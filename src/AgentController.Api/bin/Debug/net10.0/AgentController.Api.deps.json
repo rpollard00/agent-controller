@@ -1,0 +1,73 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v10.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v10.0": {
+      "AgentController.Api/1.0.0": {
+        "dependencies": {
+          "AgentController.Application": "1.0.0",
+          "AgentController.Infrastructure": "1.0.0"
+        },
+        "runtime": {
+          "AgentController.Api.dll": {}
+        }
+      },
+      "AgentController.Application/1.0.0": {
+        "dependencies": {
+          "AgentController.Domain": "1.0.0"
+        },
+        "runtime": {
+          "AgentController.Application.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      },
+      "AgentController.Domain/1.0.0": {
+        "runtime": {
+          "AgentController.Domain.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      },
+      "AgentController.Infrastructure/1.0.0": {
+        "dependencies": {
+          "AgentController.Application": "1.0.0",
+          "AgentController.Domain": "1.0.0"
+        },
+        "runtime": {
+          "AgentController.Infrastructure.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "AgentController.Api/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "AgentController.Application/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "AgentController.Domain/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "AgentController.Infrastructure/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}
