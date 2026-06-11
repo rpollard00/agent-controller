@@ -1,1 +1,47 @@
+# .NET build artifacts
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.nupkg
+
+# Test results and coverage
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+coveragereport/
+
+# IDE files
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs and temp files
+*.log
+logs/
+temp/
+tmp/
+
+# Local database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment and secrets
+.env
+.env.*
+*.env
+appsettings.*.local.json
+secrets/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Pi artifacts (keep ignored)
 .pi/pi-materia/

@@ -1,5 +1,4 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -20,5 +19,4 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\AgentController.Infrastructure\AgentController.Infrastructure.csproj" />
   </ItemGroup>
-
 </Project>
