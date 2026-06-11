@@ -3,6 +3,8 @@ using AgentController.Application;
 using AgentController.Infrastructure;
 using AgentController.Infrastructure.Options;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -31,6 +33,98 @@ public class ApiSmokeTests
         var app = builder.Build();
 
         Assert.NotNull(app);
+    }
+
+    [Fact]
+    public void ServiceCollection_AllNoOpProvidersResolve()
+    {
+        // Prove the DI container can resolve all port interfaces after
+        // registering options and no-op providers through the canonical
+        // extension methods. This is the key scaffold wiring test.
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["agentController:workerId"] = "test-worker",
+                    ["agentController:runRoot"] = "/tmp/runs",
+                    ["persistence:provider"] = "Sqlite",
+                    ["persistence:connectionString"] = "Data Source=test.db",
+                    ["workSource:provider"] = "LocalFake",
+                    ["sourceControl:provider"] = "LocalFake",
+                    ["environmentProvider:provider"] = "LocalWorkspace",
+                    ["runtime:provider"] = "NoOp",
+                }
+            )
+            .Build();
+
+        var services = new ServiceCollection();
+        services.AddAgentControllerOptions(config);
+        services.AddAgentControllerNoOpProviders();
+
+        var provider = services.BuildServiceProvider();
+
+        // All four application ports must be resolvable.
+        var workSource = provider.GetRequiredService<IWorkSource>();
+        Assert.IsType<NoOpWorkSource>(workSource);
+
+        var sourceControl = provider.GetRequiredService<ISourceControlProvider>();
+        Assert.IsType<NoOpSourceControlProvider>(sourceControl);
+
+        var envProvider = provider.GetRequiredService<IEnvironmentProvider>();
+        Assert.IsType<NoOpEnvironmentProvider>(envProvider);
+
+        var runtime = provider.GetRequiredService<IAgentRuntime>();
+        Assert.IsType<NoOpAgentRuntime>(runtime);
+    }
+
+    [Fact]
+    public void FullHost_BuildsWithoutExceptions()
+    {
+        // Prove the full WebApplication can build (but not start) without exceptions
+        // when using valid in-memory configuration and no-op providers.
+        // Starting the host would bind ports, which is non-deterministic in a unit test.
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["agentController:workerId"] = "host-test",
+                    ["agentController:runRoot"] = "/tmp/runs",
+                    ["persistence:provider"] = "Sqlite",
+                    ["persistence:connectionString"] = "Data Source=host.db",
+                    ["workSource:provider"] = "LocalFake",
+                    ["sourceControl:provider"] = "LocalFake",
+                    ["environmentProvider:provider"] = "LocalWorkspace",
+                    ["runtime:provider"] = "NoOp",
+                }
+            )
+            .Build();
+
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+        {
+            EnvironmentName = "Testing",
+            // Prevent loading files from disk.
+            ContentRootPath = Path.GetTempPath(),
+            WebRootPath = Path.GetTempPath(),
+        });
+
+        builder.Configuration.Sources.Clear();
+        builder.Configuration.AddConfiguration(config);
+
+        builder.Services.AddAgentControllerOptions(builder.Configuration);
+        builder.Services.AddAgentControllerNoOpProviders();
+
+        var app = builder.Build();
+
+        app.MapGet("/health", () => Results.Ok(new { Status = "Healthy", Timestamp = DateTimeOffset.UtcNow }));
+
+        Assert.NotNull(app);
+
+        // Verify all port interfaces can be resolved from the built host.
+        var services = app.Services;
+        Assert.NotNull(services.GetRequiredService<IWorkSource>());
+        Assert.NotNull(services.GetRequiredService<ISourceControlProvider>());
+        Assert.NotNull(services.GetRequiredService<IEnvironmentProvider>());
+        Assert.NotNull(services.GetRequiredService<IAgentRuntime>());
     }
 
     [Fact]
