@@ -1,3 +1,5 @@
+using AgentController.Application;
+using AgentController.Infrastructure;
 using Microsoft.AspNetCore.Builder;
 
 namespace AgentController.Api.Tests;
@@ -8,10 +10,10 @@ public class ApiSmokeTests
     public void ApiLayer_ReferencesApplicationAndInfrastructure()
     {
         // Prove Api -> Application and Api -> Infrastructure dependencies are resolvable.
-        var appType = typeof(Application.ApplicationPlaceholder);
+        var appType = typeof(IWorkSource);
         Assert.NotNull(appType);
 
-        var infraType = typeof(Infrastructure.InfrastructurePlaceholder);
+        var infraType = typeof(NoOpWorkSource);
         Assert.NotNull(infraType);
     }
 
