@@ -12,7 +12,7 @@ public class ApplicationSmokeTests
     public void ApplicationLayer_ReferencesDomain()
     {
         // Prove Application -> Domain dependency is resolvable.
-        var domainType = typeof(Domain.DomainPlaceholder);
+        var domainType = typeof(Domain.WorkCandidate);
         Assert.NotNull(domainType);
     }
 }
