@@ -42,9 +42,7 @@ public class OptionsSmokeTests
     {
         var config = BuildConfiguration();
         var services = new ServiceCollection();
-        services
-            .AddOptions<AgentControllerOptions>()
-            .Bind(config.GetSection("agentController"));
+        services.AddOptions<AgentControllerOptions>().Bind(config.GetSection("agentController"));
 
         var provider = services.BuildServiceProvider();
         var options = provider.GetRequiredService<IOptions<AgentControllerOptions>>().Value;
@@ -68,12 +66,12 @@ public class OptionsSmokeTests
 
         var config = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
         var services = new ServiceCollection();
-        services
-            .AddOptions<AgentControllerOptions>()
-            .Bind(config.GetSection("agentController"));
+        services.AddOptions<AgentControllerOptions>().Bind(config.GetSection("agentController"));
 
-        var options = services.BuildServiceProvider()
-            .GetRequiredService<IOptions<AgentControllerOptions>>().Value;
+        var options = services
+            .BuildServiceProvider()
+            .GetRequiredService<IOptions<AgentControllerOptions>>()
+            .Value;
 
         Assert.True(options.RetainSuccessfulRuns);
         Assert.True(options.RetainFailedRuns);
@@ -84,9 +82,7 @@ public class OptionsSmokeTests
     {
         var config = BuildConfiguration();
         var services = new ServiceCollection();
-        services
-            .AddOptions<PersistenceOptions>()
-            .Bind(config.GetSection("persistence"));
+        services.AddOptions<PersistenceOptions>().Bind(config.GetSection("persistence"));
 
         var provider = services.BuildServiceProvider();
         var options = provider.GetRequiredService<IOptions<PersistenceOptions>>().Value;
@@ -98,22 +94,24 @@ public class OptionsSmokeTests
     [Fact]
     public void WorkSourceOptions_BindsFromConfiguration()
     {
-        var config = BuildConfiguration(new Dictionary<string, string?>
-        {
-            ["workSource:eligibleTags:0"] = "agent-ready",
-            ["workSource:eligibleTags:1"] = "autonomous",
-            ["workSource:excludedTags:0"] = "agent-blocked",
-            ["workSource:eligibleStates:0"] = "New",
-            ["workSource:eligibleStates:1"] = "Approved",
-        });
+        var config = BuildConfiguration(
+            new Dictionary<string, string?>
+            {
+                ["workSource:eligibleTags:0"] = "agent-ready",
+                ["workSource:eligibleTags:1"] = "autonomous",
+                ["workSource:excludedTags:0"] = "agent-blocked",
+                ["workSource:eligibleStates:0"] = "New",
+                ["workSource:eligibleStates:1"] = "Approved",
+            }
+        );
 
         var services = new ServiceCollection();
-        services
-            .AddOptions<WorkSourceOptions>()
-            .Bind(config.GetSection("workSource"));
+        services.AddOptions<WorkSourceOptions>().Bind(config.GetSection("workSource"));
 
-        var options = services.BuildServiceProvider()
-            .GetRequiredService<IOptions<WorkSourceOptions>>().Value;
+        var options = services
+            .BuildServiceProvider()
+            .GetRequiredService<IOptions<WorkSourceOptions>>()
+            .Value;
 
         Assert.Equal("LocalFake", options.Provider);
         Assert.Equal(2, options.EligibleTags.Count);
@@ -130,12 +128,12 @@ public class OptionsSmokeTests
     {
         var config = BuildConfiguration();
         var services = new ServiceCollection();
-        services
-            .AddOptions<SourceControlOptions>()
-            .Bind(config.GetSection("sourceControl"));
+        services.AddOptions<SourceControlOptions>().Bind(config.GetSection("sourceControl"));
 
-        var options = services.BuildServiceProvider()
-            .GetRequiredService<IOptions<SourceControlOptions>>().Value;
+        var options = services
+            .BuildServiceProvider()
+            .GetRequiredService<IOptions<SourceControlOptions>>()
+            .Value;
 
         Assert.Equal("LocalFake", options.Provider);
     }
@@ -149,8 +147,10 @@ public class OptionsSmokeTests
             .AddOptions<EnvironmentProviderOptions>()
             .Bind(config.GetSection("environmentProvider"));
 
-        var options = services.BuildServiceProvider()
-            .GetRequiredService<IOptions<EnvironmentProviderOptions>>().Value;
+        var options = services
+            .BuildServiceProvider()
+            .GetRequiredService<IOptions<EnvironmentProviderOptions>>()
+            .Value;
 
         Assert.Equal("LocalWorkspace", options.Provider);
     }
@@ -158,19 +158,21 @@ public class OptionsSmokeTests
     [Fact]
     public void RuntimeOptions_BindsFromConfiguration()
     {
-        var config = BuildConfiguration(new Dictionary<string, string?>
-        {
-            ["runtime:piExecutablePath"] = "/usr/local/bin/pi",
-            ["runtime:defaultMateriaLoadout"] = "autonomous-dev",
-        });
+        var config = BuildConfiguration(
+            new Dictionary<string, string?>
+            {
+                ["runtime:piExecutablePath"] = "/usr/local/bin/pi",
+                ["runtime:defaultMateriaLoadout"] = "autonomous-dev",
+            }
+        );
 
         var services = new ServiceCollection();
-        services
-            .AddOptions<RuntimeOptions>()
-            .Bind(config.GetSection("runtime"));
+        services.AddOptions<RuntimeOptions>().Bind(config.GetSection("runtime"));
 
-        var options = services.BuildServiceProvider()
-            .GetRequiredService<IOptions<RuntimeOptions>>().Value;
+        var options = services
+            .BuildServiceProvider()
+            .GetRequiredService<IOptions<RuntimeOptions>>()
+            .Value;
 
         Assert.Equal("NoOp", options.Provider);
         Assert.Equal("/usr/local/bin/pi", options.PiExecutablePath);
@@ -180,19 +182,23 @@ public class OptionsSmokeTests
     [Fact]
     public void RepositoryProfileOptions_BindsFromConfiguration()
     {
-        var config = BuildConfiguration(new Dictionary<string, string?>
-        {
-            ["repositories:example-service:allowedPaths:0"] = "src/",
-            ["repositories:example-service:allowedPaths:1"] = "tests/",
-        });
+        var config = BuildConfiguration(
+            new Dictionary<string, string?>
+            {
+                ["repositories:example-service:allowedPaths:0"] = "src/",
+                ["repositories:example-service:allowedPaths:1"] = "tests/",
+            }
+        );
 
         var services = new ServiceCollection();
         services
             .AddOptions<Dictionary<string, RepositoryProfileOptions>>()
             .Bind(config.GetSection("repositories"));
 
-        var options = services.BuildServiceProvider()
-            .GetRequiredService<IOptions<Dictionary<string, RepositoryProfileOptions>>>().Value;
+        var options = services
+            .BuildServiceProvider()
+            .GetRequiredService<IOptions<Dictionary<string, RepositoryProfileOptions>>>()
+            .Value;
 
         Assert.NotNull(options);
         Assert.True(options.ContainsKey("example-service"));
@@ -207,10 +213,9 @@ public class OptionsSmokeTests
     [Fact]
     public void AgentControllerOptions_ValidationCatchesNegativePollInterval()
     {
-        var config = BuildConfiguration(new Dictionary<string, string?>
-        {
-            ["agentController:pollIntervalSeconds"] = "-5",
-        });
+        var config = BuildConfiguration(
+            new Dictionary<string, string?> { ["agentController:pollIntervalSeconds"] = "-5" }
+        );
 
         var services = new ServiceCollection();
         services
@@ -219,8 +224,9 @@ public class OptionsSmokeTests
             .ValidateDataAnnotations();
 
         var provider = services.BuildServiceProvider();
-        var ex = Assert.Throws<OptionsValidationException>(
-            () => provider.GetRequiredService<IOptions<AgentControllerOptions>>().Value);
+        var ex = Assert.Throws<OptionsValidationException>(() =>
+            provider.GetRequiredService<IOptions<AgentControllerOptions>>().Value
+        );
 
         Assert.Contains("PollIntervalSeconds", ex.Message);
     }
@@ -228,10 +234,9 @@ public class OptionsSmokeTests
     [Fact]
     public void AgentControllerOptions_ValidationCatchesZeroPollInterval()
     {
-        var config = BuildConfiguration(new Dictionary<string, string?>
-        {
-            ["agentController:pollIntervalSeconds"] = "0",
-        });
+        var config = BuildConfiguration(
+            new Dictionary<string, string?> { ["agentController:pollIntervalSeconds"] = "0" }
+        );
 
         var services = new ServiceCollection();
         services
@@ -240,17 +245,17 @@ public class OptionsSmokeTests
             .ValidateDataAnnotations();
 
         var provider = services.BuildServiceProvider();
-        Assert.Throws<OptionsValidationException>(
-            () => provider.GetRequiredService<IOptions<AgentControllerOptions>>().Value);
+        Assert.Throws<OptionsValidationException>(() =>
+            provider.GetRequiredService<IOptions<AgentControllerOptions>>().Value
+        );
     }
 
     [Fact]
     public void AgentControllerOptions_ValidationCatchesZeroMaxConcurrency()
     {
-        var config = BuildConfiguration(new Dictionary<string, string?>
-        {
-            ["agentController:maxConcurrentRuns"] = "0",
-        });
+        var config = BuildConfiguration(
+            new Dictionary<string, string?> { ["agentController:maxConcurrentRuns"] = "0" }
+        );
 
         var services = new ServiceCollection();
         services
@@ -259,17 +264,17 @@ public class OptionsSmokeTests
             .ValidateDataAnnotations();
 
         var provider = services.BuildServiceProvider();
-        Assert.Throws<OptionsValidationException>(
-            () => provider.GetRequiredService<IOptions<AgentControllerOptions>>().Value);
+        Assert.Throws<OptionsValidationException>(() =>
+            provider.GetRequiredService<IOptions<AgentControllerOptions>>().Value
+        );
     }
 
     [Fact]
     public void AgentControllerOptions_ValidationCatchesEmptyWorkerId()
     {
-        var config = BuildConfiguration(new Dictionary<string, string?>
-        {
-            ["agentController:workerId"] = "",
-        });
+        var config = BuildConfiguration(
+            new Dictionary<string, string?> { ["agentController:workerId"] = "" }
+        );
 
         var services = new ServiceCollection();
         services
@@ -278,17 +283,17 @@ public class OptionsSmokeTests
             .ValidateDataAnnotations();
 
         var provider = services.BuildServiceProvider();
-        Assert.Throws<OptionsValidationException>(
-            () => provider.GetRequiredService<IOptions<AgentControllerOptions>>().Value);
+        Assert.Throws<OptionsValidationException>(() =>
+            provider.GetRequiredService<IOptions<AgentControllerOptions>>().Value
+        );
     }
 
     [Fact]
     public void PersistenceOptions_ValidationCatchesEmptyProvider()
     {
-        var config = BuildConfiguration(new Dictionary<string, string?>
-        {
-            ["persistence:provider"] = "",
-        });
+        var config = BuildConfiguration(
+            new Dictionary<string, string?> { ["persistence:provider"] = "" }
+        );
 
         var services = new ServiceCollection();
         services
@@ -297,17 +302,17 @@ public class OptionsSmokeTests
             .ValidateDataAnnotations();
 
         var provider = services.BuildServiceProvider();
-        Assert.Throws<OptionsValidationException>(
-            () => provider.GetRequiredService<IOptions<PersistenceOptions>>().Value);
+        Assert.Throws<OptionsValidationException>(() =>
+            provider.GetRequiredService<IOptions<PersistenceOptions>>().Value
+        );
     }
 
     [Fact]
     public void WorkSourceOptions_ValidationCatchesEmptyProvider()
     {
-        var config = BuildConfiguration(new Dictionary<string, string?>
-        {
-            ["workSource:provider"] = "",
-        });
+        var config = BuildConfiguration(
+            new Dictionary<string, string?> { ["workSource:provider"] = "" }
+        );
 
         var services = new ServiceCollection();
         services
@@ -316,17 +321,17 @@ public class OptionsSmokeTests
             .ValidateDataAnnotations();
 
         var provider = services.BuildServiceProvider();
-        Assert.Throws<OptionsValidationException>(
-            () => provider.GetRequiredService<IOptions<WorkSourceOptions>>().Value);
+        Assert.Throws<OptionsValidationException>(() =>
+            provider.GetRequiredService<IOptions<WorkSourceOptions>>().Value
+        );
     }
 
     [Fact]
     public void SourceControlOptions_ValidationCatchesEmptyProvider()
     {
-        var config = BuildConfiguration(new Dictionary<string, string?>
-        {
-            ["sourceControl:provider"] = "",
-        });
+        var config = BuildConfiguration(
+            new Dictionary<string, string?> { ["sourceControl:provider"] = "" }
+        );
 
         var services = new ServiceCollection();
         services
@@ -335,17 +340,17 @@ public class OptionsSmokeTests
             .ValidateDataAnnotations();
 
         var provider = services.BuildServiceProvider();
-        Assert.Throws<OptionsValidationException>(
-            () => provider.GetRequiredService<IOptions<SourceControlOptions>>().Value);
+        Assert.Throws<OptionsValidationException>(() =>
+            provider.GetRequiredService<IOptions<SourceControlOptions>>().Value
+        );
     }
 
     [Fact]
     public void EnvironmentProviderOptions_ValidationCatchesEmptyProvider()
     {
-        var config = BuildConfiguration(new Dictionary<string, string?>
-        {
-            ["environmentProvider:provider"] = "",
-        });
+        var config = BuildConfiguration(
+            new Dictionary<string, string?> { ["environmentProvider:provider"] = "" }
+        );
 
         var services = new ServiceCollection();
         services
@@ -354,17 +359,17 @@ public class OptionsSmokeTests
             .ValidateDataAnnotations();
 
         var provider = services.BuildServiceProvider();
-        Assert.Throws<OptionsValidationException>(
-            () => provider.GetRequiredService<IOptions<EnvironmentProviderOptions>>().Value);
+        Assert.Throws<OptionsValidationException>(() =>
+            provider.GetRequiredService<IOptions<EnvironmentProviderOptions>>().Value
+        );
     }
 
     [Fact]
     public void RuntimeOptions_ValidationCatchesEmptyProvider()
     {
-        var config = BuildConfiguration(new Dictionary<string, string?>
-        {
-            ["runtime:provider"] = "",
-        });
+        var config = BuildConfiguration(
+            new Dictionary<string, string?> { ["runtime:provider"] = "" }
+        );
 
         var services = new ServiceCollection();
         services
@@ -373,8 +378,9 @@ public class OptionsSmokeTests
             .ValidateDataAnnotations();
 
         var provider = services.BuildServiceProvider();
-        Assert.Throws<OptionsValidationException>(
-            () => provider.GetRequiredService<IOptions<RuntimeOptions>>().Value);
+        Assert.Throws<OptionsValidationException>(() =>
+            provider.GetRequiredService<IOptions<RuntimeOptions>>().Value
+        );
     }
 
     [Fact]
@@ -383,15 +389,19 @@ public class OptionsSmokeTests
         // Read appsettings.example.json and verify all provider fields are non-empty
         var examplePath = Path.Combine(
             AppContext.BaseDirectory,
-            "..", "..", "..", "..", "..", "..",
-            "appsettings.example.json");
+            "..",
+            "..",
+            "..",
+            "..",
+            "..",
+            "..",
+            "appsettings.example.json"
+        );
 
         // If the file exists at the solution root, validate it
         if (File.Exists(examplePath))
         {
-            var config = new ConfigurationBuilder()
-                .AddJsonFile(examplePath)
-                .Build();
+            var config = new ConfigurationBuilder().AddJsonFile(examplePath).Build();
 
             var sections = new[]
             {
@@ -405,8 +415,10 @@ public class OptionsSmokeTests
             foreach (var (key, name) in sections)
             {
                 var value = config[key];
-                Assert.False(string.IsNullOrWhiteSpace(value),
-                    $"{name} provider should not be empty in appsettings.example.json. Key: {key}");
+                Assert.False(
+                    string.IsNullOrWhiteSpace(value),
+                    $"{name} provider should not be empty in appsettings.example.json. Key: {key}"
+                );
             }
         }
         // If file doesn't exist, skip (test is informational)
@@ -417,22 +429,30 @@ public class OptionsSmokeTests
     {
         var examplePath = Path.Combine(
             AppContext.BaseDirectory,
-            "..", "..", "..", "..", "..", "..",
-            "appsettings.example.json");
+            "..",
+            "..",
+            "..",
+            "..",
+            "..",
+            "..",
+            "appsettings.example.json"
+        );
 
         if (File.Exists(examplePath))
         {
-            var config = new ConfigurationBuilder()
-                .AddJsonFile(examplePath)
-                .Build();
+            var config = new ConfigurationBuilder().AddJsonFile(examplePath).Build();
 
             var pollInterval = config.GetValue<int>("agentController:pollIntervalSeconds");
             var maxConcurrency = config.GetValue<int>("agentController:maxConcurrentRuns");
 
-            Assert.True(pollInterval > 0,
-                $"pollIntervalSeconds should be positive, got {pollInterval}");
-            Assert.True(maxConcurrency > 0,
-                $"maxConcurrentRuns should be positive, got {maxConcurrency}");
+            Assert.True(
+                pollInterval > 0,
+                $"pollIntervalSeconds should be positive, got {pollInterval}"
+            );
+            Assert.True(
+                maxConcurrency > 0,
+                $"maxConcurrentRuns should be positive, got {maxConcurrency}"
+            );
         }
     }
 }

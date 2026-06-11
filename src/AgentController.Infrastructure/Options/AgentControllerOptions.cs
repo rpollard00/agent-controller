@@ -49,4 +49,10 @@ public sealed class AgentControllerOptions
     /// Debugging-friendly default: true.
     /// </summary>
     public bool RetainFailedRuns { get; init; } = true;
+
+    /// <summary>
+    /// Whether to enable the background polling worker.
+    /// Disabled by default for early scaffolding; enable once real providers are wired.
+    /// </summary>
+    public bool WorkerEnabled { get; init; } = false;
 }

@@ -5,6 +5,7 @@
   </ItemGroup>
 
   <PropertyGroup>
+    <RootNamespace>AgentController.Api</RootNamespace>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
