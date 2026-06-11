@@ -102,3 +102,17 @@
 /home/reese/projects/agent_router/tests/AgentController.Infrastructure.Tests/obj/Debug/net10.0/AgentController.Infrastructure.Tests.pdb
 /home/reese/projects/agent_router/tests/AgentController.Infrastructure.Tests/obj/Debug/net10.0/AgentController.Infrastructure.Tests.genruntimeconfig.cache
 /home/reese/projects/agent_router/tests/AgentController.Infrastructure.Tests/obj/Debug/net10.0/ref/AgentController.Infrastructure.Tests.dll
+/home/reese/projects/agent_router/tests/AgentController.Infrastructure.Tests/bin/Debug/net10.0/Microsoft.Extensions.Configuration.Abstractions.dll
+/home/reese/projects/agent_router/tests/AgentController.Infrastructure.Tests/bin/Debug/net10.0/Microsoft.Extensions.Configuration.Binder.dll
+/home/reese/projects/agent_router/tests/AgentController.Infrastructure.Tests/bin/Debug/net10.0/Microsoft.Extensions.DependencyInjection.Abstractions.dll
+/home/reese/projects/agent_router/tests/AgentController.Infrastructure.Tests/bin/Debug/net10.0/Microsoft.Extensions.Options.dll
+/home/reese/projects/agent_router/tests/AgentController.Infrastructure.Tests/bin/Debug/net10.0/Microsoft.Extensions.Options.ConfigurationExtensions.dll
+/home/reese/projects/agent_router/tests/AgentController.Infrastructure.Tests/bin/Debug/net10.0/Microsoft.Extensions.Options.DataAnnotations.dll
+/home/reese/projects/agent_router/tests/AgentController.Infrastructure.Tests/bin/Debug/net10.0/Microsoft.Extensions.Primitives.dll
+/home/reese/projects/agent_router/tests/AgentController.Infrastructure.Tests/bin/Debug/net10.0/Microsoft.Extensions.Configuration.dll
+/home/reese/projects/agent_router/tests/AgentController.Infrastructure.Tests/bin/Debug/net10.0/Microsoft.Extensions.Configuration.FileExtensions.dll
+/home/reese/projects/agent_router/tests/AgentController.Infrastructure.Tests/bin/Debug/net10.0/Microsoft.Extensions.Configuration.Json.dll
+/home/reese/projects/agent_router/tests/AgentController.Infrastructure.Tests/bin/Debug/net10.0/Microsoft.Extensions.DependencyInjection.dll
+/home/reese/projects/agent_router/tests/AgentController.Infrastructure.Tests/bin/Debug/net10.0/Microsoft.Extensions.FileProviders.Abstractions.dll
+/home/reese/projects/agent_router/tests/AgentController.Infrastructure.Tests/bin/Debug/net10.0/Microsoft.Extensions.FileProviders.Physical.dll
+/home/reese/projects/agent_router/tests/AgentController.Infrastructure.Tests/bin/Debug/net10.0/Microsoft.Extensions.FileSystemGlobbing.dll
