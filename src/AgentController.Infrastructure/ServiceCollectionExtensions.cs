@@ -1,6 +1,7 @@
 using AgentController.Application;
 using AgentController.Infrastructure;
 using AgentController.Infrastructure.Data;
+using AgentController.Infrastructure.Data.Repositories;
 using AgentController.Infrastructure.Options;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -93,6 +94,30 @@ public static class AgentControllerServiceCollectionExtensions
                 sqliteOptions => sqliteOptions.MigrationsAssembly("AgentController.Migrations")
             );
         });
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers EF Core-backed repository implementations for all application-layer
+    /// persistence contracts (<see cref="IWorkItemStore"/>, <see cref="IAgentRunStore"/>,
+    /// <see cref="ILifecycleEventStore"/>, <see cref="IEnvironmentStore"/>,
+    /// <see cref="IRepositoryStore"/>).
+    ///
+    /// Repositories are registered as scoped so each request or worker poll cycle
+    /// gets a fresh unit-of-work backed by the same <see cref="AgentControllerDbContext"/>.
+    ///
+    /// Requires <see cref="AddAgentControllerDbContext"/> to be called first.
+    /// </summary>
+    public static IServiceCollection AddAgentControllerRepositories(
+        this IServiceCollection services
+    )
+    {
+        services.AddScoped<IWorkItemStore, EfWorkItemStore>();
+        services.AddScoped<IAgentRunStore, EfAgentRunStore>();
+        services.AddScoped<ILifecycleEventStore, EfLifecycleEventStore>();
+        services.AddScoped<IEnvironmentStore, EfEnvironmentStore>();
+        services.AddScoped<IRepositoryStore, EfRepositoryStore>();
 
         return services;
     }

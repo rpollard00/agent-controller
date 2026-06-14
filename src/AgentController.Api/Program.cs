@@ -10,6 +10,10 @@ builder.Services.AddAgentControllerOptions(builder.Configuration);
 // console app; this registration never calls Migrate or EnsureCreated.
 builder.Services.AddAgentControllerDbContext(builder.Configuration);
 
+// Register EF Core-backed repository implementations for all application-layer
+// persistence contracts. Requires AddAgentControllerDbContext to be called first.
+builder.Services.AddAgentControllerRepositories();
+
 // Register deterministic no-op providers for DI seeding
 builder.Services.AddAgentControllerNoOpProviders();
 
