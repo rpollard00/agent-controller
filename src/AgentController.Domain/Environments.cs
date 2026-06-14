@@ -77,3 +77,24 @@ public sealed record CommandResult
     /// <summary>Whether the command was terminated due to a timeout.</summary>
     public bool TimedOut { get; init; }
 }
+
+/// <summary>
+/// Request to create a new environment record in the persistence store.
+/// </summary>
+public sealed record CreateEnvironmentRequest
+{
+    /// <summary>Run identifier this environment is associated with.</summary>
+    public string RunId { get; init; } = string.Empty;
+
+    /// <summary>Provider type that created this environment.</summary>
+    public string ProviderType { get; init; } = string.Empty;
+
+    /// <summary>Absolute root path of the environment on the host.</summary>
+    public string RootPath { get; init; } = string.Empty;
+
+    /// <summary>Initial status of the environment.</summary>
+    public string Status { get; init; } = "created";
+
+    /// <summary>Provider-specific metadata.</summary>
+    public IReadOnlyDictionary<string, string>? Metadata { get; init; }
+}
