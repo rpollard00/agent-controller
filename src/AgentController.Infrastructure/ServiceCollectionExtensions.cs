@@ -123,6 +123,26 @@ public static class AgentControllerServiceCollectionExtensions
     }
 
     /// <summary>
+    /// Registers the <see cref="LocalFakeWorkSource"/> as a singleton <see cref="IWorkSource"/>
+    /// implementation backed by the persisted <see cref="IWorkItemStore"/>. Applies
+    /// configured <see cref="WorkSourceOptions"/> for tag/state eligibility filtering.
+    ///
+    /// <see cref="LocalFakeWorkSource"/> uses <see cref="IServiceScopeFactory"/> internally
+    /// to resolve the scoped <see cref="IWorkItemStore"/> per operation, so it is safe for
+    /// consumption by singleton consumers such as <see cref="BackgroundService"/>.
+    ///
+    /// Requires <see cref="AddAgentControllerRepositories"/> to be called first.
+    /// </summary>
+    public static IServiceCollection AddAgentControllerLocalFakeWorkSource(
+        this IServiceCollection services
+    )
+    {
+        services.AddSingleton<IWorkSource, LocalFakeWorkSource>();
+
+        return services;
+    }
+
+    /// <summary>
     /// Registers deterministic no-op infrastructure providers suitable for DI seeding
     /// before real providers are wired.
     /// </summary>

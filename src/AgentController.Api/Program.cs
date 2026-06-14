@@ -15,7 +15,13 @@ builder.Services.AddAgentControllerDbContext(builder.Configuration);
 builder.Services.AddAgentControllerRepositories();
 
 // Register deterministic no-op providers for DI seeding
+// (source control, environment, runtime)
 builder.Services.AddAgentControllerNoOpProviders();
+
+// Override the no-op IWorkSource with a LocalFakeWorkSource backed by persisted WorkItems.
+// Must be registered after AddAgentControllerNoOpProviders so the last-registered
+// IWorkSource wins.
+builder.Services.AddAgentControllerLocalFakeWorkSource();
 
 // Register the background polling worker (disabled by default via agentController.workerEnabled).
 // Kept in the same host as the API for the prototype; a future split can move this into a
