@@ -1,6 +1,8 @@
 using AgentController.Application;
 using AgentController.Infrastructure;
+using AgentController.Infrastructure.Data;
 using AgentController.Infrastructure.Options;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -59,6 +61,35 @@ public static class AgentControllerServiceCollectionExtensions
         services
             .AddOptions<Dictionary<string, RepositoryProfileOptions>>()
             .Bind(configuration.GetSection(RepositoriesOptions.SectionName));
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers the EF Core <see cref="AgentControllerDbContext"/> with a SQLite
+    /// connection string from <see cref="PersistenceOptions"/>. The context is registered
+    /// as scoped so each request or worker poll cycle gets a fresh unit-of-work.
+    ///
+    /// This method never calls <c>MigrateAsync()</c> or <c>EnsureCreated()</c>.
+    /// Schema migrations are owned by the dedicated <c>AgentController.Migrations</c>
+    /// console application.
+    /// </summary>
+    public static IServiceCollection AddAgentControllerDbContext(
+        this IServiceCollection services,
+        IConfiguration configuration
+    )
+    {
+        var persistenceOptions = configuration
+            .GetSection(PersistenceOptions.SectionName)
+            .Get<PersistenceOptions>();
+
+        var connectionString = persistenceOptions?.ConnectionString
+            ?? "Data Source=agent-controller.db";
+
+        services.AddDbContext<AgentControllerDbContext>(options =>
+        {
+            options.UseSqlite(connectionString);
+        });
 
         return services;
     }

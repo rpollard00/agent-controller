@@ -730,25 +730,35 @@
           "framework": "net10.0",
           "targetAlias": "net10.0",
           "dependencies": {
+            "Microsoft.EntityFrameworkCore.Design": {
+              "include": "Runtime, Build, Native, ContentFiles, Analyzers, BuildTransitive",
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[9.0.7, )"
+            },
+            "Microsoft.EntityFrameworkCore.Sqlite": {
+              "target": "Package",
+              "version": "[9.0.7, )"
+            },
             "Microsoft.Extensions.Configuration.Abstractions": {
               "target": "Package",
-              "version": "[9.0.0, )"
+              "version": "[9.0.7, )"
             },
             "Microsoft.Extensions.DependencyInjection.Abstractions": {
               "target": "Package",
-              "version": "[9.0.0, )"
+              "version": "[9.0.7, )"
             },
             "Microsoft.Extensions.Options": {
               "target": "Package",
-              "version": "[9.0.0, )"
+              "version": "[9.0.7, )"
             },
             "Microsoft.Extensions.Options.ConfigurationExtensions": {
               "target": "Package",
-              "version": "[9.0.0, )"
+              "version": "[9.0.7, )"
             },
             "Microsoft.Extensions.Options.DataAnnotations": {
               "target": "Package",
-              "version": "[9.0.0, )"
+              "version": "[9.0.7, )"
             }
           },
           "imports": [
@@ -1094,23 +1104,23 @@
           "dependencies": {
             "Microsoft.Extensions.Configuration.Json": {
               "target": "Package",
-              "version": "[9.0.0, )"
+              "version": "[9.0.7, )"
             },
             "Microsoft.Extensions.DependencyInjection": {
               "target": "Package",
-              "version": "[9.0.0, )"
+              "version": "[9.0.7, )"
             },
             "Microsoft.Extensions.Options": {
               "target": "Package",
-              "version": "[9.0.0, )"
+              "version": "[9.0.7, )"
             },
             "Microsoft.Extensions.Options.ConfigurationExtensions": {
               "target": "Package",
-              "version": "[9.0.0, )"
+              "version": "[9.0.7, )"
             },
             "Microsoft.Extensions.Options.DataAnnotations": {
               "target": "Package",
-              "version": "[9.0.0, )"
+              "version": "[9.0.7, )"
             },
             "Microsoft.NET.Test.Sdk": {
               "target": "Package",

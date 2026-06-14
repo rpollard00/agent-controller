@@ -16,3 +16,5 @@
 /home/reese/projects/agent_router/src/AgentController.Infrastructure/obj/Debug/net10.0/refint/AgentController.Infrastructure.dll
 /home/reese/projects/agent_router/src/AgentController.Infrastructure/obj/Debug/net10.0/AgentController.Infrastructure.pdb
 /home/reese/projects/agent_router/src/AgentController.Infrastructure/obj/Debug/net10.0/ref/AgentController.Infrastructure.dll
+/home/reese/projects/agent_router/src/AgentController.Infrastructure/bin/Debug/net10.0/AgentController.Infrastructure.runtimeconfig.json
+/home/reese/projects/agent_router/src/AgentController.Infrastructure/obj/Debug/net10.0/AgentController.Infrastructure.genruntimeconfig.cache
