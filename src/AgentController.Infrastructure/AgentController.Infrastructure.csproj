@@ -27,4 +27,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AgentController.Migrations" />
+  </ItemGroup>
 </Project>

@@ -4,6 +4,7 @@
         <Project Path="src/AgentController.Application/AgentController.Application.csproj" />
         <Project Path="src/AgentController.Domain/AgentController.Domain.csproj" />
         <Project Path="src/AgentController.Infrastructure/AgentController.Infrastructure.csproj" />
+        <Project Path="src/AgentController.Migrations/AgentController.Migrations.csproj" />
     </Folder>
     <Folder Name="/tests/">
         <Project Path="tests/AgentController.Api.Tests/AgentController.Api.Tests.csproj" />

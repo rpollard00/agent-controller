@@ -5,6 +5,11 @@ var builder = WebApplication.CreateBuilder(args);
 // Register configuration options with validation-on-start
 builder.Services.AddAgentControllerOptions(builder.Configuration);
 
+// Register EF Core DbContext (scoped per-request/per-poll-cycle).
+// Schema migrations are owned by the dedicated AgentController.Migrations
+// console app; this registration never calls Migrate or EnsureCreated.
+builder.Services.AddAgentControllerDbContext(builder.Configuration);
+
 // Register deterministic no-op providers for DI seeding
 builder.Services.AddAgentControllerNoOpProviders();
 

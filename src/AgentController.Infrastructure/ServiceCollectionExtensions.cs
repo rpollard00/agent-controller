@@ -88,7 +88,10 @@ public static class AgentControllerServiceCollectionExtensions
 
         services.AddDbContext<AgentControllerDbContext>(options =>
         {
-            options.UseSqlite(connectionString);
+            options.UseSqlite(
+                connectionString,
+                sqliteOptions => sqliteOptions.MigrationsAssembly("AgentController.Migrations")
+            );
         });
 
         return services;
