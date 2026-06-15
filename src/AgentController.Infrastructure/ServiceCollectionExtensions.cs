@@ -1,4 +1,5 @@
 using AgentController.Application;
+using AgentController.Application.Services;
 using AgentController.Infrastructure;
 using AgentController.Infrastructure.Data;
 using AgentController.Infrastructure.Data.Repositories;
@@ -118,6 +119,21 @@ public static class AgentControllerServiceCollectionExtensions
         services.AddScoped<ILifecycleEventStore, EfLifecycleEventStore>();
         services.AddScoped<IEnvironmentStore, EfEnvironmentStore>();
         services.AddScoped<IRepositoryStore, EfRepositoryStore>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers the <see cref="RunLifecycleService"/> as a scoped <see cref="IRunLifecycleService"/>.
+    /// Coordinates <see cref="IAgentRunStore"/>, <see cref="ILifecycleEventStore"/>, and
+    /// <see cref="IWorkItemStore"/> for consistent run lifecycle transitions.
+    ///
+    /// Requires <see cref="AddAgentControllerRepositories"/> to be called first.
+    /// </summary>
+    public static IServiceCollection AddAgentControllerLifecycleService(
+        this IServiceCollection services)
+    {
+        services.AddScoped<IRunLifecycleService, RunLifecycleService>();
 
         return services;
     }

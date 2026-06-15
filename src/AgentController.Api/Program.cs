@@ -16,6 +16,11 @@ builder.Services.AddAgentControllerDbContext(builder.Configuration);
 // persistence contracts. Requires AddAgentControllerDbContext to be called first.
 builder.Services.AddAgentControllerRepositories();
 
+// Register the controller run lifecycle service (scoped).
+// Coordinates IAgentRunStore, ILifecycleEventStore, and IWorkItemStore
+// for consistent run state transitions.
+builder.Services.AddAgentControllerLifecycleService();
+
 // Register deterministic no-op providers for DI seeding
 // (source control, environment, runtime)
 builder.Services.AddAgentControllerNoOpProviders();
