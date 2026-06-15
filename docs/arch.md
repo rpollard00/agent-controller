@@ -1132,7 +1132,7 @@ Actions: cancel, retry, cleanup, mark needs-human
   },
   "persistence": {
     "provider": "Sqlite",
-    "connectionString": "Data Source=agent-controller.db"
+    "connectionString": "Data Source=~/.agent-work-controller/agent-controller.db"
   },
   "workSource": {
     "provider": "AzureDevOpsBoards",
@@ -1191,14 +1191,269 @@ Actions: cancel, retry, cleanup, mark needs-human
 6. Add JSON config loading.
 7. Add repository profile config.
 
-## Phase 1: Local Work Source for Testing
+## Phase 1: Local Lifecycle (No Azure DevOps, No pi-materia)
 
-1. Add local fake work source.
-2. Add local work item creation endpoint.
-3. Add worker polling loop.
-4. Add claim/lease logic.
-5. Add run records.
-6. Add run detail endpoint.
+Phase 1 builds a fully testable local lifecycle on top of the Phase 0 skeleton. It uses a
+local fake work source, SQLite-backed controller state, and mock runtime event ingestion so
+the entire controller lifecycle is exerciseable without any external dependency. Azure DevOps
+Boards, Azure DevOps Repos, Docker, and pi-materia are not involved.
+
+### 1a. Design Rules for Phase 1
+
+1. **API and worker code must depend on application abstractions, not EF Core.**
+   The `AgentController.Api` project references `AgentController.Application` and
+   `AgentController.Infrastructure` (for DI registration only). It never references
+   `Microsoft.EntityFrameworkCore` directly. All persistence access goes through
+   application-layer interfaces defined in `AgentController.Application`.
+
+2. **EF Core lives only in Infrastructure.** The `AgentController.Infrastructure` project
+   contains the `DbContext`, entity type configurations, and repository implementations.
+   No other project references EF Core packages.
+
+3. **The worker advances controller-owned states only until `awaiting_result`, then waits
+   for runtime events.** The worker owns everything up to and including
+   `RunLifecycleState.AwaitingResult`. After that, the runtime (or mock runtime endpoint)
+   drives state transitions through event ingestion. The worker never transitions a run
+   out of `AwaitingResult` except for stale-timeout recovery.
+
+4. **Migrations run from a dedicated console app, never from API or worker startup.**
+   The API and worker register the `DbContext` in DI for query/command use but never call
+   `Database.MigrateAsync()` or `Database.EnsureCreated()`. A separate
+   `AgentController.Migrations` console project is the sole owner of schema evolution.
+
+5. **Runtime events are idempotent.** Every inbound runtime event carries a unique
+   `eventId`. The controller must check for duplicate `eventId` values before processing
+   and reject duplicates with a clear response.
+
+### 1b. SQLite Persistence Setup
+
+Add EF Core with SQLite to `AgentController.Infrastructure`. Core tables map to the
+prototype data model defined in §7.5:
+
+| Table | Purpose |
+|-------|---------|
+| `WorkItems` | Persisted fake work items and claimed real work items |
+| `AgentRuns` | One row per controller-orchestrated run |
+| `Environments` | Per-run environment metadata |
+| `LifecycleEvents` | Controller-authoritative event log |
+| `Repositories` | Cached repository profiles from JSON config |
+
+Key mapping decisions:
+- JSON-like columns (`Tags`, `AcceptanceCriteria`, `Metadata`, `Payload`) are stored as
+  `TEXT` columns. The repository layer handles serialization; domain types remain
+  dictionary/list-based.
+- All tables carry `CreatedAt` and `UpdatedAt` timestamps.
+- `LifecycleEvents` has a **unique index on `(RunId, EventId)` WHERE `EventId IS NOT NULL`**
+  for runtime event idempotency.
+- `WorkItems` has an index on `(Status, LeaseExpiresAt)` for efficient polling queries.
+- `AgentRuns` has an index on `(Status, LastHeartbeatAt)` for stale-run detection.
+
+### 1c. Persistence Abstractions (Application Layer)
+
+Define storage-agnostic contracts in `AgentController.Application` that API and worker
+code consume. These interfaces must not leak EF Core types:
+
+```csharp
+// IWorkItemStore — CRUD for local fake work items + claim/lease
+Task<WorkCandidate> CreateAsync(CreateWorkItemRequest request, CancellationToken ct);
+Task<IReadOnlyList<WorkCandidate>> ListAsync(WorkItemListQuery query, CancellationToken ct);
+Task<WorkCandidate?> GetByIdAsync(string id, CancellationToken ct);
+Task<IReadOnlyList<WorkCandidate>> FindEligibleAsync(WorkQuery query, CancellationToken ct);
+Task<ClaimResult> TryClaimAsync(string workItemId, ClaimRequest claim, CancellationToken ct);
+Task UpdateStatusAsync(string workItemId, string status, CancellationToken ct);
+
+// IAgentRunStore — run lifecycle persistence
+Task<AgentRunHandle> CreateAsync(CreateRunRequest request, CancellationToken ct);
+Task<AgentRunHandle?> GetByIdAsync(string runId, CancellationToken ct);
+Task UpdateStatusAsync(string runId, RunLifecycleState status, CancellationToken ct);
+Task UpdateRuntimeFieldsAsync(string runId, RuntimeFieldUpdate update, CancellationToken ct);
+Task<IReadOnlyList<AgentRunHandle>> ListAsync(RunListQuery query, CancellationToken ct);
+Task<IReadOnlyList<AgentRunHandle>> FindStaleAsync(TimeSpan staleTimeout, CancellationToken ct);
+
+// ILifecycleEventStore — append-only event log
+Task AppendAsync(LifecycleEvent evt, CancellationToken ct);
+Task<IReadOnlyList<LifecycleEvent>> ListByRunIdAsync(string runId, CancellationToken ct);
+Task<bool> ExistsByEventIdAsync(string runId, string eventId, CancellationToken ct);
+
+// IEnvironmentStore — environment metadata
+Task<EnvironmentHandle> CreateAsync(CreateEnvironmentRequest request, CancellationToken ct);
+Task UpdateStatusAsync(string environmentId, string status, CancellationToken ct);
+
+// IRepositoryStore — cached repository profiles
+Task<RepositoryProfile?> GetByKeyAsync(string key, CancellationToken ct);
+Task UpsertAsync(RepositoryProfile profile, CancellationToken ct);
+```
+
+### 1d. EF Core Infrastructure Implementation
+
+Implement the above interfaces in `AgentController.Infrastructure` using EF Core with
+SQLite. Register implementations via `AddScoped` (or `AddDbContext` + scoped repositories)
+in `AgentControllerServiceCollectionExtensions`.
+
+Claim/lease behavior:
+- `TryClaimAsync` uses a transaction: read the work item, verify it is unclaimed
+  (`LeaseOwner IS NULL OR LeaseExpiresAt < NOW`), set `LeaseOwner` and
+  `LeaseExpiresAt`, and commit. Return failure if the row changed between read and write.
+- SQLite's serialized write transactions make this safe for single-process use. A future
+  Postgres provider would use `SELECT ... FOR UPDATE SKIP LOCKED`.
+
+### 1e. Dedicated Migration Runner
+
+Add `src/AgentController.Migrations/` as a console app:
+
+```csharp
+// Program.cs (sketch)
+var builder = Host.CreateApplicationBuilder(args);
+builder.Services.AddAgentControllerOptions(builder.Configuration);
+builder.Services.AddAgentControllerDbContext(builder.Configuration); // DbContext only
+
+var app = builder.Build();
+using var scope = app.Services.CreateScope();
+var db = scope.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
+await db.Database.MigrateAsync();
+```
+
+The initial migration creates all five Phase 1 tables with indexes and constraints.
+Neither `AgentController.Api` nor any worker startup path calls `MigrateAsync()` or
+`EnsureCreated()`.
+
+### 1f. Local Fake Work Source
+
+Implement `LocalFakeWorkSource : IWorkSource` in `AgentController.Infrastructure`.
+Unlike the no-op stub, this implementation:
+
+1. Calls `IWorkItemStore.FindEligibleAsync` to discover persisted fake work items matching
+   configured eligible/excluded tags and states (from `WorkSourceOptions`).
+2. Calls `IWorkItemStore.TryClaimAsync` atomically to claim a candidate.
+3. Calls `IWorkItemStore.UpdateStatusAsync` to project controller status back.
+4. Never contacts Azure DevOps.
+
+The `WorkSourceOptions.Provider` value `"LocalFake"` selects this implementation at DI
+registration time.
+
+### 1g. Local Fake Work Item Endpoints
+
+Add minimal API endpoints to `AgentController.Api`:
+
+```text
+POST   /work-items          — create a local fake work item
+GET    /work-items          — list local fake work items (with optional status/tag filters)
+GET    /work-items/{id}     — get a single work item by ID
+```
+
+Creation accepts `repoKey`, `title`, `body`, `acceptanceCriteria`, `priority`, `status`,
+and `tags`, with sensible defaults (`status = "New"`, `priority = 0`). Responses expose
+all persisted fields so operators can seed work and confirm worker eligibility.
+
+All endpoints consume `IWorkItemStore` — never EF Core directly.
+
+### 1h. Controller Run Lifecycle Service
+
+Add an application service in `AgentController.Application` (or a new
+`AgentController.Application/Services/` folder) that owns AgentRun lifecycle transitions:
+
+```csharp
+public interface IRunLifecycleService
+{
+    Task<AgentRunHandle> CreateRunForWorkItemAsync(
+        string workItemId, string workerId, CancellationToken ct);
+    Task TransitionAsync(string runId, RunLifecycleState targetState, CancellationToken ct);
+    Task AppendControllerEventAsync(string runId, string eventType, string message,
+        IReadOnlyDictionary<string, object?>? payload, CancellationToken ct);
+    Task IngestRuntimeEventAsync(RuntimeEvent evt, CancellationToken ct);
+    Task<IReadOnlyList<AgentRunHandle>> FindStaleRunsAsync(
+        TimeSpan staleTimeout, CancellationToken ct);
+    Task RecoverStaleRunAsync(string runId, CancellationToken ct);
+    bool IsTerminal(RunLifecycleState state);
+}
+```
+
+The service coordinates `IAgentRunStore`, `ILifecycleEventStore`, and `IWorkItemStore`
+to ensure consistent state transitions. Every transition appends a controller lifecycle
+event. The service validates that transitions follow the legal state graph.
+
+### 1i. Worker Polling Loop (Phase 1 Behavior)
+
+Update `PollingWorker.ExecuteAsync` to implement a real Phase 1 lifecycle when
+`WorkerEnabled = true`:
+
+1. **Guard concurrency.** Count runs in non-terminal states. If at or above
+   `MaxConcurrentRuns`, skip this poll cycle.
+2. **Discover eligible work.** Call `IWorkSource.FindEligibleAsync` with configured
+   tag/state filters.
+3. **Claim.** For each candidate, call `IWorkSource.TryClaimAsync`. On success,
+   proceed; on failure, skip to next candidate.
+4. **Create run.** Call `IRunLifecycleService.CreateRunForWorkItemAsync` — this creates
+   an `AgentRun` in `Claimed` state and appends a lifecycle event.
+5. **Advance controller-owned states.** Transition through each controller-owned state,
+   appending a lifecycle event at each step:
+   ```text
+   Claimed → EnvironmentProvisioning → EnvironmentReady →
+   RepositoryCloning → RepositoryReady → ContextInjected →
+   AgentStarting → AgentRunning → AwaitingResult
+   ```
+   In Phase 1, environment provisioning, repository cloning, and agent starting are
+   **simulated**: the worker records the lifecycle event and immediately transitions to
+   the next state. No real environments, clones, or runtime invocations occur.
+6. **Stop at `AwaitingResult`.** After transitioning to `AwaitingResult`, the worker
+   releases the run. It does not poll for completion or invoke any runtime. The mock
+   runtime event endpoint (1j) or stale recovery (1k) will advance it further.
+7. **Stale recovery pass.** Each poll cycle, after attempting new work, check for runs
+   stuck in `AwaitingResult` past the configured stale timeout and recover them.
+
+### 1j. Mock Runtime Event Ingestion Endpoint
+
+Add a `POST /runs/{runId}/events` endpoint to `AgentController.Api`. The endpoint:
+
+- Accepts a `RuntimeEvent` JSON body matching the envelope in §10.2.
+- Supports these event types:
+  - `runtime.accepted` — runtime acknowledged the run
+  - `runtime.status` — human-readable status update
+  - `runtime.heartbeat` — runtime is still alive (updates `LastHeartbeatAt`)
+  - `runtime.completed` — runtime finished (transitions to `Completed`/`PrOpened`
+    depending on `payload.outcome`)
+  - `runtime.failed` — runtime failed (transitions to `Failed`)
+  - `runtime.needs_human` — runtime needs human input (transitions to `NeedsHuman`)
+  - `runtime.cancelled` — runtime acknowledged cancellation (transitions to `Cancelled`)
+- Checks idempotency via `eventId`. Returns `409 Conflict` if the event was already
+  processed.
+- Delegates to `IRunLifecycleService.IngestRuntimeEventAsync`.
+- Rejects events for runs in terminal states (`Completed`, `Failed`, `Cancelled`,
+  `CleanedUp`).
+- Returns validation errors for unsupported event types or missing required fields.
+
+### 1k. Stale Runtime Recovery
+
+Add configurable stale-timeout recovery:
+
+- `AgentControllerOptions.StaleRunTimeout` (default: 30 minutes).
+- Each poll cycle, after attempting new work, the worker calls
+  `IRunLifecycleService.FindStaleRunsAsync`.
+- A run is stale if it is in `AwaitingResult` and its `LastHeartbeatAt` is older than
+  `NOW - StaleRunTimeout` (or `StartedAt` if no heartbeat was ever received).
+- Stale runs are transitioned to `NeedsHuman` (not `Failed`). The rationale: the runtime
+  may still be running but unable to report; a human should decide whether to retry or
+  cancel.
+- A controller lifecycle event is appended with severity `Warning` documenting the
+  timeout.
+
+### 1l. Run List and Detail Endpoints
+
+Add API endpoints to inspect runs:
+
+```text
+GET /runs              — list runs (supports ?status= and ?workItemId= filters)
+GET /runs/{runId}      — run detail with full lifecycle
+```
+
+Run detail response includes:
+- The associated `WorkCandidate` (work item)
+- Current `RunLifecycleState`
+- Runtime fields: `RuntimeRunId`, `LastHeartbeatAt`, `StartedAt`, `FinishedAt`, `Error`
+- Environment record when present
+- Ordered `LifecycleEvent[]` list
+
+This makes the full local controller lifecycle inspectable end-to-end.
 
 ## Phase 2: Azure DevOps Boards Provider
 

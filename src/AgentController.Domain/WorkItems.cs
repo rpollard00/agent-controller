@@ -152,3 +152,58 @@ public sealed record ClaimResult
     /// <summary>Human-readable reason for claim failure (populated on failure).</summary>
     public string? FailureReason { get; init; }
 }
+
+/// <summary>
+/// Request to create a local fake work item in the persistence store.
+/// </summary>
+public sealed record CreateWorkItemRequest
+{
+    /// <summary>Repository key this work item maps to.</summary>
+    public string RepoKey { get; init; } = string.Empty;
+
+    /// <summary>Work item title.</summary>
+    public string Title { get; init; } = string.Empty;
+
+    /// <summary>Work item body. If set, takes precedence over <see cref="Description"/>.</summary>
+    public string? Body { get; init; }
+
+    /// <summary>Work item description (alias for body). Used when <see cref="Body"/> is not set.</summary>
+    public string? Description { get; init; }
+
+    /// <summary>Acceptance criteria stored as key-value pairs.</summary>
+    public IReadOnlyDictionary<string, string>? AcceptanceCriteria { get; init; }
+
+    /// <summary>Work item priority. Defaults to 0 (unprioritized).</summary>
+    public int Priority { get; init; }
+
+    /// <summary>Initial status. Defaults to "New".</summary>
+    public string Status { get; init; } = "New";
+
+    /// <summary>Tags on the work item.</summary>
+    public IReadOnlyList<string> Tags { get; init; } = [];
+
+    /// <summary>Identifier of the work source. Defaults to "LocalFake".</summary>
+    public string Source { get; init; } = "LocalFake";
+}
+
+/// <summary>
+/// Query parameters for listing work items from the persistence store.
+/// All fields are optional; implementations apply the provided filters.
+/// </summary>
+public sealed record WorkItemListQuery
+{
+    /// <summary>Filter by status string.</summary>
+    public string? Status { get; init; }
+
+    /// <summary>Filter by repository key.</summary>
+    public string? RepoKey { get; init; }
+
+    /// <summary>Filter by tags (items must have at least one matching tag).</summary>
+    public IReadOnlyList<string>? Tags { get; init; }
+
+    /// <summary>Maximum number of items to return.</summary>
+    public int MaxResults { get; init; } = 100;
+
+    /// <summary>Number of items to skip for pagination.</summary>
+    public int Offset { get; init; } = 0;
+}

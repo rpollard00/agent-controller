@@ -55,4 +55,12 @@ public sealed class AgentControllerOptions
     /// Disabled by default for early scaffolding; enable once real providers are wired.
     /// </summary>
     public bool WorkerEnabled { get; init; } = false;
+
+    /// <summary>
+    /// Maximum time a run can be in <see cref="Domain.RunLifecycleState.AwaitingResult"/>
+    /// without a heartbeat or final event before being considered stale and recovered.
+    /// Must be positive. Default: 30 minutes.
+    /// </summary>
+    [Range(1, int.MaxValue)]
+    public int StaleTimeoutSeconds { get; init; } = 1800;
 }

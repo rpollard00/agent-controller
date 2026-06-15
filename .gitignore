@@ -1,10 +1,18 @@
 # .NET build artifacts
-bin/
-obj/
+**/bin/
+**/obj/
+artifacts/
+publish/
 *.user
 *.suo
 *.cache
 *.nupkg
+*.snupkg
+*.dll
+*.exe
+*.pdb
+*.deps.json
+*.runtimeconfig.json
 
 # Test results and coverage
 TestResults/
@@ -45,3 +53,4 @@ Thumbs.db
 
 # Pi artifacts (keep ignored)
 .pi/pi-materia/
+.pi/pi-materia.json

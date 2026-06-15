@@ -59,3 +59,53 @@ public static class CompletionOutcomes
     /// <summary>The run failed.</summary>
     public const string Failed = "failed";
 }
+
+/// <summary>
+/// Well-known controller lifecycle event type constants.
+/// These are emitted by <c>IRunLifecycleService</c> to record controller-owned
+/// state transitions and internal actions in the authoritative event log.
+/// </summary>
+public static class ControllerEventTypes
+{
+    /// <summary>Work item claimed by this controller instance.</summary>
+    public const string Claimed = "controller.claimed";
+
+    /// <summary>Environment provisioning started.</summary>
+    public const string EnvironmentProvisioning = "controller.environment_provisioning";
+
+    /// <summary>Environment provisioned and ready.</summary>
+    public const string EnvironmentReady = "controller.environment_ready";
+
+    /// <summary>Repository cloning started.</summary>
+    public const string RepositoryCloning = "controller.repository_cloning";
+
+    /// <summary>Repository cloned and ready.</summary>
+    public const string RepositoryReady = "controller.repository_ready";
+
+    /// <summary>Context files injected into the run workspace.</summary>
+    public const string ContextInjected = "controller.context_injected";
+
+    /// <summary>Agent runtime start requested.</summary>
+    public const string AgentStarting = "controller.agent_starting";
+
+    /// <summary>Agent runtime is executing.</summary>
+    public const string AgentRunning = "controller.agent_running";
+
+    /// <summary>Run handed off to the runtime, awaiting result.</summary>
+    public const string AwaitingResult = "controller.awaiting_result";
+
+    /// <summary>A runtime event was ingested and processed.</summary>
+    public const string RuntimeEventIngested = "controller.runtime_event_ingested";
+
+    /// <summary>A manual or external state transition was performed.</summary>
+    public const string StateTransition = "controller.state_transition";
+
+    /// <summary>Stale run recovered by the controller (transitioned to NeedsHuman).</summary>
+    public const string StaleRecovered = "controller.stale_recovered";
+
+    /// <summary>Run was cancelled by the controller.</summary>
+    public const string Cancelled = "controller.cancelled";
+
+    /// <summary>Run failed due to a controller-side error.</summary>
+    public const string Failed = "controller.failed";
+}
