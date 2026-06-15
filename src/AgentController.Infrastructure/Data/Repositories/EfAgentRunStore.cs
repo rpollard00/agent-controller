@@ -184,6 +184,17 @@ internal sealed class EfAgentRunStore : IAgentRunStore
         return entities.Select(MapToHandle).ToList();
     }
 
+    public async Task<int> CountActiveAsync(CancellationToken cancellationToken)
+    {
+        return await _db.AgentRuns
+            .CountAsync(
+                e => e.Status != (int)RunLifecycleState.Completed
+                     && e.Status != (int)RunLifecycleState.Failed
+                     && e.Status != (int)RunLifecycleState.Cancelled
+                     && e.Status != (int)RunLifecycleState.CleanedUp,
+                cancellationToken);
+    }
+
     private static AgentRunHandle MapToHandle(AgentRunEntity entity)
     {
         return new AgentRunHandle

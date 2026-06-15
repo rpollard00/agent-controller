@@ -69,4 +69,11 @@ public interface IAgentRunStore
         TimeSpan staleTimeout,
         CancellationToken cancellationToken
     );
+
+    /// <summary>
+    /// Count the number of runs that are not in a terminal state
+    /// (Completed, Failed, Cancelled, CleanedUp). Used by the worker
+    /// polling loop to enforce max concurrency.
+    /// </summary>
+    Task<int> CountActiveAsync(CancellationToken cancellationToken);
 }

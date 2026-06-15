@@ -130,18 +130,17 @@ public class ApiSmokeTests
     [Fact]
     public void PollingWorker_CanBeConstructed()
     {
-        // Prove the polling worker can be constructed with all dependencies.
+        // Prove the polling worker can be constructed with its Phase 1 dependencies.
         var options = Options.Create(new AgentControllerOptions { WorkerId = "test-worker" });
         var loggerFactory = LoggerFactory.Create(b => b.AddConsole());
-
-        // Use a simple wrapper to satisfy IOptionsMonitor<T>.
         var monitor = new TestOptionsMonitor<AgentControllerOptions>(options.Value);
 
+        // Build a service provider to get an IServiceScopeFactory.
+        var services = new ServiceCollection();
+        var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+
         var worker = new PollingWorker(
-            new NoOpWorkSource(),
-            new NoOpSourceControlProvider(),
-            new NoOpEnvironmentProvider(),
-            new NoOpAgentRuntime(),
+            scopeFactory,
             monitor,
             loggerFactory.CreateLogger<PollingWorker>()
         );
