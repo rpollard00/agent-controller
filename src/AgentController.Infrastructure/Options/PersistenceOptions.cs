@@ -18,7 +18,8 @@ public sealed class PersistenceOptions
 
     /// <summary>
     /// Connection string or data source path.
+    /// Must be explicitly configured; there is no fallback default.
     /// </summary>
     [Required]
-    public string ConnectionString { get; init; } = "Data Source=agent-controller.db";
+    public string ConnectionString { get; init; } = string.Empty;
 }

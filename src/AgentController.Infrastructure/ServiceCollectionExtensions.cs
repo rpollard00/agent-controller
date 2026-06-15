@@ -83,10 +83,11 @@ public static class AgentControllerServiceCollectionExtensions
     {
         var persistenceOptions = configuration
             .GetSection(PersistenceOptions.SectionName)
-            .Get<PersistenceOptions>();
+            .Get<PersistenceOptions>()
+            ?? new PersistenceOptions();
 
-        var connectionString = persistenceOptions?.ConnectionString
-            ?? "Data Source=agent-controller.db";
+        var connectionString =
+            PersistenceConnectionResolver.Resolve(persistenceOptions);
 
         services.AddDbContext<AgentControllerDbContext>(options =>
         {
