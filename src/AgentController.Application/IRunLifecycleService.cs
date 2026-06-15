@@ -62,12 +62,35 @@ public interface IRunLifecycleService
     /// </param>
     /// <param name="message">Human-readable message.</param>
     /// <param name="payload">Optional structured payload.</param>
+    /// <param name="severity">
+    /// Event severity. Defaults to <see cref="EventSeverity.Info"/>.
+    /// Use <see cref="EventSeverity.Warning"/> for stale recovery and other
+    /// recoverable anomalies.
+    /// </param>
     /// <param name="ct">Cancellation token.</param>
     Task AppendControllerEventAsync(
         string runId,
         string eventType,
         string message,
         IReadOnlyDictionary<string, object?>? payload,
+        CancellationToken ct);
+
+    /// <summary>
+    /// Append a controller-authored lifecycle event for a run with an explicit
+    /// <paramref name="severity"/>.
+    /// The <paramref name="eventType"/> is automatically prefixed with "controller."
+    /// if it does not already start with that prefix.
+    /// </summary>
+    /// <param name="severity">
+    /// Event severity. Use <see cref="EventSeverity.Warning"/> for stale recovery
+    /// and other recoverable anomalies.
+    /// </param>
+    Task AppendControllerEventAsync(
+        string runId,
+        string eventType,
+        string message,
+        IReadOnlyDictionary<string, object?>? payload,
+        EventSeverity severity,
         CancellationToken ct);
 
     /// <summary>

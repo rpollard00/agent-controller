@@ -157,6 +157,19 @@ internal sealed class RunLifecycleService : IRunLifecycleService
         IReadOnlyDictionary<string, object?>? payload,
         CancellationToken ct)
     {
+        await AppendControllerEventAsync(
+            runId, eventType, message, payload, EventSeverity.Info, ct);
+    }
+
+    /// <inheritdoc />
+    public async Task AppendControllerEventAsync(
+        string runId,
+        string eventType,
+        string message,
+        IReadOnlyDictionary<string, object?>? payload,
+        EventSeverity severity,
+        CancellationToken ct)
+    {
         var normalizedType = eventType.StartsWith("controller.", StringComparison.Ordinal)
             ? eventType
             : $"controller.{eventType}";
@@ -166,7 +179,7 @@ internal sealed class RunLifecycleService : IRunLifecycleService
             {
                 RunId = runId,
                 EventType = normalizedType,
-                Severity = EventSeverity.Info,
+                Severity = severity,
                 Message = message,
                 Payload = payload,
             },
@@ -335,6 +348,7 @@ internal sealed class RunLifecycleService : IRunLifecycleService
                 ["lastHeartbeatAt"] = run.LastHeartbeatAt?.ToString("O"),
                 ["startedAt"] = run.StartedAt?.ToString("O"),
             },
+            EventSeverity.Warning,
             ct);
     }
 
