@@ -169,4 +169,134 @@ app.MapPost(
     }
 );
 
+// --- Run list and detail endpoints (Phase 1) ---
+
+app.MapGet(
+    "/runs",
+    async (
+        string? status,
+        string? workItemId,
+        int? maxResults,
+        int? offset,
+        IAgentRunStore runStore,
+        IWorkItemStore workItemStore,
+        CancellationToken ct
+    ) =>
+    {
+        RunLifecycleState? statusFilter = null;
+        if (!string.IsNullOrWhiteSpace(status)
+            && Enum.TryParse<RunLifecycleState>(status, ignoreCase: true, out var parsed))
+        {
+            statusFilter = parsed;
+        }
+
+        var query = new RunListQuery
+        {
+            Status = statusFilter,
+            WorkItemId = workItemId,
+            MaxResults = maxResults ?? 100,
+            Offset = offset ?? 0,
+        };
+
+        var runs = await runStore.ListAsync(query, ct);
+
+        // Build summary items with optional work item titles
+        var items = new List<RunListResponse>(runs.Count);
+        foreach (var run in runs)
+        {
+            string? workItemTitle = null;
+            string? repoKey = null;
+
+            if (!string.IsNullOrWhiteSpace(run.WorkItemId))
+            {
+                var wi = await workItemStore.GetByIdAsync(run.WorkItemId, ct);
+                if (wi is not null)
+                {
+                    workItemTitle = wi.Title;
+                    repoKey = wi.RepoKey;
+                }
+            }
+
+            items.Add(new RunListResponse
+            {
+                RunId = run.RunId,
+                WorkItemId = run.WorkItemId,
+                WorkItemTitle = workItemTitle,
+                RepoKey = repoKey,
+                Status = run.Status.ToString(),
+                StartedAt = run.StartedAt,
+                FinishedAt = run.FinishedAt,
+                LastHeartbeatAt = run.LastHeartbeatAt,
+                CreatedAt = run.CreatedAt,
+            });
+        }
+
+        return Results.Ok(new RunListEnvelope
+        {
+            Runs = items,
+            TotalCount = items.Count,
+        });
+    }
+);
+
+app.MapGet(
+    "/runs/{runId}",
+    async (
+        string runId,
+        IAgentRunStore runStore,
+        IWorkItemStore workItemStore,
+        ILifecycleEventStore lifecycleStore,
+        IEnvironmentStore environmentStore,
+        CancellationToken ct
+    ) =>
+    {
+        var run = await runStore.GetByIdAsync(runId, ct);
+        if (run is null)
+        {
+            return Results.NotFound(new { error = $"Run '{runId}' not found." });
+        }
+
+        // Fetch the associated work item
+        WorkCandidate? workItem = null;
+        if (!string.IsNullOrWhiteSpace(run.WorkItemId))
+        {
+            workItem = await workItemStore.GetByIdAsync(run.WorkItemId, ct);
+        }
+
+        // Fetch the environment if one exists
+        EnvironmentHandle? environment = null;
+        if (!string.IsNullOrWhiteSpace(run.EnvironmentId))
+        {
+            environment = await environmentStore.GetByIdAsync(run.EnvironmentId, ct);
+        }
+
+        // Fetch ordered lifecycle events
+        var lifecycleEvents = await lifecycleStore.ListByRunIdAsync(runId, ct);
+
+        var detail = new RunDetailResponse
+        {
+            RunId = run.RunId,
+            WorkItemId = run.WorkItemId,
+            WorkItem = workItem,
+            EnvironmentId = run.EnvironmentId,
+            RuntimeType = run.RuntimeType,
+            RuntimeRunId = run.RuntimeRunId,
+            Status = run.Status.ToString(),
+            BranchName = run.BranchName,
+            PullRequestUrl = run.PullRequestUrl,
+            ResultSummary = run.ResultSummary,
+            StartedAt = run.StartedAt,
+            FinishedAt = run.FinishedAt,
+            LastHeartbeatAt = run.LastHeartbeatAt,
+            Error = run.Error,
+            Environment = environment,
+            LifecycleEvents = lifecycleEvents,
+            CreatedAt = run.CreatedAt,
+            UpdatedAt = run.UpdatedAt,
+        };
+
+        return Results.Ok(detail);
+    }
+);
+
 app.Run();

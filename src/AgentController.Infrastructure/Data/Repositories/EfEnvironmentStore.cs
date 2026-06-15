@@ -52,6 +52,20 @@ internal sealed class EfEnvironmentStore : IEnvironmentStore
         };
     }
 
+    public async Task<EnvironmentHandle?> GetByIdAsync(
+        string environmentId,
+        CancellationToken cancellationToken)
+    {
+        var entity = await _db.Environments.FindAsync([environmentId], cancellationToken);
+        return entity is null ? null : new EnvironmentHandle
+        {
+            Id = entity.Id,
+            ProviderType = entity.ProviderType,
+            RootPath = entity.RootPath,
+            Status = entity.Status,
+        };
+    }
+
     public async Task UpdateStatusAsync(
         string environmentId,
         string status,
