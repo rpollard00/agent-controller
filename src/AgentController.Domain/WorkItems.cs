@@ -164,7 +164,10 @@ public sealed record CreateWorkItemRequest
     /// <summary>Work item title.</summary>
     public string Title { get; init; } = string.Empty;
 
-    /// <summary>Work item description or body.</summary>
+    /// <summary>Work item body. If set, takes precedence over <see cref="Description"/>.</summary>
+    public string? Body { get; init; }
+
+    /// <summary>Work item description (alias for body). Used when <see cref="Body"/> is not set.</summary>
     public string? Description { get; init; }
 
     /// <summary>Acceptance criteria stored as key-value pairs.</summary>

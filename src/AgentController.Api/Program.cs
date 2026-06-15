@@ -1,4 +1,6 @@
 using AgentController.Api;
+using AgentController.Application;
+using AgentController.Domain;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -35,6 +37,55 @@ app.MapGet("/", () => "AgentController API");
 app.MapGet(
     "/health",
     () => Results.Ok(new { Status = "Healthy", Timestamp = DateTimeOffset.UtcNow })
+);
+
+// --- Work item endpoints (Phase 1 local fake work items) ---
+
+app.MapPost(
+    "/work-items",
+    async (CreateWorkItemRequest request, IWorkItemStore store, CancellationToken ct) =>
+    {
+        var created = await store.CreateAsync(request, ct);
+        return Results.Created($"/work-items/{created.Id}", created);
+    }
+);
+
+app.MapGet(
+    "/work-items",
+    async (
+        string? status,
+        string? repoKey,
+        string? tags,
+        int? maxResults,
+        int? offset,
+        IWorkItemStore store,
+        CancellationToken ct
+    ) =>
+    {
+        var tagList = tags?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var query = new WorkItemListQuery
+        {
+            Status = status,
+            RepoKey = repoKey,
+            Tags = tagList is { Length: > 0 } ? tagList : null,
+            MaxResults = maxResults ?? 100,
+            Offset = offset ?? 0,
+        };
+
+        var items = await store.ListAsync(query, ct);
+        return Results.Ok(items);
+    }
+);
+
+app.MapGet(
+    "/work-items/{id}",
+    async (string id, IWorkItemStore store, CancellationToken ct) =>
+    {
+        var item = await store.GetByIdAsync(id, ct);
+        return item is null
+            ? Results.NotFound(new { error = $"Work item '{id}' not found." })
+            : Results.Ok(item);
+    }
 );
 
 app.Run();

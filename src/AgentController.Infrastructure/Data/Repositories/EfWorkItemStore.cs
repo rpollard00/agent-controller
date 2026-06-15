@@ -36,7 +36,7 @@ internal sealed class EfWorkItemStore : IWorkItemStore
             ExternalId = "local-fake",
             RepoKey = request.RepoKey,
             Title = request.Title,
-            Body = request.Description,
+            Body = request.Body ?? request.Description,
             AcceptanceCriteriaJson = SerializeDictionary(request.AcceptanceCriteria),
             Priority = request.Priority,
             Status = request.Status,
