@@ -1,0 +1,72 @@
+using AgentController.Domain;
+
+namespace AgentController.Application;
+
+/// <summary>
+/// Persistence contract for work items (local fake and externally sourced).
+/// Used by API endpoints and the worker polling loop.
+/// Implementations are storage-agnostic; API and worker code must not
+/// reference EF Core or any specific persistence technology directly.
+/// </summary>
+public interface IWorkItemStore
+{
+    /// <summary>
+    /// Create a new local fake work item and return it with its controller-assigned identifier.
+    /// </summary>
+    Task<WorkCandidate> CreateAsync(
+        CreateWorkItemRequest request,
+        CancellationToken cancellationToken
+    );
+
+    /// <summary>
+    /// List work items matching the optional filters in <paramref name="query"/>.
+    /// Supports pagination via <see cref="WorkItemListQuery.Offset"/> and
+    /// <see cref="WorkItemListQuery.MaxResults"/>.
+    /// </summary>
+    Task<IReadOnlyList<WorkCandidate>> ListAsync(
+        WorkItemListQuery query,
+        CancellationToken cancellationToken
+    );
+
+    /// <summary>
+    /// Get a single work item by its controller-assigned identifier.
+    /// Returns null if no item matches.
+    /// </summary>
+    Task<WorkCandidate?> GetByIdAsync(
+        string id,
+        CancellationToken cancellationToken
+    );
+
+    /// <summary>
+    /// Find work items eligible for autonomous agent execution according to
+    /// the provided query. This is the persistence-level query used by
+    /// <see cref="IWorkSource"/> implementations to discover candidates
+    /// from the local store.
+    /// </summary>
+    Task<IReadOnlyList<WorkCandidate>> FindEligibleAsync(
+        WorkQuery query,
+        CancellationToken cancellationToken
+    );
+
+    /// <summary>
+    /// Attempt to claim a work item for exclusive execution.
+    /// The claim is atomic: the store verifies the item is unclaimed
+    /// (no active lease), sets <c>LeaseOwner</c> and <c>LeaseExpiresAt</c>,
+    /// and returns success. Returns failure if the item was already claimed
+    /// by another worker with an active lease.
+    /// </summary>
+    Task<ClaimResult> TryClaimAsync(
+        string workItemId,
+        ClaimRequest claim,
+        CancellationToken cancellationToken
+    );
+
+    /// <summary>
+    /// Update the status string of a work item (controller-internal projection).
+    /// </summary>
+    Task UpdateStatusAsync(
+        string workItemId,
+        string status,
+        CancellationToken cancellationToken
+    );
+}
