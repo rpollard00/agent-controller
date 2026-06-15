@@ -26,5 +26,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\AgentController.Infrastructure\AgentController.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\AgentController.Migrations\AgentController.Migrations.csproj" />
   </ItemGroup>
 </Project>

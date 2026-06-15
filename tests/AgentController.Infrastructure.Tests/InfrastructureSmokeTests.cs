@@ -1,6 +1,10 @@
 using AgentController.Application;
 using AgentController.Domain;
 using AgentController.Infrastructure;
+using AgentController.Infrastructure.Data;
+using AgentController.Infrastructure.Options;
+using AgentController.Migrations;
+using Microsoft.Data.Sqlite;
 
 namespace AgentController.Infrastructure.Tests;
 
@@ -151,5 +155,357 @@ public class InfrastructureSmokeTests
         Assert.Equal(0, result.ExitCode);
         Assert.False(result.TimedOut);
         Assert.Equal(TimeSpan.Zero, result.Duration);
+    }
+
+    // ──────────────────────────────────────────────
+    // PersistenceConnectionResolver tests
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public void PersistenceConnectionResolver_ThrowsWhenConnectionStringIsMissing()
+    {
+        var options = new PersistenceOptions
+        {
+            Provider = "Sqlite",
+            ConnectionString = string.Empty
+        };
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => PersistenceConnectionResolver.Resolve(options));
+
+        Assert.Contains("connection string", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("required", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PersistenceConnectionResolver_ThrowsWhenConnectionStringIsNull()
+    {
+        var options = new PersistenceOptions
+        {
+            Provider = "Sqlite",
+            ConnectionString = null!
+        };
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => PersistenceConnectionResolver.Resolve(options));
+
+        Assert.Contains("connection string", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PersistenceConnectionResolver_ThrowsWhenOptionsIsNull()
+    {
+        Assert.Throws<ArgumentNullException>(
+            () => PersistenceConnectionResolver.Resolve(null!));
+    }
+
+    [Fact]
+    public void PersistenceConnectionResolver_RejectsRelativeSqlitePath()
+    {
+        var options = new PersistenceOptions
+        {
+            Provider = "Sqlite",
+            ConnectionString = "Data Source=test.db"
+        };
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => PersistenceConnectionResolver.Resolve(options));
+
+        Assert.Contains("not allowed", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("test.db", ex.Message);
+    }
+
+    [Fact]
+    public void PersistenceConnectionResolver_ExpandsTildePathToUserHome()
+    {
+        var options = new PersistenceOptions
+        {
+            Provider = "Sqlite",
+            ConnectionString = "Data Source=~/.agent-work-controller/agent-controller.db"
+        };
+
+        var resolved = PersistenceConnectionResolver.Resolve(options);
+
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        Assert.Contains(home, resolved, StringComparison.Ordinal);
+        Assert.Contains(".agent-work-controller", resolved, StringComparison.Ordinal);
+        Assert.Contains("agent-controller.db", resolved, StringComparison.Ordinal);
+        Assert.DoesNotContain("~", resolved, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PersistenceConnectionResolver_ExpandsTildeAloneToUserHome()
+    {
+        var options = new PersistenceOptions
+        {
+            Provider = "Sqlite",
+            ConnectionString = "Data Source=~"
+        };
+
+        var resolved = PersistenceConnectionResolver.Resolve(options);
+
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        Assert.Contains($"Data Source={home}", resolved, StringComparison.Ordinal);
+        Assert.DoesNotContain("~", resolved, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PersistenceConnectionResolver_PassesThroughAbsolutePath()
+    {
+        var options = new PersistenceOptions
+        {
+            Provider = "Sqlite",
+            ConnectionString = "Data Source=/tmp/agent-controller-test.db"
+        };
+
+        var resolved = PersistenceConnectionResolver.Resolve(options);
+
+        Assert.Contains("/tmp/agent-controller-test.db", resolved, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PersistenceConnectionResolver_PassesThroughNonSqliteProvider()
+    {
+        var pgConnString = "Host=localhost;Database=agents;Username=dev;Password=secret";
+        var options = new PersistenceOptions
+        {
+            Provider = "Postgres",
+            ConnectionString = pgConnString
+        };
+
+        var resolved = PersistenceConnectionResolver.Resolve(options);
+
+        Assert.Equal(pgConnString, resolved);
+    }
+
+    [Fact]
+    public void PersistenceConnectionResolver_TildePathResolvesIndependentlyOfCurrentDirectory()
+    {
+        // Tilde paths must expand to the user home regardless of the
+        // current working directory.
+        var tildePath = "Data Source=~/.agent-work-controller/agent-controller.db";
+        var options = new PersistenceOptions
+        {
+            Provider = "Sqlite",
+            ConnectionString = tildePath
+        };
+
+        var originalCwd = Directory.GetCurrentDirectory();
+        try
+        {
+            // Switch to a different directory — the resolved path must
+            // be the same as when called from the project root.
+            Directory.SetCurrentDirectory(Path.GetTempPath());
+
+            var resolvedFromTemp = PersistenceConnectionResolver.Resolve(options);
+
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            Assert.StartsWith($"Data Source={home}", resolvedFromTemp, StringComparison.Ordinal);
+            Assert.Contains(".agent-work-controller", resolvedFromTemp, StringComparison.Ordinal);
+            Assert.DoesNotContain("~", resolvedFromTemp, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(originalCwd);
+        }
+    }
+
+    [Fact]
+    public void PersistenceConnectionResolver_RejectsSqliteDataSourcesWithoutPath()
+    {
+        var options = new PersistenceOptions
+        {
+            Provider = "Sqlite",
+            ConnectionString = "Data Source="
+        };
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => PersistenceConnectionResolver.Resolve(options));
+
+        Assert.Contains("Data Source value", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ──────────────────────────────────────────────
+    // SqliteDatabaseEnsurer tests
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public void SqliteDatabaseEnsurer_CreatesParentDirectoryWhenMissing()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "ensurer-test-" + Guid.NewGuid());
+        var dbDir = Path.Combine(tempRoot, "nested", "data");
+        var dbPath = Path.Combine(dbDir, "test.db");
+        var connStr = $"Data Source={dbPath}";
+
+        try
+        {
+            var created = SqliteDatabaseEnsurer.EnsureDirectory(connStr);
+
+            Assert.NotNull(created);
+            Assert.Equal(dbDir, created);
+            Assert.True(Directory.Exists(dbDir), "Parent directory should be created");
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+                Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void SqliteDatabaseEnsurer_ReturnsNullWhenDirectoryAlreadyExists()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "ensurer-test-" + Guid.NewGuid());
+        var dbPath = Path.Combine(tempDir, "test.db");
+        var connStr = $"Data Source={dbPath}";
+
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+
+            // First call should create nothing because dir already exists
+            var result = SqliteDatabaseEnsurer.EnsureDirectory(connStr);
+
+            Assert.Null(result);
+            Assert.True(Directory.Exists(tempDir));
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void SqliteDatabaseEnsurer_SkipsInMemoryDataSource()
+    {
+        var result = SqliteDatabaseEnsurer.EnsureDirectory("Data Source=:memory:");
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void SqliteDatabaseEnsurer_SkipsRelativeDataSource()
+    {
+        // Relative paths are rejected by PersistenceConnectionResolver before
+        // reaching this method, but this helper is defensive.
+        var result = SqliteDatabaseEnsurer.EnsureDirectory("Data Source=relative.db");
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void SqliteDatabaseEnsurer_ReturnsNullForNullConnectionString()
+    {
+        var result = SqliteDatabaseEnsurer.EnsureDirectory(null!);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void SqliteDatabaseEnsurer_ReturnsNullForEmptyConnectionString()
+    {
+        var result = SqliteDatabaseEnsurer.EnsureDirectory(string.Empty);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void SqliteDatabaseEnsurer_ReturnsNullForWhitespaceConnectionString()
+    {
+        var result = SqliteDatabaseEnsurer.EnsureDirectory("   ");
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void SqliteDatabaseEnsurer_ReturnsNullWhenDataSourceIsMissing()
+    {
+        var result = SqliteDatabaseEnsurer.EnsureDirectory("Data Source=");
+
+        Assert.Null(result);
+    }
+
+    // ──────────────────────────────────────────────
+    // Migration runner integration tests
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task MigrationRunner_UsesConfiguredDatabaseLocation()
+    {
+        // The migration runner must create the database at the configured
+        // path, not at a relative fallback like "agent-controller.db".
+        var tempRoot = Path.Combine(Path.GetTempPath(), "migration-runner-test-" + Guid.NewGuid());
+        var dbDir = Path.Combine(tempRoot, "custom", "data");
+        var dbPath = Path.Combine(dbDir, "agent-controller.db");
+
+        var originalProvider = Environment.GetEnvironmentVariable("persistence__provider");
+        var originalConnString = Environment.GetEnvironmentVariable("persistence__connectionString");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("persistence__provider", "Sqlite");
+            Environment.SetEnvironmentVariable(
+                "persistence__connectionString",
+                $"Data Source={dbPath}");
+
+            var exitCode = await Program.Main(Array.Empty<string>());
+
+            Assert.Equal(0, exitCode);
+            Assert.True(File.Exists(dbPath),
+                $"Database file should exist at configured path: {dbPath}");
+            Assert.True(Directory.Exists(dbDir),
+                $"Parent directory should be created: {dbDir}");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("persistence__provider", originalProvider);
+            Environment.SetEnvironmentVariable("persistence__connectionString", originalConnString);
+
+            if (Directory.Exists(tempRoot))
+                Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MigrationRunner_CreatesParentDirectoryBeforeMigration()
+    {
+        // When the parent directory does not exist before migration,
+        // the runner must create it so MigrateAsync can succeed.
+        var tempRoot = Path.Combine(Path.GetTempPath(), "migration-parent-test-" + Guid.NewGuid());
+        var dbDir = Path.Combine(tempRoot, "nonexistent", "subdir");
+        var dbPath = Path.Combine(dbDir, "migrations.db");
+
+        // Verify the directory does NOT exist before we start
+        Assert.False(Directory.Exists(dbDir),
+            "Pre-condition: directory should not exist yet");
+
+        var originalProvider = Environment.GetEnvironmentVariable("persistence__provider");
+        var originalConnString = Environment.GetEnvironmentVariable("persistence__connectionString");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("persistence__provider", "Sqlite");
+            Environment.SetEnvironmentVariable(
+                "persistence__connectionString",
+                $"Data Source={dbPath}");
+
+            var exitCode = await Program.Main(Array.Empty<string>());
+
+            // The migration should succeed — the directory was created first
+            Assert.Equal(0, exitCode);
+            Assert.True(Directory.Exists(dbDir),
+                $"Parent directory should exist after migration runner: {dbDir}");
+            Assert.True(File.Exists(dbPath),
+                $"Database should exist at: {dbPath}");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("persistence__provider", originalProvider);
+            Environment.SetEnvironmentVariable("persistence__connectionString", originalConnString);
+
+            if (Directory.Exists(tempRoot))
+                Directory.Delete(tempRoot, recursive: true);
+        }
     }
 }

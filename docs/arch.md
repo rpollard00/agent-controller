@@ -1132,7 +1132,7 @@ Actions: cancel, retry, cleanup, mark needs-human
   },
   "persistence": {
     "provider": "Sqlite",
-    "connectionString": "Data Source=agent-controller.db"
+    "connectionString": "Data Source=~/.agent-work-controller/agent-controller.db"
   },
   "workSource": {
     "provider": "AzureDevOpsBoards",

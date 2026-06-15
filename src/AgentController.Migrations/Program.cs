@@ -108,23 +108,12 @@ internal static class Program
         if (string.IsNullOrWhiteSpace(connectionString))
             return;
 
-        var builder = new SqliteConnectionStringBuilder(connectionString);
-        var dataSource = builder.DataSource;
-
-        if (string.IsNullOrWhiteSpace(dataSource))
-            return;
-
-        // Skip special SQLite data sources like ":memory:"
-        if (dataSource == ":memory:" || !Path.IsPathRooted(dataSource))
-            return;
-
-        var directory = Path.GetDirectoryName(Path.GetFullPath(dataSource));
-        if (directory is not null && !Directory.Exists(directory))
+        var createdDir = SqliteDatabaseEnsurer.EnsureDirectory(connectionString);
+        if (createdDir is not null)
         {
-            Directory.CreateDirectory(directory);
             logger.LogInformation(
                 "Created database directory: {Directory}",
-                directory
+                createdDir
             );
         }
     }
