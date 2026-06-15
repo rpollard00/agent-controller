@@ -1,4 +1,5 @@
 using AgentController.Api;
+using AgentController.Api.Models;
 using AgentController.Application;
 using AgentController.Domain;
 
@@ -90,6 +91,81 @@ app.MapGet(
         return item is null
             ? Results.NotFound(new { error = $"Work item '{id}' not found." })
             : Results.Ok(item);
+    }
+);
+
+// --- Mock runtime event ingestion endpoint (Phase 1) ---
+
+app.MapPost(
+    "/runs/{runId}/events",
+    async (
+        string runId,
+        RuntimeEventRequest request,
+        IRunLifecycleService lifecycle,
+        IAgentRunStore runStore,
+        CancellationToken ct
+    ) =>
+    {
+        // Validation
+        if (string.IsNullOrWhiteSpace(request.EventType))
+        {
+            return Results.BadRequest(new
+            {
+                error = "Request body is missing required field 'eventType'."
+            });
+        }
+
+        if (string.IsNullOrWhiteSpace(request.EventId))
+        {
+            return Results.BadRequest(new
+            {
+                error = "Request body is missing required field 'eventId'."
+            });
+        }
+
+        var evt = new RuntimeEvent
+        {
+            EventId = request.EventId,
+            RunId = runId,
+            EventType = request.EventType,
+            RuntimeRunId = request.RuntimeRunId,
+            Sequence = request.Sequence,
+            OccurredAt = request.OccurredAt ?? DateTimeOffset.UtcNow,
+            Severity = request.Severity ?? EventSeverity.Info,
+            Message = request.Message,
+            Payload = request.Payload,
+        };
+
+        try
+        {
+            await lifecycle.IngestRuntimeEventAsync(evt, ct);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Results.Conflict(new
+            {
+                error = ex.Message,
+                runId,
+                eventId = request.EventId,
+            });
+        }
+
+        // Fetch the updated run to return current state
+        var updatedRun = await runStore.GetByIdAsync(runId, ct);
+        return updatedRun is null
+            ? Results.NotFound(new { error = $"Run '{runId}' not found after event ingestion." })
+            : Results.Ok(new
+            {
+                runId = updatedRun.RunId,
+                status = updatedRun.Status.ToString(),
+                runtimeRunId = updatedRun.RuntimeRunId,
+                lastHeartbeatAt = updatedRun.LastHeartbeatAt,
+                finishedAt = updatedRun.FinishedAt,
+                resultSummary = updatedRun.ResultSummary,
+                error = updatedRun.Error,
+                eventId = request.EventId,
+                message = $"Runtime event '{request.EventType}' ingested successfully.",
+            });
     }
 );
 
