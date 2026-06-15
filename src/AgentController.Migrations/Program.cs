@@ -1,5 +1,6 @@
 using AgentController.Infrastructure.Data;
 using AgentController.Infrastructure.Options;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -39,10 +40,13 @@ internal static class Program
                 // Bind persistence options — same path as the API/worker
                 var persistenceOptions = context.Configuration
                     .GetSection(PersistenceOptions.SectionName)
-                    .Get<PersistenceOptions>();
+                    .Get<PersistenceOptions>()
+                    ?? new PersistenceOptions();
 
-                var connectionString = persistenceOptions?.ConnectionString
-                    ?? "Data Source=agent-controller.db";
+                // Resolve and validate the connection string via the shared resolver.
+                // This rejects missing configuration and relative SQLite paths.
+                var connectionString =
+                    PersistenceConnectionResolver.Resolve(persistenceOptions);
 
                 services.AddDbContext<AgentControllerDbContext>(options =>
                 {
@@ -66,6 +70,10 @@ internal static class Program
         {
             var dbContext = host.Services.GetRequiredService<AgentControllerDbContext>();
 
+            // Ensure the parent directory exists for file-based SQLite databases
+            // so MigrateAsync does not fail because the directory is missing.
+            EnsureDatabaseDirectory(dbContext, logger);
+
             logger.LogInformation("Applying pending EF Core migrations...");
             await dbContext.Database.MigrateAsync();
 
@@ -85,6 +93,28 @@ internal static class Program
             );
 
             return 1;
+        }
+    }
+
+    /// <summary>
+    /// Creates the parent directory for SQLite file-based databases when needed.
+    /// In-memory databases are skipped.
+    /// </summary>
+    private static void EnsureDatabaseDirectory(
+        AgentControllerDbContext dbContext,
+        ILogger logger)
+    {
+        var connectionString = dbContext.Database.GetConnectionString();
+        if (string.IsNullOrWhiteSpace(connectionString))
+            return;
+
+        var createdDir = SqliteDatabaseEnsurer.EnsureDirectory(connectionString);
+        if (createdDir is not null)
+        {
+            logger.LogInformation(
+                "Created database directory: {Directory}",
+                createdDir
+            );
         }
     }
 }

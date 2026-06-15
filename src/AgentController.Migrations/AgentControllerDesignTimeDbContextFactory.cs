@@ -31,10 +31,11 @@ internal sealed class AgentControllerDesignTimeDbContextFactory
 
         var persistenceOptions = configuration
             .GetSection(PersistenceOptions.SectionName)
-            .Get<PersistenceOptions>();
+            .Get<PersistenceOptions>()
+            ?? new PersistenceOptions();
 
-        var connectionString = persistenceOptions?.ConnectionString
-            ?? "Data Source=agent-controller.db";
+        var connectionString =
+            PersistenceConnectionResolver.Resolve(persistenceOptions);
 
         var optionsBuilder = new DbContextOptionsBuilder<AgentControllerDbContext>();
         optionsBuilder.UseSqlite(
