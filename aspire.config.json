@@ -1,0 +1,5 @@
+{
+  "appHost": {
+    "path": "src/AgentController.AppHost/AgentController.AppHost.csproj"
+  }
+}

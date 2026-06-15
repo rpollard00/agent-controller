@@ -1,10 +1,12 @@
 <Solution>
     <Folder Name="/src/">
         <Project Path="src/AgentController.Api/AgentController.Api.csproj" />
+        <Project Path="src/AgentController.AppHost/AgentController.AppHost.csproj" />
         <Project Path="src/AgentController.Application/AgentController.Application.csproj" />
         <Project Path="src/AgentController.Domain/AgentController.Domain.csproj" />
         <Project Path="src/AgentController.Infrastructure/AgentController.Infrastructure.csproj" />
         <Project Path="src/AgentController.Migrations/AgentController.Migrations.csproj" />
+        <Project Path="src/AgentController.ServiceDefaults/AgentController.ServiceDefaults.csproj" />
     </Folder>
     <Folder Name="/tests/">
         <Project Path="tests/AgentController.Api.Tests/AgentController.Api.Tests.csproj" />

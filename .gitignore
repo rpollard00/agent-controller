@@ -13,6 +13,8 @@ publish/
 *.pdb
 *.deps.json
 *.runtimeconfig.json
+.nuget/
+**/.nuget/
 
 # Test results and coverage
 TestResults/

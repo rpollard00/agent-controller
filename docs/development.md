@@ -32,6 +32,20 @@ dotnet csharpier check .
 dotnet build
 ```
 
+## Run (Aspire)
+
+```bash
+dotnet run --project src/AgentController.AppHost
+```
+
+The Aspire AppHost orchestrates startup: migrations run to completion first,
+then the API starts. The Aspire dashboard shows logs, traces, and metrics for
+both projects. When running outside Aspire, start the API directly:
+
+```bash
+dotnet run --project src/AgentController.Api
+```
+
 ## Test
 
 ```bash
@@ -44,10 +58,13 @@ Tests use [xUnit](https://xunit.net/). Test projects are under `tests/`.
 
 ```
 src/
-  AgentController.Api/            ASP.NET Core host (API + background worker)
-  AgentController.Domain/          Domain models, records, lifecycle vocabulary
+  AgentController.Api/             ASP.NET Core host (API + background worker)
+  AgentController.AppHost/         Aspire orchestration host
   AgentController.Application/     Service ports / interfaces
+  AgentController.Domain/          Domain models, records, lifecycle vocabulary
   AgentController.Infrastructure/  Provider implementations (no-op by default)
+  AgentController.Migrations/      EF Core migration runner (console)
+  AgentController.ServiceDefaults/ Shared Aspire conventions (OTel, health, resilience)
 tests/
   AgentController.Api.Tests/
   AgentController.Application.Tests/
@@ -65,4 +82,8 @@ Project references flow one way:
   Infrastructure   -> Application, Domain
     ^
   Api              -> Application, Infrastructure
+  Migrations       -> Infrastructure
+
+  AppHost          -> Api, Migrations (orchestration only)
+  ServiceDefaults  (shared library, referenced by Api and Migrations)
 ```
