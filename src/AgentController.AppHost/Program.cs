@@ -18,11 +18,10 @@ if (Environment.GetEnvironmentVariable("DOTNET_SYSTEM_GLOBALIZATION_INVARIANT") 
 var builder = DistributedApplication.CreateBuilder(args);
 
 // Migration runner — one-shot console app.
-// In a subsequent change this will be configured to complete before
-// the API starts (WaitForCompletion).
 var migrations = builder.AddProject<AgentController_Migrations>("migrations");
 
 // API — ASP.NET Core web host.
-var api = builder.AddProject<AgentController_Api>("api");
+var _ = builder.AddProject<AgentController_Api>("api")
+.WaitForCompletion(migrations);
 
 builder.Build().Run();
