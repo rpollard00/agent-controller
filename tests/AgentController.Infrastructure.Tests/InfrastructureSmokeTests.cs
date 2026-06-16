@@ -5,6 +5,9 @@ using AgentController.Infrastructure.Data;
 using AgentController.Infrastructure.Options;
 using AgentController.Migrations;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace AgentController.Infrastructure.Tests;
 
@@ -507,5 +510,135 @@ public class InfrastructureSmokeTests
             if (Directory.Exists(tempRoot))
                 Directory.Delete(tempRoot, recursive: true);
         }
+    }
+
+    // ──────────────────────────────────────────────
+    // Azure DevOps Boards smoke tests
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public void AzureDevOpsBoardsClient_ImplementsInterface()
+    {
+        var type = typeof(AzureDevOpsBoardsClient);
+        Assert.True(
+            typeof(IAzureDevOpsBoardsClient).IsAssignableFrom(type),
+            "AzureDevOpsBoardsClient should implement IAzureDevOpsBoardsClient");
+    }
+
+    [Fact]
+    public void AzureDevOpsBoardsWorkSource_ImplementsInterface()
+    {
+        var type = typeof(AzureDevOpsBoardsWorkSource);
+        Assert.True(
+            typeof(IWorkSource).IsAssignableFrom(type),
+            "AzureDevOpsBoardsWorkSource should implement IWorkSource");
+    }
+
+    [Fact]
+    public void AzureDevOpsBoardsOptions_ResolvePat_EnvPrefixIsCaseInsensitive()
+    {
+        var envName = "AZDO_CASE_TEST_PAT";
+        var expected = "case-insensitive-pat";
+
+        try
+        {
+            Environment.SetEnvironmentVariable(envName, expected);
+
+            // Lowercase 'env:' prefix
+            var lowerOpt = new AzureDevOpsBoardsOptions
+            {
+                PersonalAccessToken = $"env:{envName}",
+            };
+            Assert.Equal(expected, lowerOpt.ResolvePersonalAccessToken());
+
+            // Mixed case 'Env:' prefix
+            var mixedOpt = new AzureDevOpsBoardsOptions
+            {
+                PersonalAccessToken = $"Env:{envName}",
+            };
+            Assert.Equal(expected, mixedOpt.ResolvePersonalAccessToken());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envName, null);
+        }
+    }
+
+    [Fact]
+    public void IAzureDevOpsBoardsClient_IsDefinedInApplicationLayer()
+    {
+        var type = typeof(IAzureDevOpsBoardsClient);
+        Assert.True(type.IsInterface, "IAzureDevOpsBoardsClient should be an interface");
+        Assert.Equal("AgentController.Application", type.Namespace);
+    }
+
+    [Fact]
+    public void AzureDevOpsBoardsWorkSource_DiRegistration_WithValidationDisabled_Succeeds()
+    {
+        // Test that DI registration succeeds when validateConnection=false
+        // (used in test/development scenarios without real Azure DevOps creds)
+        var envName = "AZDO_DI_TEST_PAT";
+        try
+        {
+            Environment.SetEnvironmentVariable(envName, "test-pat-value");
+
+            var configValues = new Dictionary<string, string?>
+            {
+                ["workSource:provider"] = "AzureDevOpsBoards",
+                ["workSource:organizationUrl"] = "https://dev.azure.com/testorg",
+                ["workSource:project"] = "TestProject",
+                ["azureDevOps:personalAccessToken"] = $"ENV:{envName}",
+            };
+
+            var config = new ConfigurationBuilder()
+                .AddInMemoryCollection(configValues)
+                .Build();
+
+            var services = new ServiceCollection();
+            services.AddSingleton<IConfiguration>(config);
+            services.AddAgentControllerOptions(config);
+            services.AddAgentControllerAzureDevOpsBoardsWorkSource(validateConnection: false);
+
+            var provider = services.BuildServiceProvider();
+
+            // Should be able to resolve IWorkSource as AzureDevOpsBoardsWorkSource
+            var workSource = provider.GetRequiredService<IWorkSource>();
+            Assert.IsType<AzureDevOpsBoardsWorkSource>(workSource);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envName, null);
+        }
+    }
+
+    [Fact]
+    public void AzureDevOpsBoardsWorkSource_DiRegistration_WithValidationEnabled_ThrowsOnMissingConfig()
+    {
+        // Test that eager validation catches missing configuration.
+        // Validation runs when IAzureDevOpsBoardsClient is first resolved
+        // (scoped), not at IWorkSource singleton registration time.
+        var configValues = new Dictionary<string, string?>
+        {
+            ["workSource:provider"] = "AzureDevOpsBoards",
+            // Missing: organizationUrl, project
+            ["azureDevOps:personalAccessToken"] = "",  // Missing PAT
+        };
+
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(configValues)
+            .Build();
+
+        var services = new ServiceCollection();
+        services.AddSingleton<IConfiguration>(config);
+        services.AddAgentControllerOptions(config);
+        services.AddAgentControllerAzureDevOpsBoardsWorkSource(validateConnection: true);
+
+        var provider = services.BuildServiceProvider();
+
+        // The singleton IWorkSource resolves fine (it's lazy).
+        // Validation fires when the scoped IAzureDevOpsBoardsClient is resolved.
+        using var scope = provider.CreateScope();
+        Assert.Throws<InvalidOperationException>(() =>
+            scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClient>());
     }
 }

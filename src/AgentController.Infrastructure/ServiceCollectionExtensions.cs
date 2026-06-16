@@ -64,6 +64,10 @@ public static class AgentControllerServiceCollectionExtensions
             .AddOptions<Dictionary<string, RepositoryProfileOptions>>()
             .Bind(configuration.GetSection(RepositoriesOptions.SectionName));
 
+        services
+            .AddOptions<AzureDevOpsBoardsOptions>()
+            .Bind(configuration.GetSection(AzureDevOpsBoardsOptions.SectionName));
+
         return services;
     }
 
@@ -171,6 +175,71 @@ public static class AgentControllerServiceCollectionExtensions
         services.AddSingleton<ISourceControlProvider, NoOpSourceControlProvider>();
         services.AddSingleton<IEnvironmentProvider, NoOpEnvironmentProvider>();
         services.AddSingleton<IAgentRuntime, NoOpAgentRuntime>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers the Azure DevOps Boards implementation as a singleton
+    /// <see cref="IWorkSource"/> backed by <see cref="IAzureDevOpsBoardsClient"/>.
+    ///
+    /// This method:
+    /// <list type="number">
+    ///   <item>
+    ///     Registers <see cref="AzureDevOpsBoardsClient"/> as a scoped
+    ///     <see cref="IAzureDevOpsBoardsClient"/> with a managed <see cref="HttpClient"/>.
+    ///   </item>
+    ///   <item>
+    ///     Registers <see cref="AzureDevOpsBoardsWorkSource"/> as a singleton
+    ///     <see cref="IWorkSource"/>. It uses <see cref="IServiceScopeFactory"/>
+    ///     internally to resolve scoped services per operation, making it safe
+    ///     for consumption by singleton consumers such as <see cref="BackgroundService"/>.
+    ///   </item>
+    /// </list>
+    ///
+    /// Requires <see cref="AddAgentControllerOptions"/> to be called first
+    /// (for <see cref="WorkSourceOptions"/> and <see cref="AzureDevOpsBoardsOptions"/>).
+    ///
+    /// Callers should register this <em>after</em>
+    /// <see cref="AddAgentControllerNoOpProviders"/> or
+    /// <see cref="AddAgentControllerLocalFakeWorkSource"/> so the last-registered
+    /// <see cref="IWorkSource"/> wins.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="validateConnection">
+    /// When <c>true</c> (default), validates at registration time that required
+    /// Azure DevOps settings (organization URL, project, PAT) are configured.
+    /// Set to <c>false</c> to skip eager validation (useful in tests or when
+    /// the work source provider is not AzureDevOpsBoards).
+    /// </param>
+    public static IServiceCollection AddAgentControllerAzureDevOpsBoardsWorkSource(
+        this IServiceCollection services,
+        bool validateConnection = true)
+    {
+        // Register the Azure DevOps Boards HTTP client as scoped.
+        // Each operation (poll cycle, request) gets a fresh client.
+        services.AddScoped<IAzureDevOpsBoardsClient>(sp =>
+        {
+            var boardsOptions = sp.GetRequiredService<IOptions<AzureDevOpsBoardsOptions>>().Value;
+            var workSourceOptions = sp.GetRequiredService<IOptions<WorkSourceOptions>>().Value;
+
+            // Derive BaseUrl and Project from WorkSourceOptions into BoardsOptions
+            boardsOptions.BaseUrl = workSourceOptions.OrganizationUrl;
+            boardsOptions.Project = workSourceOptions.Project;
+
+            if (validateConnection)
+            {
+                AzureDevOpsBoardsValidator.Validate(workSourceOptions, boardsOptions);
+            }
+
+            var http = new HttpClient();
+            return new AzureDevOpsBoardsClient(http, boardsOptions);
+        });
+
+        // Register the work source implementation as singleton.
+        // It uses IServiceScopeFactory to resolve scoped IAzureDevOpsBoardsClient
+        // per operation.
+        services.AddSingleton<IWorkSource, AzureDevOpsBoardsWorkSource>();
 
         return services;
     }

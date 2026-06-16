@@ -1,3 +1,4 @@
+using AgentController.Infrastructure;
 using AgentController.Infrastructure.Options;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -422,6 +423,297 @@ public class OptionsSmokeTests
             }
         }
         // If file doesn't exist, skip (test is informational)
+    }
+
+    // ──────────────────────────────────────────────
+    // Azure DevOps Boards Options tests
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public void AzureDevOpsBoardsOptions_BindsFromConfiguration()
+    {
+        var values = new Dictionary<string, string?>
+        {
+            ["azureDevOps:personalAccessToken"] = "test-pat-token",
+        };
+
+        var config = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
+        var services = new ServiceCollection();
+        services
+            .AddOptions<AzureDevOpsBoardsOptions>()
+            .Bind(config.GetSection("azureDevOps"));
+
+        var options = services
+            .BuildServiceProvider()
+            .GetRequiredService<IOptions<AzureDevOpsBoardsOptions>>()
+            .Value;
+
+        Assert.Equal("test-pat-token", options.PersonalAccessToken);
+    }
+
+    [Fact]
+    public void AzureDevOpsBoardsOptions_ResolvePat_ReturnsDirectValue()
+    {
+        var options = new AzureDevOpsBoardsOptions
+        {
+            PersonalAccessToken = "my-direct-pat",
+        };
+
+        var resolved = options.ResolvePersonalAccessToken();
+
+        Assert.Equal("my-direct-pat", resolved);
+    }
+
+    [Fact]
+    public void AzureDevOpsBoardsOptions_ResolvePat_ExpandsEnvReference()
+    {
+        var envName = "TEST_AZURE_DEVOPS_PAT_SMOKE";
+        var expected = "env-resolved-pat-value";
+
+        try
+        {
+            Environment.SetEnvironmentVariable(envName, expected);
+
+            var options = new AzureDevOpsBoardsOptions
+            {
+                PersonalAccessToken = $"ENV:{envName}",
+            };
+
+            var resolved = options.ResolvePersonalAccessToken();
+
+            Assert.Equal(expected, resolved);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envName, null);
+        }
+    }
+
+    [Fact]
+    public void AzureDevOpsBoardsOptions_ResolvePat_ThrowsWhenEnvVarMissing()
+    {
+        var envName = "MISSING_ENV_VAR_FOR_AZDO_PAT";
+
+        // Ensure the variable is not set
+        Environment.SetEnvironmentVariable(envName, null);
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            PersonalAccessToken = $"ENV:{envName}",
+        };
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => options.ResolvePersonalAccessToken());
+
+        Assert.Contains(envName, ex.Message);
+        Assert.Contains("missing or empty", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AzureDevOpsBoardsOptions_ResolvePat_ThrowsWhenEnvRefHasNoVariableName()
+    {
+        var options = new AzureDevOpsBoardsOptions
+        {
+            PersonalAccessToken = "ENV:",
+        };
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => options.ResolvePersonalAccessToken());
+
+        Assert.Contains("no environment variable name", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AzureDevOpsBoardsOptions_ResolvePat_ReturnsNullForEmptyValue()
+    {
+        var options = new AzureDevOpsBoardsOptions
+        {
+            PersonalAccessToken = "",
+        };
+
+        var resolved = options.ResolvePersonalAccessToken();
+
+        Assert.Null(resolved);
+    }
+
+    [Fact]
+    public void AzureDevOpsBoardsOptions_ResolvePat_ReturnsNullForWhitespaceValue()
+    {
+        var options = new AzureDevOpsBoardsOptions
+        {
+            PersonalAccessToken = "   ",
+        };
+
+        var resolved = options.ResolvePersonalAccessToken();
+
+        Assert.Null(resolved);
+    }
+
+    [Fact]
+    public void AzureDevOpsBoardsOptions_ValidationCatchesEmptyPat()
+    {
+        // Validation is deferred to AzureDevOpsBoardsValidator, not data annotations.
+        var workSource = new WorkSourceOptions
+        {
+            Provider = "AzureDevOpsBoards",
+            OrganizationUrl = "https://dev.azure.com/myorg",
+            Project = "MyProject",
+        };
+
+        var boards = new AzureDevOpsBoardsOptions
+        {
+            PersonalAccessToken = "",
+        };
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            AzureDevOpsBoardsValidator.Validate(workSource, boards));
+
+        Assert.Contains("PAT", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ──────────────────────────────────────────────
+    // Azure DevOps Boards Validator tests
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public void AzureDevOpsBoardsValidator_ValidConfig_Passes()
+    {
+        var envName = "AZDO_VALIDATOR_TEST_PAT";
+        try
+        {
+            Environment.SetEnvironmentVariable(envName, "test-pat");
+
+            var workSource = new WorkSourceOptions
+            {
+                Provider = "AzureDevOpsBoards",
+                OrganizationUrl = "https://dev.azure.com/myorg",
+                Project = "MyProject",
+            };
+
+            var boards = new AzureDevOpsBoardsOptions
+            {
+                PersonalAccessToken = $"ENV:{envName}",
+            };
+
+            // Should not throw
+            var ex = Record.Exception(() =>
+                AzureDevOpsBoardsValidator.Validate(workSource, boards));
+
+            Assert.Null(ex);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envName, null);
+        }
+    }
+
+    [Fact]
+    public void AzureDevOpsBoardsValidator_ThrowsWhenOrganizationUrlMissing()
+    {
+        var workSource = new WorkSourceOptions
+        {
+            Provider = "AzureDevOpsBoards",
+            OrganizationUrl = null,
+            Project = "MyProject",
+        };
+
+        var boards = new AzureDevOpsBoardsOptions
+        {
+            PersonalAccessToken = "test-pat",
+        };
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            AzureDevOpsBoardsValidator.Validate(workSource, boards));
+
+        Assert.Contains("organization URL", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AzureDevOpsBoardsValidator_ThrowsWhenOrganizationUrlInvalid()
+    {
+        var workSource = new WorkSourceOptions
+        {
+            Provider = "AzureDevOpsBoards",
+            OrganizationUrl = "not-a-valid-url",
+            Project = "MyProject",
+        };
+
+        var boards = new AzureDevOpsBoardsOptions
+        {
+            PersonalAccessToken = "test-pat",
+        };
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            AzureDevOpsBoardsValidator.Validate(workSource, boards));
+
+        Assert.Contains("not a valid", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AzureDevOpsBoardsValidator_ThrowsWhenProjectMissing()
+    {
+        var workSource = new WorkSourceOptions
+        {
+            Provider = "AzureDevOpsBoards",
+            OrganizationUrl = "https://dev.azure.com/myorg",
+            Project = null,
+        };
+
+        var boards = new AzureDevOpsBoardsOptions
+        {
+            PersonalAccessToken = "test-pat",
+        };
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            AzureDevOpsBoardsValidator.Validate(workSource, boards));
+
+        Assert.Contains("project", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AzureDevOpsBoardsValidator_ThrowsWhenPatMissing()
+    {
+        var workSource = new WorkSourceOptions
+        {
+            Provider = "AzureDevOpsBoards",
+            OrganizationUrl = "https://dev.azure.com/myorg",
+            Project = "MyProject",
+        };
+
+        var boards = new AzureDevOpsBoardsOptions
+        {
+            PersonalAccessToken = "",
+        };
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            AzureDevOpsBoardsValidator.Validate(workSource, boards));
+
+        Assert.Contains("PAT", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AzureDevOpsBoardsValidator_ReportsMultipleFailures()
+    {
+        var workSource = new WorkSourceOptions
+        {
+            Provider = "AzureDevOpsBoards",
+            OrganizationUrl = null,
+            Project = null,
+        };
+
+        var boards = new AzureDevOpsBoardsOptions
+        {
+            PersonalAccessToken = "",
+        };
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            AzureDevOpsBoardsValidator.Validate(workSource, boards));
+
+        // Should report all failures (at least 3: org url, project, PAT)
+        var message = ex.Message;
+        Assert.Contains("1.", message);
+        Assert.Contains("2.", message);
+        Assert.Contains("3.", message);
     }
 
     [Fact]
