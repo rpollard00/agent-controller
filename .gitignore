@@ -53,6 +53,9 @@ secrets/
 .DS_Store
 Thumbs.db
 
+# Agent work controller local run-root (keep ignored)
+.agent-work-controller/
+
 # Pi artifacts (keep ignored)
 .pi/pi-materia/
 .pi/pi-materia.json

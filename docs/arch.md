@@ -16,6 +16,71 @@ The MVP should evolve the same design into a durable internal service using stro
 
 ---
 
+# 0. Implementation Status
+
+## 0.1 Completed
+
+### Phase 0: Skeleton ✓
+
+- .NET solution with ASP.NET Core API, Domain, Application, Infrastructure, Migrations, AppHost, ServiceDefaults
+- Clean architecture enforcement: API → Application + Infrastructure; EF Core only in Infrastructure
+- SQLite persistence via EF Core with full entity configurations
+- Migration runner console app (AgentController.Migrations) — sole owner of schema evolution
+- JSON configuration loading with options classes and validation-on-start
+- Repository profile config (`repositories:{key}:cloneUrl`, `defaultBranch`, `environmentProfile`, `runtimeProfile`, `allowedPaths`)
+
+### Phase 1: Local Lifecycle ✓
+
+- LocalFakeWorkSource (`IWorkSource`) backed by persisted `WorkCandidate` items in SQLite
+- `IRunLifecycleService` with full lifecyle coordination across `IAgentRunStore`, `ILifecycleEventStore`, `IWorkItemStore`
+- `PollingWorker` (`BackgroundService`) with concurrency gating, candidate discovery and claiming, controller-owned state progression (Claimed → AwaitingResult), and stale-run recovery
+- Mock runtime event ingestion endpoint (`POST /runs/{runId}/events`) with validation, idempotency, terminal-state rejection
+- Work item CRUD endpoints (`POST/GET /work-items`, `GET /work-items/{id}`)
+- Run list and detail endpoints (`GET /runs`, `GET /runs/{runId}`)
+- Integration tests for runtime events covering validation, idempotency, runId mismatch, terminal states
+
+### Phase 2: Azure DevOps Boards Provider ✓
+
+- `IAzureDevOpsBoardsClient` + `AzureDevOpsBoardsClient` with managed `HttpClient`
+- `AzureDevOpsBoardsWorkSource` registered as singleton `IWorkSource` (last-registered wins)
+- `AzureDevOpsBoardsValidator` for configuration validation with toggle
+- `AzureDevOpsBoardsOptions` with `env:` prefix PAT resolution
+- Remote → local `UpsertAsync` path for persisting ADO work items before claiming
+
+## 0.2 Incomplete
+
+### Phase 3: Azure DevOps Repos Clone — NoOp only
+
+`ISourceControlProvider` is defined. `NoOpSourceControlProvider` is registered. Real `AzureDevOpsReposSourceControlProvider` is not implemented. No real git clone or repository workspace provisioning.
+
+### Phase 4: Local Environment Provider — NoOp only
+
+`IEnvironmentProvider` is defined. `NoOpEnvironmentProvider` is registered. Real `LocalWorkspaceEnvironmentProvider` is not implemented. No per-run directory creation, context file generation, or workspace retention.
+
+### Phase 5: Pi-Materia Runtime Adapter — NoOp only
+
+`IAgentRuntime` is defined. `NoOpAgentRuntime` is registered. Real `PiMateriaRuntime` is not implemented. No process invocation, stdout/stderr capture, or runtime webhook ingestion.
+
+### Phase 6: Result Reporting — mock only
+
+Runtime event ingestion handles all event types through the mock endpoint. No real ADO work item status projection is wired. Comments and board state transitions exist only in mock form.
+
+### Phase 7: Reconciliation — stale detection only
+
+Stale run detection and recovery (`AwaitingResult` → `NeedsHuman`) is implemented. No reconciliation of PR URLs, branch info, or partial results from a real runtime.
+
+## 0.3 Current Gaps for Local-Only End-to-End
+
+The controller cannot currently complete a real end-to-end run without Azure DevOps because:
+
+1. **No local work source that reads work definitions from config/files** — LocalFakeWorkSource reads from the database, requiring work items to be created via API first. There is no declarative config/file input path.
+2. **No real local environment/workspace provider** — The controller advances through `EnvironmentProvisioning` and `RepositoryCloning` as no-ops. No real directories are created.
+3. **No repository checkout for local paths** — `ISourceControlProvider` has no implementation that handles local paths or `file://` URLs.
+4. **No real runtime invocation** — The controller stops at `AwaitingResult` and waits for external mock events. There is no path to actually invoke pi-materia.
+5. **No mock runtime completion path** — The mock event endpoint exists but requires manual HTTP calls. There is no automated mock runtime that emits events to complete a run.
+
+---
+
 # 1. Goals
 
 The system should:
@@ -1455,7 +1520,7 @@ Run detail response includes:
 
 This makes the full local controller lifecycle inspectable end-to-end.
 
-## Phase 2: Azure DevOps Boards Provider
+## Phase 2: Azure DevOps Boards Provider ✓ (completed)
 
 1. Query work items by configured tags and states.
 2. Resolve repo key from work item fields or tags.
@@ -1506,6 +1571,373 @@ This makes the full local controller lifecycle inspectable end-to-end.
 3. Detect failed cleanup attempts.
 4. Reconcile PR URL or branch info if runtime provided partial result.
 5. Mark unresolved runs as `needs_human` after timeout.
+
+---
+
+# 13a. Local-First Milestone (Local-Only End-to-End)
+
+**Goal:** Make the controller fully exerciseable end-to-end without Azure DevOps integration.
+A developer should be able to define work items in a config or local file, point the controller
+at a local repository (via a `file://` URL or local path in `repositories:{key}:cloneUrl`),
+run the full controller lifecycle through a real environment, source-control provider, and
+mock runtime, and observe a completed run — all without network access or Azure DevOps credentials.
+
+This milestone consists of four slices:
+
+## Slice 1: Local Work Source Provider (`feat: add local work source provider`)
+
+Implement a local work source that reads deterministic work item definitions from
+configuration or a local JSON file, validates required fields, maps them into the
+existing `WorkCandidate` model, and integrates with the existing source selection
+and config conventions.
+
+### Design Decisions
+
+1. **Deterministic input, not API-only.** The existing `LocalFakeWorkSource` reads from
+the database (populated via `POST /work-items`). A new source should support declarative
+input so a developer can define work items in `appsettings.json` or a dedicated JSON file
+and have the controller pick them up without API calls.
+
+2. **Configuration section or file.** A new `localWork` (or `localWorkItems`) configuration
+section contains an ordered set of work item definitions. Each definition includes `repoKey`,
+`title`, `description`/`body`, `acceptanceCriteria`, `priority`, and `tags`. The `Source`
+field is `"LocalFile"` to distinguish these from database-seeded `LocalFake` items.
+
+3. **No duplicate externalIds.** An `externalId` is optional; when not supplied, the
+provider derives a stable idempotency key from the definition content.
+
+4. **Integration.** A new provider selector at registration time: when
+`workSource:provider` is `"LocalFile"`, register the new source. The `LocalFile` source
+should implement the same `IWorkSource` interface and follow the same claim/lease
+pattern through `IWorkItemStore`.
+
+5. **Validation.** Each work definition must have `repoKey` and `title`. Invalid
+definitions are logged at startup and skipped. The controller continues with remaining
+valid definitions.
+
+## Slice 2: Local Repository Workspace (`feat: support local repository workspace runs`)
+
+Ensure repository checkout/workspace setup supports `repositories:{key}:cloneUrl` values
+that are local paths, `file://` URLs, or normal git URLs. Do not introduce a separate
+`localPath` field — reuse the existing `cloneUrl` field.
+
+### Design Decisions
+
+1. **No new field.** The existing `repositories:{key}:cloneUrl` field is the single
+source of truth. Values can be:
+   - A standard remote git URL (`https://...`, `git@...`)
+   - A `file://` URL (`file:///home/user/projects/repo`)
+   - A bare local path (`/home/user/projects/repo` or `~/projects/repo`)
+
+2. **No clone for local paths.** When `cloneUrl` is a local path or `file://` URL,
+the source-control provider should use the repository in-place (or create a
+lightweight worktree/copy) rather than attempting a full git clone. For a `file://`
+URL, git itself handles local cloning efficiently via hardlinks when using
+`git clone file:///...`.
+
+3. **Run root.** The default run root remains `~/.agent-work-controller/runs/{runId}`.
+For local-repo runs, the repository is either cloned into `{runId}/repo/` (for remote
+or `file://` URLs) or symlinked/copied (for bare local paths). The run root itself
+is always under the configured directory, never inside the source repository.
+
+4. **`.agent-work-controller` in `.gitignore`.** The `.gitignore` should include
+`.agent-work-controller/` so local run roots within a repository are not tracked.
+This covers the case where `runRoot` is set to a repo-relative path or where
+generated artifacts land in the repo.
+
+5. **Path normalization.** Tilde (`~`) expansion and relative-to-absolute conversion
+happen at configuration binding or first use. The source-control provider receives
+already-resolved paths.
+
+## Slice 3: Real Environment Provider (`feat: wire environment provider`)
+
+Implement `LocalWorkspaceEnvironmentProvider` (`IEnvironmentProvider`) to replace
+the Phase 1 no-ops with real per-run directory creation, context file generation,
+and configurable retention.
+
+### Design Decisions
+
+1. **Per-run directory.** Creates `{runRoot}/{runId}/` with subdirectories:
+   ```text
+   repo/         — clone target (managed by source-control provider)
+   context/      — context files for the runtime
+   logs/         — stdout/stderr from the runtime
+   artifacts/    — runtime-produced artifacts
+   result/       — final result summary
+   ```
+
+2. **Context files.** Writes `work-item.md`, `acceptance-criteria.md`,
+`controller-run.json`, and `repository.json` into `context/`.
+
+3. **Retention.** Respects `retainSuccessfulRuns` and `retainFailedRuns` from
+`AgentControllerOptions`. A future cleanup worker can delete directories
+based on TTL.
+
+4. **Integration.** The polling worker already transitions through
+`EnvironmentProvisioning` and `EnvironmentReady`. The environment provider
+is invoked at `EnvironmentProvisioning`. If provisioning fails, the run
+transitions to `Failed`.
+
+## Slice 4: Mock Runtime Completion Path (`feat: wire local end-to-end run with mock runtime completion`)
+
+Create a real local end-to-end controller path that goes from work discovery through
+runtime execution and cleanly completes without requiring Azure DevOps or manual
+HTTP calls to the mock event endpoint.
+
+### Design Decisions
+
+1. **Automated mock runtime.** Implement a `MockPiMateriaRuntime` (or extend
+`NoOpAgentRuntime`) that, when started, emits a sequence of runtime events
+automatically:
+   ```text
+   runtime.accepted → runtime.heartbeat → runtime.status ("working") →
+   runtime.completed (outcome: pull_request_opened or no_changes_needed)
+   ```
+   The mock runtime calls the runtime event ingestion logic directly (in-process)
+rather than through HTTP, so it works without the API being reachable.
+
+2. **Integration test or smoke command.** A documented command or integration test
+that:
+   - Configures `workSource:provider` = `"LocalFile"`
+   - Defines at least one work item in `localWork` config
+   - Points a repository at a local path or `file://` URL
+   - Sets `runtime:provider` = `"MockPiMateria"`
+   - Runs the worker for one full poll cycle
+   - Asserts the run reaches `Completed` or `PrOpened`
+
+3. **Observable transitions.** The entire lifecycle is visible through the controller
+logs and the `/runs/{runId}` endpoint. No state should require Azure DevOps access
+to observe.
+
+4. **Configuration example.** An `appsettings.local-e2e.example.json` file documents
+all the settings needed for a local-only run.
+
+## Slice 5 (Future): Pi-Materia Process Adapter
+
+After the local-only E2E path works with the mock runtime, the next slice replaces
+the mock with a real pi-materia invocation. This is documented in §13b.
+
+### Runtime Contract (Recap)
+
+The controller and pi-materia interact through:
+
+1. **Input (context files).** Written by the environment provider into
+`{runRoot}/{runId}/context/`:
+   - `controller-run.json` — run metadata (runId, workItemId, repo path, branch)
+   - `work-item.md` — markdown work item description
+   - `acceptance-criteria.md` — acceptance criteria
+   - `repository.json` — repository profile metadata
+
+2. **Runtime events (inbound).** Sent by pi-materia to `POST /runs/{runId}/events`.
+The minimal required events for a first integration are `runtime.accepted`,
+`runtime.status`, `runtime.heartbeat`, `runtime.completed`, and `runtime.failed`.
+
+3. **Process lifecycle.** The controller starts `pi` as a child process with the
+materia loadout, captures stdout/stderr into log files, monitors process exit,
+and handles cancellation via SIGTERM or equivalent.
+
+4. **Webhook vs. process exit.** If pi-materia emits runtime events via stdout
+(newline-delimited JSON), the controller can ingest them in real time. Process
+exit code and the final event together determine the run outcome.
+
+---
+
+# 13b. Pi-Materia Process Adapter (Implementation-Ready Design)
+
+**This section captures the immediate follow-up design after the local-only E2E path works.**
+It is implementation-ready: the interfaces exist, the event contract is defined, and the
+only missing piece is a real process-launching `IAgentRuntime` implementation that replaces
+the mock.
+
+## 13b.1 Status of Dependencies
+
+All dependencies needed for the pi-materia adapter exist today:
+
+- `IAgentRuntime` interface — defined in `AgentController.Application`
+- `RuntimeOptions` — configured via `appsettings.json` (provider, piExecutablePath, defaultMateriaLoadout)
+- `IRunLifecycleService` — can be resolved by the runtime to ingest events in-process
+- `POST /runs/{runId}/events` — HTTP endpoint for runtime event ingestion
+- `IEnvironmentProvider` — produces per-run directories with context files that pi-materia consumes
+- `IWorkItemStore` — holds work item data the runtime needs
+
+## 13b.2 PiMateriaRuntime Design
+
+```csharp
+public sealed class PiMateriaRuntime : IAgentRuntime
+{
+    // Dependencies
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IOptionsMonitor<RuntimeOptions> _runtimeOptions;
+    private readonly IOptionsMonitor<AgentControllerOptions> _controllerOptions;
+    private readonly ILogger<PiMateriaRuntime> _logger;
+
+    public async Task<AgentRunHandle> StartAsync(
+        AgentRunSpec spec, CancellationToken ct);
+
+    public async Task<AgentRuntimeStatus> GetStatusAsync(
+        AgentRunHandle handle, CancellationToken ct);
+
+    public async Task CancelAsync(
+        AgentRunHandle handle, CancellationToken ct);
+}
+```
+
+### StartAsync Behavior
+
+1. **Locate context files.** Read `{runRoot}/{runId}/context/controller-run.json` to
+get run metadata (runId, workItemId, repo path, suggested branch name, callback URL).
+
+2. **Build pi command.** Construct a process invocation:
+   ```bash
+   pi --loadout {defaultMateriaLoadout} --context {contextDir}
+   ```
+   The `--context` flag points pi-materia at the context directory containing
+   `work-item.md`, `acceptance-criteria.md`, and `controller-run.json`.
+
+3. **Start process.** Launch `pi` as a child process with:
+   - Working directory set to `{runRoot}/{runId}/repo/`
+   - stdout piped to `{runRoot}/{runId}/logs/runtime.stdout.log`
+   - stderr piped to `{runRoot}/{runId}/logs/runtime.stderr.log`
+   - Environment variables: `CONTROLLER_RUN_ID`, `CONTROLLER_EVENT_URL`
+
+4. **Track process.** Store process ID and start time in the returned
+`AgentRunHandle`. Return immediately — the process runs asynchronously.
+
+5. **Event ingestion.** The runtime can emit events via either path:
+   - **HTTP webhook.** pi-materia POSTs to `CONTROLLER_EVENT_URL`
+     (`http://localhost:{port}/runs/{runId}/events`).
+   - **Stdout JSON stream.** If pi-materia emits newline-delimited JSON events on stdout,
+     the `PiMateriaRuntime` reads stdout line-by-line, deserializes each line as a
+     `RuntimeEvent`, and calls `IRunLifecycleService.IngestRuntimeEventAsync` directly
+     in-process via a scoped service resolution.
+
+6. **Heartbeat.** While the process is running, the controller's heartbeat mechanism
+is satisfied by periodic `runtime.heartbeat` events from pi-materia. If pi-materia
+does not emit heartbeats natively, `PiMateriaRuntime` can emit synthetic heartbeats
+based on a timer while the process is alive.
+
+### GetStatusAsync Behavior
+
+1. Check if the tracked process is still running (OS process check).
+2. If the process exited, read the exit code.
+3. If the process exited without a final event, synthesize a `runtime.failed` or
+`runtime.completed` event based on exit code.
+
+### CancelAsync Behavior
+
+1. Send SIGTERM (or platform-equivalent) to the child process.
+2. After a configurable grace period, send SIGKILL if still alive.
+3. Ingest a `runtime.cancelled` event.
+4. Record the cancellation in a lifecycle event.
+
+## 13b.3 Required Inputs (What the Controller Provides to pi-materia)
+
+### controller-run.json
+
+```json
+{
+  "runId": "run_abc123",
+  "workItemId": "c8f3e2a1",
+  "externalWorkItemId": "42",
+  "repoPath": "/home/user/.agent-work-controller/runs/run_abc123/repo",
+  "baseBranch": "main",
+  "suggestedBranchName": "agent/42-add-retry-handling",
+  "repositoryProfile": {
+    "key": "example-service",
+    "cloneUrl": "https://dev.azure.com/org/project/_git/example-service",
+    "defaultBranch": "main",
+    "allowedPaths": ["src/", "tests/"]
+  },
+  "callbackUrl": "http://localhost:5000/runs/run_abc123/events",
+  "workItem": {
+    "title": "Add retry handling for transient failures",
+    "acceptanceCriteria": {
+      "given": "A service call receives a 503 response",
+      "when": "The retry middleware is configured",
+      "then": "The call is retried up to 3 times with exponential backoff"
+    }
+  }
+}
+```
+
+### work-item.md
+
+A rendered markdown version of the work item description for pi-materia consumption.
+Generated by the environment provider from the `WorkCandidate` record.
+
+### acceptance-criteria.md
+
+A rendered markdown version of the acceptance criteria.
+
+### repository.json
+
+A copy of the resolved repository profile.
+
+## 13b.4 Required Outputs (What pi-materia Reports Back)
+
+All outputs flow through the runtime event contract (§10). The minimal set of
+events pi-materia must emit:
+
+| Event | Required? | Notes |
+|-------|-----------|-------|
+| `runtime.accepted` | Yes | Must be the first event |
+| `runtime.heartbeat` | Recommended | Every N seconds while working |
+| `runtime.status` | Recommended | Human-readable progress |
+| `runtime.completed` | Yes | Must include `outcome` in payload |
+| `runtime.failed` | Conditional | Required when the run fails |
+| `runtime.needs_human` | Optional | When human input is needed |
+| `runtime.branch_created` | Optional | When a branch is created |
+| `runtime.pr_created` | Optional | When a PR is opened |
+
+### Completion Outcomes
+
+When emitting `runtime.completed`, pi-materia sets `payload.outcome` to one of:
+
+- `pull_request_opened` — a PR was created (include `pullRequestUrl`, `branchName`)
+- `branch_pushed` — code was pushed to a branch without a PR
+- `patch_created` — a patch file was produced at a known path
+- `no_changes_needed` — the runtime determined no change was required
+- `needs_human` — the runtime needs human review (same as `runtime.needs_human`)
+- `failed` — the runtime could not complete (same as `runtime.failed`)
+
+## 13b.5 Handoff Contract Summary
+
+```text
+Controller → pi-materia (inputs):
+  - Context directory at {runRoot}/{runId}/context/
+  - controller-run.json, work-item.md, acceptance-criteria.md, repository.json
+  - Working directory at {runRoot}/{runId}/repo/
+  - Environment variables: CONTROLLER_RUN_ID, CONTROLLER_EVENT_URL
+
+pi-materia → Controller (outputs):
+  - Runtime events via HTTP POST or stdout JSON stream
+  - eventId, runId, eventType (required)
+  - runtime.completed or runtime.failed is the terminal event
+  - Process exit code (0 = success, non-zero = check final event)
+```
+
+## 13b.6 Implementation Sequence
+
+1. **Local E2E with mock runtime** (Slice 4 in §13a) — proves the full lifecycle
+works with no real pi-materia.
+2. **Real PiMateriaRuntime** — replaces the mock. Starts pi as a child process.
+3. **Stdout event stream** — teaches PiMateriaRuntime to read newline-delimited
+JSON events from pi-materia's stdout (in-process ingestion, no HTTP round-trip).
+4. **HTTP webhook fallback** — supports pi-materia sending events via
+`POST /runs/{runId}/events` if it cannot emit on stdout.
+5. **Cancellation & cleanup** — wire SIGTERM handling, grace period, and
+cleanup of the process tree.
+
+## 13b.7 Open Design Questions
+
+1. Should pi-materia receive the full acceptance criteria as structured JSON or
+rendered markdown? (Start with markdown; structured JSON can be added later.)
+2. How many `runtime.heartbeat` events per minute? (Start with 1 per 30 seconds.)
+3. Should the controller restart pi-materia if it exits without a final event?
+(No. Mark stale and let the operator decide. Auto-restart is a future concern.)
+4. What happens if pi-materia modifies files outside `allowedPaths`?
+(The controller does not enforce this — it's advisory. A future policy engine
+can inspect diffs.)
 
 ---
 
