@@ -31,6 +31,12 @@ builder.Services.AddAgentControllerNoOpProviders();
 // IWorkSource wins.
 builder.Services.AddAgentControllerLocalFakeWorkSource();
 
+// To use a declarative config/file-based work source instead of the API-seeded
+// LocalFakeWorkSource, swap the registration above with:
+//   builder.Services.AddAgentControllerLocalFileWorkSource();
+// Then define work items in appsettings.json under "localWork": { "definitions": [...] },
+// set "workSource:provider" to "LocalFile", and set "agentController:workerEnabled" to true.
+
 // Register the background polling worker (disabled by default via agentController.workerEnabled).
 // Kept in the same host as the API for the prototype; a future split can move this into a
 // separate deployable without changing the domain or application contracts.

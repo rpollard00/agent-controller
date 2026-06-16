@@ -68,6 +68,10 @@ public static class AgentControllerServiceCollectionExtensions
             .AddOptions<AzureDevOpsBoardsOptions>()
             .Bind(configuration.GetSection(AzureDevOpsBoardsOptions.SectionName));
 
+        services
+            .AddOptions<LocalWorkOptions>()
+            .Bind(configuration.GetSection(LocalWorkOptions.SectionName));
+
         return services;
     }
 
@@ -159,6 +163,30 @@ public static class AgentControllerServiceCollectionExtensions
     )
     {
         services.AddSingleton<IWorkSource, LocalFakeWorkSource>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers the <see cref="LocalFileWorkSource"/> as a singleton <see cref="IWorkSource"/>
+    /// implementation that reads work item definitions from the <c>localWork</c> configuration
+    /// section and upserts them into the persisted <see cref="IWorkItemStore"/> on first use.
+    ///
+    /// When <c>workSource:provider</c> is <c>"LocalFile"</c>, use this method instead of
+    /// <see cref="AddAgentControllerLocalFakeWorkSource"/> to seed work items declaratively
+    /// from configuration without API calls.
+    ///
+    /// <see cref="LocalFileWorkSource"/> uses <see cref="IServiceScopeFactory"/> internally
+    /// to resolve the scoped <see cref="IWorkItemStore"/> per operation, so it is safe for
+    /// consumption by singleton consumers such as <see cref="BackgroundService"/>.
+    ///
+    /// Requires <see cref="AddAgentControllerRepositories"/> to be called first.
+    /// </summary>
+    public static IServiceCollection AddAgentControllerLocalFileWorkSource(
+        this IServiceCollection services
+    )
+    {
+        services.AddSingleton<IWorkSource, LocalFileWorkSource>();
 
         return services;
     }

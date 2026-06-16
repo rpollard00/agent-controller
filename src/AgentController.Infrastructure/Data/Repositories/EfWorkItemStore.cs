@@ -125,25 +125,40 @@ internal sealed class EfWorkItemStore : IWorkItemStore
             }
         }
 
-        // Only items that are unclaimed (no active lease)
-        var now = DateTimeOffset.UtcNow;
-        q = q.Where(e => e.LeaseOwner == null || e.LeaseExpiresAt < now);
-
-        // Priority range
-        if (query.PriorityMin.HasValue)
-            q = q.Where(e => e.Priority != null && e.Priority >= query.PriorityMin.Value);
-
-        if (query.PriorityMax.HasValue)
-            q = q.Where(e => e.Priority != null && e.Priority <= query.PriorityMax.Value);
-
-        q = q.OrderByDescending(e => e.Priority)
-             .ThenBy(e => e.CreatedAt);
-
-        if (query.MaxResults > 0)
-            q = q.Take(query.MaxResults);
+        // SQLite provider limitations: EF Core 9.x cannot translate
+        // DateTimeOffset? comparisons or DateTimeOffset ORDER BY clauses
+        // into SQL. We apply status/tag filters server-side and perform
+        // lease filtering, priority range, ordering, and limit on the
+        // client side. This is acceptable for local SQLite databases
+        // with moderate item counts.
 
         var entities = await q.ToListAsync(cancellationToken);
-        return entities.Select(MapToCandidate).ToList();
+
+        // Client-side filters
+        var now = DateTimeOffset.UtcNow;
+        IEnumerable<WorkItemEntity> filtered = entities;
+
+        // Priority range filter
+        if (query.PriorityMin.HasValue)
+            filtered = filtered.Where(e => e.Priority != null && e.Priority >= query.PriorityMin.Value);
+
+        if (query.PriorityMax.HasValue)
+            filtered = filtered.Where(e => e.Priority != null && e.Priority <= query.PriorityMax.Value);
+
+        // Lease filter: unclaimed or expired (client-side to avoid
+        // DateTimeOffset? translation issues in EF Core SQLite 9.x)
+        filtered = filtered.Where(e =>
+            e.LeaseOwner == null || e.LeaseExpiresAt < now);
+
+        // Client-side ordering (DateTimeOffset ORDER BY not supported in SQLite)
+        filtered = filtered
+            .OrderByDescending(e => e.Priority)
+            .ThenBy(e => e.CreatedAt);
+
+        if (query.MaxResults > 0)
+            filtered = filtered.Take(query.MaxResults);
+
+        return filtered.Select(MapToCandidate).ToList();
     }
 
     public async Task<ClaimResult> TryClaimAsync(
