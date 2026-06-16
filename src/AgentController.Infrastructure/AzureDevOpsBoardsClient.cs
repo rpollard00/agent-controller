@@ -130,23 +130,56 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         var results = new List<WorkCandidate>();
         foreach (var item in workItems)
         {
-            var fields = item.GetProperty("fields");
             var itemId = item.GetProperty("id").GetInt32();
 
+            // Extract revision for optimistic concurrency on later updates
+            var revision = item.TryGetProperty("rev", out var revEl)
+                           && revEl.ValueKind == JsonValueKind.Number
+                           && revEl.TryGetInt32(out var rev)
+                ? rev.ToString(CultureInfo.InvariantCulture)
+                : null;
+
+            // Require the fields object for mapping
+            if (!item.TryGetProperty("fields", out var fields)
+                || fields.ValueKind != JsonValueKind.Object)
+            {
+                // Malformed: work item returned without fields — skip with warning
+                continue;
+            }
+
+            // Parse tags
             var tags = fields.TryGetProperty("System.Tags", out var tagsElement)
                         && tagsElement.ValueKind == JsonValueKind.String
                 ? tagsElement.GetString()?.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                     ?? Array.Empty<string>()
                 : Array.Empty<string>();
 
+            // Resolve RepoKey from tags
+            var repoKey = ResolveRepoKeyFromTags(tags);
+
+            // Build SourceMetadata for later updates
+            var metadata = new Dictionary<string, string>();
+            if (revision is not null)
+                metadata["revision"] = revision;
+
+            var areaPath = GetStringField(fields, "System.AreaPath");
+            if (areaPath is not null)
+                metadata["areaPath"] = areaPath;
+
+            var iterationPath = GetStringField(fields, "System.IterationPath");
+            if (iterationPath is not null)
+                metadata["iterationPath"] = iterationPath;
+
+            var workItemType = GetStringField(fields, "System.WorkItemType");
+            if (workItemType is not null)
+                metadata["workItemType"] = workItemType;
+
             var candidate = new WorkCandidate
             {
                 Id = $"wi_{itemId}",
                 ExternalId = itemId.ToString(CultureInfo.InvariantCulture),
-                ExternalUrl = fields.TryGetProperty("System.Url", out var urlEl)
-                    ? urlEl.GetString()
-                    : $"{_options.BaseUrl?.TrimEnd('/')}/{project}/_workitems/edit/{itemId}",
-                RepoKey = string.Empty, // Resolved from work item fields/tags by the work source
+                ExternalUrl = $"{_options.BaseUrl?.TrimEnd('/')}/{project}/_workitems/edit/{itemId}",
+                RepoKey = repoKey,
                 Title = GetStringField(fields, "System.Title") ?? string.Empty,
                 Description = GetStringField(fields, "System.Description"),
                 AcceptanceCriteria = null, // Azure DevOps doesn't have a standard field; extensions may provide it
@@ -155,6 +188,7 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                 Tags = tags,
                 AssignedTo = GetAssignedToDisplayName(fields),
                 Source = "AzureDevOpsBoards",
+                SourceMetadata = metadata.Count > 0 ? metadata : null,
             };
 
             results.Add(candidate);
@@ -309,6 +343,32 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
 
     private static string EscapeWiql(string value) =>
         value.Replace("'", "''");
+
+    // ─── RepoKey resolution ──────────────────────────────
+
+    /// <summary>
+    /// Resolves a repository key from work item tags.
+    /// Looks for a tag with the prefix <c>repo:</c> and returns the
+    /// remainder as the repository key.
+    /// Returns <see cref="string.Empty"/> when no matching tag is found.
+    /// </summary>
+    private static string ResolveRepoKeyFromTags(string[] tags)
+    {
+        const string repoPrefix = "repo:";
+
+        for (int i = 0; i < tags.Length; i++)
+        {
+            var tag = tags[i];
+            if (tag.StartsWith(repoPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                var key = tag[repoPrefix.Length..].Trim();
+                if (!string.IsNullOrWhiteSpace(key))
+                    return key;
+            }
+        }
+
+        return string.Empty;
+    }
 
     // ─── Field helpers ────────────────────────────────────
 

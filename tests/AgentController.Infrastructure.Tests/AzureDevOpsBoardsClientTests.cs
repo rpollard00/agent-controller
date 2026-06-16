@@ -1,0 +1,752 @@
+using System.Globalization;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
+using AgentController.Application;
+using AgentController.Domain;
+using AgentController.Infrastructure.Options;
+
+namespace AgentController.Infrastructure.Tests;
+
+/// <summary>
+/// Tests for <see cref="AzureDevOpsBoardsClient"/> field mapping and
+/// work item discovery behavior. Uses a fake <see cref="HttpMessageHandler"/>
+/// to simulate Azure DevOps REST API responses.
+/// </summary>
+public class AzureDevOpsBoardsClientTests
+{
+    private const string OrgUrl = "https://dev.azure.com/testorg";
+    private const string Project = "TestProject";
+
+    /// <summary>
+    /// Creates an <see cref="AzureDevOpsBoardsClient"/> wired to a fake
+    /// <see cref="HttpMessageHandler"/> that returns the supplied JSON
+    /// responses in order.
+    /// </summary>
+    private static AzureDevOpsBoardsClient CreateClient(
+        params (string urlContains, string jsonResponse)[] responses)
+    {
+        var handler = new FakeHttpMessageHandler(responses);
+        var http = new HttpClient(handler)
+        {
+            BaseAddress = new Uri(OrgUrl + "/"),
+        };
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            BaseUrl = OrgUrl,
+            Project = Project,
+            PersonalAccessToken = "test-pat",
+        };
+
+        // Set auth header as the real constructor does
+        var authBytes = Encoding.ASCII.GetBytes(":test-pat");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        return new AzureDevOpsBoardsClient(http, options);
+    }
+
+    // ──────────────────────────────────────────────
+    // Successful mapping
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_MapsAllFields()
+    {
+        var client = CreateClient(
+            (urlContains: "wiql",
+             jsonResponse: WiqlResponse(42, 99)),
+            (urlContains: "workitemsbatch",
+             jsonResponse: BatchResponse(
+                 (id: 42, rev: 3, title: "Fix login bug", description: "Users cannot log in",
+                  state: "New", tags: "agent-ready; repo:example-service; ui",
+                  assignedToDisplay: "Jane Dev", priority: 1,
+                  areaPath: @"TestProject\TeamA", iterationPath: @"TestProject\Sprint 1",
+                  workItemType: "Bug"),
+                 (id: 99, rev: 1, title: "Add retry logic", description: null,
+                  state: "Approved", tags: "agent-ready; backend",
+                  assignedToDisplay: null, priority: 2,
+                  areaPath: @"TestProject", iterationPath: @"TestProject\Sprint 2",
+                  workItemType: "User Story")))
+        );
+
+        var parameters = new BoardsQueryParameters { Project = Project };
+        var results = await client.QueryWorkItemsAsync(parameters, CancellationToken.None);
+
+        Assert.Equal(2, results.Count);
+
+        // First work item
+        var wi1 = results[0];
+        Assert.Equal("wi_42", wi1.Id);
+        Assert.Equal("42", wi1.ExternalId);
+        Assert.Equal($"{OrgUrl}/{Project}/_workitems/edit/42", wi1.ExternalUrl);
+        Assert.Equal("example-service", wi1.RepoKey);
+        Assert.Equal("Fix login bug", wi1.Title);
+        Assert.Equal("Users cannot log in", wi1.Description);
+        Assert.Equal("New", wi1.Status);
+        Assert.Equal(1, wi1.Priority);
+        Assert.Equal("Jane Dev", wi1.AssignedTo);
+        Assert.Contains("agent-ready", wi1.Tags);
+        Assert.Contains("ui", wi1.Tags);
+        Assert.Equal("AzureDevOpsBoards", wi1.Source);
+
+        // Source metadata
+        Assert.NotNull(wi1.SourceMetadata);
+        Assert.Equal("3", wi1.SourceMetadata["revision"]);
+        Assert.Equal(@"TestProject\TeamA", wi1.SourceMetadata["areaPath"]);
+        Assert.Equal(@"TestProject\Sprint 1", wi1.SourceMetadata["iterationPath"]);
+        Assert.Equal("Bug", wi1.SourceMetadata["workItemType"]);
+
+        // Second work item
+        var wi2 = results[1];
+        Assert.Equal("wi_99", wi2.Id);
+        Assert.Equal("99", wi2.ExternalId);
+        Assert.Equal(string.Empty, wi2.RepoKey); // No repo: tag
+        Assert.Equal("Add retry logic", wi2.Title);
+        Assert.Null(wi2.Description);
+        Assert.Equal("Approved", wi2.Status);
+        Assert.Equal(2, wi2.Priority);
+        Assert.Null(wi2.AssignedTo);
+        Assert.NotNull(wi2.SourceMetadata);
+        Assert.Equal("1", wi2.SourceMetadata["revision"]);
+        Assert.Equal("User Story", wi2.SourceMetadata["workItemType"]);
+    }
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_EmptyWiqlResults_ReturnsEmptyList()
+    {
+        var client = CreateClient(
+            (urlContains: "wiql",
+             jsonResponse: """{"queryType":"flat","asOf":"2024-01-01T00:00:00Z","workItems":[]}""")
+        );
+
+        var parameters = new BoardsQueryParameters { Project = Project };
+        var results = await client.QueryWorkItemsAsync(parameters, CancellationToken.None);
+
+        Assert.NotNull(results);
+        Assert.Empty(results);
+    }
+
+    // ──────────────────────────────────────────────
+    // RepoKey resolution from tags
+    // ──────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("repo:my-service", "my-service")]
+    [InlineData("repo:  example-svc  ", "example-svc")]
+    [InlineData("agent-ready; repo:backend; high-priority", "backend")]
+    [InlineData("REPO:CaseInsensitive", "CaseInsensitive")]
+    [InlineData("other-tag; repo:svc; another-tag", "svc")]
+    public async Task QueryWorkItemsAsync_ResolvesRepoKeyFromTags(string tagsRaw, string expectedRepoKey)
+    {
+        var client = CreateClient(
+            (urlContains: "wiql",
+             jsonResponse: WiqlResponse(1)),
+            (urlContains: "workitemsbatch",
+             jsonResponse: BatchResponse(
+                 (id: 1, rev: 1, title: "Test", description: null,
+                  state: "New", tags: tagsRaw,
+                  assignedToDisplay: null, priority: 1,
+                  areaPath: @"Project", iterationPath: @"Project\Sprint",
+                  workItemType: "Task")))
+        );
+
+        var parameters = new BoardsQueryParameters { Project = Project };
+        var results = await client.QueryWorkItemsAsync(parameters, CancellationToken.None);
+
+        Assert.Single(results);
+        Assert.Equal(expectedRepoKey, results[0].RepoKey);
+    }
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_NoRepoTag_RepoKeyIsEmpty()
+    {
+        var client = CreateClient(
+            (urlContains: "wiql",
+             jsonResponse: WiqlResponse(1)),
+            (urlContains: "workitemsbatch",
+             jsonResponse: BatchResponse(
+                 (id: 1, rev: 1, title: "Test", description: null,
+                  state: "New", tags: "agent-ready; backend; ui",
+                  assignedToDisplay: null, priority: 1,
+                  areaPath: @"Project", iterationPath: @"Project\Sprint",
+                  workItemType: "Task")))
+        );
+
+        var parameters = new BoardsQueryParameters { Project = Project };
+        var results = await client.QueryWorkItemsAsync(parameters, CancellationToken.None);
+
+        Assert.Single(results);
+        Assert.Equal(string.Empty, results[0].RepoKey);
+    }
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_RepoTagWithOnlyWhitespace_RepoKeyIsEmpty()
+    {
+        var client = CreateClient(
+            (urlContains: "wiql",
+             jsonResponse: WiqlResponse(1)),
+            (urlContains: "workitemsbatch",
+             jsonResponse: BatchResponse(
+                 (id: 1, rev: 1, title: "Test", description: null,
+                  state: "New", tags: "agent-ready; repo:   ; backend",
+                  assignedToDisplay: null, priority: 1,
+                  areaPath: @"Project", iterationPath: @"Project\Sprint",
+                  workItemType: "Task")))
+        );
+
+        var parameters = new BoardsQueryParameters { Project = Project };
+        var results = await client.QueryWorkItemsAsync(parameters, CancellationToken.None);
+
+        Assert.Single(results);
+        Assert.Equal(string.Empty, results[0].RepoKey);
+    }
+
+    // ──────────────────────────────────────────────
+    // Missing / malformed fields
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_WorkItemWithoutFields_IsSkipped()
+    {
+        // Azure DevOps batch response where one item has no "fields" object
+        var batchJson = """
+        {
+          "count": 2,
+          "value": [
+            {
+              "id": 1,
+              "rev": 1,
+              "url": "https://dev.azure.com/org/_apis/wit/workItems/1"
+            },
+            {
+              "id": 2,
+              "rev": 2,
+              "fields": {
+                "System.Id": 2,
+                "System.Title": "Valid item",
+                "System.State": "New"
+              },
+              "url": "https://dev.azure.com/org/_apis/wit/workItems/2"
+            }
+          ]
+        }
+        """;
+
+        var client = CreateClient(
+            (urlContains: "wiql", jsonResponse: WiqlResponse(1, 2)),
+            (urlContains: "workitemsbatch", jsonResponse: batchJson)
+        );
+
+        var parameters = new BoardsQueryParameters { Project = Project };
+        var results = await client.QueryWorkItemsAsync(parameters, CancellationToken.None);
+
+        // The malformed item without fields is skipped; only the valid one remains
+        Assert.Single(results);
+        Assert.Equal("wi_2", results[0].Id);
+        Assert.Equal("Valid item", results[0].Title);
+    }
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_MissingOptionalFields_ProducesNullValues()
+    {
+        var client = CreateClient(
+            (urlContains: "wiql",
+             jsonResponse: WiqlResponse(1)),
+            (urlContains: "workitemsbatch",
+             jsonResponse: """
+             {
+               "count": 1,
+               "value": [
+                 {
+                   "id": 1,
+                   "rev": 5,
+                   "fields": {
+                     "System.Id": 1,
+                     "System.Title": "Minimal item"
+                   },
+                   "url": "https://dev.azure.com/org/_apis/wit/workItems/1"
+                 }
+               ]
+             }
+             """)
+        );
+
+        var parameters = new BoardsQueryParameters { Project = Project };
+        var results = await client.QueryWorkItemsAsync(parameters, CancellationToken.None);
+
+        Assert.Single(results);
+        var wi = results[0];
+        Assert.Equal("Minimal item", wi.Title);
+        Assert.Null(wi.Description);
+        Assert.Null(wi.Status);
+        Assert.Null(wi.Priority);
+        Assert.Null(wi.AssignedTo);
+        Assert.Empty(wi.Tags);
+        Assert.Equal(string.Empty, wi.RepoKey);
+
+        // Metadata should still have the revision
+        Assert.NotNull(wi.SourceMetadata);
+        Assert.Equal("5", wi.SourceMetadata["revision"]);
+        Assert.False(wi.SourceMetadata.ContainsKey("areaPath"));
+        Assert.False(wi.SourceMetadata.ContainsKey("iterationPath"));
+        Assert.False(wi.SourceMetadata.ContainsKey("workItemType"));
+    }
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_TagsFieldIsNotAString_ProducesEmptyTags()
+    {
+        var client = CreateClient(
+            (urlContains: "wiql",
+             jsonResponse: WiqlResponse(1)),
+            (urlContains: "workitemsbatch",
+             jsonResponse: """
+             {
+               "count": 1,
+               "value": [
+                 {
+                   "id": 1,
+                   "rev": 1,
+                   "fields": {
+                     "System.Id": 1,
+                     "System.Title": "Test",
+                     "System.State": "New",
+                     "System.Tags": null
+                   },
+                   "url": "https://dev.azure.com/org/_apis/wit/workItems/1"
+                 }
+               ]
+             }
+             """)
+        );
+
+        var parameters = new BoardsQueryParameters { Project = Project };
+        var results = await client.QueryWorkItemsAsync(parameters, CancellationToken.None);
+
+        Assert.Single(results);
+        Assert.Empty(results[0].Tags);
+    }
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_PriorityFieldIsString_ConvertsToInt()
+    {
+        var client = CreateClient(
+            (urlContains: "wiql",
+             jsonResponse: WiqlResponse(1)),
+            (urlContains: "workitemsbatch",
+             jsonResponse: """
+             {
+               "count": 1,
+               "value": [
+                 {
+                   "id": 1,
+                   "rev": 1,
+                   "fields": {
+                     "System.Id": 1,
+                     "System.Title": "Test",
+                     "System.State": "New",
+                     "Microsoft.VSTS.Common.Priority": "3"
+                   },
+                   "url": "https://dev.azure.com/org/_apis/wit/workItems/1"
+                 }
+               ]
+             }
+             """)
+        );
+
+        var parameters = new BoardsQueryParameters { Project = Project };
+        var results = await client.QueryWorkItemsAsync(parameters, CancellationToken.None);
+
+        Assert.Single(results);
+        Assert.Equal(3, results[0].Priority);
+    }
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_AssignedToIsObject_ExtractsDisplayName()
+    {
+        var client = CreateClient(
+            (urlContains: "wiql",
+             jsonResponse: WiqlResponse(1)),
+            (urlContains: "workitemsbatch",
+             jsonResponse: """
+             {
+               "count": 1,
+               "value": [
+                 {
+                   "id": 1,
+                   "rev": 1,
+                   "fields": {
+                     "System.Id": 1,
+                     "System.Title": "Test",
+                     "System.State": "New",
+                     "System.AssignedTo": {
+                       "displayName": "Alice Smith",
+                       "uniqueName": "alice@example.com",
+                       "id": "guid-here"
+                     }
+                   },
+                   "url": "https://dev.azure.com/org/_apis/wit/workItems/1"
+                 }
+               ]
+             }
+             """)
+        );
+
+        var parameters = new BoardsQueryParameters { Project = Project };
+        var results = await client.QueryWorkItemsAsync(parameters, CancellationToken.None);
+
+        Assert.Single(results);
+        Assert.Equal("Alice Smith", results[0].AssignedTo);
+    }
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_AssignedToIsString_ReturnsDirectly()
+    {
+        var client = CreateClient(
+            (urlContains: "wiql",
+             jsonResponse: WiqlResponse(1)),
+            (urlContains: "workitemsbatch",
+             jsonResponse: """
+             {
+               "count": 1,
+               "value": [
+                 {
+                   "id": 1,
+                   "rev": 1,
+                   "fields": {
+                     "System.Id": 1,
+                     "System.Title": "Test",
+                     "System.State": "New",
+                     "System.AssignedTo": "Bob Builder"
+                   },
+                   "url": "https://dev.azure.com/org/_apis/wit/workItems/1"
+                 }
+               ]
+             }
+             """)
+        );
+
+        var parameters = new BoardsQueryParameters { Project = Project };
+        var results = await client.QueryWorkItemsAsync(parameters, CancellationToken.None);
+
+        Assert.Single(results);
+        Assert.Equal("Bob Builder", results[0].AssignedTo);
+    }
+
+    // ──────────────────────────────────────────────
+    // Source metadata preservation
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_PreservesSourceMetadataForLaterUpdates()
+    {
+        var client = CreateClient(
+            (urlContains: "wiql",
+             jsonResponse: WiqlResponse(1)),
+            (urlContains: "workitemsbatch",
+             jsonResponse: BatchResponse(
+                 (id: 1, rev: 7, title: "Test", description: "Desc",
+                  state: "New", tags: "agent-ready",
+                  assignedToDisplay: "Dev", priority: 1,
+                  areaPath: @"Project\Area1", iterationPath: @"Project\Iteration",
+                  workItemType: "Feature")))
+        );
+
+        var parameters = new BoardsQueryParameters { Project = Project };
+        var results = await client.QueryWorkItemsAsync(parameters, CancellationToken.None);
+
+        Assert.Single(results);
+        var metadata = results[0].SourceMetadata;
+        Assert.NotNull(metadata);
+        Assert.Equal(4, metadata.Count);
+        Assert.Equal("7", metadata["revision"]);
+        Assert.Equal(@"Project\Area1", metadata["areaPath"]);
+        Assert.Equal(@"Project\Iteration", metadata["iterationPath"]);
+        Assert.Equal("Feature", metadata["workItemType"]);
+    }
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_MissingRevision_OmitsFromMetadata()
+    {
+        var batchJson = """
+        {
+          "count": 1,
+          "value": [
+            {
+              "id": 1,
+              "fields": {
+                "System.Id": 1,
+                "System.Title": "No revision item",
+                "System.State": "New",
+                "System.AreaPath": "Project",
+                "System.IterationPath": "Project\\Sprint",
+                "System.WorkItemType": "Task"
+              },
+              "url": "https://dev.azure.com/org/_apis/wit/workItems/1"
+            }
+          ]
+        }
+        """;
+
+        var client = CreateClient(
+            (urlContains: "wiql", jsonResponse: WiqlResponse(1)),
+            (urlContains: "workitemsbatch", jsonResponse: batchJson)
+        );
+
+        var parameters = new BoardsQueryParameters { Project = Project };
+        var results = await client.QueryWorkItemsAsync(parameters, CancellationToken.None);
+
+        Assert.Single(results);
+        var metadata = results[0].SourceMetadata;
+        Assert.NotNull(metadata);
+        // revision is absent
+        Assert.False(metadata.ContainsKey("revision"));
+        Assert.Equal("Project", metadata["areaPath"]);
+    }
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_NoSourceMetadataFields_ProducesNullMetadata()
+    {
+        // Item with only basic fields, no area/iteration/type/revision
+        var client = CreateClient(
+            (urlContains: "wiql",
+             jsonResponse: WiqlResponse(1)),
+            (urlContains: "workitemsbatch",
+             jsonResponse: """
+             {
+               "count": 1,
+               "value": [
+                 {
+                   "id": 1,
+                   "fields": {
+                     "System.Id": 1,
+                     "System.Title": "Bare item",
+                     "System.State": "New"
+                   },
+                   "url": "https://dev.azure.com/org/_apis/wit/workItems/1"
+                 }
+               ]
+             }
+             """)
+        );
+
+        var parameters = new BoardsQueryParameters { Project = Project };
+        var results = await client.QueryWorkItemsAsync(parameters, CancellationToken.None);
+
+        Assert.Single(results);
+        Assert.Null(results[0].SourceMetadata);
+    }
+
+    // ──────────────────────────────────────────────
+    // WIQL builder edge cases
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_WiqlContainsSingleQuotedTags_IsEscapedCorrectly()
+    {
+        // Tags with single quotes should not break WIQL — verify the
+        // mapping still works when the WIQL is valid.
+        var client = CreateClient(
+            (urlContains: "wiql",
+             jsonResponse: WiqlResponse(1)),
+            (urlContains: "workitemsbatch",
+             jsonResponse: BatchResponse(
+                 (id: 1, rev: 1, title: "Test", description: null,
+                  state: "New", tags: "agent-ready",
+                  assignedToDisplay: null, priority: 1,
+                  areaPath: "P", iterationPath: "P\\I", workItemType: "T")))
+        );
+
+        var parameters = new BoardsQueryParameters
+        {
+            Project = Project,
+            Tags = new[] { "agent-ready" },
+            ExcludedTags = new[] { "agent-blocked" },
+        };
+
+        var results = await client.QueryWorkItemsAsync(parameters, CancellationToken.None);
+
+        Assert.Single(results);
+    }
+
+    // ──────────────────────────────────────────────
+    // HTTP error handling
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_MissingProject_ThrowsInvalidOperation()
+    {
+        // Create a client with no project configured — the query must fail with
+        // a clear error before any HTTP call is made.
+        var handler = new FakeHttpMessageHandler();
+        var http = new HttpClient(handler) { BaseAddress = new Uri(OrgUrl + "/") };
+        var authBytes = Encoding.ASCII.GetBytes(":test-pat");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            BaseUrl = OrgUrl,
+            Project = null, // No project configured
+            PersonalAccessToken = "test-pat",
+        };
+        var client = new AzureDevOpsBoardsClient(http, options);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.QueryWorkItemsAsync(new BoardsQueryParameters(), CancellationToken.None));
+
+        Assert.Contains("project", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_NonSuccessStatusCode_Throws()
+    {
+        var handler = new FakeHttpMessageHandler(
+            (urlContains: "wiql",
+             httpResponse: new HttpResponseMessage(HttpStatusCode.Unauthorized)
+             {
+                 Content = new StringContent("""{"message":"Access denied"}""",
+                     Encoding.UTF8, "application/json"),
+             }));
+        var http = new HttpClient(handler) { BaseAddress = new Uri(OrgUrl + "/") };
+        var authBytes = Encoding.ASCII.GetBytes(":bad-pat");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            BaseUrl = OrgUrl,
+            Project = Project,
+            PersonalAccessToken = "bad-pat",
+        };
+        var client = new AzureDevOpsBoardsClient(http, options);
+
+        var parameters = new BoardsQueryParameters { Project = Project };
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.QueryWorkItemsAsync(parameters, CancellationToken.None));
+    }
+
+    // ──────────────────────────────────────────────
+    // JSON response helpers
+    // ──────────────────────────────────────────────
+
+    private static string WiqlResponse(params int[] ids)
+    {
+        var workItems = ids.Select(id => new { id, url = $"{OrgUrl}/_apis/wit/workItems/{id}" });
+        return JsonSerializer.Serialize(new
+        {
+            queryType = "flat",
+            asOf = "2024-01-01T00:00:00Z",
+            workItems,
+        });
+    }
+
+    private static string BatchResponse(
+        params (int id, int rev, string title, string? description,
+                string state, string tags, string? assignedToDisplay,
+                int priority, string areaPath, string iterationPath,
+                string workItemType)[] items)
+    {
+        var value = items.Select(item =>
+        {
+            var fields = new Dictionary<string, object?>
+            {
+                ["System.Id"] = item.id,
+                ["System.Title"] = item.title,
+                ["System.State"] = item.state,
+                ["System.Tags"] = item.tags,
+                ["Microsoft.VSTS.Common.Priority"] = item.priority,
+                ["System.AreaPath"] = item.areaPath,
+                ["System.IterationPath"] = item.iterationPath,
+                ["System.WorkItemType"] = item.workItemType,
+            };
+
+            if (item.description is not null)
+                fields["System.Description"] = item.description;
+
+            if (item.assignedToDisplay is not null)
+            {
+                fields["System.AssignedTo"] = new Dictionary<string, string>
+                {
+                    ["displayName"] = item.assignedToDisplay,
+                    ["uniqueName"] = item.assignedToDisplay.Replace(" ", ".").ToLowerInvariant() + "@example.com",
+                };
+            }
+
+            return new
+            {
+                id = item.id,
+                rev = item.rev,
+                fields,
+                url = $"{OrgUrl}/_apis/wit/workItems/{item.id}",
+            };
+        });
+
+        return JsonSerializer.Serialize(new
+        {
+            count = items.Length,
+            value,
+        });
+    }
+
+    /// <summary>
+    /// Fake <see cref="HttpMessageHandler"/> that matches requests by URL substring
+    /// and returns predefined responses in order.
+    /// </summary>
+    private sealed class FakeHttpMessageHandler : HttpMessageHandler
+    {
+        private readonly Queue<(string urlContains, Func<HttpResponseMessage> responseFactory)> _responses;
+
+        public FakeHttpMessageHandler()
+        {
+            _responses = new Queue<(string, Func<HttpResponseMessage>)>();
+        }
+
+        public FakeHttpMessageHandler(params (string urlContains, string jsonResponse)[] responses)
+        {
+            _responses = new Queue<(string, Func<HttpResponseMessage>)>(
+                responses.Select(r =>
+                    (r.urlContains,
+                     (Func<HttpResponseMessage>)(() => new HttpResponseMessage(HttpStatusCode.OK)
+                     {
+                         Content = new StringContent(r.jsonResponse, Encoding.UTF8, "application/json"),
+                     }))));
+        }
+
+        public FakeHttpMessageHandler(params (string urlContains, HttpResponseMessage httpResponse)[] responses)
+        {
+            _responses = new Queue<(string, Func<HttpResponseMessage>)>(
+                responses.Select(r =>
+                    (r.urlContains, (Func<HttpResponseMessage>)(() => r.httpResponse))));
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var url = request.RequestUri?.AbsoluteUri ?? string.Empty;
+
+            // Find the first queued response whose URL match contains the request URL
+            var match = _responses.FirstOrDefault(r => url.Contains(r.urlContains, StringComparison.OrdinalIgnoreCase));
+            if (match.urlContains is not null)
+            {
+                // Re-queue to remove consumed match; rest remain
+                var remaining = new Queue<(string, Func<HttpResponseMessage>)>(
+                    _responses.Where(r => r.urlContains != match.urlContains));
+                _responses.Clear();
+                foreach (var r in remaining)
+                    _responses.Enqueue(r);
+
+                return Task.FromResult(match.responseFactory());
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)
+            {
+                Content = new StringContent(
+                    "{\"message\":\"No handler for " + url + "\"}",
+                    Encoding.UTF8, "application/json"),
+            });
+        }
+    }
+}

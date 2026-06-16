@@ -48,6 +48,14 @@ public sealed record WorkCandidate
 
     /// <summary>Identifier of the work source that produced this candidate.</summary>
     public string Source { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Opaque source metadata needed for later updates (claiming, status projection).
+    /// For Azure DevOps Boards this carries the revision number, area path,
+    /// iteration path, and work item type so subsequent PATCH operations can
+    /// use optimistic concurrency and preserve field-level fidelity.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? SourceMetadata { get; init; }
 }
 
 /// <summary>
