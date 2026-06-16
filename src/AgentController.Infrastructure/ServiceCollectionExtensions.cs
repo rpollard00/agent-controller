@@ -208,6 +208,40 @@ public static class AgentControllerServiceCollectionExtensions
     }
 
     /// <summary>
+    /// Registers the <see cref="LocalGitSourceControlProvider"/> as a singleton
+    /// <see cref="ISourceControlProvider"/> that uses <c>git clone</c> for all
+    /// clone URL types: local paths, <c>file://</c> URLs, and remote URLs.
+    ///
+    /// Callers should register this <em>after</em>
+    /// <see cref="AddAgentControllerNoOpProviders"/> so the last-registered
+    /// <see cref="ISourceControlProvider"/> wins.
+    /// </summary>
+    public static IServiceCollection AddAgentControllerLocalGitSourceControl(
+        this IServiceCollection services)
+    {
+        services.AddSingleton<ISourceControlProvider, LocalGitSourceControlProvider>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers the <see cref="LocalWorkspaceEnvironmentProvider"/> as a singleton
+    /// <see cref="IEnvironmentProvider"/> that creates per-run local workspace
+    /// directories under <c>{runRoot}/{runId}/</c>.
+    ///
+    /// Callers should register this <em>after</em>
+    /// <see cref="AddAgentControllerNoOpProviders"/> so the last-registered
+    /// <see cref="IEnvironmentProvider"/> wins.
+    /// </summary>
+    public static IServiceCollection AddAgentControllerLocalWorkspaceEnvironment(
+        this IServiceCollection services)
+    {
+        services.AddSingleton<IEnvironmentProvider, LocalWorkspaceEnvironmentProvider>();
+
+        return services;
+    }
+
+    /// <summary>
     /// Registers the Azure DevOps Boards implementation as a singleton
     /// <see cref="IWorkSource"/> backed by <see cref="IAzureDevOpsBoardsClient"/>.
     ///

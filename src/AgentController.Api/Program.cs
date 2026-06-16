@@ -26,6 +26,14 @@ builder.Services.AddAgentControllerLifecycleService();
 // (source control, environment, runtime)
 builder.Services.AddAgentControllerNoOpProviders();
 
+// To use a real local-git source control provider (which supports local paths,
+// file:// URLs, and remote git URLs as cloneUrl values), swap the no-op with:
+//   builder.Services.AddAgentControllerLocalGitSourceControl();
+//
+// To use a real local-workspace environment provider (which creates per-run
+// directories under runRoot), swap the no-op with:
+//   builder.Services.AddAgentControllerLocalWorkspaceEnvironment();
+
 // Override the no-op IWorkSource with a LocalFakeWorkSource backed by persisted WorkItems.
 // Must be registered after AddAgentControllerNoOpProviders so the last-registered
 // IWorkSource wins.
