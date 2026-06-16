@@ -16,4 +16,9 @@
         <!-- Keep the build clean of noise -->
         <NoWarn>$(NoWarn);CS1591</NoWarn>
     </PropertyGroup>
+
+    <ItemGroup>
+        <!-- GHSA-hv8m-jj95-wg3x: MessagePack unsafe deserialization (transitive via Aspire) -->
+        <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-hv8m-jj95-wg3x" />
+    </ItemGroup>
 </Project>

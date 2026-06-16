@@ -93,7 +93,7 @@ internal sealed class EfRepositoryStore : IRepositoryStore
         }
     }
 
-    private static IReadOnlyList<string> DeserializeList(string? json)
+    private static List<string> DeserializeList(string? json)
     {
         if (string.IsNullOrWhiteSpace(json)) return [];
         try

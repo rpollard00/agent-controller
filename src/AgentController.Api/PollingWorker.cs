@@ -22,7 +22,7 @@ namespace AgentController.Api;
 /// Seam: kept in the same host as the API for the prototype; a future split can
 /// move this into a separate deployable without changing the domain or application contracts.
 /// </summary>
-public sealed class PollingWorker : BackgroundService
+public sealed partial class PollingWorker : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IOptionsMonitor<AgentControllerOptions> _options;
@@ -64,10 +64,7 @@ public sealed class PollingWorker : BackgroundService
 
         if (!options.WorkerEnabled)
         {
-            _logger.LogInformation(
-                "Polling worker is disabled (WorkerEnabled=false). No Azure DevOps, source control, "
-                    + "environment, or pi-materia work will be performed."
-            );
+            Log.WorkerDisabled(_logger);
 
             // Sleep indefinitely until requested to stop, keeping the host alive.
             try
@@ -82,14 +79,12 @@ public sealed class PollingWorker : BackgroundService
             return;
         }
 
-        _logger.LogInformation(
-            "Polling worker started. WorkerId={WorkerId}, PollInterval={PollInterval}s, " +
-            "MaxConcurrency={MaxConcurrency}, StaleTimeout={StaleTimeout}s",
+        Log.WorkerStarted(
+            _logger,
             options.WorkerId,
             options.PollIntervalSeconds,
             options.MaxConcurrentRuns,
-            options.StaleTimeoutSeconds
-        );
+            options.StaleTimeoutSeconds);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -104,10 +99,7 @@ public sealed class PollingWorker : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(
-                    ex,
-                    "Unhandled exception in polling cycle. Worker will retry after delay."
-                );
+                Log.PollCycleError(_logger, ex);
             }
 
             try
@@ -121,7 +113,7 @@ public sealed class PollingWorker : BackgroundService
             }
         }
 
-        _logger.LogInformation("Polling worker stopped.");
+        Log.WorkerStopped(_logger);
     }
 
     /// <summary>
@@ -145,11 +137,7 @@ public sealed class PollingWorker : BackgroundService
 
         if (availableSlots <= 0)
         {
-            _logger.LogDebug(
-                "Concurrency limit reached (active={ActiveCount}, max={MaxConcurrency}). " +
-                "Skipping work discovery.",
-                activeCount,
-                options.MaxConcurrentRuns);
+            Log.ConcurrencyLimitReached(_logger, activeCount, options.MaxConcurrentRuns);
         }
         else
         {
@@ -159,9 +147,7 @@ public sealed class PollingWorker : BackgroundService
 
             if (candidates.Count > 0)
             {
-                _logger.LogInformation(
-                    "Discovered {CandidateCount} eligible work candidate(s).",
-                    candidates.Count);
+                Log.CandidatesDiscovered(_logger, candidates.Count);
             }
 
             foreach (var candidate in candidates)
@@ -176,11 +162,8 @@ public sealed class PollingWorker : BackgroundService
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(
-                        ex,
-                        "Failed to process work candidate {CandidateId} ({Title}).",
-                        candidate.Id,
-                        candidate.Title);
+                    Log.CandidateProcessingFailed(
+                        _logger, ex, candidate.Id, candidate.Title);
                 }
             }
         }
@@ -211,17 +194,14 @@ public sealed class PollingWorker : BackgroundService
 
         if (!claimResult.Success)
         {
-            _logger.LogDebug(
-                "Could not claim candidate {CandidateId}: {Reason}",
+            Log.ClaimFailed(
+                _logger,
                 candidate.Id,
                 claimResult.FailureReason ?? "unknown");
             return;
         }
 
-        _logger.LogInformation(
-            "Claimed work candidate {CandidateId} ({Title}).",
-            candidate.Id,
-            candidate.Title);
+        Log.CandidateClaimed(_logger, candidate.Id, candidate.Title);
 
         // Create the agent run (starts in Claimed state, records controller.claimed event)
         var run = await lifecycle.CreateRunForWorkItemAsync(
@@ -229,10 +209,7 @@ public sealed class PollingWorker : BackgroundService
             options.WorkerId,
             ct);
 
-        _logger.LogInformation(
-            "Created agent run {RunId} for work item {WorkItemId}.",
-            run.RunId,
-            candidate.Id);
+        Log.RunCreated(_logger, run.RunId, candidate.Id);
 
         // Advance through all controller-owned lifecycle states.
         // Phase 1: skip real environment provisioning, repository cloning,
@@ -292,11 +269,7 @@ public sealed class PollingWorker : BackgroundService
                 ct);
         }
 
-        _logger.LogInformation(
-            "Run {RunId} advanced to {State} for work item {WorkItemId}.",
-            run.RunId,
-            RunLifecycleState.AwaitingResult,
-            candidate.Id);
+        Log.RunAdvanced(_logger, run.RunId, candidate.Id);
     }
 
     /// <summary>
@@ -319,25 +292,103 @@ public sealed class PollingWorker : BackgroundService
             try
             {
                 await lifecycle.RecoverStaleRunAsync(staleRun.RunId, ct);
-                _logger.LogWarning(
-                    "Recovered stale run {RunId} (last heartbeat: {LastHeartbeat}).",
+                Log.StaleRunRecovered(
+                    _logger,
                     staleRun.RunId,
-                    staleRun.LastHeartbeatAt?.ToString("O") ?? "never");
+                    staleRun.LastHeartbeatAt);
             }
             catch (Exception ex)
             {
-                _logger.LogError(
-                    ex,
-                    "Failed to recover stale run {RunId}.",
-                    staleRun.RunId);
+                Log.StaleRecoveryFailed(_logger, ex, staleRun.RunId);
             }
         }
 
         if (staleRuns.Count > 0)
         {
-            _logger.LogInformation(
-                "Recovered {StaleCount} stale run(s).",
-                staleRuns.Count);
+            Log.StaleRecoverySummary(_logger, staleRuns.Count);
         }
+    }
+
+    /// <summary>
+    /// Source-generated high-performance logger methods.
+    /// </summary>
+    private static partial class Log
+    {
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Polling worker is disabled (WorkerEnabled=false). No Azure DevOps, source control, "
+                + "environment, or pi-materia work will be performed.")]
+        public static partial void WorkerDisabled(ILogger logger);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Polling worker started. WorkerId={WorkerId}, PollInterval={PollInterval}s, "
+                + "MaxConcurrency={MaxConcurrency}, StaleTimeout={StaleTimeout}s")]
+        public static partial void WorkerStarted(
+            ILogger logger, string workerId, int pollInterval, int maxConcurrency, int staleTimeout);
+
+        [LoggerMessage(
+            Level = LogLevel.Error,
+            Message = "Unhandled exception in polling cycle. Worker will retry after delay.")]
+        public static partial void PollCycleError(ILogger logger, Exception ex);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Polling worker stopped.")]
+        public static partial void WorkerStopped(ILogger logger);
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "Concurrency limit reached (active={ActiveCount}, max={MaxConcurrency}). "
+                + "Skipping work discovery.")]
+        public static partial void ConcurrencyLimitReached(
+            ILogger logger, int activeCount, int maxConcurrency);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Discovered {CandidateCount} eligible work candidate(s).")]
+        public static partial void CandidatesDiscovered(ILogger logger, int candidateCount);
+
+        [LoggerMessage(
+            Level = LogLevel.Error,
+            Message = "Failed to process work candidate {CandidateId} ({Title}).")]
+        public static partial void CandidateProcessingFailed(
+            ILogger logger, Exception ex, string candidateId, string title);
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "Could not claim candidate {CandidateId}: {Reason}")]
+        public static partial void ClaimFailed(ILogger logger, string candidateId, string reason);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Claimed work candidate {CandidateId} ({Title}).")]
+        public static partial void CandidateClaimed(ILogger logger, string candidateId, string title);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Created agent run {RunId} for work item {WorkItemId}.")]
+        public static partial void RunCreated(ILogger logger, string runId, string workItemId);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Run {RunId} advanced to AwaitingResult for work item {WorkItemId}.")]
+        public static partial void RunAdvanced(ILogger logger, string runId, string workItemId);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Recovered stale run {RunId} (last heartbeat: {LastHeartbeat}).")]
+        public static partial void StaleRunRecovered(
+            ILogger logger, string runId, DateTimeOffset? lastHeartbeat);
+
+        [LoggerMessage(
+            Level = LogLevel.Error,
+            Message = "Failed to recover stale run {RunId}.")]
+        public static partial void StaleRecoveryFailed(ILogger logger, Exception ex, string runId);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Recovered {StaleCount} stale run(s).")]
+        public static partial void StaleRecoverySummary(ILogger logger, int staleCount);
     }
 }

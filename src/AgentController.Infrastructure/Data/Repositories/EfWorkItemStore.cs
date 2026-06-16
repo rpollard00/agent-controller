@@ -240,7 +240,7 @@ internal sealed class EfWorkItemStore : IWorkItemStore
         return list is { Count: > 0 } ? JsonSerializer.Serialize(list, JsonOptions) : null;
     }
 
-    private static IReadOnlyDictionary<string, string>? DeserializeDictionary(string? json)
+    private static Dictionary<string, string>? DeserializeDictionary(string? json)
     {
         if (string.IsNullOrWhiteSpace(json)) return null;
         try
@@ -253,7 +253,7 @@ internal sealed class EfWorkItemStore : IWorkItemStore
         }
     }
 
-    private static IReadOnlyList<string> DeserializeList(string? json)
+    private static List<string> DeserializeList(string? json)
     {
         if (string.IsNullOrWhiteSpace(json)) return [];
         try

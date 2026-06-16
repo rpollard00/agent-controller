@@ -54,7 +54,7 @@ public sealed class AgentControllerOptions
     /// Whether to enable the background polling worker.
     /// Disabled by default for early scaffolding; enable once real providers are wired.
     /// </summary>
-    public bool WorkerEnabled { get; init; } = false;
+    public bool WorkerEnabled { get; init; }
 
     /// <summary>
     /// Maximum time a run can be in <see cref="Domain.RunLifecycleState.AwaitingResult"/>

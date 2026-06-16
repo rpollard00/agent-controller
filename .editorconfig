@@ -43,3 +43,8 @@ dotnet_diagnostic.CA1716.severity = suggestion
 dotnet_style_require_accessibility_modifiers = for_non_interface_members:suggestion
 dotnet_style_prefer_inferred_tuple_names = true:suggestion
 dotnet_style_prefer_inferred_anonymous_type_member_names = true:suggestion
+
+[tests/**/*.cs]
+# Test method naming conventions (Given_When_Then patterns) use underscores
+# by design for readability; suppress CA1707 in test projects.
+dotnet_diagnostic.CA1707.severity = none

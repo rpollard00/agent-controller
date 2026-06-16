@@ -22,7 +22,7 @@ namespace AgentController.Migrations;
 /// automatically. Schema changes are owned exclusively by this console app
 /// to avoid accidental drift or startup race conditions.
 /// </summary>
-internal static class Program
+internal static partial class Program
 {
     public static async Task<int> Main(string[] args)
     {
@@ -61,10 +61,7 @@ internal static class Program
         var loggerFactory = host.Services.GetRequiredService<ILoggerFactory>();
         var logger = loggerFactory.CreateLogger("AgentController.Migrations");
 
-        logger.LogInformation(
-            "Starting database migration run at {Timestamp}",
-            DateTimeOffset.UtcNow
-        );
+        Log.MigrationStarting(logger, DateTimeOffset.UtcNow);
 
         try
         {
@@ -72,26 +69,18 @@ internal static class Program
 
             // Ensure the parent directory exists for file-based SQLite databases
             // so MigrateAsync does not fail because the directory is missing.
-            EnsureDatabaseDirectory(dbContext, logger);
+            EnsureDatabaseDirectory(dbContext, loggerFactory.CreateLogger("AgentController.Migrations"));
 
-            logger.LogInformation("Applying pending EF Core migrations...");
+            Log.ApplyingMigrations(logger);
             await dbContext.Database.MigrateAsync();
 
-            logger.LogInformation(
-                "Migration run completed successfully at {Timestamp}",
-                DateTimeOffset.UtcNow
-            );
+            Log.MigrationSucceeded(logger, DateTimeOffset.UtcNow);
 
             return 0;
         }
         catch (Exception ex)
         {
-            logger.LogCritical(
-                ex,
-                "Migration run failed: {ErrorMessage}",
-                ex.Message
-            );
-
+            Log.MigrationFailed(logger, ex, ex.Message);
             return 1;
         }
     }
@@ -111,10 +100,35 @@ internal static class Program
         var createdDir = SqliteDatabaseEnsurer.EnsureDirectory(connectionString);
         if (createdDir is not null)
         {
-            logger.LogInformation(
-                "Created database directory: {Directory}",
-                createdDir
-            );
+            Log.DirectoryCreated(logger, createdDir);
         }
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Starting database migration run at {Timestamp}")]
+        public static partial void MigrationStarting(ILogger logger, DateTimeOffset timestamp);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Applying pending EF Core migrations...")]
+        public static partial void ApplyingMigrations(ILogger logger);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Migration run completed successfully at {Timestamp}")]
+        public static partial void MigrationSucceeded(ILogger logger, DateTimeOffset timestamp);
+
+        [LoggerMessage(
+            Level = LogLevel.Critical,
+            Message = "Migration run failed: {ErrorMessage}")]
+        public static partial void MigrationFailed(ILogger logger, Exception ex, string errorMessage);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Created database directory: {Directory}")]
+        public static partial void DirectoryCreated(ILogger logger, string directory);
     }
 }

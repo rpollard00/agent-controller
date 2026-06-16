@@ -205,5 +205,5 @@ public sealed record WorkItemListQuery
     public int MaxResults { get; init; } = 100;
 
     /// <summary>Number of items to skip for pagination.</summary>
-    public int Offset { get; init; } = 0;
+    public int Offset { get; init; }
 }

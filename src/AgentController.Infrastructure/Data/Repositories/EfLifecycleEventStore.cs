@@ -98,7 +98,7 @@ internal sealed class EfLifecycleEventStore : ILifecycleEventStore
         }
     }
 
-    private static IReadOnlyDictionary<string, object?>? DeserializePayload(string? json)
+    private static Dictionary<string, object?>? DeserializePayload(string? json)
     {
         if (string.IsNullOrWhiteSpace(json)) return null;
         try
