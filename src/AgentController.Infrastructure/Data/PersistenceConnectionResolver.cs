@@ -71,6 +71,12 @@ public static class PersistenceConnectionResolver
             return builder.ConnectionString;
         }
 
+        // Allow special SQLite data sources like ":memory:" and empty (URI mode)
+        if (dataSource == ":memory:" || dataSource.Length == 0)
+        {
+            return builder.ConnectionString;
+        }
+
         // Reject relative paths — must be rooted (starts with / or a drive letter)
         if (!Path.IsPathRooted(dataSource))
         {

@@ -4,10 +4,17 @@ namespace AgentController.Api.Models;
 
 /// <summary>
 /// Request body for the POST /runs/{runId}/events endpoint.
-/// Maps to a <see cref="RuntimeEvent"/>; the <c>runId</c> is taken from the route.
+/// Maps to a <see cref="RuntimeEvent"/>; the <c>runId</c> is taken from the route
+/// but may also be set in the body. When both are provided, they must match.
 /// </summary>
 public sealed record RuntimeEventRequest
 {
+    /// <summary>
+    /// Controller-assigned run identifier. Required per the runtime event contract.
+    /// When provided, must match the <c>runId</c> route parameter.
+    /// </summary>
+    public string? RunId { get; init; }
+
     /// <summary>Stable unique identifier for this event (idempotency key). Required.</summary>
     public string? EventId { get; init; }
 

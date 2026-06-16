@@ -106,7 +106,7 @@ app.MapPost(
         CancellationToken ct
     ) =>
     {
-        // Validation
+        // Validation: required fields
         if (string.IsNullOrWhiteSpace(request.EventType))
         {
             return Results.BadRequest(new
@@ -120,6 +120,41 @@ app.MapPost(
             return Results.BadRequest(new
             {
                 error = "Request body is missing required field 'eventId'."
+            });
+        }
+
+        // Validation: route runId / body runId consistency
+        if (!string.IsNullOrWhiteSpace(request.RunId)
+            && !request.RunId.Equals(runId, StringComparison.Ordinal))
+        {
+            return Results.BadRequest(new
+            {
+                error = $"RunId mismatch: route parameter '{runId}' does not match " +
+                        $"request body 'runId' value '{request.RunId}'.",
+                routeRunId = runId,
+                bodyRunId = request.RunId,
+            });
+        }
+
+        // Validation: event severity must be a defined enum value
+        if (request.Severity.HasValue && !Enum.IsDefined(request.Severity.Value))
+        {
+            return Results.BadRequest(new
+            {
+                error = $"Unsupported severity value {(int)request.Severity.Value}. " +
+                        $"Valid values: {string.Join(", ", Enum.GetNames<EventSeverity>())}."
+            });
+        }
+
+        // Validation: occurredAt must not be in the far future (more than 5 minutes ahead)
+        if (request.OccurredAt.HasValue
+            && request.OccurredAt.Value > DateTimeOffset.UtcNow.AddMinutes(5))
+        {
+            return Results.BadRequest(new
+            {
+                error = $"Field 'occurredAt' is too far in the future. " +
+                        $"Maximum allowed skew is 5 minutes.",
+                provided = request.OccurredAt.Value.ToString("O"),
             });
         }
 
@@ -142,12 +177,24 @@ app.MapPost(
         }
         catch (InvalidOperationException ex)
         {
-            return Results.Conflict(new
-            {
-                error = ex.Message,
-                runId,
-                eventId = request.EventId,
-            });
+            // Distinguish idempotency conflicts from other validation errors.
+            // Idempotency/duplicate → 409 Conflict.
+            // Unsupported type, bad outcome, regression, missing field, terminal → 422 Unprocessable.
+            var isDuplicate = ex.Message.Contains("already been processed", StringComparison.OrdinalIgnoreCase);
+
+            return isDuplicate
+                ? Results.Conflict(new
+                {
+                    error = ex.Message,
+                    runId,
+                    eventId = request.EventId,
+                })
+                : Results.UnprocessableEntity(new
+                {
+                    error = ex.Message,
+                    runId,
+                    eventId = request.EventId,
+                });
         }
 
         // Fetch the updated run to return current state

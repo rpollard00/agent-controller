@@ -30,5 +30,6 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="AgentController.Migrations" />
+    <InternalsVisibleTo Include="AgentController.Api.Tests" />
   </ItemGroup>
 </Project>

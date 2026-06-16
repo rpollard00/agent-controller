@@ -209,6 +209,13 @@ internal sealed class RunLifecycleService : IRunLifecycleService
                 "Runtime event is missing required field 'eventType'.");
         }
 
+        if (!Enum.IsDefined(evt.Severity))
+        {
+            throw new InvalidOperationException(
+                $"Unsupported severity value {(int)evt.Severity}. " +
+                $"Valid values: {string.Join(", ", Enum.GetNames<EventSeverity>())}.");
+        }
+
         // Idempotency check
         var alreadyExists = await _eventStore.ExistsByEventIdAsync(evt.RunId, evt.EventId, ct);
         if (alreadyExists)
@@ -415,10 +422,18 @@ internal sealed class RunLifecycleService : IRunLifecycleService
         RuntimeEvent evt,
         CancellationToken ct)
     {
-        // Transition to AgentRunning if we're in AwaitingResult or earlier
-        if (run.Status != RunLifecycleState.AgentRunning)
+        // runtime.accepted must never regress a run that has already progressed
+        // beyond AgentRunning. Only transition forward from states prior to AgentRunning.
+        if ((int)run.Status < (int)RunLifecycleState.AgentRunning)
         {
             await _runStore.UpdateStatusAsync(run.RunId, RunLifecycleState.AgentRunning, ct);
+        }
+        else if (run.Status > RunLifecycleState.AgentRunning)
+        {
+            throw new InvalidOperationException(
+                $"Cannot accept run '{run.RunId}': run has already progressed to '{run.Status}', " +
+                "'runtime.accepted' is only valid for runs prior to AgentRunning. " +
+                "Use 'runtime.heartbeat' or 'runtime.status' to report activity on active runs.");
         }
 
         // Update runtime fields
@@ -561,10 +576,16 @@ internal sealed class RunLifecycleService : IRunLifecycleService
         {
             CompletionOutcomes.PullRequestOpened => RunLifecycleState.PrOpened,
             CompletionOutcomes.BranchPushed => RunLifecycleState.BranchPushed,
+            CompletionOutcomes.PatchCreated => RunLifecycleState.Completed,
+            CompletionOutcomes.NoChangesNeeded => RunLifecycleState.Completed,
             CompletionOutcomes.NeedsHuman => RunLifecycleState.NeedsHuman,
             CompletionOutcomes.Failed => RunLifecycleState.Failed,
-            // patch_created, no_changes_needed, and unknown → Completed
-            _ => RunLifecycleState.Completed,
+            _ => throw new InvalidOperationException(
+                $"Unsupported completion outcome '{outcome ?? "(null)"}'. " +
+                $"Supported outcomes: {CompletionOutcomes.PullRequestOpened}, " +
+                $"{CompletionOutcomes.BranchPushed}, {CompletionOutcomes.PatchCreated}, " +
+                $"{CompletionOutcomes.NoChangesNeeded}, {CompletionOutcomes.NeedsHuman}, " +
+                $"{CompletionOutcomes.Failed}."),
         };
     }
 

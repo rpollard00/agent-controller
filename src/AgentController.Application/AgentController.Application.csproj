@@ -10,5 +10,6 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="AgentController.Infrastructure" />
+    <InternalsVisibleTo Include="AgentController.Application.Tests" />
   </ItemGroup>
 </Project>
