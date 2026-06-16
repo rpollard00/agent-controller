@@ -242,6 +242,38 @@ public static class AgentControllerServiceCollectionExtensions
     }
 
     /// <summary>
+    /// Registers the <see cref="MockPiMateriaRuntime"/> as a singleton
+    /// <see cref="IAgentRuntime"/> that simulates a pi-materia runtime by
+    /// emitting a deterministic sequence of runtime events in-process.
+    ///
+    /// The mock runtime fires <c>runtime.accepted</c>, <c>runtime.heartbeat</c>,
+    /// <c>runtime.status</c>, and <c>runtime.completed</c> events automatically
+    /// after <see cref="IAgentRuntime.StartAsync"/> is called, driving the run
+    /// through to completion without requiring an external process or HTTP calls.
+    ///
+    /// Completion outcome is configurable via <see cref="RuntimeOptions.DefaultMateriaLoadout"/>:
+    /// <list type="bullet">
+    ///   <item><c>"success-pr"</c> or unset → <c>pull_request_opened</c></item>
+    ///   <item><c>"no-change"</c> → <c>no_changes_needed</c></item>
+    ///   <item>starts with <c>"fail"</c> → <c>failed</c></item>
+    /// </list>
+    ///
+    /// Requires <see cref="AddAgentControllerOptions"/> to be called first
+    /// (for <see cref="RuntimeOptions"/> binding).
+    ///
+    /// Callers should register this <em>after</em>
+    /// <see cref="AddAgentControllerNoOpProviders"/> so the last-registered
+    /// <see cref="IAgentRuntime"/> wins.
+    /// </summary>
+    public static IServiceCollection AddAgentControllerMockPiMateriaRuntime(
+        this IServiceCollection services)
+    {
+        services.AddSingleton<IAgentRuntime, MockPiMateriaRuntime>();
+
+        return services;
+    }
+
+    /// <summary>
     /// Registers the Azure DevOps Boards implementation as a singleton
     /// <see cref="IWorkSource"/> backed by <see cref="IAzureDevOpsBoardsClient"/>.
     ///

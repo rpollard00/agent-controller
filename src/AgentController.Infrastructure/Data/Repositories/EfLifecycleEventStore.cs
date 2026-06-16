@@ -53,12 +53,13 @@ internal sealed class EfLifecycleEventStore : ILifecycleEventStore
         string runId,
         CancellationToken cancellationToken)
     {
+        // Fetch entities then apply client-side ordering.
+        // DateTimeOffset ORDER BY is not supported by EF Core SQLite 9.x.
         var entities = await _db.LifecycleEvents
             .Where(e => e.RunId == runId)
-            .OrderBy(e => e.CreatedAt)
             .ToListAsync(cancellationToken);
 
-        return entities.Select(MapToDomain).ToList();
+        return entities.OrderBy(e => e.CreatedAt).Select(MapToDomain).ToList();
     }
 
     public async Task<bool> ExistsByEventIdAsync(

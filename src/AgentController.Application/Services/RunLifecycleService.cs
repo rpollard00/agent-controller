@@ -382,14 +382,31 @@ internal sealed class RunLifecycleService : IRunLifecycleService
         if (current == target)
             return true;
 
-        // Cancellation is always allowed from any non-terminal state
+        // Cancellation and failure are always allowed from any non-terminal state.
+        // Failure transitions may come from environment provisioning, repository
+        // cloning, or runtime handoff errors.
         if (target == RunLifecycleState.Cancelled && current != RunLifecycleState.CleanedUp)
+            return true;
+
+        if (target == RunLifecycleState.Failed && !IsTerminalStatic(current))
             return true;
 
         if (AllowedTransitions.TryGetValue(current, out var allowed))
             return allowed.Contains(target);
 
         return false;
+    }
+
+    private static bool IsTerminalStatic(RunLifecycleState state)
+    {
+        return state switch
+        {
+            RunLifecycleState.Completed => true,
+            RunLifecycleState.Failed => true,
+            RunLifecycleState.Cancelled => true,
+            RunLifecycleState.CleanedUp => true,
+            _ => false,
+        };
     }
 
     private async Task MaybeUpdateWorkItemStatus(
@@ -632,6 +649,11 @@ internal sealed class RunLifecycleService : IRunLifecycleService
             ResultSummary = GetPayloadString(evt.Payload, "summary") ?? evt.Message ?? run.ResultSummary,
             LastHeartbeatAt = evt.OccurredAt,
             FinishedAt = evt.OccurredAt,
+            // When the completion outcome is "failed", carry the error message
+            // and reason so the run record is diagnosable.
+            Error = targetState == RunLifecycleState.Failed
+                ? (evt.Message ?? GetPayloadString(evt.Payload, "summary"))
+                : run.Error,
         };
         await _runStore.UpdateRuntimeFieldsAsync(run.RunId, update, ct);
     }

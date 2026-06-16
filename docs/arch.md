@@ -49,17 +49,17 @@ The MVP should evolve the same design into a durable internal service using stro
 
 ## 0.2 Incomplete
 
-### Phase 3: Azure DevOps Repos Clone — NoOp only
+### Phase 3: Azure DevOps Repos Clone — NoOp only, local-git implemented
 
-`ISourceControlProvider` is defined. `NoOpSourceControlProvider` is registered. Real `AzureDevOpsReposSourceControlProvider` is not implemented. No real git clone or repository workspace provisioning.
+`ISourceControlProvider` is defined. `NoOpSourceControlProvider` and `LocalGitSourceControlProvider` are registered. `LocalGitSourceControlProvider` supports local paths, `file://` URLs, and remote git URLs via git clone. Real `AzureDevOpsReposSourceControlProvider` is not implemented.
 
-### Phase 4: Local Environment Provider — NoOp only
+### Phase 4: Local Environment Provider — implemented
 
-`IEnvironmentProvider` is defined. `NoOpEnvironmentProvider` is registered. Real `LocalWorkspaceEnvironmentProvider` is not implemented. No per-run directory creation, context file generation, or workspace retention.
+`IEnvironmentProvider` is defined. `NoOpEnvironmentProvider` and `LocalWorkspaceEnvironmentProvider` are registered. `LocalWorkspaceEnvironmentProvider` creates per-run workspace directories under `{runRoot}/{runId}/` with subdirectories for repo, context, logs, artifacts, and results.
 
-### Phase 5: Pi-Materia Runtime Adapter — NoOp only
+### Phase 5: Pi-Materia Runtime Adapter — mock implemented
 
-`IAgentRuntime` is defined. `NoOpAgentRuntime` is registered. Real `PiMateriaRuntime` is not implemented. No process invocation, stdout/stderr capture, or runtime webhook ingestion.
+`IAgentRuntime` is defined. `NoOpAgentRuntime` and `MockPiMateriaRuntime` are registered. `MockPiMateriaRuntime` emits a deterministic sequence of runtime events in-process (accepted → heartbeat → status → completed) after `StartAsync` is called, driving runs to completion without external processes or HTTP calls. Real `PiMateriaRuntime` is not implemented.
 
 ### Phase 6: Result Reporting — mock only
 
@@ -69,15 +69,20 @@ Runtime event ingestion handles all event types through the mock endpoint. No re
 
 Stale run detection and recovery (`AwaitingResult` → `NeedsHuman`) is implemented. No reconciliation of PR URLs, branch info, or partial results from a real runtime.
 
-## 0.3 Current Gaps for Local-Only End-to-End
+## 0.3 Local-First End-to-End Status
 
-The controller cannot currently complete a real end-to-end run without Azure DevOps because:
+The local-first milestone (§13a) enables fully local controller runs without Azure DevOps:
 
-1. **No local work source that reads work definitions from config/files** — LocalFakeWorkSource reads from the database, requiring work items to be created via API first. There is no declarative config/file input path.
-2. **No real local environment/workspace provider** — The controller advances through `EnvironmentProvisioning` and `RepositoryCloning` as no-ops. No real directories are created.
-3. **No repository checkout for local paths** — `ISourceControlProvider` has no implementation that handles local paths or `file://` URLs.
-4. **No real runtime invocation** — The controller stops at `AwaitingResult` and waits for external mock events. There is no path to actually invoke pi-materia.
-5. **No mock runtime completion path** — The mock event endpoint exists but requires manual HTTP calls. There is no automated mock runtime that emits events to complete a run.
+- **Slice 1 ✓** — `LocalFileWorkSource` reads work item definitions from `localWork` config, validates required fields, maps to `WorkCandidate`, upserts into `IWorkItemStore`.
+- **Slice 2 ✓** — `LocalGitSourceControlProvider` supports `repositories:{key}:cloneUrl` values for local paths, `file://` URLs, and remote git URLs (via git clone). No separate `localPath` field.
+- **Slice 3 ✓** — `LocalWorkspaceEnvironmentProvider` creates per-run workspace directories under `{runRoot}/{runId}/` with subdirectories for repo, context, logs, artifacts, and results.
+- **Slice 4 ✓** — `MockPiMateriaRuntime` emits a deterministic sequence of runtime events in-process after `StartAsync` is called, driving runs from discovery through completion without Azure DevOps, external processes, or manual HTTP calls. The `PollingWorker` invokes `IAgentRuntime.StartAsync` at the `AgentStarting` milestone. Completion outcome is configurable via `runtime:defaultMateriaLoadout` (`success-pr`, `no-change`, `fail*`).
+
+### Remaining Local-First Gaps
+
+1. **Real pi-materia process invocation** — `MockPiMateriaRuntime` simulates execution but does not invoke a real `pi` process. The `PiMateriaRuntime` adapter is the next planned slice.
+2. **Runtime webhook ingestion from external processes** — `MockPiMateriaRuntime` emits events in-process; real `PiMateriaRuntime` must POST events via HTTP. The existing `POST /runs/{runId}/events` endpoint is ready for this.
+3. ~~Environment/source-control no-ops in PollingWorker~~ — **Fixed:** The `PollingWorker` now invokes `IEnvironmentProvider.CreateAsync` at `EnvironmentProvisioning`, `ISourceControlProvider.CloneAsync` at `RepositoryCloning`, writes context files at `ContextInjected`, and passes the full environment/repo context to `IAgentRuntime.StartAsync` at `AgentStarting`.
 
 ---
 

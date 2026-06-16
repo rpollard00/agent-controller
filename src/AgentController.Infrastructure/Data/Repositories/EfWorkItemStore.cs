@@ -67,7 +67,6 @@ internal sealed class EfWorkItemStore : IWorkItemStore
         if (query.Tags is { Count: > 0 })
         {
             // Filter items whose TagsJson contains at least one of the requested tags.
-            // SQLite JSON functions are used for this.
             foreach (var tag in query.Tags)
             {
                 var t = tag;
@@ -75,16 +74,19 @@ internal sealed class EfWorkItemStore : IWorkItemStore
             }
         }
 
-        q = q.OrderByDescending(e => e.CreatedAt);
+        // Fetch entities then apply client-side ordering and pagination.
+        // DateTimeOffset ORDER BY is not supported by EF Core SQLite 9.x.
+        var entities = await q.ToListAsync(cancellationToken);
+
+        IEnumerable<WorkItemEntity> ordered = entities.OrderByDescending(e => e.CreatedAt);
 
         if (query.Offset > 0)
-            q = q.Skip(query.Offset);
+            ordered = ordered.Skip(query.Offset);
 
         if (query.MaxResults > 0)
-            q = q.Take(query.MaxResults);
+            ordered = ordered.Take(query.MaxResults);
 
-        var entities = await q.ToListAsync(cancellationToken);
-        return entities.Select(MapToCandidate).ToList();
+        return ordered.Select(MapToCandidate).ToList();
     }
 
     public async Task<WorkCandidate?> GetByIdAsync(

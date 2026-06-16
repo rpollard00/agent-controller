@@ -153,16 +153,19 @@ internal sealed class EfAgentRunStore : IAgentRunStore
         if (!string.IsNullOrWhiteSpace(query.WorkItemId))
             q = q.Where(e => e.WorkItemId == query.WorkItemId);
 
-        q = q.OrderByDescending(e => e.CreatedAt);
+        // Fetch entities then apply client-side ordering and pagination.
+        // DateTimeOffset ORDER BY is not supported by EF Core SQLite 9.x.
+        var entities = await q.ToListAsync(cancellationToken);
+
+        IEnumerable<AgentRunEntity> ordered = entities.OrderByDescending(e => e.CreatedAt);
 
         if (query.Offset > 0)
-            q = q.Skip(query.Offset);
+            ordered = ordered.Skip(query.Offset);
 
         if (query.MaxResults > 0)
-            q = q.Take(query.MaxResults);
+            ordered = ordered.Take(query.MaxResults);
 
-        var entities = await q.ToListAsync(cancellationToken);
-        return entities.Select(MapToHandle).ToList();
+        return ordered.Select(MapToHandle).ToList();
     }
 
     public async Task<IReadOnlyList<AgentRunHandle>> FindStaleAsync(
@@ -171,17 +174,21 @@ internal sealed class EfAgentRunStore : IAgentRunStore
     {
         var cutoff = DateTimeOffset.UtcNow - staleTimeout;
 
-        // Find runs in AwaitingResult whose last heartbeat (or started time) is older than cutoff
+        // Find runs in AwaitingResult whose last heartbeat (or started time) is older than cutoff.
+        // Client evaluation is used because EF Core SQLite 9.x cannot translate
+        // DateTimeOffset? comparisons or DateTimeOffset ORDER BY clauses.
         var entities = await _db.AgentRuns
             .Where(e => e.Status == (int)RunLifecycleState.AwaitingResult)
+            .ToListAsync(cancellationToken);
+
+        var stale = entities
             .Where(e =>
-                // If never heartbeat, use StartedAt; otherwise use LastHeartbeatAt
                 (e.LastHeartbeatAt == null && e.StartedAt < cutoff) ||
                 (e.LastHeartbeatAt < cutoff))
             .OrderBy(e => e.LastHeartbeatAt ?? e.StartedAt)
-            .ToListAsync(cancellationToken);
+            .ToList();
 
-        return entities.Select(MapToHandle).ToList();
+        return stale.Select(MapToHandle).ToList();
     }
 
     public async Task<int> CountActiveAsync(CancellationToken cancellationToken)

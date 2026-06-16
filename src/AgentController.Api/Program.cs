@@ -22,28 +22,51 @@ builder.Services.AddAgentControllerRepositories();
 // for consistent run state transitions.
 builder.Services.AddAgentControllerLifecycleService();
 
-// Register deterministic no-op providers for DI seeding
-// (source control, environment, runtime)
+// ── Provider wiring ───────────────────────────────────────────
+// Register no-op defaults first, then override with real providers
+// based on configuration sections (workSource:provider, sourceControl:provider,
+// environmentProvider:provider, runtime:provider).
+// The last-registered implementation for each interface wins.
 builder.Services.AddAgentControllerNoOpProviders();
 
-// To use a real local-git source control provider (which supports local paths,
-// file:// URLs, and remote git URLs as cloneUrl values), swap the no-op with:
-//   builder.Services.AddAgentControllerLocalGitSourceControl();
-//
-// To use a real local-workspace environment provider (which creates per-run
-// directories under runRoot), swap the no-op with:
-//   builder.Services.AddAgentControllerLocalWorkspaceEnvironment();
+var workSourceProvider = builder.Configuration.GetValue<string>("workSource:provider") ?? "LocalFake";
+var sourceControlProvider = builder.Configuration.GetValue<string>("sourceControl:provider") ?? string.Empty;
+var envProvider = builder.Configuration.GetValue<string>("environmentProvider:provider") ?? string.Empty;
+var runtimeProvider = builder.Configuration.GetValue<string>("runtime:provider") ?? string.Empty;
 
-// Override the no-op IWorkSource with a LocalFakeWorkSource backed by persisted WorkItems.
-// Must be registered after AddAgentControllerNoOpProviders so the last-registered
-// IWorkSource wins.
-builder.Services.AddAgentControllerLocalFakeWorkSource();
+// Work source (required — always override the no-op)
+switch (workSourceProvider)
+{
+    case "LocalFile":
+        builder.Services.AddAgentControllerLocalFileWorkSource();
+        break;
+    case "AzureDevOpsBoards":
+        builder.Services.AddAgentControllerAzureDevOpsBoardsWorkSource();
+        break;
+    case "LocalFake":
+    default:
+        builder.Services.AddAgentControllerLocalFakeWorkSource();
+        break;
+}
 
-// To use a declarative config/file-based work source instead of the API-seeded
-// LocalFakeWorkSource, swap the registration above with:
-//   builder.Services.AddAgentControllerLocalFileWorkSource();
-// Then define work items in appsettings.json under "localWork": { "definitions": [...] },
-// set "workSource:provider" to "LocalFile", and set "agentController:workerEnabled" to true.
+// Source control provider (optional override)
+if (sourceControlProvider.Equals("LocalGit", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddAgentControllerLocalGitSourceControl();
+}
+
+// Environment provider (optional override)
+if (envProvider.Equals("LocalWorkspace", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddAgentControllerLocalWorkspaceEnvironment();
+}
+
+// Agent runtime (optional override)
+if (runtimeProvider.Equals("MockPiMateria", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddAgentControllerMockPiMateriaRuntime();
+}
+// ── End provider wiring ───────────────────────────────────────
 
 // Register the background polling worker (disabled by default via agentController.workerEnabled).
 // Kept in the same host as the API for the prototype; a future split can move this into a
