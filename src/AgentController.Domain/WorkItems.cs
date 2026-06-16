@@ -71,6 +71,14 @@ public sealed record ExternalWorkRef
 
     /// <summary>URL to the work item, if available.</summary>
     public string? Url { get; init; }
+
+    /// <summary>
+    /// Source-controlled revision number for optimistic concurrency.
+    /// For Azure DevOps Boards this is the work item <c>rev</c> field.
+    /// When set, update operations should include an <c>If-Match</c>
+    /// header to detect conflicting modifications.
+    /// </summary>
+    public string? Revision { get; init; }
 }
 
 /// <summary>

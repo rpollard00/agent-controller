@@ -27,7 +27,7 @@ public class RunLifecycleServiceTests
         _runStore = new InMemoryAgentRunStore();
         _eventStore = new InMemoryLifecycleEventStore();
         _workItemStore = new InMemoryWorkItemStore();
-        _service = new RunLifecycleService(_runStore, _eventStore, _workItemStore);
+        _service = new RunLifecycleService(_runStore, _eventStore, _workItemStore, new StubWorkSource());
     }
 
     // ── CreateRunForWorkItemAsync ──────────────────────────────────
@@ -56,6 +56,167 @@ public class RunLifecycleServiceTests
         var events = await _eventStore.ListByRunIdAsync(run.RunId, CancellationToken.None);
         Assert.Single(events);
         Assert.Equal("controller.claimed", events[0].EventType);
+    }
+
+    // ── CreateRunForWorkItemAsync — upsert + Azure integration ────
+
+    [Fact]
+    public async Task UpsertAsync_PersistsAndRetrievesSourceMetadata()
+    {
+        // Upsert a candidate with SourceMetadata (simulating Azure DevOps discovery)
+        var candidate = new WorkCandidate
+        {
+            Id = "wi_42",
+            ExternalId = "42",
+            Source = "AzureDevOpsBoards",
+            Title = "Fix login bug",
+            Description = "Users cannot log in",
+            Status = "New",
+            Priority = 1,
+            RepoKey = "example-service",
+            Tags = new[] { "agent-ready", "repo:example-service" },
+            ExternalUrl = "https://dev.azure.com/org/project/_workitems/edit/42",
+            SourceMetadata = new Dictionary<string, string>
+            {
+                ["revision"] = "3",
+                ["areaPath"] = @"Project\TeamA",
+                ["iterationPath"] = @"Project\Sprint 1",
+                ["workItemType"] = "Bug",
+            },
+        };
+
+        var persisted = await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
+
+        // Verify the upserted candidate has an ID and preserves metadata
+        Assert.Equal("wi_42", persisted.Id);
+        Assert.Equal("AzureDevOpsBoards", persisted.Source);
+
+        // Retrieve by ID to verify SourceMetadata is round-tripped
+        var retrieved = await _workItemStore.GetByIdAsync(persisted.Id, CancellationToken.None);
+        Assert.NotNull(retrieved);
+        Assert.NotNull(retrieved.SourceMetadata);
+        Assert.Equal("3", retrieved.SourceMetadata["revision"]);
+        Assert.Equal(@"Project\TeamA", retrieved.SourceMetadata["areaPath"]);
+        Assert.Equal(@"Project\Sprint 1", retrieved.SourceMetadata["iterationPath"]);
+        Assert.Equal("Bug", retrieved.SourceMetadata["workItemType"]);
+
+        // Upsert again with updated metadata — should update existing
+        var updated = candidate with
+        {
+            Title = "Fix login bug (updated)",
+            SourceMetadata = new Dictionary<string, string>
+            {
+                ["revision"] = "5",
+                ["areaPath"] = @"Project\TeamA",
+            },
+        };
+        await _workItemStore.UpsertAsync(updated, CancellationToken.None);
+
+        var retrievedAgain = await _workItemStore.GetByIdAsync(persisted.Id, CancellationToken.None);
+        Assert.NotNull(retrievedAgain);
+        Assert.Equal("Fix login bug (updated)", retrievedAgain.Title);
+        Assert.NotNull(retrievedAgain.SourceMetadata);
+        Assert.Equal("5", retrievedAgain.SourceMetadata["revision"]);
+        // iterationPath should be from original since we didn't set it in the update
+        Assert.False(retrievedAgain.SourceMetadata.ContainsKey("iterationPath"));
+    }
+
+    [Fact]
+    public async Task UpsertRemoteCandidate_CreateRunSucceeds()
+    {
+        // Simulate the Azure DevOps discovery → upsert → claim → run creation path.
+        // This tests that the integration gap (remote WorkCandidate not in IWorkItemStore)
+        // is closed by UpsertAsync.
+        var candidate = new WorkCandidate
+        {
+            Id = "wi_99",
+            ExternalId = "99",
+            Source = "AzureDevOpsBoards",
+            Title = "Add retry logic",
+            Description = "Implement retry handling for transient failures",
+            Status = "Approved",
+            Priority = 2,
+            RepoKey = "backend",
+            Tags = new[] { "agent-ready", "repo:backend" },
+            ExternalUrl = "https://dev.azure.com/org/project/_workitems/edit/99",
+            SourceMetadata = new Dictionary<string, string>
+            {
+                ["revision"] = "1",
+                ["workItemType"] = "User Story",
+            },
+        };
+
+        // Step 1: Upsert into local persistence (what PollingWorker now does)
+        var persisted = await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
+        Assert.Equal("AzureDevOpsBoards", persisted.Source);
+        Assert.Equal("99", persisted.ExternalId);
+
+        // Step 2: Create a run for the upserted work item
+        // (previously this would fail with "not found")
+        var run = await _service.CreateRunForWorkItemAsync(
+            persisted.Id, "worker-1", CancellationToken.None);
+
+        Assert.NotNull(run);
+        Assert.Equal(persisted.Id, run.WorkItemId);
+        Assert.Equal(RunLifecycleState.Claimed, run.Status);
+    }
+
+    [Fact]
+    public async Task AzureSourcedWorkItem_ProjectsCommentsOnTransition()
+    {
+        // Verify that transitioning an Azure-sourced work item triggers
+        // comment projection to the work source via IWorkSource.AddCommentAsync.
+        var stubWorkSource = new StubWorkSource();
+        var serviceWithStub = new RunLifecycleService(
+            _runStore, _eventStore, _workItemStore, stubWorkSource);
+
+        // Upsert an Azure candidate with SourceMetadata (revision)
+        var candidate = new WorkCandidate
+        {
+            Id = "wi_55",
+            ExternalId = "55",
+            Source = "AzureDevOpsBoards",
+            Title = "Projection test",
+            Description = "Test that status is projected",
+            Status = "New",
+            RepoKey = "test-repo",
+            Tags = new[] { "agent-ready" },
+            ExternalUrl = "https://dev.azure.com/org/project/_workitems/edit/55",
+            SourceMetadata = new Dictionary<string, string>
+            {
+                ["revision"] = "2",
+            },
+        };
+        await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
+
+        // Create a run and transition to AwaitingResult. The AgentRunning
+        // milestone triggers a comment via BuildExternalProjection.
+        var run = await serviceWithStub.CreateRunForWorkItemAsync(
+            "wi_55", "worker-1", CancellationToken.None);
+
+        await serviceWithStub.TransitionAsync(run.RunId, RunLifecycleState.EnvironmentProvisioning, CancellationToken.None);
+        await serviceWithStub.TransitionAsync(run.RunId, RunLifecycleState.EnvironmentReady, CancellationToken.None);
+        await serviceWithStub.TransitionAsync(run.RunId, RunLifecycleState.RepositoryCloning, CancellationToken.None);
+        await serviceWithStub.TransitionAsync(run.RunId, RunLifecycleState.RepositoryReady, CancellationToken.None);
+        await serviceWithStub.TransitionAsync(run.RunId, RunLifecycleState.ContextInjected, CancellationToken.None);
+        await serviceWithStub.TransitionAsync(run.RunId, RunLifecycleState.AgentStarting, CancellationToken.None);
+        await serviceWithStub.TransitionAsync(run.RunId, RunLifecycleState.AgentRunning, CancellationToken.None);
+
+        // AgentRunning milestone triggers a comment: "Agent runtime is now executing."
+        // The Claimed projection (agent-active tag) happens via the Azure client's
+        // TryClaimWorkItemAsync, not through TransitionAsync, so we only check comments.
+        Assert.NotEmpty(stubWorkSource.Comments);
+
+        // All comments should reference the correct work item with SourceMetadata revision
+        Assert.All(stubWorkSource.Comments, c =>
+        {
+            Assert.Equal("AzureDevOpsBoards", c.WorkRef.Source);
+            Assert.Equal("55", c.WorkRef.ExternalId);
+            Assert.Equal("2", c.WorkRef.Revision);
+        });
+
+        Assert.Contains(stubWorkSource.Comments, c =>
+            c.Comment.Contains("Agent runtime is now executing", StringComparison.Ordinal));
     }
 
     // ── TransitionAsync — allowed transitions ──────────────────────
@@ -1061,6 +1222,89 @@ public class RunLifecycleServiceTests
             {
                 _items[workItemId] = item with { Status = status };
             }
+            return Task.CompletedTask;
+        }
+
+        public Task<WorkCandidate> UpsertAsync(WorkCandidate candidate, CancellationToken ct)
+        {
+            // Match by (Source, ExternalId)
+            var existing = _items.Values.FirstOrDefault(
+                i => i.Source == candidate.Source && i.ExternalId == candidate.ExternalId);
+
+            if (existing is not null)
+            {
+                var updated = existing with
+                {
+                    Title = candidate.Title,
+                    Description = candidate.Description,
+                    RepoKey = candidate.RepoKey,
+                    Priority = candidate.Priority,
+                    Status = candidate.Status,
+                    AssignedTo = candidate.AssignedTo,
+                    ExternalUrl = candidate.ExternalUrl,
+                    AcceptanceCriteria = candidate.AcceptanceCriteria,
+                    Tags = candidate.Tags,
+                    SourceMetadata = candidate.SourceMetadata,
+                };
+                _items[existing.Id] = updated;
+                return Task.FromResult(updated);
+            }
+
+            // Insert new
+            var item = new WorkCandidate
+            {
+                Id = candidate.Id.Length > 0 ? candidate.Id : $"wi_{Guid.NewGuid():N}",
+                ExternalId = candidate.ExternalId,
+                ExternalUrl = candidate.ExternalUrl,
+                RepoKey = candidate.RepoKey,
+                Title = candidate.Title,
+                Description = candidate.Description,
+                AcceptanceCriteria = candidate.AcceptanceCriteria,
+                Priority = candidate.Priority,
+                Status = candidate.Status,
+                Tags = candidate.Tags,
+                AssignedTo = candidate.AssignedTo,
+                Source = candidate.Source,
+                SourceMetadata = candidate.SourceMetadata,
+            };
+            _items[item.Id] = item;
+            return Task.FromResult(item);
+        }
+    }
+
+    /// <summary>
+    /// Stub <see cref="IWorkSource"/> that records calls for assertion
+    /// but performs no real external operations. Used by unit tests
+    /// that do not need real Azure DevOps or local-fake work source behavior.
+    /// </summary>
+    private sealed class StubWorkSource : IWorkSource
+    {
+        public List<(ExternalWorkRef WorkRef, ExternalWorkStatus Status)> StatusUpdates { get; } = new();
+        public List<(ExternalWorkRef WorkRef, string Comment)> Comments { get; } = new();
+
+        public Task<IReadOnlyList<WorkCandidate>> FindEligibleAsync(
+            WorkQuery query, CancellationToken cancellationToken)
+        {
+            return Task.FromResult<IReadOnlyList<WorkCandidate>>([]);
+        }
+
+        public Task<ClaimResult> TryClaimAsync(
+            WorkCandidate candidate, ClaimRequest claim, CancellationToken cancellationToken)
+        {
+            return Task.FromResult(new ClaimResult { Success = true });
+        }
+
+        public Task UpdateStatusAsync(
+            ExternalWorkRef workRef, ExternalWorkStatus status, CancellationToken cancellationToken)
+        {
+            StatusUpdates.Add((workRef, status));
+            return Task.CompletedTask;
+        }
+
+        public Task AddCommentAsync(
+            ExternalWorkRef workRef, string comment, CancellationToken cancellationToken)
+        {
+            Comments.Add((workRef, comment));
             return Task.CompletedTask;
         }
     }

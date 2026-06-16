@@ -62,6 +62,10 @@ internal sealed class WorkItemEntityConfiguration : IEntityTypeConfiguration<Wor
         builder.Property(x => x.LeaseOwner)
             .HasMaxLength(256);
 
+        // JSON-like column for source metadata (revision, area path, etc.)
+        builder.Property(x => x.SourceMetadataJson)
+            .HasColumnName("SourceMetadataJson");
+
         // Timestamps
         builder.Property(x => x.CreatedAt)
             .IsRequired();

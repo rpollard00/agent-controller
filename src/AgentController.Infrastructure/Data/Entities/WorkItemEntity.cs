@@ -55,6 +55,12 @@ internal sealed class WorkItemEntity
     /// <summary>When the record was first persisted.</summary>
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
+    /// <summary>
+    /// Opaque source metadata serialized as JSON for later concurrency and
+    /// field-level fidelity (revision, area path, iteration path, work item type).
+    /// </summary>
+    public string? SourceMetadataJson { get; set; }
+
     /// <summary>When the record was last mutated.</summary>
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }

@@ -69,4 +69,22 @@ public interface IWorkItemStore
         string status,
         CancellationToken cancellationToken
     );
+
+    /// <summary>
+    /// Upsert a work candidate into the local persistence store.
+    /// Keyed by the combination of <see cref="WorkCandidate.Source"/> and
+    /// <see cref="WorkCandidate.ExternalId"/>. If a matching record already
+    /// exists, its mutable fields (title, description, status, priority,
+    /// tags, assigned-to, repo key, source metadata) are updated; otherwise
+    /// a new record is inserted. Returns the persisted candidate with its
+    /// controller-assigned <see cref="WorkCandidate.Id"/>.
+    ///
+    /// This enables externally discovered work items (e.g. from Azure DevOps
+    /// Boards) to be persisted before claiming and run creation, so the
+    /// lifecycle service can find them by ID.
+    /// </summary>
+    Task<WorkCandidate> UpsertAsync(
+        WorkCandidate candidate,
+        CancellationToken cancellationToken
+    );
 }

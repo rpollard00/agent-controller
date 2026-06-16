@@ -202,14 +202,6 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         ClaimRequest request,
         CancellationToken cancellationToken)
     {
-        // Claiming strategy: add an "agent-active" tag and optionally assign to service identity.
-        // For now, this is a stub that returns success with a placeholder implementation.
-        //
-        // Full implementation in the subsequent work items will:
-        // 1. Read the current work item revision
-        // 2. Check if already claimed by another controller
-        // 3. Patch the work item with tags/assignment using optimistic concurrency
-
         var project = _options.Project;
         if (string.IsNullOrWhiteSpace(project))
         {
@@ -220,12 +212,163 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             };
         }
 
-        return new ClaimResult
+        if (string.IsNullOrWhiteSpace(workRef.ExternalId))
         {
-            Success = true,
-            WorkRef = workRef,
-            LeaseToken = $"lease_{workRef.ExternalId}_{DateTimeOffset.UtcNow:yyyyMMddHHmmss}",
-        };
+            return new ClaimResult
+            {
+                Success = false,
+                FailureReason = "External work item identifier is required for claiming.",
+            };
+        }
+
+        try
+        {
+            // 1. GET the current work item to read revision and tags
+            var getResponse = await _http.GetAsync(
+                $"{project}/_apis/wit/workitems/{workRef.ExternalId}?api-version=7.1&$expand=all",
+                cancellationToken);
+
+            if (!getResponse.IsSuccessStatusCode)
+            {
+                return new ClaimResult
+                {
+                    Success = false,
+                    FailureReason = $"Failed to read work item {workRef.ExternalId}: " +
+                                    $"HTTP {(int)getResponse.StatusCode} {getResponse.ReasonPhrase}.",
+                };
+            }
+
+            var getJson = await getResponse.Content.ReadAsStringAsync(cancellationToken);
+            using var getDoc = JsonDocument.Parse(getJson);
+
+            var currentRev = getDoc.RootElement.TryGetProperty("rev", out var revEl)
+                             && revEl.ValueKind == JsonValueKind.Number
+                             && revEl.TryGetInt32(out var rev)
+                ? rev
+                : (int?)null;
+
+            // 2. Check if already claimed — look for agent-active or agent-worker: tags
+            var currentTags = string.Empty;
+            if (getDoc.RootElement.TryGetProperty("fields", out var fields)
+                && fields.TryGetProperty("System.Tags", out var tagsEl)
+                && tagsEl.ValueKind == JsonValueKind.String)
+            {
+                currentTags = tagsEl.GetString() ?? string.Empty;
+            }
+
+            var existingTags = currentTags
+                .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            if (existingTags.Contains("agent-active"))
+            {
+                return new ClaimResult
+                {
+                    Success = false,
+                    FailureReason = $"Work item {workRef.ExternalId} is already claimed " +
+                                    "(has 'agent-active' tag).",
+                };
+            }
+
+            // Also check for any agent-worker: tag to detect re-claim attempts
+            var workerTag = existingTags.FirstOrDefault(t =>
+                t.StartsWith("agent-worker:", StringComparison.OrdinalIgnoreCase));
+            if (workerTag is not null)
+            {
+                return new ClaimResult
+                {
+                    Success = false,
+                    FailureReason = $"Work item {workRef.ExternalId} is already claimed " +
+                                    $"by worker '{workerTag}'.",
+                };
+            }
+
+            // 3. Build PATCH operations: add agent-active tag, agent-worker tag,
+            //    and a claiming comment
+            var newTags = string.IsNullOrWhiteSpace(currentTags)
+                ? $"agent-active; agent-worker:{request.WorkerId}"
+                : $"{currentTags.TrimEnd(';')}; agent-active; agent-worker:{request.WorkerId}";
+
+            var claimedAt = request.ClaimedAt.ToString("yyyy-MM-dd HH:mm:ss UTC",
+                System.Globalization.CultureInfo.InvariantCulture);
+
+            var patchOps = new[]
+            {
+                new
+                {
+                    op = "add",
+                    path = "/fields/System.Tags",
+                    value = newTags,
+                },
+                new
+                {
+                    op = "add",
+                    path = "/fields/System.History",
+                    value = $"Claimed by agent controller '{request.WorkerId}' at {claimedAt}.",
+                },
+            };
+
+            var patchBody = JsonSerializer.Serialize(patchOps, JsonOptions);
+            var patchContent = new StringContent(patchBody, Encoding.UTF8,
+                "application/json-patch+json");
+
+            // 4. Use If-Match with the current revision for optimistic concurrency
+            var patchRequest = new HttpRequestMessage(HttpMethod.Patch,
+                $"{project}/_apis/wit/workitems/{workRef.ExternalId}?api-version=7.1")
+            {
+                Content = patchContent,
+            };
+
+            if (currentRev.HasValue)
+            {
+                patchRequest.Headers.TryAddWithoutValidation(
+                    "If-Match", currentRev.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+
+            var patchResponse = await _http.SendAsync(patchRequest, cancellationToken);
+
+            if (patchResponse.IsSuccessStatusCode)
+            {
+                // Extract the new revision from the response for lease tracking
+                var patchJson = await patchResponse.Content.ReadAsStringAsync(cancellationToken);
+                var newRev = TryExtractRevision(patchJson) ?? currentRev;
+
+                return new ClaimResult
+                {
+                    Success = true,
+                    WorkRef = workRef with { Revision = newRev?.ToString(System.Globalization.CultureInfo.InvariantCulture) },
+                    LeaseToken = $"lease_{workRef.ExternalId}_" +
+                                 $"{newRev}_{DateTimeOffset.UtcNow:yyyyMMddHHmmss}",
+                };
+            }
+
+            if (patchResponse.StatusCode == System.Net.HttpStatusCode.PreconditionFailed)
+            {
+                return new ClaimResult
+                {
+                    Success = false,
+                    FailureReason = $"Work item {workRef.ExternalId} was modified " +
+                                    "by another process (412 Precondition Failed).",
+                };
+            }
+
+            var errorBody = await patchResponse.Content.ReadAsStringAsync(cancellationToken);
+            return new ClaimResult
+            {
+                Success = false,
+                FailureReason = $"Failed to claim work item {workRef.ExternalId}: " +
+                                $"HTTP {(int)patchResponse.StatusCode} {patchResponse.ReasonPhrase}. " +
+                                $"Details: {Truncate(errorBody, 200)}",
+            };
+        }
+        catch (HttpRequestException ex)
+        {
+            return new ClaimResult
+            {
+                Success = false,
+                FailureReason = $"Network error claiming work item {workRef.ExternalId}: {ex.Message}",
+            };
+        }
     }
 
     public async Task UpdateWorkItemStatusAsync(
@@ -266,10 +409,29 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         var body = JsonSerializer.Serialize(patchOps, JsonOptions);
         var content = new StringContent(body, Encoding.UTF8, "application/json-patch+json");
 
-        var response = await _http.PatchAsync(
-            $"{project}/_apis/wit/workitems/{workRef.ExternalId}?api-version=7.1",
-            content,
-            cancellationToken);
+        var request = new HttpRequestMessage(HttpMethod.Patch,
+            $"{project}/_apis/wit/workitems/{workRef.ExternalId}?api-version=7.1")
+        {
+            Content = content,
+        };
+
+        // Use If-Match with revision for optimistic concurrency when available
+        if (!string.IsNullOrWhiteSpace(workRef.Revision))
+        {
+            request.Headers.TryAddWithoutValidation("If-Match", workRef.Revision);
+        }
+
+        var response = await _http.SendAsync(request, cancellationToken);
+
+        // 412 Precondition Failed is not thrown — it means someone else
+        // modified the work item concurrently. We treat status projection as
+        // best-effort: log and continue. The next poll cycle will pick up the
+        // latest revision from QueryWorkItemsAsync.
+        if (response.StatusCode == System.Net.HttpStatusCode.PreconditionFailed)
+        {
+            // Best-effort status projection: concurrent modification is not fatal.
+            return;
+        }
 
         response.EnsureSuccessStatusCode();
     }
@@ -298,10 +460,26 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         var body = JsonSerializer.Serialize(patchOps, JsonOptions);
         var content = new StringContent(body, Encoding.UTF8, "application/json-patch+json");
 
-        var response = await _http.PatchAsync(
-            $"{project}/_apis/wit/workitems/{workRef.ExternalId}?api-version=7.1",
-            content,
-            cancellationToken);
+        var request = new HttpRequestMessage(HttpMethod.Patch,
+            $"{project}/_apis/wit/workitems/{workRef.ExternalId}?api-version=7.1")
+        {
+            Content = content,
+        };
+
+        // Use If-Match with revision for optimistic concurrency when available
+        if (!string.IsNullOrWhiteSpace(workRef.Revision))
+        {
+            request.Headers.TryAddWithoutValidation("If-Match", workRef.Revision);
+        }
+
+        var response = await _http.SendAsync(request, cancellationToken);
+
+        // 412 Precondition Failed: best-effort comment projection.
+        // Concurrent modifications are not fatal for comments.
+        if (response.StatusCode == System.Net.HttpStatusCode.PreconditionFailed)
+        {
+            return;
+        }
 
         response.EnsureSuccessStatusCode();
     }
@@ -343,6 +521,40 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
 
     private static string EscapeWiql(string value) =>
         value.Replace("'", "''");
+
+    // ─── Concurrency helpers ────────────────────────────
+
+    /// <summary>
+    /// Attempts to extract the <c>rev</c> field from a JSON response body.
+    /// Returns <c>null</c> when the field is missing or not a valid integer.
+    /// </summary>
+    private static int? TryExtractRevision(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("rev", out var revEl)
+                && revEl.ValueKind == JsonValueKind.Number
+                && revEl.TryGetInt32(out var rev))
+            {
+                return rev;
+            }
+        }
+        catch (JsonException)
+        {
+            // Response body is not valid JSON — revision is unavailable.
+        }
+
+        return null;
+    }
+
+    private static string Truncate(string value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= maxLength)
+            return value;
+
+        return value[..maxLength] + "...";
+    }
 
     // ─── RepoKey resolution ──────────────────────────────
 

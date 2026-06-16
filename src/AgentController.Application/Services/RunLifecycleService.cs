@@ -18,6 +18,7 @@ internal sealed class RunLifecycleService : IRunLifecycleService
     private readonly IAgentRunStore _runStore;
     private readonly ILifecycleEventStore _eventStore;
     private readonly IWorkItemStore _workItemStore;
+    private readonly IWorkSource _workSource;
 
     /// <summary>
     /// Legal state transitions.
@@ -59,11 +60,13 @@ internal sealed class RunLifecycleService : IRunLifecycleService
     public RunLifecycleService(
         IAgentRunStore runStore,
         ILifecycleEventStore eventStore,
-        IWorkItemStore workItemStore)
+        IWorkItemStore workItemStore,
+        IWorkSource workSource)
     {
         _runStore = runStore;
         _eventStore = eventStore;
         _workItemStore = workItemStore;
+        _workSource = workSource;
     }
 
     /// <inheritdoc />
@@ -415,6 +418,140 @@ internal sealed class RunLifecycleService : IRunLifecycleService
         {
             await _workItemStore.UpdateStatusAsync(run.WorkItemId, status, ct);
         }
+
+        // Project status to the external work source (Phase 2 feedback loop).
+        // Best-effort: failures in external projection are not fatal to the
+        // controller's internal state transition.
+        await MaybeProjectToWorkSource(run, targetState, ct);
+    }
+
+    /// <summary>
+    /// Project controller state to the external work source when the work
+    /// item originated from one (e.g. Azure DevOps Boards).
+    ///
+    /// Builds an <see cref="ExternalWorkStatus"/> from the current lifecycle
+    /// state and calls <see cref="IWorkSource.UpdateStatusAsync"/> and
+    /// <see cref="IWorkSource.AddCommentAsync"/> for key lifecycle milestones.
+    ///
+    /// This is best-effort; failures are caught and do not prevent the
+    /// controller's internal state transition from completing.
+    /// </summary>
+    private async Task MaybeProjectToWorkSource(
+        AgentRunHandle run,
+        RunLifecycleState targetState,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(run.WorkItemId))
+            return;
+
+        // Look up the work item to get external reference details
+        var workItem = await _workItemStore.GetByIdAsync(run.WorkItemId, ct);
+        if (workItem is null)
+            return;
+
+        // Only project for work items that have an external source
+        if (string.IsNullOrWhiteSpace(workItem.ExternalId) ||
+            string.IsNullOrWhiteSpace(workItem.Source) ||
+            workItem.Source == "LocalFake")
+            return;
+
+        var revision = workItem.SourceMetadata?.TryGetValue("revision", out var rev) == true
+            ? rev
+            : null;
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = workItem.Source,
+            ExternalId = workItem.ExternalId,
+            Url = workItem.ExternalUrl,
+            Revision = revision,
+        };
+
+        // Determine status update (tags, state) and comment for this lifecycle milestone
+        var (extStatus, comment) = BuildExternalProjection(targetState, run);
+
+        try
+        {
+            if (extStatus is not null)
+            {
+                await _workSource.UpdateStatusAsync(workRef, extStatus, ct);
+            }
+
+            if (!string.IsNullOrWhiteSpace(comment))
+            {
+                await _workSource.AddCommentAsync(workRef, comment, ct);
+            }
+        }
+        catch
+        {
+            // Best-effort projection: external work source failures are not
+            // fatal to the controller's internal state transition. The next
+            // poll cycle may retry through QueryWorkItemsAsync.
+        }
+    }
+
+    /// <summary>
+    /// Builds the external status update and comment for a lifecycle state
+    /// transition. Returns <c>null</c> for states that do not require
+    /// external projection.
+    /// </summary>
+    private static (ExternalWorkStatus? Status, string? Comment) BuildExternalProjection(
+        RunLifecycleState targetState,
+        AgentRunHandle run)
+    {
+        return targetState switch
+        {
+            RunLifecycleState.Claimed => (
+                new ExternalWorkStatus
+                {
+                    Tags = ["agent-active"],
+                },
+                "Agent controller claimed this work item and started processing."),
+
+            RunLifecycleState.AgentRunning => (
+                null,
+                "Agent runtime is now executing."),
+
+            RunLifecycleState.AwaitingResult => (
+                null,
+                "Agent runtime is working; awaiting result."),
+
+            RunLifecycleState.PrOpened => (
+                null,
+                !string.IsNullOrWhiteSpace(run.PullRequestUrl)
+                    ? $"Pull request opened: {run.PullRequestUrl}"
+                    : "Pull request opened."),
+
+            RunLifecycleState.BranchPushed => (
+                null,
+                !string.IsNullOrWhiteSpace(run.BranchName)
+                    ? $"Branch pushed: {run.BranchName}"
+                    : "Branch pushed to remote."),
+
+            RunLifecycleState.Completed => (
+                new ExternalWorkStatus { Tags = null }, // Tags unchanged, status updated separately
+                !string.IsNullOrWhiteSpace(run.ResultSummary)
+                    ? $"Run completed: {run.ResultSummary}"
+                    : "Run completed successfully."),
+
+            RunLifecycleState.Failed => (
+                new ExternalWorkStatus { Tags = ["agent-failed"] },
+                !string.IsNullOrWhiteSpace(run.Error)
+                    ? $"Run failed: {run.Error}"
+                    : "Run failed."),
+
+            RunLifecycleState.NeedsHuman => (
+                new ExternalWorkStatus { Tags = ["agent-needs-human"] },
+                !string.IsNullOrWhiteSpace(run.ResultSummary)
+                    ? $"Run requires human input: {run.ResultSummary}"
+                    : "Run requires human input."),
+
+            RunLifecycleState.Cancelled => (
+                null,
+                "Run was cancelled."),
+
+            _ => (null, null),
+        };
     }
 
     private async Task HandleAcceptedAsync(

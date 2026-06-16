@@ -48,6 +48,42 @@ public class AzureDevOpsBoardsClientTests
         return new AzureDevOpsBoardsClient(http, options);
     }
 
+    /// <summary>
+    /// Creates an <see cref="AzureDevOpsBoardsClient"/> wired to a fake handler
+    /// that returns responses with custom status codes and JSON bodies.
+    /// Each tuple: (URL substring to match, HTTP status code, JSON response body).
+    /// </summary>
+    private static AzureDevOpsBoardsClient CreateClientWithStatusCodes(
+        params (string urlContains, HttpStatusCode statusCode, string body)[] responses)
+    {
+        var handler = new FakeHttpMessageHandler();
+        foreach (var (urlContains, statusCode, body) in responses)
+        {
+            handler.AddResponse(urlContains, new HttpResponseMessage(statusCode)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            });
+        }
+
+        var http = new HttpClient(handler)
+        {
+            BaseAddress = new Uri(OrgUrl + "/"),
+        };
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            BaseUrl = OrgUrl,
+            Project = Project,
+            PersonalAccessToken = "test-pat",
+        };
+
+        var authBytes = Encoding.ASCII.GetBytes(":test-pat");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        return new AzureDevOpsBoardsClient(http, options);
+    }
+
     // ──────────────────────────────────────────────
     // Successful mapping
     // ──────────────────────────────────────────────
@@ -629,6 +665,508 @@ public class AzureDevOpsBoardsClientTests
     }
 
     // ──────────────────────────────────────────────
+    // Claiming (TryClaimWorkItemAsync)
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task TryClaimWorkItem_SuccessfulClaim_ReturnsSuccessWithLeaseToken()
+    {
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "42",
+            Url = $"{OrgUrl}/{Project}/_workitems/edit/42",
+        };
+
+        var client = CreateClient(
+            // GET work item — unclaimed, rev 3
+            (urlContains: "workitems/42?api-version=7.1&$expand=all",
+             jsonResponse: WorkItemGetResponse(42, 3, "New", "agent-ready; backend")),
+            // PATCH claim — success, returns rev 4
+            (urlContains: "workitems/42?api-version=7.1",
+             jsonResponse: WorkItemPatchResponse(42, 4))
+        );
+
+        var claim = new ClaimRequest
+        {
+            WorkerId = "worker-1",
+            ClaimedAt = DateTimeOffset.UtcNow,
+        };
+
+        var result = await client.TryClaimWorkItemAsync(workRef, claim, CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.NotNull(result.WorkRef);
+        Assert.Equal("42", result.WorkRef.ExternalId);
+        Assert.NotNull(result.LeaseToken);
+        Assert.Contains("lease_42", result.LeaseToken, StringComparison.Ordinal);
+        Assert.Null(result.FailureReason);
+    }
+
+    [Fact]
+    public async Task TryClaimWorkItem_AlreadyClaimedAgentActiveTag_ReturnsFailure()
+    {
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "42",
+            Url = $"{OrgUrl}/{Project}/_workitems/edit/42",
+        };
+
+        var client = CreateClient(
+            // GET work item — already has agent-active tag
+            (urlContains: "workitems/42?api-version=7.1&$expand=all",
+             jsonResponse: WorkItemGetResponse(42, 3, "New", "agent-ready; agent-active; backend"))
+        );
+
+        var claim = new ClaimRequest
+        {
+            WorkerId = "worker-1",
+            ClaimedAt = DateTimeOffset.UtcNow,
+        };
+
+        var result = await client.TryClaimWorkItemAsync(workRef, claim, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.NotNull(result.FailureReason);
+        Assert.Contains("already claimed", result.FailureReason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("agent-active", result.FailureReason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task TryClaimWorkItem_AlreadyClaimedWorkerTag_ReturnsFailure()
+    {
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "42",
+            Url = $"{OrgUrl}/{Project}/_workitems/edit/42",
+        };
+
+        var client = CreateClient(
+            // GET work item — already has agent-worker:someone-else tag
+            (urlContains: "workitems/42?api-version=7.1&$expand=all",
+             jsonResponse: WorkItemGetResponse(42, 3, "New", "agent-ready; agent-worker:other-worker; backend"))
+        );
+
+        var claim = new ClaimRequest
+        {
+            WorkerId = "worker-1",
+            ClaimedAt = DateTimeOffset.UtcNow,
+        };
+
+        var result = await client.TryClaimWorkItemAsync(workRef, claim, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.NotNull(result.FailureReason);
+        Assert.Contains("already claimed", result.FailureReason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task TryClaimWorkItem_PreconditionFailed_ReturnsFailure()
+    {
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "42",
+            Url = $"{OrgUrl}/{Project}/_workitems/edit/42",
+        };
+
+        var client = CreateClientWithStatusCodes(
+            // GET work item — unclaimed, rev 3
+            (urlContains: "workitems/42?api-version=7.1&$expand=all",
+             statusCode: HttpStatusCode.OK,
+             body: WorkItemGetResponse(42, 3, "New", "agent-ready")),
+            // PATCH claim — 412 Precondition Failed (someone else modified it)
+            (urlContains: "workitems/42?api-version=7.1",
+             statusCode: HttpStatusCode.PreconditionFailed,
+             body: """{"message":"The resource has been modified by another user."}""")
+        );
+
+        var claim = new ClaimRequest
+        {
+            WorkerId = "worker-1",
+            ClaimedAt = DateTimeOffset.UtcNow,
+        };
+
+        var result = await client.TryClaimWorkItemAsync(workRef, claim, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.NotNull(result.FailureReason);
+        Assert.Contains("412", result.FailureReason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task TryClaimWorkItem_GetFails_ReturnsFailure()
+    {
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "99",
+            Url = $"{OrgUrl}/{Project}/_workitems/edit/99",
+        };
+
+        var client = CreateClientWithStatusCodes(
+            // GET work item — 404 Not Found
+            (urlContains: "workitems/99?api-version=7.1&$expand=all",
+             statusCode: HttpStatusCode.NotFound,
+             body: """{"message":"Work item not found."}""")
+        );
+
+        var claim = new ClaimRequest
+        {
+            WorkerId = "worker-1",
+            ClaimedAt = DateTimeOffset.UtcNow,
+        };
+
+        var result = await client.TryClaimWorkItemAsync(workRef, claim, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.NotNull(result.FailureReason);
+        Assert.Contains("404", result.FailureReason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task TryClaimWorkItem_MissingExternalId_ReturnsFailure()
+    {
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = string.Empty, // missing
+        };
+
+        var client = CreateClient();
+
+        var claim = new ClaimRequest { WorkerId = "worker-1" };
+
+        var result = await client.TryClaimWorkItemAsync(workRef, claim, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.NotNull(result.FailureReason);
+        Assert.Contains("External work item identifier", result.FailureReason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task TryClaimWorkItem_AddsAgentTagsAndHistoryComment()
+    {
+        // This test verifies the PATCH body includes the correct tags and comment.
+        // We capture the request body via the fake handler.
+        string? patchBody = null;
+        string? ifMatchHeader = null;
+
+        var handler = new CaptureHttpMessageHandler(async (req) =>
+        {
+            if (req.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemGetResponse(42, 3, "New", "agent-ready"),
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            if (req.Method == HttpMethod.Patch)
+            {
+                if (req.Content is not null)
+                    patchBody = await req.Content.ReadAsStringAsync();
+                ifMatchHeader = req.Headers.TryGetValues("If-Match", out var values)
+                    ? values.FirstOrDefault()
+                    : null;
+
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemPatchResponse(42, 4),
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var http = new HttpClient(handler) { BaseAddress = new Uri(OrgUrl + "/") };
+        var authBytes = Encoding.ASCII.GetBytes(":test-pat");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            BaseUrl = OrgUrl,
+            Project = Project,
+            PersonalAccessToken = "test-pat",
+        };
+        var client = new AzureDevOpsBoardsClient(http, options);
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "42",
+        };
+
+        var claim = new ClaimRequest
+        {
+            WorkerId = "worker-1",
+            ClaimedAt = DateTimeOffset.UtcNow,
+        };
+
+        var result = await client.TryClaimWorkItemAsync(workRef, claim, CancellationToken.None);
+
+        Assert.True(result.Success);
+
+        // Verify PATCH body contains agent-active and agent-worker: tags
+        Assert.NotNull(patchBody);
+        Assert.Contains("agent-active", patchBody, StringComparison.Ordinal);
+        Assert.Contains("agent-worker:worker-1", patchBody, StringComparison.Ordinal);
+
+        // Verify System.History comment was added
+        Assert.Contains("System.History", patchBody, StringComparison.Ordinal);
+        Assert.Contains("Claimed by agent controller", patchBody, StringComparison.Ordinal);
+        Assert.Contains("worker-1", patchBody, StringComparison.Ordinal);
+
+        // Verify If-Match header was sent for optimistic concurrency
+        Assert.NotNull(ifMatchHeader);
+        Assert.Equal("3", ifMatchHeader);
+    }
+
+    // ──────────────────────────────────────────────
+    // Status projection (UpdateWorkItemStatusAsync)
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task UpdateWorkItemStatus_UpdatesStatusAndTags()
+    {
+        string? patchBody = null;
+
+        var handler = new CaptureHttpMessageHandler(async (req) =>
+        {
+            if (req.Method == HttpMethod.Patch)
+            {
+                if (req.Content is not null)
+                    patchBody = await req.Content.ReadAsStringAsync();
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemPatchResponse(42, 5),
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var http = new HttpClient(handler) { BaseAddress = new Uri(OrgUrl + "/") };
+        var authBytes = Encoding.ASCII.GetBytes(":test-pat");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            BaseUrl = OrgUrl,
+            Project = Project,
+            PersonalAccessToken = "test-pat",
+        };
+        var client = new AzureDevOpsBoardsClient(http, options);
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "42",
+            Revision = "3",
+        };
+
+        var status = new ExternalWorkStatus
+        {
+            Status = "Active",
+            Tags = new[] { "agent-active", "agent-worker:worker-1" },
+        };
+
+        await client.UpdateWorkItemStatusAsync(workRef, status, CancellationToken.None);
+
+        Assert.NotNull(patchBody);
+        Assert.Contains("System.State", patchBody, StringComparison.Ordinal);
+        Assert.Contains("Active", patchBody, StringComparison.Ordinal);
+        Assert.Contains("System.Tags", patchBody, StringComparison.Ordinal);
+        Assert.Contains("agent-active", patchBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task UpdateWorkItemStatus_NoStatusOrTags_NoOp()
+    {
+        bool patchCalled = false;
+
+        var handler = new CaptureHttpMessageHandler((req) =>
+        {
+            patchCalled = true;
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+
+        var http = new HttpClient(handler) { BaseAddress = new Uri(OrgUrl + "/") };
+        var authBytes = Encoding.ASCII.GetBytes(":test-pat");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            BaseUrl = OrgUrl,
+            Project = Project,
+            PersonalAccessToken = "test-pat",
+        };
+        var client = new AzureDevOpsBoardsClient(http, options);
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "42",
+        };
+
+        var status = new ExternalWorkStatus
+        {
+            Status = null,
+            Tags = null,
+        };
+
+        await client.UpdateWorkItemStatusAsync(workRef, status, CancellationToken.None);
+
+        // No PATCH should be made when there's nothing to update
+        Assert.False(patchCalled);
+    }
+
+    [Fact]
+    public async Task UpdateWorkItemStatus_PreconditionFailed_NoException()
+    {
+        var handler = new FakeHttpMessageHandler();
+        handler.AddResponse("workitems/42?api-version=7.1",
+            new HttpResponseMessage(HttpStatusCode.PreconditionFailed)
+            {
+                Content = new StringContent(
+                    """{"message":"The resource has been modified."}""",
+                    Encoding.UTF8, "application/json"),
+            });
+
+        var http = new HttpClient(handler) { BaseAddress = new Uri(OrgUrl + "/") };
+        var authBytes = Encoding.ASCII.GetBytes(":test-pat");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            BaseUrl = OrgUrl,
+            Project = Project,
+            PersonalAccessToken = "test-pat",
+        };
+        var client = new AzureDevOpsBoardsClient(http, options);
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "42",
+            Revision = "1",
+        };
+
+        var status = new ExternalWorkStatus { Status = "Active" };
+
+        // Should not throw — 412 is handled gracefully for status projection
+        var ex = await Record.ExceptionAsync(() =>
+            client.UpdateWorkItemStatusAsync(workRef, status, CancellationToken.None));
+
+        Assert.Null(ex);
+    }
+
+    // ──────────────────────────────────────────────
+    // Comment projection (AddCommentAsync)
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task AddComment_AddsSystemHistoryField()
+    {
+        string? patchBody = null;
+
+        var handler = new CaptureHttpMessageHandler(async (req) =>
+        {
+            if (req.Method == HttpMethod.Patch)
+            {
+                if (req.Content is not null)
+                    patchBody = await req.Content.ReadAsStringAsync();
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemPatchResponse(42, 5),
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var http = new HttpClient(handler) { BaseAddress = new Uri(OrgUrl + "/") };
+        var authBytes = Encoding.ASCII.GetBytes(":test-pat");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            BaseUrl = OrgUrl,
+            Project = Project,
+            PersonalAccessToken = "test-pat",
+        };
+        var client = new AzureDevOpsBoardsClient(http, options);
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "42",
+            Revision = "3",
+        };
+
+        const string comment = "Agent runtime completed: Implemented retry handling.";
+
+        await client.AddCommentAsync(workRef, comment, CancellationToken.None);
+
+        Assert.NotNull(patchBody);
+        // Verify the PATCH body contains the expected operation targeting System.History
+        Assert.Contains("System.History", patchBody, StringComparison.Ordinal);
+        Assert.Contains("retry handling", patchBody, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task AddComment_PreconditionFailed_NoException()
+    {
+        var handler = new FakeHttpMessageHandler();
+        handler.AddResponse("workitems/42?api-version=7.1",
+            new HttpResponseMessage(HttpStatusCode.PreconditionFailed)
+            {
+                Content = new StringContent(
+                    """{"message":"The resource has been modified."}""",
+                    Encoding.UTF8, "application/json"),
+            });
+
+        var http = new HttpClient(handler) { BaseAddress = new Uri(OrgUrl + "/") };
+        var authBytes = Encoding.ASCII.GetBytes(":test-pat");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            BaseUrl = OrgUrl,
+            Project = Project,
+            PersonalAccessToken = "test-pat",
+        };
+        var client = new AzureDevOpsBoardsClient(http, options);
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "42",
+            Revision = "1",
+        };
+
+        // Should not throw — 412 is handled gracefully for comment projection
+        var ex = await Record.ExceptionAsync(() =>
+            client.AddCommentAsync(workRef, "Should be fine.", CancellationToken.None));
+
+        Assert.Null(ex);
+    }
+
+    // ──────────────────────────────────────────────
     // JSON response helpers
     // ──────────────────────────────────────────────
 
@@ -640,6 +1178,46 @@ public class AzureDevOpsBoardsClientTests
             queryType = "flat",
             asOf = "2024-01-01T00:00:00Z",
             workItems,
+        });
+    }
+
+    /// <summary>
+    /// Builds a JSON response for a single work item GET (for claim verification).
+    /// </summary>
+    private static string WorkItemGetResponse(int id, int rev, string state, string tags)
+    {
+        return JsonSerializer.Serialize(new
+        {
+            id,
+            rev,
+            fields = new Dictionary<string, object>
+            {
+                ["System.Id"] = id,
+                ["System.Title"] = "Test work item",
+                ["System.State"] = state,
+                ["System.Tags"] = tags,
+            },
+            _links = new { self = new { href = $"{OrgUrl}/_apis/wit/workItems/{id}" } },
+            url = $"{OrgUrl}/_apis/wit/workItems/{id}",
+        });
+    }
+
+    /// <summary>
+    /// Builds a JSON response for a successful work item PATCH.
+    /// </summary>
+    private static string WorkItemPatchResponse(int id, int rev)
+    {
+        return JsonSerializer.Serialize(new
+        {
+            id,
+            rev,
+            fields = new Dictionary<string, object>
+            {
+                ["System.Id"] = id,
+                ["System.Rev"] = rev,
+            },
+            _links = new { self = new { href = $"{OrgUrl}/_apis/wit/workItems/{id}" } },
+            url = $"{OrgUrl}/_apis/wit/workItems/{id}",
         });
     }
 
@@ -722,6 +1300,16 @@ public class AzureDevOpsBoardsClientTests
                     (r.urlContains, (Func<HttpResponseMessage>)(() => r.httpResponse))));
         }
 
+        /// <summary>
+        /// Adds a response that will be returned when a request URL contains the
+        /// given substring. Responses are consumed in FIFO order; each call to
+        /// <see cref="SendAsync"/> dequeues the first matching response.
+        /// </summary>
+        public void AddResponse(string urlContains, HttpResponseMessage response)
+        {
+            _responses.Enqueue((urlContains, () => response));
+        }
+
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -747,6 +1335,31 @@ public class AzureDevOpsBoardsClientTests
                     "{\"message\":\"No handler for " + url + "\"}",
                     Encoding.UTF8, "application/json"),
             });
+        }
+    }
+
+    /// <summary>
+    /// Fake <see cref="HttpMessageHandler"/> that delegates to an async callback
+    /// for each request, enabling inspection of request headers and body.
+    /// </summary>
+    private sealed class CaptureHttpMessageHandler : HttpMessageHandler
+    {
+        private readonly Func<HttpRequestMessage, Task<HttpResponseMessage>> _handler;
+
+        public CaptureHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> handler)
+        {
+            _handler = req => Task.FromResult(handler(req));
+        }
+
+        public CaptureHttpMessageHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> handler)
+        {
+            _handler = handler;
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            return await _handler(request);
         }
     }
 }

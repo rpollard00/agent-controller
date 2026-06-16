@@ -90,11 +90,16 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
             };
         }
 
+        var revision = candidate.SourceMetadata?.TryGetValue("revision", out var rev) == true
+            ? rev
+            : null;
+
         var workRef = new ExternalWorkRef
         {
             Source = candidate.Source,
             ExternalId = candidate.ExternalId,
             Url = candidate.ExternalUrl,
+            Revision = revision,
         };
 
         await using var scope = _scopeFactory.CreateAsyncScope();

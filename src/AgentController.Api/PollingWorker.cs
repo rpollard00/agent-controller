@@ -129,6 +129,7 @@ public sealed partial class PollingWorker : BackgroundService
         var workSource = scope.ServiceProvider.GetRequiredService<IWorkSource>();
         var lifecycle = scope.ServiceProvider.GetRequiredService<IRunLifecycleService>();
         var runStore = scope.ServiceProvider.GetRequiredService<IAgentRunStore>();
+        var workItemStore = scope.ServiceProvider.GetRequiredService<IWorkItemStore>();
         var options = _options.CurrentValue;
 
         // ── 1. Check concurrency ─────────────────────────────────────
@@ -158,7 +159,7 @@ public sealed partial class PollingWorker : BackgroundService
                 try
                 {
                     await ProcessCandidateAsync(
-                        candidate, workSource, lifecycle, options, ct);
+                        candidate, workSource, lifecycle, workItemStore, options, ct);
                 }
                 catch (Exception ex)
                 {
@@ -180,9 +181,20 @@ public sealed partial class PollingWorker : BackgroundService
         WorkCandidate candidate,
         IWorkSource workSource,
         IRunLifecycleService lifecycle,
+        IWorkItemStore workItemStore,
         AgentControllerOptions options,
         CancellationToken ct)
     {
+        // ── Upsert remote candidates into local persistence ────────
+        // Azure DevOps Boards (and future remote sources) return
+        // WorkCandidate objects that must exist in IWorkItemStore
+        // before CreateRunForWorkItemAsync can find them by ID.
+        if (candidate.Source != "LocalFake")
+        {
+            candidate = await workItemStore.UpsertAsync(candidate, ct);
+            Log.CandidateUpserted(_logger, candidate.Id, candidate.Source);
+        }
+
         // Claim the work item for exclusive execution
         var claim = new ClaimRequest
         {
@@ -364,6 +376,11 @@ public sealed partial class PollingWorker : BackgroundService
             Level = LogLevel.Information,
             Message = "Claimed work candidate {CandidateId} ({Title}).")]
         public static partial void CandidateClaimed(ILogger logger, string candidateId, string title);
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "Upserted work candidate {CandidateId} from source {Source} into local persistence.")]
+        public static partial void CandidateUpserted(ILogger logger, string candidateId, string source);
 
         [LoggerMessage(
             Level = LogLevel.Information,

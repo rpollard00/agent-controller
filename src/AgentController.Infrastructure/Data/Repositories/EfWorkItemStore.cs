@@ -211,6 +211,69 @@ internal sealed class EfWorkItemStore : IWorkItemStore
         await _db.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task<WorkCandidate> UpsertAsync(
+        WorkCandidate candidate,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        // Look up existing by (Source, ExternalId)
+        var existing = await _db.WorkItems
+            .FirstOrDefaultAsync(
+                e => e.Source == candidate.Source && e.ExternalId == candidate.ExternalId,
+                cancellationToken);
+
+        if (existing is not null)
+        {
+            // Update mutable fields from the freshly discovered candidate.
+            // Lease fields are intentionally not cleared — they are managed
+            // exclusively by TryClaimAsync and should not be affected by
+            // discovery upserts.
+            existing.Title = candidate.Title;
+            existing.Body = candidate.Description;
+            existing.RepoKey = candidate.RepoKey;
+            existing.Priority = candidate.Priority;
+            existing.Status = candidate.Status;
+            existing.AssignedTo = candidate.AssignedTo;
+            existing.ExternalUrl = candidate.ExternalUrl;
+            existing.AcceptanceCriteriaJson = SerializeDictionary(candidate.AcceptanceCriteria);
+            existing.TagsJson = SerializeList(candidate.Tags);
+            existing.SourceMetadataJson = SerializeDictionary(candidate.SourceMetadata);
+            existing.UpdatedAt = now;
+
+            await _db.SaveChangesAsync(cancellationToken);
+            return MapToCandidate(existing);
+        }
+
+        // Insert new record with a controller-assigned ID.
+        // The ID uses the candidate's ExternalId as a stable suffix so
+        // it can be reconstructed from source data.
+        var entity = new WorkItemEntity
+        {
+            Id = GenerateId($"wi_{candidate.ExternalId}"),
+            ExternalSource = candidate.Source,
+            ExternalId = candidate.ExternalId,
+            ExternalUrl = candidate.ExternalUrl,
+            RepoKey = candidate.RepoKey,
+            Title = candidate.Title,
+            Body = candidate.Description,
+            AcceptanceCriteriaJson = SerializeDictionary(candidate.AcceptanceCriteria),
+            Priority = candidate.Priority,
+            Status = candidate.Status,
+            TagsJson = SerializeList(candidate.Tags),
+            AssignedTo = candidate.AssignedTo,
+            Source = candidate.Source,
+            SourceMetadataJson = SerializeDictionary(candidate.SourceMetadata),
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+
+        _db.WorkItems.Add(entity);
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return MapToCandidate(entity);
+    }
+
     private static WorkCandidate MapToCandidate(WorkItemEntity entity)
     {
         return new WorkCandidate
@@ -227,6 +290,7 @@ internal sealed class EfWorkItemStore : IWorkItemStore
             Tags = DeserializeList(entity.TagsJson),
             AssignedTo = entity.AssignedTo,
             Source = entity.Source,
+            SourceMetadata = DeserializeDictionary(entity.SourceMetadataJson),
         };
     }
 
