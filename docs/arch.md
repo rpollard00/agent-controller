@@ -80,8 +80,8 @@ The local-first milestone (§13a) enables fully local controller runs without Az
 
 ### Remaining Local-First Gaps
 
-1. **Real pi-materia process invocation** — `MockPiMateriaRuntime` simulates execution but does not invoke a real `pi` process. The `PiMateriaRuntime` adapter is the next planned slice.
-2. **Runtime webhook ingestion from external processes** — `MockPiMateriaRuntime` emits events in-process; real `PiMateriaRuntime` must POST events via HTTP. The existing `POST /runs/{runId}/events` endpoint is ready for this.
+1. **Real pi-materia process invocation** — `MockPiMateriaRuntime` simulates execution but does not invoke a real `pi` process. The `PiMateriaRuntime` adapter is fully designed in §13b and is the next planned slice.
+2. **Runtime webhook ingestion from external processes** — `MockPiMateriaRuntime` emits events in-process; real `PiMateriaRuntime` must POST events via HTTP. The existing `POST /runs/{runId}/events` endpoint is ready for this. Addressed in §13b.6 (stdout primary, HTTP fallback).
 3. ~~Environment/source-control no-ops in PollingWorker~~ — **Fixed:** The `PollingWorker` now invokes `IEnvironmentProvider.CreateAsync` at `EnvironmentProvisioning`, `ISourceControlProvider.CloneAsync` at `RepositoryCloning`, writes context files at `ContextInjected`, and passes the full environment/repo context to `IAgentRuntime.StartAsync` at `AgentStarting`.
 
 ---
@@ -1747,202 +1747,569 @@ exit code and the final event together determine the run outcome.
 
 ---
 
-# 13b. Pi-Materia Process Adapter (Implementation-Ready Design)
+# 13b. Pi-Materia Process Adapter — Implementation-Ready Design
 
-**This section captures the immediate follow-up design after the local-only E2E path works.**
-It is implementation-ready: the interfaces exist, the event contract is defined, and the
-only missing piece is a real process-launching `IAgentRuntime` implementation that replaces
-the mock.
+**Status:** Planned. The local E2E path works with `MockPiMateriaRuntime`. The
+immediate follow-up is a real process-launching `PiMateriaRuntime` that replaces
+the mock by starting `pi` as a child process and ingesting its runtime events.
 
 ## 13b.1 Status of Dependencies
 
 All dependencies needed for the pi-materia adapter exist today:
 
-- `IAgentRuntime` interface — defined in `AgentController.Application`
-- `RuntimeOptions` — configured via `appsettings.json` (provider, piExecutablePath, defaultMateriaLoadout)
-- `IRunLifecycleService` — can be resolved by the runtime to ingest events in-process
-- `POST /runs/{runId}/events` — HTTP endpoint for runtime event ingestion
-- `IEnvironmentProvider` — produces per-run directories with context files that pi-materia consumes
-- `IWorkItemStore` — holds work item data the runtime needs
+| Dependency | Location | Status |
+|-----------|----------|--------|
+| `IAgentRuntime` interface | `AgentController.Application/IAgentRuntime.cs` | ✓ Defined |
+| `RuntimeOptions` (provider, piExecutablePath, defaultMateriaLoadout) | `AgentController.Infrastructure/Options/RuntimeOptions.cs` | ✓ Bound |
+| `IRunLifecycleService` | `AgentController.Application/IRunLifecycleService.cs` | ✓ Scoped |
+| `POST /runs/{runId}/events` | `AgentController.Api/Program.cs` | ✓ Accepts runtime events over HTTP |
+| `IEnvironmentProvider` | `AgentController.Application/IEnvironmentProvider.cs` | ✓ LocalWorkspace impl |
+| `ISourceControlProvider` | `AgentController.Application/ISourceControlProvider.cs` | ✓ LocalGit impl |
+| `IWorkItemStore` | `AgentController.Application/IWorkItemStore.cs` | ✓ EF Core impl |
+| Context files on disk | Written by `PollingWorker.InjectContextAsync` | ✓ controller-run.json, work-item.md, etc. |
+| Provider selection in `Program.cs` | `AgentController.Api/Program.cs` | ✓ Switch on `runtime:provider` |
+| DI registration pattern | `ServiceCollectionExtensions.AddAgentControllerMockPiMateriaRuntime` | ✓ Pattern to follow |
 
-## 13b.2 PiMateriaRuntime Design
+## 13b.2 How PiMateriaRuntime Replaces MockPiMateriaRuntime
+
+The mock and the real runtime implement the same `IAgentRuntime` interface. The
+only difference is **what happens inside `StartAsync`**:
+
+| Aspect | MockPiMateriaRuntime | PiMateriaRuntime |
+|--------|---------------------|------------------|
+| Event source | In-process `Task` emitting fake events via `IRunLifecycleService` | Real `pi` child process emitting events via stdout |
+| Process lifecycle | None — async task completes after emitting events | Tracked `System.Diagnostics.Process` |
+| Cancellation | No-op | SIGTERM → grace period → SIGKILL |
+| Heartbeats | One synthetic heartbeat per run | Synthetic timer while process is alive (if pi doesn't emit its own) |
+| Run outcome | Configurable via `DefaultMateriaLoadout` | Determined by pi's stdout events + exit code |
+
+**Provider selection** is config-driven. In `appsettings.json`:
+
+```jsonc
+{
+  "runtime": {
+    // Use "MockPiMateria" for simulated local runs (current).
+    // Switch to "PiMateria" for real pi process invocation.
+    "provider": "PiMateria",
+    "piExecutablePath": "pi",
+    "defaultMateriaLoadout": "autonomous-dev"
+  }
+}
+```
+
+In `Program.cs`, add a new case:
 
 ```csharp
-public sealed class PiMateriaRuntime : IAgentRuntime
+// Add after the existing MockPiMateria case:
+if (runtimeProvider.Equals("PiMateria", StringComparison.OrdinalIgnoreCase))
 {
-    // Dependencies
+    builder.Services.AddAgentControllerPiMateriaRuntime();
+}
+```
+
+## 13b.3 PiMateriaRuntime Implementation
+
+### Class Skeleton
+
+```csharp
+// src/AgentController.Infrastructure/PiMateriaRuntime.cs
+namespace AgentController.Infrastructure;
+
+/// <summary>
+/// Real IAgentRuntime that launches pi as a child process, reads newline-delimited
+/// JSON runtime events from stdout, and ingests them through
+/// IRunLifecycleService.IngestRuntimeEventAsync.
+///
+/// Registered as a singleton via AddAgentControllerPiMateriaRuntime().
+/// Uses IServiceScopeFactory to resolve scoped services per event emission.
+/// </summary>
+public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
+{
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IOptionsMonitor<RuntimeOptions> _runtimeOptions;
     private readonly IOptionsMonitor<AgentControllerOptions> _controllerOptions;
     private readonly ILogger<PiMateriaRuntime> _logger;
 
-    public async Task<AgentRunHandle> StartAsync(
-        AgentRunSpec spec, CancellationToken ct);
+    // Track active processes by runId for status queries and cancellation.
+    private readonly ConcurrentDictionary<string, ActiveProcess> _activeProcesses = new();
 
-    public async Task<AgentRuntimeStatus> GetStatusAsync(
-        AgentRunHandle handle, CancellationToken ct);
+    // Grace period between SIGTERM and SIGKILL (configurable).
+    private static readonly TimeSpan DefaultCancelGracePeriod = TimeSpan.FromSeconds(10);
 
-    public async Task CancelAsync(
-        AgentRunHandle handle, CancellationToken ct);
+    public PiMateriaRuntime(
+        IServiceScopeFactory scopeFactory,
+        IOptionsMonitor<RuntimeOptions> runtimeOptions,
+        IOptionsMonitor<AgentControllerOptions> controllerOptions,
+        ILogger<PiMateriaRuntime> logger);
+
+    public Task<AgentRunHandle> StartAsync(AgentRunSpec spec, CancellationToken ct);
+    public Task<AgentRuntimeStatus> GetStatusAsync(AgentRunHandle handle, CancellationToken ct);
+    public Task CancelAsync(AgentRunHandle handle, CancellationToken ct);
+    public void Dispose();
+
+    private sealed record ActiveProcess(
+        System.Diagnostics.Process Process,
+        CancellationTokenSource Cts);
 }
 ```
 
-### StartAsync Behavior
+### StartAsync — Detailed Behavior
 
-1. **Locate context files.** Read `{runRoot}/{runId}/context/controller-run.json` to
-get run metadata (runId, workItemId, repo path, suggested branch name, callback URL).
+```
+1. VALIDATE prerequisites
+   - Read RuntimeOptions.PiExecutablePath (fallback: "pi").
+   - Verify the executable exists on PATH or at the configured path.
+     If not found, throw InvalidOperationException with a clear message.
+   - Read context dir from spec.EnvironmentHandle.RootPath + "/context".
+     Verify controller-run.json exists; log warning if missing.
 
-2. **Build pi command.** Construct a process invocation:
-   ```bash
-   pi --loadout {defaultMateriaLoadout} --context {contextDir}
-   ```
-   The `--context` flag points pi-materia at the context directory containing
-   `work-item.md`, `acceptance-criteria.md`, and `controller-run.json`.
+2. BUILD process start info
+   - FileName: resolved pi executable path
+   - Arguments: --loadout {loadout} --context {contextDir}
+   - WorkingDirectory: spec.RepoCheckout.LocalPath (the cloned repo)
+   - RedirectStandardOutput: true
+   - RedirectStandardError: true
+   - RedirectStandardInput: false
+   - UseShellExecute: false
+   - CreateNoWindow: true
+   - Environment variables:
+       CONTROLLER_RUN_ID={spec.RunId}
+       CONTROLLER_EVENT_URL={spec.CallbackUrl}  // for HTTP fallback
+       CONTROLLER_CONTEXT_DIR={contextDir}
 
-3. **Start process.** Launch `pi` as a child process with:
-   - Working directory set to `{runRoot}/{runId}/repo/`
-   - stdout piped to `{runRoot}/{runId}/logs/runtime.stdout.log`
-   - stderr piped to `{runRoot}/{runId}/logs/runtime.stderr.log`
-   - Environment variables: `CONTROLLER_RUN_ID`, `CONTROLLER_EVENT_URL`
+3. START process
+   - Call Process.Start(). If it throws, wrap in InvalidOperationException.
+   - Store (process, cts) in _activeProcesses keyed by spec.RunId.
+   - Begin async stdout line-reading loop (fire-and-forget, see below).
+   - Begin async stderr line-reading loop (logs to ILogger, fire-and-forget).
+   - Begin async process-exit monitoring (fire-and-forget, see below).
 
-4. **Track process.** Store process ID and start time in the returned
-`AgentRunHandle`. Return immediately — the process runs asynchronously.
+4. RETURN handle
+   - Return AgentRunHandle with:
+       RunId = spec.RunId
+       RuntimeRunId = $"pi-{process.Id}"
+       Status = RunLifecycleState.AgentRunning
+       StartedAt = DateTimeOffset.UtcNow
+```
 
-5. **Event ingestion.** The runtime can emit events via either path:
-   - **HTTP webhook.** pi-materia POSTs to `CONTROLLER_EVENT_URL`
-     (`http://localhost:{port}/runs/{runId}/events`).
-   - **Stdout JSON stream.** If pi-materia emits newline-delimited JSON events on stdout,
-     the `PiMateriaRuntime` reads stdout line-by-line, deserializes each line as a
-     `RuntimeEvent`, and calls `IRunLifecycleService.IngestRuntimeEventAsync` directly
-     in-process via a scoped service resolution.
+### Stdout Event Stream Loop
 
-6. **Heartbeat.** While the process is running, the controller's heartbeat mechanism
-is satisfied by periodic `runtime.heartbeat` events from pi-materia. If pi-materia
-does not emit heartbeats natively, `PiMateriaRuntime` can emit synthetic heartbeats
-based on a timer while the process is alive.
+```
+WHILE process is running AND !ct.IsCancellationRequested:
+    read line = await process.StandardOutput.ReadLineAsync(ct)
+    if line is null → stdout closed, break
+    if line is whitespace → continue
 
-### GetStatusAsync Behavior
+    TRY:
+        deserialize line as RuntimeEvent (System.Text.Json)
+        validate eventId and eventType are non-empty
+        validate runId matches spec.RunId (or is absent)
 
-1. Check if the tracked process is still running (OS process check).
-2. If the process exited, read the exit code.
-3. If the process exited without a final event, synthesize a `runtime.failed` or
-`runtime.completed` event based on exit code.
+        await using scope = _scopeFactory.CreateAsyncScope()
+        var lifecycle = scope.ServiceProvider.GetRequiredService<IRunLifecycleService>()
+        await lifecycle.IngestRuntimeEventAsync(evt, ct)
+    CATCH InvalidOperationException (duplicate eventId, terminal state, etc.):
+        log at Debug level and continue
+    CATCH JsonException:
+        log at Warning level with the raw line, continue
+```
 
-### CancelAsync Behavior
+### Process Exit Monitoring
 
-1. Send SIGTERM (or platform-equivalent) to the child process.
-2. After a configurable grace period, send SIGKILL if still alive.
-3. Ingest a `runtime.cancelled` event.
-4. Record the cancellation in a lifecycle event.
+```
+AWAIT process.WaitForExitAsync(ct)
 
-## 13b.3 Required Inputs (What the Controller Provides to pi-materia)
+IF process exited without a final event (runtime.completed or runtime.failed):
+    → Synthesize an event based on exit code:
+        exit 0 → runtime.completed (outcome: no_changes_needed, message: "pi exited cleanly")
+        exit ≠ 0 → runtime.failed (message: "pi exited with code {code}")
+    → Ingest the synthesized event through IRunLifecycleService
 
-### controller-run.json
+REMOVE from _activeProcesses
+```
+
+### CancelAsync — Graceful Shutdown
+
+```
+1. LOOKUP ActiveProcess by handle.RunId. If not found, return (no-op).
+2. TRIGGER the CancellationTokenSource for that process.
+3. SEND SIGTERM:
+     process.Kill(entireProcessTree: true)  // .NET 5+ on Unix sends SIGTERM
+     On Windows: GenerateConsoleCtrlEvent or CloseMainWindow first
+4. WAIT for process exit with grace period (default 10s):
+     await process.WaitForExitAsync(token with timeout)
+5. IF still running after grace period:
+     process.Kill() again (this sends SIGKILL on Unix)
+6. INGEST runtime.cancelled event through IRunLifecycleService.
+7. REMOVE from _activeProcesses.
+```
+
+### GetStatusAsync
+
+```
+1. LOOKUP ActiveProcess by handle.RunId.
+2. IF process exists and is running → return AgentRuntimeStatus with current state.
+3. IF process existed but exited → return status with exit code info.
+4. IF no tracked process → return status from the handle (may be stale).
+```
+
+### Synthetic Heartbeat Timer
+
+If pi-materia does not natively emit `runtime.heartbeat` events, `PiMateriaRuntime`
+should emit a synthetic heartbeat every 30 seconds while the process is running.
+This prevents the controller's stale-run recovery from timing out the run.
+
+```
+START background timer (interval: 30s)
+WHILE process is running:
+    Emit runtime.heartbeat event with:
+        eventId = $"pi-hb-{runId}-{tick}"
+        phase = "process-running"
+        pid = process.Id
+```
+
+## 13b.4 DI Registration
+
+```csharp
+// src/AgentController.Infrastructure/ServiceCollectionExtensions.cs
+
+/// <summary>
+/// Registers the <see cref="PiMateriaRuntime"/> as a singleton
+/// <see cref="IAgentRuntime"/> that launches pi as a child process
+/// and ingests stdout JSON events in-process.
+///
+/// Requires <see cref="AddAgentControllerOptions"/> to be called first
+/// (for <see cref="RuntimeOptions"/> and <see cref="AgentControllerOptions"/> binding).
+///
+/// Callers should register this <em>after</em>
+/// <see cref="AddAgentControllerNoOpProviders"/> so the last-registered
+/// <see cref="IAgentRuntime"/> wins.
+/// </summary>
+public static IServiceCollection AddAgentControllerPiMateriaRuntime(
+    this IServiceCollection services)
+{
+    services.AddSingleton<IAgentRuntime, PiMateriaRuntime>();
+    return services;
+}
+```
+
+## 13b.5 Required Inputs (What the Controller Provides to pi-materia)
+
+### Context Files on Disk
+
+Written by `PollingWorker.InjectContextAsync` into `{runRoot}/{runId}/context/`.
+
+#### controller-run.json (actual format produced by InjectContextAsync)
 
 ```json
 {
-  "runId": "run_abc123",
-  "workItemId": "c8f3e2a1",
-  "externalWorkItemId": "42",
-  "repoPath": "/home/user/.agent-work-controller/runs/run_abc123/repo",
-  "baseBranch": "main",
-  "suggestedBranchName": "agent/42-add-retry-handling",
-  "repositoryProfile": {
-    "key": "example-service",
-    "cloneUrl": "https://dev.azure.com/org/project/_git/example-service",
-    "defaultBranch": "main",
-    "allowedPaths": ["src/", "tests/"]
-  },
-  "callbackUrl": "http://localhost:5000/runs/run_abc123/events",
-  "workItem": {
-    "title": "Add retry handling for transient failures",
-    "acceptanceCriteria": {
-      "given": "A service call receives a 503 response",
-      "when": "The retry middleware is configured",
-      "then": "The call is retried up to 3 times with exponential backoff"
-    }
-  }
+  "runId": "run_a1b2c3d4",
+  "workItemId": "c8f3e2a1-...",
+  "externalId": "42",
+  "externalUrl": "https://dev.azure.com/org/project/_workitems/edit/42",
+  "source": "LocalFile",
+  "repoKey": "example-service",
+  "repoPath": "/home/user/.agent-work-controller/runs/run_a1b2c3d4/repo",
+  "branch": "main",
+  "commitSha": "abc123def456...",
+  "clonedAt": "2026-06-16T20:00:00Z",
+  "startedAt": "2026-06-16T20:00:05Z"
 }
 ```
 
-### work-item.md
+> **Note:** The `InjectContextAsync` method in `PollingWorker.cs` is the canonical
+> source of truth for this format. The `PiMateriaRuntime` reads this file and passes
+> relevant fields to pi via CLI args and environment variables.
 
-A rendered markdown version of the work item description for pi-materia consumption.
-Generated by the environment provider from the `WorkCandidate` record.
+#### work-item.md
 
-### acceptance-criteria.md
+Markdown rendered from `WorkCandidate` fields:
 
-A rendered markdown version of the acceptance criteria.
+```markdown
+# Add retry handling for transient failures
 
-### repository.json
+**ID:** 42
+**Priority:** 1
+**Tags:** agent-ready, backend
 
-A copy of the resolved repository profile.
+The service currently fails immediately on 5xx responses from downstream
+services. We need a retry middleware that retries with exponential backoff.
+```
 
-## 13b.4 Required Outputs (What pi-materia Reports Back)
+#### acceptance-criteria.md
 
-All outputs flow through the runtime event contract (§10). The minimal set of
-events pi-materia must emit:
+Markdown rendered from `WorkCandidate.AcceptanceCriteria` dictionary:
 
-| Event | Required? | Notes |
-|-------|-----------|-------|
-| `runtime.accepted` | Yes | Must be the first event |
-| `runtime.heartbeat` | Recommended | Every N seconds while working |
-| `runtime.status` | Recommended | Human-readable progress |
-| `runtime.completed` | Yes | Must include `outcome` in payload |
-| `runtime.failed` | Conditional | Required when the run fails |
-| `runtime.needs_human` | Optional | When human input is needed |
-| `runtime.branch_created` | Optional | When a branch is created |
-| `runtime.pr_created` | Optional | When a PR is opened |
+```markdown
+## Acceptance Criteria
+
+- **Given** a service call receives a 503 response
+- **When** the retry middleware is configured
+- **Then** the call is retried up to 3 times with exponential backoff
+
+- **Given** all retries are exhausted
+- **When** the downstream service still returns 5xx
+- **Then** the original error is propagated to the caller
+```
+
+#### repository.json
+
+```json
+{
+  "key": "example-service",
+  "cloneUrl": "\u003cresolved\u003e",
+  "localPath": "/home/user/.agent-work-controller/runs/run_a1b2c3d4/repo",
+  "defaultBranch": "main",
+  "commitSha": "abc123def456..."
+}
+```
+
+### Environment Variables Passed to pi
+
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `CONTROLLER_RUN_ID` | `run_a1b2c3d4` | Run identifier for event correlation |
+| `CONTROLLER_EVENT_URL` | `http://localhost:5000/runs/run_a1b2c3d4/events` | HTTP webhook fallback for event POST |
+| `CONTROLLER_CONTEXT_DIR` | `/home/user/.agent-work-controller/runs/run_a1b2c3d4/context` | Path to context file directory |
+
+### CLI Arguments
+
+```bash
+pi --loadout autonomous-dev --context /home/user/.agent-work-controller/runs/run_a1b2c3d4/context
+```
+
+- `--loadout`: Value from `RuntimeOptions.DefaultMateriaLoadout` (default: `"autonomous-dev"`).
+- `--context`: Absolute path to the context directory containing `controller-run.json`,
+  `work-item.md`, and `acceptance-criteria.md`.
+
+## 13b.6 Required Outputs (What pi-materia Reports Back)
+
+### Stdout JSON Event Stream Format
+
+pi-materia emits **newline-delimited JSON** (one JSON object per line, `\n` terminated)
+on stdout. Each line is a `RuntimeEvent` envelope matching the contract in §10.2.
+
+Example stdout output:
+
+```
+{"eventId":"evt_01","eventType":"runtime.accepted","occurredAt":"2026-06-16T20:00:10Z","severity":"info","message":"pi-materia accepted run"}
+{"eventId":"evt_02","eventType":"runtime.heartbeat","occurredAt":"2026-06-16T20:00:40Z","payload":{"phase":"analysis"}}
+{"eventId":"evt_03","eventType":"runtime.status","occurredAt":"2026-06-16T20:01:00Z","message":"Reading work item and acceptance criteria"}
+{"eventId":"evt_04","eventType":"runtime.status","occurredAt":"2026-06-16T20:02:00Z","message":"Implementing changes","payload":{"phase":"implementation"}}
+{"eventId":"evt_05","eventType":"runtime.completed","occurredAt":"2026-06-16T20:05:00Z","message":"PR opened","payload":{"outcome":"pull_request_opened","summary":"Added retry middleware","branchName":"agent/42-add-retry","pullRequestUrl":"https://dev.azure.com/org/project/_git/repo/pullrequest/99"}}
+```
+
+> **Design note:** The `runId` field is optional in stdout events because the controller
+> already knows which run the process belongs to. If pi includes `runId`, it must match
+> the `CONTROLLER_RUN_ID` environment variable. If omitted, `PiMateriaRuntime` fills it
+> in before ingesting.
+
+### HTTP Webhook Fallback
+
+If pi-materia cannot emit events on stdout (e.g., it uses a different output channel),
+it can POST events to `CONTROLLER_EVENT_URL`:
+
+```bash
+curl -X POST http://localhost:5000/runs/run_a1b2c3d4/events \
+  -H "Content-Type: application/json" \
+  -d '{"eventId":"evt_01","eventType":"runtime.accepted",...}'
+```
+
+The HTTP endpoint is already implemented and battle-tested (§10, `docs/runtime-events.md`).
+
+### Event Ordering Requirements
+
+| Order | Event | Required |
+|-------|-------|----------|
+| 1st | `runtime.accepted` | Yes |
+| 2nd+ | `runtime.heartbeat`, `runtime.status`, `runtime.branch_created`, `runtime.pr_created` | Optional, any order |
+| Last | `runtime.completed` or `runtime.failed` | Yes (exactly one) |
 
 ### Completion Outcomes
 
 When emitting `runtime.completed`, pi-materia sets `payload.outcome` to one of:
 
-- `pull_request_opened` — a PR was created (include `pullRequestUrl`, `branchName`)
-- `branch_pushed` — code was pushed to a branch without a PR
-- `patch_created` — a patch file was produced at a known path
-- `no_changes_needed` — the runtime determined no change was required
-- `needs_human` — the runtime needs human review (same as `runtime.needs_human`)
-- `failed` — the runtime could not complete (same as `runtime.failed`)
+| Outcome | Controller State | Required payload fields |
+|---------|-----------------|------------------------|
+| `pull_request_opened` | `PrOpened` | `pullRequestUrl`, `branchName`, `summary` |
+| `branch_pushed` | `BranchPushed` | `branchName`, `summary` |
+| `patch_created` | `Completed` | `summary` |
+| `no_changes_needed` | `Completed` | `summary` |
+| `needs_human` | `NeedsHuman` | `summary`, `reason` |
+| `failed` | `Failed` | `summary`, `reason` |
 
-## 13b.5 Handoff Contract Summary
+If pi exits with code 0 but no `runtime.completed` event was emitted on stdout,
+`PiMateriaRuntime` synthesizes `runtime.completed` with outcome `no_changes_needed`.
+If pi exits with non-zero code and no `runtime.failed` event, `PiMateriaRuntime`
+synthesizes `runtime.failed`.
+
+## 13b.7 Handoff Contract Summary
 
 ```text
-Controller → pi-materia (inputs):
-  - Context directory at {runRoot}/{runId}/context/
-  - controller-run.json, work-item.md, acceptance-criteria.md, repository.json
-  - Working directory at {runRoot}/{runId}/repo/
-  - Environment variables: CONTROLLER_RUN_ID, CONTROLLER_EVENT_URL
+┌─────────────────────────────────────────────────────────────────┐
+│ CONTROLLER → PI-MATERIA (one-time, before process start)        │
+├─────────────────────────────────────────────────────────────────┤
+│ Context files in {runRoot}/{runId}/context/:                    │
+│   controller-run.json   — run metadata (runId, repo path, etc)  │
+│   work-item.md          — work item description (markdown)      │
+│   acceptance-criteria.md— acceptance criteria (markdown)        │
+│   repository.json       — repository profile metadata           │
+│                                                                 │
+│ Working directory: {runRoot}/{runId}/repo/                      │
+│                                                                 │
+│ Environment variables:                                          │
+│   CONTROLLER_RUN_ID      — controller run identifier            │
+│   CONTROLLER_EVENT_URL   — HTTP endpoint for events             │
+│   CONTROLLER_CONTEXT_DIR — path to context files                │
+│                                                                 │
+│ CLI: pi --loadout {loadout} --context {contextDir}              │
+└─────────────────────────────────────────────────────────────────┘
 
-pi-materia → Controller (outputs):
-  - Runtime events via HTTP POST or stdout JSON stream
-  - eventId, runId, eventType (required)
-  - runtime.completed or runtime.failed is the terminal event
-  - Process exit code (0 = success, non-zero = check final event)
+┌─────────────────────────────────────────────────────────────────┐
+│ PI-MATERIA → CONTROLLER (streaming, during process lifetime)    │
+├─────────────────────────────────────────────────────────────────┤
+│ Primary: newline-delimited JSON on stdout                       │
+│   One RuntimeEvent object per line                              │
+│   eventId and eventType required per event                      │
+│   runtime.accepted must be first                                │
+│   runtime.completed or runtime.failed must be last              │
+│                                                                 │
+│ Fallback: HTTP POST to CONTROLLER_EVENT_URL                     │
+│   Same RuntimeEvent envelope as JSON body                       │
+│   Standard REST semantics (200/400/409/422 responses)           │
+│                                                                 │
+│ Process exit:                                                    │
+│   Exit code 0 + final event → outcome per event                 │
+│   Exit code 0 + no final event → synthesized no_changes_needed  │
+│   Exit code ≠ 0 + no final event → synthesized failed           │
+│   Exit code ≠ 0 + final event → outcome per event (event wins)  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-## 13b.6 Implementation Sequence
+## 13b.8 Implementation Sequence
 
-1. **Local E2E with mock runtime** (Slice 4 in §13a) — proves the full lifecycle
-works with no real pi-materia.
-2. **Real PiMateriaRuntime** — replaces the mock. Starts pi as a child process.
-3. **Stdout event stream** — teaches PiMateriaRuntime to read newline-delimited
-JSON events from pi-materia's stdout (in-process ingestion, no HTTP round-trip).
-4. **HTTP webhook fallback** — supports pi-materia sending events via
-`POST /runs/{runId}/events` if it cannot emit on stdout.
-5. **Cancellation & cleanup** — wire SIGTERM handling, grace period, and
-cleanup of the process tree.
+### Step 1: PiMateriaRuntime class (core)
 
-## 13b.7 Open Design Questions
+File: `src/AgentController.Infrastructure/PiMateriaRuntime.cs`
 
-1. Should pi-materia receive the full acceptance criteria as structured JSON or
-rendered markdown? (Start with markdown; structured JSON can be added later.)
-2. How many `runtime.heartbeat` events per minute? (Start with 1 per 30 seconds.)
-3. Should the controller restart pi-materia if it exits without a final event?
-(No. Mark stale and let the operator decide. Auto-restart is a future concern.)
-4. What happens if pi-materia modifies files outside `allowedPaths`?
-(The controller does not enforce this — it's advisory. A future policy engine
-can inspect diffs.)
+- Implement `StartAsync` with `Process.Start`.
+- Implement stdout line-reading loop with JSON deserialization.
+- Implement process exit monitoring with synthesized events.
+- Implement `GetStatusAsync`.
+- Implement `CancelAsync` with graceful shutdown (SIGTERM → grace → SIGKILL).
+- Implement `IDisposable` to clean up tracked processes.
+
+### Step 2: DI registration
+
+- Add `AddAgentControllerPiMateriaRuntime()` extension method.
+- Add `"PiMateria"` case to `Program.cs` provider switch.
+
+### Step 3: Synthetic heartbeat timer
+
+- Add a per-process timer that emits `runtime.heartbeat` every 30s while
+  the pi process is alive. This keeps the controller from marking the run
+  as stale during long-running agent work.
+
+### Step 4: HTTP webhook fallback (stretch)
+
+- Already supported by the existing `POST /runs/{runId}/events` endpoint.
+- No code changes needed in the controller. pi-materia must be configured
+  to POST to `CONTROLLER_EVENT_URL` if stdout events aren't feasible.
+
+### Step 5: Integration test
+
+File: `tests/AgentController.Infrastructure.Tests/PiMateriaRuntimeTests.cs`
+
+- Test process start with a dummy script that emits valid stdout JSON events.
+- Test process exit without final event → synthesized completion.
+- Test process exit with error code → synthesized failure.
+- Test cancellation → process killed.
+- Test duplicate eventId on stdout → logged and skipped.
+- Test malformed JSON on stdout → logged and skipped.
+- Test pi executable not found → clear error message.
+
+### Step 6: Example config
+
+Update `appsettings.example.json` with a `"PiMateria"` config section:
+
+```jsonc
+{
+  "runtime": {
+    "provider": "PiMateria",
+    "piExecutablePath": "pi",
+    "defaultMateriaLoadout": "autonomous-dev"
+  }
+}
+```
+
+## 13b.9 Test Strategy
+
+### Unit Tests (PiMateriaRuntimeTests)
+
+Use a shell script or small executable as a fake `pi`:
+
+```bash
+#!/bin/bash
+# test_fixture_pi.sh — behaves like pi-materia for testing
+echo '{"eventId":"t1","eventType":"runtime.accepted"}'
+sleep 0.1
+echo '{"eventId":"t2","eventType":"runtime.status","message":"working"}'
+sleep 0.1
+echo '{"eventId":"t3","eventType":"runtime.completed","payload":{"outcome":"pull_request_opened","summary":"done","branchName":"agent/test","pullRequestUrl":"https://example.com/pr/1"}}'
+```
+
+Tests:
+| Test | What it verifies |
+|------|-----------------|
+| `StartAsync_LaunchesProcess_AndReturnsHandle` | Process starts, handle has RuntimeRunId |
+| `StdoutEvents_AreIngested_IntoLifecycle` | JSON lines → IngestRuntimeEventAsync calls |
+| `ProcessExit_WithoutFinalEvent_SynthesizesCompletion` | Exit 0 → no_changes_needed |
+| `ProcessExit_WithErrorCode_SynthesizesFailure` | Exit 1 → runtime.failed |
+| `CancelAsync_KillsProcess` | Cancel → process exits within grace period |
+| `CancelAsync_ForceKillsAfterGracePeriod` | Process ignoring SIGTERM → SIGKILL |
+| `DuplicateEventId_OnStdout_IsSkipped` | Duplicate eventId → logged, not re-ingested |
+| `MalformedJson_OnStdout_IsSkipped` | Bad JSON → logged, process continues |
+| `ExecutableNotFound_ThrowsClearError` | Missing pi → InvalidOperationException with message |
+| `Dispose_CleansUpActiveProcesses` | Dispose kills all tracked processes |
+
+### Integration Test (LocalEndToEndSmokeTests)
+
+Extend the existing `LocalEndToEndSmokeTests` with a `"PiMateria"` variant that
+uses a test fixture script as the `piExecutablePath`. The test:
+- Configures `LocalFile` work source + `LocalGit` source control +
+  `LocalWorkspace` environment + `PiMateria` runtime (pointing at fixture script).
+- Runs one poll cycle.
+- Asserts the run reaches `PrOpened`.
+- Asserts lifecycle events include `runtime.accepted`, `runtime.status`,
+  and `runtime.completed`.
+
+## 13b.10 Open Design Questions
+
+1. **Context format for pi-materia.** Should pi receive the full work item as
+   structured JSON or rendered markdown? (Start with markdown files already written
+   by `InjectContextAsync`; structured JSON can be added later by extending the
+   context file set.)
+
+2. **Heartbeat frequency.** How many `runtime.heartbeat` events per minute?
+   (Start with 1 per 30 seconds from the synthetic timer; pi can override by
+   emitting its own heartbeats on stdout.)
+
+3. **Auto-restart on crash.** Should the controller restart pi if it exits without
+   a final event? (No. Mark stale after timeout and let the operator decide.
+   Auto-restart is a future concern.)
+
+4. **allowedPaths enforcement.** What happens if pi modifies files outside
+   `allowedPaths`? (The controller does not enforce this — it's advisory.
+   A future policy engine can inspect diffs post-run.)
+
+5. **pi CLI contract stability.** What flags does pi-materia accept?
+   (`--loadout` and `--context` are assumed based on current pi CLI conventions.
+   Confirm with pi-materia maintainers before implementing.)
+
+6. **Concurrency of runs.** `PiMateriaRuntime` is a singleton but tracks multiple
+   concurrent processes in `_activeProcesses`. The `PollingWorker` already enforces
+   `MaxConcurrentRuns` — each `StartAsync` call creates an independent process.
+   No additional concurrency control is needed in the runtime.
 
 ---
 
