@@ -36,7 +36,8 @@ csharp_new_line_before_members_in_anonymous_types = true
 csharp_new_line_between_query_expression_clauses = true
 
 # Keep analysis at sensible defaults without over-tightening.
-# Warnings fire but don't block compilation.
+# Warnings (not suggestions) will fail the build via TreatWarningsAsErrors.
+# Suggestion-level rules remain non-blocking style preferences.
 dotnet_diagnostic.CA1716.severity = suggestion
 
 # IDE preferences
