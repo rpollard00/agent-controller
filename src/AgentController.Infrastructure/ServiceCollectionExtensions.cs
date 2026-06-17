@@ -148,6 +148,28 @@ public static class AgentControllerServiceCollectionExtensions
     }
 
     /// <summary>
+    /// Registers the <see cref="RuntimeEventMonitor"/> as a singleton
+    /// <see cref="IRuntimeEventMonitor"/> that reads the bounded runtime event
+    /// artifact stream (<c>{runRoot}/{runId}/events/events.jsonl</c>) for the
+    /// monitoring/local sync feed.
+    ///
+    /// The implementation is stateless and fault-tolerant: absent, partial, or
+    /// malformed event streams yield empty/malformed snapshots rather than
+    /// throwing, so monitoring never blocks local sync.
+    ///
+    /// Requires <see cref="AddAgentControllerOptions"/> to be called first
+    /// (for <see cref="AgentControllerOptions"/> binding, used to resolve
+    /// <see cref="AgentControllerOptions.RunRoot"/>).
+    /// </summary>
+    public static IServiceCollection AddAgentControllerRuntimeEventMonitor(
+        this IServiceCollection services)
+    {
+        services.AddSingleton<IRuntimeEventMonitor, RuntimeEventMonitor>();
+
+        return services;
+    }
+
+    /// <summary>
     /// Registers the <see cref="LocalFakeWorkSource"/> as a singleton <see cref="IWorkSource"/>
     /// implementation backed by the persisted <see cref="IWorkItemStore"/>. Applies
     /// configured <see cref="WorkSourceOptions"/> for tag/state eligibility filtering.

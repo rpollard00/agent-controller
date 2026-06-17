@@ -22,6 +22,10 @@ builder.Services.AddAgentControllerRepositories();
 // for consistent run state transitions.
 builder.Services.AddAgentControllerLifecycleService();
 
+// Register the runtime event monitor (singleton) that reads bounded runtime
+// event artifacts for the monitoring/local sync feed.
+builder.Services.AddAgentControllerRuntimeEventMonitor();
+
 // ── Provider wiring ───────────────────────────────────────────
 // Register no-op defaults first, then override with real providers
 // based on configuration sections (workSource:provider, sourceControl:provider,
@@ -382,5 +386,75 @@ app.MapGet(
         return Results.Ok(detail);
     }
 );
+
+// --- Monitoring / local sync (runtime event feed) ---
+//
+// GET /api/monitor/events?runId=<id>&cap=<n?>&stream=<true|1> ->
+//   - JSON snapshot by default, OR
+//   - server-sent events when the client requests ?stream=true or sends
+//     Accept: text/event-stream.
+//
+// The payload (MonitorEventsResponse) combines the existing run summary fields
+// with the additive `runtimeEvents` snapshot so older clients keep working while
+// newer clients render the formatted event feed. SSE polls the artifact stream
+// and emits an update whenever the run summary or event stream changes.
+app.MapGet(
+    "/api/monitor/events",
+    async (
+        string? runId,
+        int? cap,
+        string? stream,
+        IAgentRunStore runStore,
+        IRuntimeEventMonitor monitor,
+        IServiceScopeFactory scopeFactory,
+        HttpContext httpContext,
+        CancellationToken ct
+    ) =>
+    {
+        if (string.IsNullOrWhiteSpace(runId))
+        {
+            return Results.BadRequest(new
+            {
+                error = "Query parameter 'runId' is required.",
+            });
+        }
+
+        var run = await runStore.GetByIdAsync(runId, ct);
+        if (run is null)
+        {
+            return Results.NotFound(new { error = $"Run '{runId}' not found." });
+        }
+
+        if (MonitoringEndpoint.ClientWantsStream(stream, httpContext))
+        {
+            // Resolve scoped stores per tick so a long-lived SSE connection never
+            // pins a single DbContext. The request scope stays open for the stream.
+            return new MonitoringSseResult(async tickToken =>
+            {
+                await using var scope = scopeFactory.CreateAsyncScope();
+                var tickRunStore = scope.ServiceProvider
+                    .GetRequiredService<IAgentRunStore>();
+                var tickMonitor = scope.ServiceProvider
+                    .GetRequiredService<IRuntimeEventMonitor>();
+
+                // If the run vanishes mid-stream, keep the channel open with a
+                // minimal payload rather than tearing down.
+                var currentRun = await tickRunStore.GetByIdAsync(runId, tickToken);
+                if (currentRun is null)
+                {
+                    return new MonitorEventsResponse { RunId = runId };
+                }
+
+                var snapshot = await tickMonitor.GetRuntimeEventsAsync(runId, cap, tickToken);
+                return MonitoringEndpoint.BuildResponse(currentRun, snapshot);
+            });
+        }
+
+        var runtimeEvents = await monitor.GetRuntimeEventsAsync(runId, cap, ct);
+        var monitorResponse = MonitoringEndpoint.BuildResponse(run, runtimeEvents);
+        return Results.Text(
+            MonitoringEndpoint.Serialize(monitorResponse),
+            "application/json");
+    });
 
 app.Run();
