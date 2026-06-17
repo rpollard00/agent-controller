@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>AgentController · Monitoring</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="monitoring-shell">
+      <header class="monitoring-shell-header">
+        <h1>Monitoring</h1>
+        <p class="monitoring-shell-subtitle">
+          Runtime event stream from local sync. Add <code>?runId=&lt;id&gt;</code> to follow a run.
+        </p>
+      </header>
+      <!--
+        The monitoring tab. The orchestrator (main.ts) auto-mounts any element
+        with [data-monitoring-tab]. It reads runId from data-run-id or ?runId=,
+        and optionally data-api-base (default: same-origin) and data-cap.
+      -->
+      <section
+        id="monitoring-tab"
+        class="monitoring-tab"
+        data-monitoring-tab
+        data-cap="200"
+      ></section>
+    </main>
+    <!-- In a built dist/ this is replaced by the bundled ./main.js. -->
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
