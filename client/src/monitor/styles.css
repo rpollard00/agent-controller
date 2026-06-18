@@ -1,0 +1,401 @@
+/*
+ * Styles for the AgentController monitoring tab runtime event feed.
+ *
+ * Styling is intentionally minimal and token-driven: severity and parse status
+ * are rendered as badges whose color comes from the CSS classes emitted by the
+ * formatters (e.g. "severity-critical", "parse-status-malformed"). The feed is
+ * read-only, so there are no form-controls beyond the order toggle.
+ */
+
+:host,
+.monitoring-shell {
+  --monitoring-bg: #0f1115;
+  --monitoring-fg: #e6e9ef;
+  --monitoring-muted: #9aa4b2;
+  --monitoring-surface: #171a21;
+  --monitoring-surface-2: #1d212b;
+  --monitoring-border: #2a2f3a;
+  --monitoring-accent: #4f9cff;
+
+  --severity-info: #4f9cff;
+  --severity-warning: #f0a93b;
+  --severity-error: #f0654f;
+  --severity-critical: #d041ff;
+  --severity-unknown: #9aa4b2;
+
+  color-scheme: dark;
+}
+
+.monitoring-shell {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--monitoring-bg);
+  color: var(--monitoring-fg);
+  margin: 0;
+  padding: 1.5rem clamp(1rem, 4vw, 3rem);
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+.monitoring-shell-header h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.25rem;
+}
+
+.monitoring-shell-subtitle {
+  margin: 0 0 1.25rem;
+  color: var(--monitoring-muted);
+  font-size: 0.9rem;
+}
+
+.monitoring-tab {
+  background: var(--monitoring-surface);
+  border: 1px solid var(--monitoring-border);
+  border-radius: 10px;
+  padding: 1rem;
+  min-height: 6rem;
+}
+
+/* ── States ──────────────────────────────────────────────────── */
+
+.monitoring-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  padding: 1.5rem 0.5rem;
+  color: var(--monitoring-muted);
+}
+
+.monitoring-state--loading,
+.monitoring-state--empty {
+  flex-direction: row;
+  align-items: center;
+}
+
+.monitoring-state p {
+  margin: 0;
+}
+
+.monitoring-state--error {
+  color: var(--severity-error);
+}
+
+.monitoring-state-hint {
+  font-size: 0.8rem;
+  opacity: 0.85;
+}
+
+.monitoring-spinner {
+  width: 0.95rem;
+  height: 0.95rem;
+  margin-right: 0.6rem;
+  border: 2px solid var(--monitoring-border);
+  border-top-color: var(--monitoring-accent);
+  border-radius: 50%;
+  animation: monitoring-spin 0.8s linear infinite;
+}
+
+@keyframes monitoring-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .monitoring-spinner {
+    animation: none;
+  }
+}
+
+/* ── Feed header ─────────────────────────────────────────────── */
+
+.monitoring-feed-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 0.6rem;
+  margin-bottom: 0.6rem;
+  border-bottom: 1px solid var(--monitoring-border);
+}
+
+.monitoring-feed-counts {
+  color: var(--monitoring-muted);
+  font-size: 0.82rem;
+}
+
+.monitoring-order-toggle {
+  appearance: none;
+  background: var(--monitoring-surface-2);
+  color: var(--monitoring-fg);
+  border: 1px solid var(--monitoring-border);
+  border-radius: 6px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.monitoring-order-toggle:hover {
+  border-color: var(--monitoring-accent);
+}
+
+.monitoring-order-toggle:focus-visible {
+  outline: 2px solid var(--monitoring-accent);
+  outline-offset: 1px;
+}
+
+/* ── Feed list ───────────────────────────────────────────────── */
+
+.monitoring-feed-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.monitoring-event {
+  border-left: 3px solid var(--severity-unknown);
+  padding: 0.55rem 0.6rem;
+  border-radius: 4px;
+}
+
+.monitoring-event + .monitoring-event {
+  margin-top: 0.4rem;
+}
+
+.monitoring-event.severity-info {
+  border-left-color: var(--severity-info);
+}
+.monitoring-event.severity-warning {
+  border-left-color: var(--severity-warning);
+}
+.monitoring-event.severity-error {
+  border-left-color: var(--severity-error);
+}
+.monitoring-event.severity-critical {
+  border-left-color: var(--severity-critical);
+}
+.monitoring-event.severity-unknown {
+  border-left-color: var(--severity-unknown);
+}
+
+.monitoring-event-main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.monitoring-event-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.monitoring-badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.monitoring-type {
+  background: var(--monitoring-surface-2);
+  color: var(--monitoring-fg);
+  border-color: var(--monitoring-border);
+}
+
+.monitoring-severity.severity-info {
+  background: rgba(79, 156, 255, 0.16);
+  color: var(--severity-info);
+  border-color: rgba(79, 156, 255, 0.4);
+}
+.monitoring-severity.severity-warning {
+  background: rgba(240, 169, 59, 0.16);
+  color: var(--severity-warning);
+  border-color: rgba(240, 169, 59, 0.4);
+}
+.monitoring-severity.severity-error {
+  background: rgba(240, 101, 79, 0.16);
+  color: var(--severity-error);
+  border-color: rgba(240, 101, 79, 0.4);
+}
+.monitoring-severity.severity-critical {
+  background: rgba(208, 65, 255, 0.16);
+  color: var(--severity-critical);
+  border-color: rgba(208, 65, 255, 0.4);
+}
+.monitoring-severity.severity-unknown {
+  background: var(--monitoring-surface-2);
+  color: var(--severity-unknown);
+  border-color: var(--monitoring-border);
+}
+
+.monitoring-parse.parse-status-malformed {
+  background: rgba(240, 101, 79, 0.16);
+  color: var(--severity-error);
+  border-color: rgba(240, 101, 79, 0.4);
+}
+.monitoring-parse.parse-status-missing-fields {
+  background: rgba(240, 169, 59, 0.16);
+  color: var(--severity-warning);
+  border-color: rgba(240, 169, 59, 0.4);
+}
+
+.monitoring-event-time {
+  font-size: 0.75rem;
+  color: var(--monitoring-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.monitoring-event-message {
+  margin: 0.35rem 0 0;
+  font-size: 0.92rem;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.monitoring-event-summary {
+  display: inline-block;
+  margin-top: 0.35rem;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 0.76rem;
+  color: var(--monitoring-muted);
+  background: var(--monitoring-surface-2);
+  border: 1px solid var(--monitoring-border);
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Expandable raw details ──────────────────────────────────── */
+
+.monitoring-event-actions {
+  margin-top: 0.4rem;
+}
+
+.monitoring-event-raw-toggle {
+  appearance: none;
+  background: transparent;
+  color: var(--monitoring-muted);
+  border: 1px solid var(--monitoring-border);
+  border-radius: 6px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.76rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.monitoring-event-raw-toggle:hover {
+  border-color: var(--monitoring-accent);
+  color: var(--monitoring-fg);
+}
+
+.monitoring-event-raw-toggle:focus-visible {
+  outline: 2px solid var(--monitoring-accent);
+  outline-offset: 1px;
+}
+
+.monitoring-event-raw-toggle-icon {
+  display: inline-block;
+  transition: transform 0.12s ease;
+  font-size: 0.7rem;
+}
+
+.monitoring-event--expanded .monitoring-event-raw-toggle-icon {
+  transform: rotate(90deg);
+}
+
+/* The panel is always in the DOM (copy-friendly); CSS hides it unless the
+   row carries the expanded class, so the toggle is a snappy class flip. */
+.monitoring-event:not(.monitoring-event--expanded) .monitoring-event-raw {
+  display: none;
+}
+
+.monitoring-event-raw {
+  margin-top: 0.5rem;
+  padding: 0.6rem 0.7rem;
+  background: var(--monitoring-surface-2);
+  border: 1px solid var(--monitoring-border);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.monitoring-raw-parse-error {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  color: var(--severity-error);
+  font-size: 0.82rem;
+  word-break: break-word;
+}
+
+.monitoring-raw-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.monitoring-raw-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--monitoring-muted);
+}
+
+.monitoring-raw-value {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+.monitoring-raw-pre {
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  background: var(--monitoring-bg);
+  border: 1px solid var(--monitoring-border);
+  border-radius: 4px;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--monitoring-fg);
+  /* Wrap long lines instead of overflowing; stays selectable/copy-friendly. */
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* Belt-and-suspenders with formatter truncation: scroll very large blobs. */
+  max-height: 18rem;
+  overflow: auto;
+  tab-size: 2;
+}
+
+.monitoring-raw-muted {
+  font-size: 0.78rem;
+  color: var(--monitoring-muted);
+  font-style: italic;
+}
+
+.monitoring-raw-truncated {
+  font-size: 0.72rem;
+  color: var(--monitoring-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .monitoring-event-raw-toggle-icon {
+    transition: none;
+  }
+}

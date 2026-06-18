@@ -24,6 +24,7 @@ namespace AgentController.Api.Tests;
 [System.Diagnostics.CodeAnalysis.SuppressMessage(
     "Design", "CA1001:Types that own disposable fields should be disposable",
     Justification = "IAsyncLifetime.DisposeAsync disposes all owned fields.")]
+[Collection("ApiWebFactory")]
 public class RuntimeEventApiTests : IAsyncLifetime
 {
     private WebApplicationFactory<Program> _factory = null!;

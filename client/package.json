@@ -1,0 +1,23 @@
+{
+  "name": "@agentcontroller/monitoring-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Client-side types and formatting helpers for the AgentController monitoring/local sync runtime event feed, consumed by the Materia UI.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "build": "bun run scripts/build.mjs",
+    "serve": "bun run scripts/serve.mjs",
+    "dev": "bun run scripts/build.mjs && bun run scripts/serve.mjs"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.0",
+    "happy-dom": "^20.10.6",
+    "typescript": "^5.6.0"
+  }
+}
