@@ -63,6 +63,8 @@ interface TabState {
   lastResponse: MonitorEventsResponse | null;
   errorMessage: string;
   order: FeedOrder;
+  /** Event keys whose raw-details panel is expanded (survives re-renders). */
+  expandedKeys: Set<string>;
 }
 
 /**
@@ -77,6 +79,7 @@ export function mountMonitoringTab(options: MountMonitoringTabOptions): () => vo
     lastResponse: null,
     errorMessage: '',
     order: DEFAULT_FEED_ORDER,
+    expandedKeys: new Set<string>(),
   };
 
   let lastSignature = '';
@@ -100,7 +103,7 @@ export function mountMonitoringTab(options: MountMonitoringTabOptions): () => vo
       container.innerHTML = renderEmptyHtml('No runtime events yet for this run.');
       return;
     }
-    container.innerHTML = renderFeedHtml(state.vm);
+    container.innerHTML = renderFeedHtml(state.vm, state.expandedKeys);
   }
 
   /** Re-derive the view model from the last response and re-render if needed. */
@@ -177,6 +180,22 @@ export function mountMonitoringTab(options: MountMonitoringTabOptions): () => vo
 
   function onContainerClick(event: MouseEvent): void {
     const target = event.target as HTMLElement | null;
+
+    // Expand/collapse an event's raw-details panel. Mutate the tracked set
+    // *and* the DOM directly so the toggle is snappy and survives the next
+    // full re-render (signature change, live update, or relative-time tick),
+    // which re-applies `expandedKeys` via `render()`.
+    const rawToggle = target?.closest?.('[data-raw-toggle]') as HTMLElement | null;
+    if (rawToggle) {
+      const row = rawToggle.closest('.monitoring-event') as HTMLElement | null;
+      const key = row?.dataset.eventKey;
+      if (key) {
+        toggleExpanded(key, row);
+      }
+      return;
+    }
+
+    // Feed-wide order toggle.
     const button = target?.closest?.('[data-order-toggle]') as HTMLElement | null;
     if (!button) return;
     const next = button.dataset.order as EventOrder | undefined;
@@ -184,6 +203,19 @@ export function mountMonitoringTab(options: MountMonitoringTabOptions): () => vo
     if (next === state.order) return;
     state.order = next;
     rederive(true);
+  }
+
+  /** Toggle one event's raw-details expansion in state and the DOM. */
+  function toggleExpanded(key: string, row: HTMLElement): void {
+    const willExpand = !state.expandedKeys.has(key);
+    if (willExpand) {
+      state.expandedKeys.add(key);
+    } else {
+      state.expandedKeys.delete(key);
+    }
+    row.classList.toggle('monitoring-event--expanded', willExpand);
+    const toggle = row.querySelector('[data-raw-toggle]');
+    toggle?.setAttribute('aria-expanded', willExpand ? 'true' : 'false');
   }
 
   // Boot sequence.

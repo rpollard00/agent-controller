@@ -18,6 +18,7 @@ import type {
 import {
   formatEventMessage,
   formatEventTitle,
+  formatRawDetails,
   formatTimestamp,
   getParseStatusInfo,
   getSeverityInfo,
@@ -25,6 +26,7 @@ import {
   orderEvents,
   summarizePayload,
   type EventOrder,
+  type RawDetailsView,
 } from '../formatters.js';
 
 /** Display order for the rendered feed; mirrors {@link EventOrder}. */
@@ -60,6 +62,8 @@ export interface FeedItemView {
   occurredRelative: string | null;
   /** True for malformed entries (drives an extra badge). */
   malformed: boolean;
+  /** Render-ready raw inspection view (raw line, pretty payload, parse error). */
+  raw: RawDetailsView;
 }
 
 /** A complete, render-ready view of the monitoring feed. */
@@ -148,6 +152,7 @@ function deriveItem(event: MonitoringRuntimeEvent, now: number): FeedItemView {
     occurredAbsolute: timestamp.absolute,
     occurredRelative: timestamp.relative,
     malformed: status.key === 'malformed',
+    raw: formatRawDetails(event),
   };
 }
 
@@ -171,7 +176,7 @@ export function feedSignature(vm: FeedViewModel): string {
   const body = vm.items
     .map(
       (item) =>
-        `${item.key}\u{241F}${item.severityRank}\u{241F}${item.title}\u{241F}${item.message}\u{241F}${item.summary}\u{241F}${item.occurredIso ?? ''}`,
+        `${item.key}\u{241F}${item.severityRank}\u{241F}${item.title}\u{241F}${item.message}\u{241F}${item.summary}\u{241F}${item.occurredIso ?? ''}\u{241F}${item.raw.rawLine}\u{241F}${item.raw.payloadJson}\u{241F}${item.raw.parseError}`,
     )
     .join('\n');
 

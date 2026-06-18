@@ -171,3 +171,80 @@ describe('mountMonitoringTab order toggle (click path)', () => {
     expect(firstEventKey(container)).toBe('evt:new');
   });
 });
+
+describe('mountMonitoringTab raw details (expand/collapse)', () => {
+  it('renders raw-details toggles collapsed initially', async () => {
+    const container = setup();
+    const toggle = await waitFor(
+      () => container.querySelector('[data-raw-toggle]') as HTMLElement | null,
+    );
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(container.querySelector('.monitoring-event--expanded')).toBeNull();
+  });
+
+  it('expands the panel on click and flips aria-expanded', async () => {
+    const container = setup();
+    const toggle = await waitFor(
+      () => container.querySelector('[data-raw-toggle]') as HTMLElement,
+    );
+    toggle.click();
+
+    const row = container.querySelector('.monitoring-event') as HTMLElement;
+    expect(row.classList.contains('monitoring-event--expanded')).toBe(true);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('collapses on a second click', async () => {
+    const container = setup();
+    const toggle = await waitFor(
+      () => container.querySelector('[data-raw-toggle]') as HTMLElement,
+    );
+    toggle.click();
+    toggle.click();
+
+    const row = container.querySelector('.monitoring-event') as HTMLElement;
+    expect(row.classList.contains('monitoring-event--expanded')).toBe(false);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('expands each event independently', async () => {
+    const container = setup();
+    await waitFor(() => container.querySelector('[data-raw-toggle]'));
+    const toggles = container.querySelectorAll('[data-raw-toggle]');
+    expect(toggles.length).toBe(2);
+
+    (toggles[0] as HTMLElement).click();
+    const rows = container.querySelectorAll('.monitoring-event');
+    expect((rows[0] as HTMLElement).classList.contains('monitoring-event--expanded')).toBe(true);
+    expect((rows[1] as HTMLElement).classList.contains('monitoring-event--expanded')).toBe(false);
+  });
+
+  it('persists expanded state across a forced re-render (order toggle)', async () => {
+    const container = setup();
+    await waitFor(() => container.querySelector('[data-raw-toggle]'));
+    const firstRow = container.querySelector('.monitoring-event') as HTMLElement;
+    const firstKey = firstRow.dataset.eventKey!;
+    (firstRow.querySelector('[data-raw-toggle]') as HTMLElement).click();
+    expect(firstRow.classList.contains('monitoring-event--expanded')).toBe(true);
+
+    // Trigger a full re-render via the feed-wide order toggle.
+    (container.querySelector('[data-order-toggle]') as HTMLElement).click();
+
+    // The same event key is still expanded after the re-render.
+    const rowAfter = container.querySelector(
+      `.monitoring-event[data-event-key="${firstKey}"]`,
+    ) as HTMLElement;
+    expect(rowAfter.classList.contains('monitoring-event--expanded')).toBe(true);
+    const toggleAfter = rowAfter.querySelector('[data-raw-toggle]') as HTMLElement;
+    expect(toggleAfter.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('does not change the feed order when toggling raw details', async () => {
+    const container = setup();
+    await waitFor(() => container.querySelector('[data-raw-toggle]'));
+    expect(firstEventKey(container)).toBe('evt:new');
+
+    (container.querySelector('[data-raw-toggle]') as HTMLElement).click();
+    expect(firstEventKey(container)).toBe('evt:new');
+  });
+});

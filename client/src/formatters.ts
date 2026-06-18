@@ -385,6 +385,145 @@ function truncate(value: string, max: number): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Raw event details (expandable inspection view)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Default character cap for the pretty-printed payload in the raw view. */
+export const DEFAULT_RAW_PAYLOAD_MAX = 4_000;
+/** Default character cap for the raw line in the raw view. */
+export const DEFAULT_RAW_LINE_MAX = 4_000;
+
+/** Result of pretty-printing a payload for the raw inspection view. */
+export interface PayloadJsonDisplay {
+  /** Pretty-printed JSON (2-space indent by default), truncated for display. */
+  text: string;
+  /** True when the pretty payload was truncated to fit the display cap. */
+  truncated: boolean;
+  /** Original length of the pretty payload before truncation (for the note). */
+  originalLength: number;
+}
+
+/** Options for {@link formatPayloadJson}. */
+export interface FormatPayloadJsonOptions {
+  /** Indent width in spaces (default 2). */
+  indent?: number;
+  /** Maximum output length (default {@link DEFAULT_RAW_PAYLOAD_MAX}). */
+  maxLen?: number;
+}
+
+/**
+ * Pretty-print a parsed event payload as JSON (2-space indent by default),
+ * truncating the result to a display-friendly length. Returns an empty string
+ * when the payload is missing/empty. Never throws: non-serializable payloads
+ * (e.g. circular references) fall back to a safe representation.
+ */
+export function formatPayloadJson(
+  payload: RuntimeEventPayload | undefined,
+  opts: FormatPayloadJsonOptions = {},
+): PayloadJsonDisplay {
+  if (!payload || typeof payload !== 'object') {
+    return { text: '', truncated: false, originalLength: 0 };
+  }
+  if (Object.keys(payload).length === 0) {
+    return { text: '', truncated: false, originalLength: 0 };
+  }
+
+  const indent = opts.indent ?? 2;
+  const pretty = safeJsonStringify(payload, indent);
+
+  const maxLen = opts.maxLen ?? DEFAULT_RAW_PAYLOAD_MAX;
+  const originalLength = pretty.length;
+  if (originalLength <= maxLen) {
+    return { text: pretty, truncated: false, originalLength };
+  }
+  return { text: truncate(pretty, maxLen), truncated: true, originalLength };
+}
+
+/**
+ * JSON.stringify with a replacer that survives values the JSON spec drops or
+ * rejects (circular references, functions, symbols, bigint, undefined), so a
+ * weird payload never throws. Falls back to `String(value)` if even this fails.
+ */
+function safeJsonStringify(value: unknown, indent: number): string {
+  const seen = new WeakSet<object>();
+  try {
+    return (
+      JSON.stringify(value, (_key, replacement) => {
+        if (typeof replacement === 'object' && replacement !== null) {
+          if (seen.has(replacement)) return '[Circular]';
+          seen.add(replacement);
+          return replacement;
+        }
+        if (typeof replacement === 'function') return `[Function ${replacement.name || 'anonymous'}]`;
+        if (typeof replacement === 'symbol') return replacement.toString();
+        if (typeof replacement === 'bigint') return `${replacement.toString()}n`;
+        if (typeof replacement === 'undefined') return null;
+        return replacement;
+      }, indent) ?? String(value)
+    );
+  } catch {
+    return String(value);
+  }
+}
+
+/** A render-ready breakdown of an event's raw/parsed content for inspection. */
+export interface RawDetailsView {
+  /** Pretty-printed JSON of the parsed payload, truncated for display. */
+  payloadJson: string;
+  /** True when the pretty payload was truncated to fit the display cap. */
+  payloadTruncated: boolean;
+  /** Original length of the pretty payload before truncation (for the note). */
+  payloadOriginalLength: number;
+  /** Original raw line/JSON, truncated for display. */
+  rawLine: string;
+  /** True when the raw line was truncated to fit the display cap. */
+  rawLineTruncated: boolean;
+  /** Original length of the raw line before truncation (for the note). */
+  rawLineOriginalLength: number;
+  /** Parse-error text for malformed entries (empty when none). */
+  parseError: string;
+}
+
+/** Options for {@link formatRawDetails}. */
+export interface FormatRawDetailsOptions {
+  /** Maximum length for the pretty payload (default {@link DEFAULT_RAW_PAYLOAD_MAX}). */
+  payloadMaxLen?: number;
+  /** Maximum length for the raw line (default {@link DEFAULT_RAW_LINE_MAX}). */
+  rawLineMaxLen?: number;
+}
+
+/**
+ * Build a render-ready raw inspection view for a monitoring event, combining
+ * the parse error (for malformed entries), the original raw line, and the
+ * pretty-printed parsed payload. Each text field is truncated for display with
+ * a flag/origin length so the UI can surface a truncation note. Never throws.
+ */
+export function formatRawDetails(
+  event: MonitoringRuntimeEvent,
+  opts: FormatRawDetailsOptions = {},
+): RawDetailsView {
+  const payload = formatPayloadJson(event.payload, {
+    maxLen: opts.payloadMaxLen ?? DEFAULT_RAW_PAYLOAD_MAX,
+  });
+
+  const rawLineMaxLen = opts.rawLineMaxLen ?? DEFAULT_RAW_LINE_MAX;
+  const rawLineText = event.rawLine ?? '';
+  const rawLineOriginalLength = rawLineText.length;
+  const rawLine =
+    rawLineOriginalLength <= rawLineMaxLen ? rawLineText : truncate(rawLineText, rawLineMaxLen);
+
+  return {
+    payloadJson: payload.text,
+    payloadTruncated: payload.truncated,
+    payloadOriginalLength: payload.originalLength,
+    rawLine,
+    rawLineTruncated: rawLineOriginalLength > rawLineMaxLen,
+    rawLineOriginalLength,
+    parseError: event.parseError?.trim() ?? '',
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Ordering
 // ─────────────────────────────────────────────────────────────────────────────
 

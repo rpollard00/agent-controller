@@ -103,6 +103,28 @@ describe('deriveFeed', () => {
     expect(item.statusClassName).toBe('parse-status-malformed');
   });
 
+  it('populates the raw inspection view per event', () => {
+    const vm = deriveFeed(
+      snapshot([
+        {
+          index: 0,
+          status: 'Valid',
+          eventId: 'a',
+          eventType: 'runtime.status',
+          rawLine: '{"a":1}',
+          payload: { a: 1, nested: { x: 2 } },
+        },
+      ]),
+      { now: NOW },
+    );
+    const raw = vm.items[0]!.raw;
+    expect(raw.rawLine).toBe('{"a":1}');
+    expect(raw.rawLineTruncated).toBe(false);
+    expect(raw.payloadJson).toContain('"a": 1');
+    expect(raw.payloadJson).toContain('"nested"');
+    expect(raw.parseError).toBe('');
+  });
+
   it('reports an empty view when there are no events', () => {
     const vm = deriveFeed(snapshot([]), { now: NOW });
     expect(vm.empty).toBe(true);
@@ -160,5 +182,28 @@ describe('feedSignature', () => {
     const newest = feedSignature(deriveFeed(payload, { order: 'newest-first', now: NOW }));
     const oldest = feedSignature(deriveFeed(payload, { order: 'oldest-first', now: NOW }));
     expect(newest).not.toBe(oldest);
+  });
+
+  it('changes when an event raw line or parse error changes', () => {
+    const before = feedSignature(
+      deriveFeed(
+        snapshot([{ index: 0, status: 'Malformed', rawLine: 'abc', parseError: 'e1' }]),
+        { now: NOW },
+      ),
+    );
+    const afterLine = feedSignature(
+      deriveFeed(
+        snapshot([{ index: 0, status: 'Malformed', rawLine: 'xyz', parseError: 'e1' }]),
+        { now: NOW },
+      ),
+    );
+    const afterError = feedSignature(
+      deriveFeed(
+        snapshot([{ index: 0, status: 'Malformed', rawLine: 'abc', parseError: 'e2' }]),
+        { now: NOW },
+      ),
+    );
+    expect(before).not.toBe(afterLine);
+    expect(before).not.toBe(afterError);
   });
 });

@@ -11,9 +11,13 @@ import { describe, expect, it } from 'bun:test';
 import type { MonitoringRuntimeEvent } from './types.js';
 
 import {
+  DEFAULT_RAW_LINE_MAX,
+  DEFAULT_RAW_PAYLOAD_MAX,
   formatCompletionOutcome,
   formatEventMessage,
   formatEventTitle,
+  formatPayloadJson,
+  formatRawDetails,
   formatRelativeTime,
   formatTimestamp,
   getEventTypeLabel,
@@ -251,6 +255,116 @@ describe('summarizePayload', () => {
     const long = summarizePayload({ text: 'x'.repeat(500) }, 20);
     expect(long.length).toBeLessThanOrEqual(20);
     expect(long.endsWith('…')).toBe(true);
+  });
+});
+
+// ── Raw event details (expandable inspection view) ─────────────────────────
+
+describe('formatPayloadJson', () => {
+  it('pretty-prints objects with a 2-space indent by default', () => {
+    const out = formatPayloadJson({ a: 1, b: 'x' });
+    expect(out.text).toBe('{\n  "a": 1,\n  "b": "x"\n}');
+    expect(out.truncated).toBe(false);
+    expect(out.originalLength).toBe(out.text.length);
+  });
+
+  it('returns empty for missing/empty payloads', () => {
+    expect(formatPayloadJson(undefined).text).toBe('');
+    expect(formatPayloadJson(null).text).toBe('');
+    expect(formatPayloadJson({}).text).toBe('');
+    expect(formatPayloadJson({}).originalLength).toBe(0);
+  });
+
+  it('truncates large payloads and reports the original length', () => {
+    const out = formatPayloadJson({ blob: 'x'.repeat(10_000) }, { maxLen: 50 });
+    expect(out.truncated).toBe(true);
+    expect(out.originalLength).toBeGreaterThan(50);
+    expect(out.text.length).toBeLessThanOrEqual(50);
+    expect(out.text.endsWith('…')).toBe(true);
+  });
+
+  it('never throws on non-serializable payloads', () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    const out = formatPayloadJson(circular);
+    expect(out.text).toContain('[Circular]');
+    expect(out.truncated).toBe(false);
+  });
+
+  it('honours a custom indent width', () => {
+    const out = formatPayloadJson({ a: 1 }, { indent: 4 });
+    expect(out.text).toBe('{\n    "a": 1\n}');
+  });
+});
+
+describe('formatRawDetails', () => {
+  it('combines parse error, raw line, and pretty payload', () => {
+    const details = formatRawDetails({
+      index: 0,
+      status: 'Valid',
+      rawLine: '{"a":1}',
+      payload: { a: 1, nested: { x: 2 } },
+      parseError: null,
+    });
+    expect(details.rawLine).toBe('{"a":1}');
+    expect(details.rawLineTruncated).toBe(false);
+    expect(details.payloadJson).toContain('"a": 1');
+    expect(details.payloadJson).toContain('"nested"');
+    expect(details.payloadTruncated).toBe(false);
+    expect(details.parseError).toBe('');
+  });
+
+  it('surfaces parse errors for malformed entries and omits a payload', () => {
+    const details = formatRawDetails({
+      index: 0,
+      status: 'Malformed',
+      rawLine: '{boom',
+      parseError: 'Unexpected token }',
+    });
+    expect(details.parseError).toBe('Unexpected token }');
+    expect(details.payloadJson).toBe('');
+    expect(details.payloadOriginalLength).toBe(0);
+  });
+
+  it('trims and tolerates a missing parse error', () => {
+    const details = formatRawDetails({
+      index: 0,
+      status: 'Malformed',
+      parseError: '   ',
+    });
+    expect(details.parseError).toBe('');
+  });
+
+  it('handles missing raw line and payload gracefully', () => {
+    const details = formatRawDetails({ index: 0, status: 'Valid' });
+    expect(details.rawLine).toBe('');
+    expect(details.rawLineTruncated).toBe(false);
+    expect(details.rawLineOriginalLength).toBe(0);
+    expect(details.payloadJson).toBe('');
+    expect(details.parseError).toBe('');
+  });
+
+  it('truncates large raw lines and payloads via options', () => {
+    const longLine = 'x'.repeat(5_000);
+    const details = formatRawDetails(
+      { index: 0, status: 'Valid', rawLine: longLine, payload: { blob: 'y'.repeat(5_000) } },
+      { payloadMaxLen: 100, rawLineMaxLen: 100 },
+    );
+    expect(details.rawLineTruncated).toBe(true);
+    expect(details.rawLineOriginalLength).toBe(5_000);
+    expect(details.rawLine.length).toBeLessThanOrEqual(100);
+    expect(details.payloadTruncated).toBe(true);
+    expect(details.payloadOriginalLength).toBeGreaterThan(100);
+    expect(details.payloadJson.length).toBeLessThanOrEqual(100);
+  });
+
+  it('applies the documented default caps', () => {
+    expect(DEFAULT_RAW_PAYLOAD_MAX).toBeGreaterThan(0);
+    expect(DEFAULT_RAW_LINE_MAX).toBeGreaterThan(0);
+    const longLine = 'x'.repeat(DEFAULT_RAW_LINE_MAX + 100);
+    const details = formatRawDetails({ index: 0, status: 'Valid', rawLine: longLine });
+    expect(details.rawLineTruncated).toBe(true);
+    expect(details.rawLineOriginalLength).toBe(DEFAULT_RAW_LINE_MAX + 100);
   });
 });
 

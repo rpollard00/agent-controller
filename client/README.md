@@ -24,6 +24,8 @@ a live, readable event feed.
   - **Title/message**: `getEventTypeLabel`, `formatEventTitle`, `formatEventMessage`,
     `formatCompletionOutcome`.
   - **Payload**: `summarizePayload`.
+  - **Raw inspection**: `formatPayloadJson`, `formatRawDetails`
+    (pretty payload JSON, raw line, parse error — with truncation flags).
   - **Ordering**: `orderEvents` (oldest-first / newest-first).
   - **Normalization**: `normalizeEvent`, `normalizeMonitorEventsResponse` for
     untyped `fetch`/SSE JSON.
@@ -91,6 +93,12 @@ readable progress feed:
   label, plus a parse-status badge for malformed entries so they stay visible.
 - **Timestamps**: relative label ("5m ago") with an absolute tooltip.
 - **Message + payload summary** per event.
+- **Expandable raw details**: each event has a "Raw details" toggle that
+  expands an inspection panel with the parse error (for malformed entries), the
+  original raw line, and the pretty-printed parsed payload. Large payloads are
+  truncated (with a note) and wrap inside a scrollable, selectable `<pre>` so
+  they are easy to copy; malformed entries stay visible with parse-error
+  context. Expansion state is per-event and survives live re-renders.
 - **States**: loading, empty (no event stream yet), and error — the feed never
   goes blank and keeps the last good view on transient failures.
 - **Live updates**: subscribes to the SSE channel

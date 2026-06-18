@@ -31,6 +31,15 @@ function item(overrides: Partial<FeedItemView> = {}): FeedItemView {
     occurredAbsolute: '6/17/2026, 12:00 PM',
     occurredRelative: '1m ago',
     malformed: false,
+    raw: {
+      payloadJson: '{\n  "phase": "validation"\n}',
+      payloadTruncated: false,
+      payloadOriginalLength: 26,
+      rawLine: '{"eventType":"runtime.status","phase":"validation"}',
+      rawLineTruncated: false,
+      rawLineOriginalLength: 48,
+      parseError: '',
+    },
     ...overrides,
   };
 }
@@ -127,6 +136,120 @@ describe('renderItemHtml', () => {
   });
 });
 
+describe('renderItemHtml raw details', () => {
+  it('renders a collapsed raw-details toggle by default', () => {
+    const html = renderItemHtml(item());
+    expect(html).toContain('data-raw-toggle');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('>Raw details<');
+    // The panel is always present (copy-friendly); the row just isn't expanded.
+    expect(html).toContain('monitoring-event-raw');
+    expect(html).not.toContain('monitoring-event--expanded');
+  });
+
+  it('marks the row expanded and flips aria-expanded when expanded', () => {
+    const html = renderItemHtml(item(), true);
+    expect(html).toContain('monitoring-event--expanded');
+    expect(html).toContain('aria-expanded="true"');
+  });
+
+  it('links the toggle to the panel via aria-controls/id', () => {
+    const html = renderItemHtml(item());
+    expect(html).toContain('aria-controls="monitoring-raw-evt_1"');
+    expect(html).toContain('id="monitoring-raw-evt_1"');
+  });
+
+  it('renders the raw line and pretty payload in selectable <pre> blocks', () => {
+    const html = renderItemHtml(item());
+    expect(html).toContain('Raw line');
+    expect(html).toContain('Parsed payload');
+    expect(html).toContain('monitoring-raw-pre--json');
+    expect(html).toContain('<pre class="monitoring-raw-pre">');
+    // Pretty payload content is escaped but present.
+    expect(html).toContain('phase&quot;: &quot;validation');
+  });
+
+  it('escapes untrusted raw line and payload content', () => {
+    const html = renderItemHtml(
+      item({
+        raw: {
+          payloadJson: '{ "x": "</script>" }',
+          payloadTruncated: false,
+          payloadOriginalLength: 20,
+          rawLine: '<script>alert(1)</script>',
+          rawLineTruncated: false,
+          rawLineOriginalLength: 27,
+          parseError: '',
+        },
+      }),
+    );
+    expect(html).toContain('&lt;script&gt;');
+    expect(html).not.toContain('<script>alert(1)</script>');
+  });
+
+  it('shows muted fallbacks when raw line and payload are missing', () => {
+    const html = renderItemHtml(
+      item({
+        raw: {
+          payloadJson: '',
+          payloadTruncated: false,
+          payloadOriginalLength: 0,
+          rawLine: '',
+          rawLineTruncated: false,
+          rawLineOriginalLength: 0,
+          parseError: '',
+        },
+      }),
+    );
+    expect(html).toContain('No raw line captured.');
+    expect(html).toContain('No parsed payload.');
+  });
+
+  it('renders parse-error context for malformed entries', () => {
+    const html = renderItemHtml(
+      item({
+        malformed: true,
+        statusLabel: 'Malformed',
+        statusClassName: 'parse-status-malformed',
+        title: 'Malformed entry',
+        message: 'Unexpected token }',
+        raw: {
+          payloadJson: '',
+          payloadTruncated: false,
+          payloadOriginalLength: 0,
+          rawLine: '{boom',
+          rawLineTruncated: false,
+          rawLineOriginalLength: 5,
+          parseError: 'Unexpected token }',
+        },
+      }),
+    );
+    expect(html).toContain('Parse error');
+    expect(html).toContain('Unexpected token }');
+  });
+
+  it('renders a truncation note only when a field was truncated', () => {
+    const collapsed = renderItemHtml(item());
+    expect(collapsed).not.toContain('Truncated for display');
+
+    const html = renderItemHtml(
+      item({
+        raw: {
+          payloadJson: '{ "a": 1 …',
+          payloadTruncated: true,
+          payloadOriginalLength: 9_999,
+          rawLine: 'x'.repeat(10),
+          rawLineTruncated: true,
+          rawLineOriginalLength: 9_999,
+          parseError: '',
+        },
+      }),
+    );
+    expect(html).toContain('Truncated for display');
+    expect(html).toContain('characters');
+  });
+});
+
 describe('renderCountsLabel', () => {
   it('pluralizes and reports truncation/cap', () => {
     expect(renderCountsLabel(vm({ returnedCount: 1, cap: null }))).toBe('1 event');
@@ -163,5 +286,25 @@ describe('renderFeedHtml', () => {
     const html = renderFeedHtml(vm({ order: 'oldest-first' }));
     expect(html).toContain('data-order="newest-first"');
     expect(html).toContain('Order: Oldest first');
+  });
+});
+
+describe('renderFeedHtml expandedKeys', () => {
+  it('marks matching event keys as expanded', () => {
+    const html = renderFeedHtml(vm(), new Set(['evt:1']));
+    expect(html).toContain('monitoring-event--expanded');
+    expect(html).toContain('aria-expanded="true"');
+  });
+
+  it('leaves events collapsed when their key is not in the set', () => {
+    const html = renderFeedHtml(vm(), new Set(['evt:other']));
+    expect(html).not.toContain('monitoring-event--expanded');
+    expect(html).toContain('aria-expanded="false"');
+  });
+
+  it('defaults to all collapsed when no set is provided', () => {
+    const html = renderFeedHtml(vm());
+    expect(html).not.toContain('monitoring-event--expanded');
+    expect(html).toContain('aria-expanded="false"');
   });
 });
