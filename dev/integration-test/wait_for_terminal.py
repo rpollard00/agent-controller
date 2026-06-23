@@ -31,10 +31,35 @@ def _now() -> str:
     return _dt.datetime.now(tz=_dt.timezone.utc).isoformat()
 
 
+# Force a no-proxy opener. The poller only ever talks to localhost; bypass any
+# ambient proxy configuration (env/system) so requests reach the controller
+# directly. urllib honors *_proxy env vars by default, which can divert localhost
+# traffic to a proxy that returns 404.
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def http_get(url: str, timeout: float = 5.0):
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    return json.loads(_OPENER.open(req, timeout=timeout).read().decode("utf-8"))
+
+
+def http_get_or_diag(url: str, timeout: float = 5.0):
+    """Like http_get but returns (data, None) on success or (None, message) on
+    failure, with the response body included when an HTTP response was received.
+    Used so the poller can print what actually answered (proxy/server) on error."""
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    try:
+        data = _OPENER.open(req, timeout=timeout).read().decode("utf-8", "replace")
+        return json.loads(data), None
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8", "replace")[:200]
+        except Exception:
+            pass
+        return None, f"HTTP {e.code} {e.reason}; body={body!r}"
+    except Exception as e:  # noqa: BLE001
+        return None, repr(e)
 
 
 def get_case(d: dict, *keys, default=None):
@@ -81,10 +106,9 @@ def main() -> int:
     # Phase 1: wait for a run to appear (worker must discover the work item).
     print(f"[{_now()}] waiting for a run to appear at {base}/runs ...", flush=True)
     while time.time() < deadline:
-        try:
-            listing = http_get(f"{base}/runs")
-        except Exception as exc:  # noqa: BLE001
-            print(f"[{_now()}] (controller not ready yet: {exc})", flush=True)
+        listing, diag = http_get_or_diag(f"{base}/runs")
+        if diag is not None:
+            print(f"[{_now()}] (controller not ready yet: {diag})", flush=True)
             time.sleep(2)
             continue
 
@@ -110,10 +134,9 @@ def main() -> int:
     # Phase 2: poll the run until terminal.
     print(f"[{_now()}] polling {base}/runs/{run_id} until terminal ...", flush=True)
     while time.time() < deadline:
-        try:
-            detail = http_get(f"{base}/runs/{run_id}")
-        except Exception as exc:  # noqa: BLE001
-            print(f"[{_now()}] (detail fetch failed: {exc})", flush=True)
+        detail, diag = http_get_or_diag(f"{base}/runs/{run_id}")
+        if diag is not None:
+            print(f"[{_now()}] (detail fetch failed: {diag})", flush=True)
             time.sleep(args.poll_interval)
             continue
 
