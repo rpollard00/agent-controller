@@ -179,7 +179,7 @@ app.MapGet(
 
             // Lightweight test: GET project info (validates org URL + PAT + project)
             using var result = http.GetAsync(
-                $"{project}/_apis/projects/{project}?api-version=7.1",
+                $"_apis/projects/{project}?api-version=7.1",
                 ct).GetAwaiter().GetResult();
 
             statusCode = (int)result.StatusCode;
