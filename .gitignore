@@ -42,9 +42,10 @@ tmp/
 *.sqlite
 *.sqlite3
 
-# Environment and secrets
+# Environment and secrets (keep .env.example committed as a template)
 .env
 .env.*
+!.env.example
 *.env
 appsettings.*.local.json
 secrets/

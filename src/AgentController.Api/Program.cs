@@ -1,10 +1,10 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.Extensions.Options;
 using AgentController.Api;
 using AgentController.Api.Models;
 using AgentController.Application;
 using AgentController.Domain;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -152,6 +152,7 @@ app.MapGet(
                 organizationUrl = workSource.OrganizationUrl,
                 project = workSource.Project,
                 patConfigured = !string.IsNullOrWhiteSpace(resolvedPat),
+                pat = resolvedPat,
                 errors,
                 timestamp = DateTimeOffset.UtcNow,
             });
@@ -218,6 +219,7 @@ app.MapGet(
             organizationUrl = workSource.OrganizationUrl,
             project = workSource.Project,
             patConfigured = true,
+            pat = resolvedPat,
             httpStatusCode = statusCode,
             apiError,
             errors,
