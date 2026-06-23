@@ -20,13 +20,15 @@
     <ItemGroup>
         <!-- GHSA-hv8m-jj95-wg3x: MessagePack unsafe deserialization (transitive via Aspire) -->
         <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-hv8m-jj95-wg3x" />
-        <!--
-            GHSA-2m69-gcr7-jv3q: high-severity advisory against SQLitePCLRaw.lib.e_sqlite3
-            2.1.10, pulled transitively by Microsoft.EntityFrameworkCore.Sqlite 9.0.7.
-            Suppressing to unblock the build; the proper fix is to bump EF Core Sqlite
-            (and its SQLitePCLRaw transitive) to a patched release. This is a
-            build-policy unblock, not an acceptance of the vulnerability.
-        -->
-        <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-2m69-gcr7-jv3q" />
+
+    </ItemGroup>
+
+    <!-- Force newer SQLitePCLRaw versions to resolve GHSA-2m69-gcr7-jv3q (CVE-2025-6965)
+         SQLitePCLRaw 3.0.3 bundles SQLite >= 3.50.2, addressing the vulnerability.
+         This overrides the 2.1.11 transitive dependencies from EFCore.Sqlite. -->
+    <ItemGroup>
+        <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
+        <PackageReference Include="SQLitePCLRaw.core" Version="3.0.3" />
+        <PackageReference Include="SQLitePCLRaw.provider.e_sqlite3" Version="3.0.3" />
     </ItemGroup>
 </Project>
