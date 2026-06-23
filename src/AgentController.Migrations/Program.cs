@@ -65,7 +65,11 @@ internal static partial class Program
 
         try
         {
-            var dbContext = host.Services.GetRequiredService<AgentControllerDbContext>();
+            // The DbContext is registered as scoped (default for AddDbContext),
+            // so resolve it from a dedicated scope rather than the root provider.
+            // This is valid under ValidateScopes (Development) and Production alike.
+            using var scope = host.Services.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
 
             // Ensure the parent directory exists for file-based SQLite databases
             // so MigrateAsync does not fail because the directory is missing.

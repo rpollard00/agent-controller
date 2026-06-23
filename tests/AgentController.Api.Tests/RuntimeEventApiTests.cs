@@ -393,24 +393,31 @@ public class RuntimeEventApiTests : IAsyncLifetime
         Assert.Contains("not found", body.GetProperty("error").GetString());
     }
 
-    // ── Accepted prevention on progressed runs ─────────────────────
+    // ── Accepted tolerance on progressed runs ─────────────────────
 
     [Fact]
-    public async Task PostEvent_AcceptedOnAwaitingResult_Returns422()
+    public async Task PostEvent_AcceptedOnAwaitingResult_ToleratedReturns200()
     {
-        // The seeded run is already in AwaitingResult
+        // The seeded run is already in AwaitingResult (the benign race where the
+        // PollingWorker advances past AgentRunning before the runtime boots and
+        // POSTs accepted). The controller tolerates this: 200 OK, state unchanged,
+        // runtime id + heartbeat recorded. (This was previously a 422.)
+        var eventId = $"evt_acc_{Guid.NewGuid():N}";
         var request = new
         {
-            eventId = $"evt_acc_{Guid.NewGuid():N}",
+            eventId,
             eventType = RuntimeEventTypes.Accepted,
-            message = "Trying to accept",
+            runtimeRunId = "pi_late_boot",
+            message = "Accepted late",
         };
 
         var response = await _client.PostAsJsonAsync($"/runs/{_runId}/events", request);
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, (HttpStatusCode)422);
+        Assert.Equal(HttpStatusCode.OK, (HttpStatusCode)200);
 
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Contains("only valid for runs prior to AgentRunning", body.GetProperty("error").GetString());
+        Assert.Equal(_runId, body.GetProperty("runId").GetString());
+        Assert.Equal("AwaitingResult", body.GetProperty("status").GetString());
+        Assert.Equal("pi_late_boot", body.GetProperty("runtimeRunId").GetString());
     }
 
     // ── No runId in body is okay (route is authoritative) ──────────

@@ -99,7 +99,11 @@ public interface IRunLifecycleService
     /// Checks idempotency via <see cref="RuntimeEvent.EventId"/>.
     /// Dispatches based on <see cref="RuntimeEvent.EventType"/>:
     /// <list type="bullet">
-    ///   <item><c>runtime.accepted</c> — transitions to AgentRunning, records runtime run id</item>
+    ///   <item><c>runtime.accepted</c> — transitions to AgentRunning when the run is
+///   still before that state; otherwise treated as informational (records the
+///   runtime run id and refreshes the heartbeat). This tolerates the ordering
+///   race where the PollingWorker advances a run to AwaitingResult before a
+///   slow-booting runtime POSTs its accepted event.</item>
     ///   <item><c>runtime.heartbeat</c> — updates LastHeartbeatAt</item>
     ///   <item><c>runtime.status</c> — appends lifecycle event without state change</item>
     ///   <item><c>runtime.completed</c> — transitions to Completed/PrOpened/BranchPushed based on payload.outcome</item>

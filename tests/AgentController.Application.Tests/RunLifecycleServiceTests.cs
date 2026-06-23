@@ -447,38 +447,50 @@ public class RunLifecycleServiceTests
     }
 
     [Fact]
-    public async Task IngestAccepted_RejectedWhenRunHasProgressedBeyondAgentRunning()
+    public async Task IngestAccepted_OnAwaitingResult_ToleratedAsInformational()
     {
-        // Start from AwaitingResult (past AgentRunning)
+        // The PollingWorker advances a run to AwaitingResult synchronously,
+        // while a real pi runtime takes seconds to boot before POSTing
+        // accepted. So accepted frequently lands on an AwaitingResult run.
+        // It must be tolerated (no throw), must not regress the state, and
+        // must still record the runtime run id + refresh the heartbeat.
         var run = await CreateRunAsync(advanceTo: RunLifecycleState.AwaitingResult);
 
         var evt = CreateEvent(run.RunId, "evt_accepted", RuntimeEventTypes.Accepted,
             "Runtime accepted", runtimeRunId: "pi_123");
 
-        // Must reject regression
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => _service.IngestRuntimeEventAsync(evt, CancellationToken.None));
+        await _service.IngestRuntimeEventAsync(evt, CancellationToken.None);
 
-        Assert.Contains("only valid for runs prior to AgentRunning", ex.Message);
-        Assert.Contains(run.RunId, ex.Message);
-
-        // State must not have changed
-        var unchanged = await _runStore.GetByIdAsync(run.RunId, CancellationToken.None);
-        Assert.Equal(RunLifecycleState.AwaitingResult, unchanged!.Status);
+        var updated = await _runStore.GetByIdAsync(run.RunId, CancellationToken.None);
+        Assert.Equal(RunLifecycleState.AwaitingResult, updated!.Status); // state unchanged
+        Assert.Equal("pi_123", updated.RuntimeRunId); // runtime id recorded
+        Assert.Equal(evt.OccurredAt, updated.LastHeartbeatAt); // heartbeat refreshed
     }
 
     [Fact]
-    public async Task IngestAccepted_RejectedWhenRunIsNeedsHuman()
+    public async Task IngestAccepted_OnNeedsHuman_ToleratedAsInformational()
     {
-        // NeedsHuman is past AgentRunning — regression should be rejected
-        var run = await CreateRunAsync(advanceTo: RunLifecycleState.NeedsHuman);
+        // NeedsHuman is past AgentRunning and is only reachable via a
+        // runtime.needs_human event, so seed it realistically: advance to
+        // AwaitingResult, ingest needs_human, then send accepted.
+        var run = await CreateRunAsync(advanceTo: RunLifecycleState.AwaitingResult);
+        await _service.IngestRuntimeEventAsync(
+            CreateEvent(run.RunId, "evt_nh", RuntimeEventTypes.NeedsHuman, "needs a human"),
+            CancellationToken.None);
 
-        var evt = CreateEvent(run.RunId, "evt_accepted", RuntimeEventTypes.Accepted, "Accepted");
+        var seeded = await _runStore.GetByIdAsync(run.RunId, CancellationToken.None);
+        Assert.Equal(RunLifecycleState.NeedsHuman, seeded!.Status);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => _service.IngestRuntimeEventAsync(evt, CancellationToken.None));
+        // A stray accepted on NeedsHuman is harmless and must be tolerated
+        // (no throw), leaving the run in NeedsHuman and recording the runtime id.
+        var evt = CreateEvent(run.RunId, "evt_accepted", RuntimeEventTypes.Accepted,
+            "Accepted", runtimeRunId: "pi_456");
 
-        Assert.Contains("only valid for runs prior to AgentRunning", ex.Message);
+        await _service.IngestRuntimeEventAsync(evt, CancellationToken.None);
+
+        var updated = await _runStore.GetByIdAsync(run.RunId, CancellationToken.None);
+        Assert.Equal(RunLifecycleState.NeedsHuman, updated!.Status); // state unchanged
+        Assert.Equal("pi_456", updated.RuntimeRunId);
     }
 
     // ── IngestRuntimeEventAsync — runtime.heartbeat ────────────────

@@ -576,21 +576,24 @@ internal sealed class RunLifecycleService : IRunLifecycleService
         RuntimeEvent evt,
         CancellationToken ct)
     {
-        // runtime.accepted must never regress a run that has already progressed
-        // beyond AgentRunning. Only transition forward from states prior to AgentRunning.
+        // runtime.accepted normally arrives while the run is still before
+        // AgentRunning. With a real pi runtime, the PollingWorker advances the
+        // run through AgentRunning → AwaitingResult synchronously in a few
+        // milliseconds, while pi takes seconds to boot before it POSTs its
+        // accepted event. So accepted frequently lands on an AwaitingResult
+        // run. Treat accepted as forward-progress before AgentRunning, and as
+        // an informational heartbeat-equivalent otherwise — never throw, so
+        // the ingestion endpoint does not return 422 for this benign ordering
+        // race. (Terminal-state runs are still rejected upstream by
+        // IngestRuntimeEventAsync before reaching this handler.)
         if ((int)run.Status < (int)RunLifecycleState.AgentRunning)
         {
             await _runStore.UpdateStatusAsync(run.RunId, RunLifecycleState.AgentRunning, ct);
         }
-        else if (run.Status > RunLifecycleState.AgentRunning)
-        {
-            throw new InvalidOperationException(
-                $"Cannot accept run '{run.RunId}': run has already progressed to '{run.Status}', " +
-                "'runtime.accepted' is only valid for runs prior to AgentRunning. " +
-                "Use 'runtime.heartbeat' or 'runtime.status' to report activity on active runs.");
-        }
 
-        // Update runtime fields
+        // Record runtime fields and refresh the heartbeat in every non-terminal
+        // case. This keeps LastHeartbeatAt fresh even when accepted arrives late,
+        // so a slow-booting runtime never trips stale-run recovery.
         var update = new RuntimeFieldUpdate
         {
             RuntimeRunId = evt.RuntimeRunId,
