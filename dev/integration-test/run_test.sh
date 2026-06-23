@@ -53,6 +53,7 @@ ENV_FILE="${RUN_DIR}/env.sh"
 API_LOG="${RUN_DIR}/api.log"
 MIGRATIONS_LOG="${RUN_DIR}/migrations.log"
 API_PID=""
+POLL_PID=""
 
 echo "============================================================"
 echo " agent_router controller-driven integration test (Tier B)"
@@ -66,6 +67,11 @@ echo "============================================================"
 cleanup() {
   local rc=$?
   echo "[test] tearing down (rc so far=$rc) ..."
+  # Kill the poller first so it stops printing while we tear the API down.
+  if [[ -n "$POLL_PID" ]] && kill -0 "$POLL_PID" 2>/dev/null; then
+    kill -TERM "$POLL_PID" 2>/dev/null || true
+    wait "$POLL_PID" 2>/dev/null || true
+  fi
   if [[ -n "$API_PID" ]] && kill -0 "$API_PID" 2>/dev/null; then
     echo "[test] SIGTERM api (pid=$API_PID) -> host disposes PiMateriaRuntime -> kills pi"
     kill -TERM "$API_PID" 2>/dev/null || true
@@ -94,7 +100,11 @@ cleanup() {
   echo "[test] done. logs: $API_LOG , $MIGRATIONS_LOG ; events via: GET $BASE_URL/runs"
   exit "$rc"
 }
+# Trap EXIT (normal return, error, `set -e` abort) AND explicit signals so a
+# SIGTERM/SIGINT (e.g. killing the harness script) still tears down children
+# instead of orphaning the API + poller.
 trap cleanup EXIT
+trap 'trap - EXIT; cleanup' INT TERM
 
 # ── 1. Build the solution once (so migrations + API run fast) ─────────
 echo "[test] building solution ..."
@@ -200,7 +210,9 @@ python3 "$HERE/wait_for_terminal.py" \
   --base-url "$BASE_URL" \
   --timeout "$TIMEOUT" \
   --poll-interval 3 \
-  --boot-grace 60
+  --boot-grace 60 &
+POLL_PID=$!
+wait "$POLL_PID"
 POLL_RC=$?
 
 # Give the runtime a moment to finish shutting pi down on the success path
