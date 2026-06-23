@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Options;
 using AgentController.Api;
 using AgentController.Api.Models;
 using AgentController.Application;
@@ -97,6 +98,132 @@ app.MapGet("/", () => "AgentController API");
 app.MapGet(
     "/health",
     () => Results.Ok(new { Status = "Healthy", Timestamp = DateTimeOffset.UtcNow })
+);
+
+// --- ADO connection diagnostic endpoint ---
+
+app.MapGet(
+    "/azure-devops/diagnostic",
+    (
+        IOptions<AgentController.Infrastructure.Options.WorkSourceOptions> workSourceOpts,
+        IOptions<AgentController.Infrastructure.Options.AzureDevOpsBoardsOptions> boardsOpts,
+        CancellationToken ct
+    ) =>
+    {
+        var workSource = workSourceOpts.Value;
+        var boards = boardsOpts.Value;
+
+        var errors = new List<string>();
+
+        // (1) Validate required configuration fields
+        if (string.IsNullOrWhiteSpace(workSource.OrganizationUrl))
+        {
+            errors.Add("workSource:organizationUrl is not configured.");
+        }
+        if (string.IsNullOrWhiteSpace(workSource.Project))
+        {
+            errors.Add("workSource:project is not configured.");
+        }
+
+        // Resolve the PAT (may throw if ENV: reference is missing)
+        string? resolvedPat = null;
+        string? patError = null;
+        try
+        {
+            resolvedPat = boards.ResolvePersonalAccessToken();
+        }
+        catch (InvalidOperationException ex)
+        {
+            patError = ex.Message;
+            errors.Add($"PAT resolution failed: {ex.Message}");
+        }
+
+        if (string.IsNullOrWhiteSpace(resolvedPat) && patError is null)
+        {
+            errors.Add("azureDevOps:personalAccessToken is not configured.");
+        }
+
+        // If config validation failed, return early without making API calls
+        if (errors.Count > 0)
+        {
+            return Results.Ok(new
+            {
+                status = "ConfigurationError",
+                organizationUrl = workSource.OrganizationUrl,
+                project = workSource.Project,
+                patConfigured = !string.IsNullOrWhiteSpace(resolvedPat),
+                errors,
+                timestamp = DateTimeOffset.UtcNow,
+            });
+        }
+
+        // (2) Make a lightweight test API call to verify PAT and org URL
+        string? apiError = null;
+        int? statusCode = null;
+        bool apiSuccess = false;
+
+        try
+        {
+            var orgUrl = workSource.OrganizationUrl!.TrimEnd('/');
+            var project = workSource.Project!;
+
+            using var http = new HttpClient();
+            http.BaseAddress = new Uri(orgUrl + "/");
+
+            // Basic auth with PAT (empty username, PAT as password)
+            var authBytes = System.Text.Encoding.ASCII.GetBytes($":{resolvedPat}");
+            http.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue(
+                    "Basic", Convert.ToBase64String(authBytes));
+
+            // Lightweight test: GET project info (validates org URL + PAT + project)
+            using var result = http.GetAsync(
+                $"{project}/_apis/projects/{project}?api-version=7.1",
+                ct).GetAwaiter().GetResult();
+
+            statusCode = (int)result.StatusCode;
+
+            if (result.IsSuccessStatusCode)
+            {
+                apiSuccess = true;
+            }
+            else
+            {
+                var errorBody = result.Content.ReadAsStringAsync(ct).Result;
+                apiError = $"HTTP {(int)result.StatusCode} {result.ReasonPhrase}: " +
+                           (errorBody.Length > 200 ? errorBody[..200] + "..." : errorBody);
+                errors.Add(apiError);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            apiError = "Request timed out or was cancelled.";
+            errors.Add(apiError);
+        }
+        catch (System.Net.Http.HttpRequestException ex)
+        {
+            apiError = $"HTTP request failed: {ex.Message}";
+            errors.Add(apiError);
+        }
+        catch (Exception ex)
+        {
+            apiError = $"Unexpected error: {ex.Message}";
+            errors.Add(apiError);
+        }
+
+        // (3) Return diagnostic response
+        return Results.Ok(new
+        {
+            status = apiSuccess ? "Connected" : "ConnectionFailed",
+            organizationUrl = workSource.OrganizationUrl,
+            project = workSource.Project,
+            patConfigured = true,
+            httpStatusCode = statusCode,
+            apiError,
+            errors,
+            timestamp = DateTimeOffset.UtcNow,
+        });
+    }
 );
 
 // --- Work item endpoints (Phase 1 local fake work items) ---
