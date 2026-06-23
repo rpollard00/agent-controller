@@ -262,6 +262,25 @@ public class RuntimeEventApiTests : IAsyncLifetime
         Assert.Contains("severity", body.GetProperty("error").GetString(), StringComparison.OrdinalIgnoreCase);
     }
 
+    // ── Runtime events arrive with severity as a lowercase string ────
+    // pi-materia's agent-controller webhook preset sends severity as a lowercase
+    // string ("info"/"warning"/"error"/"critical") per docs/arch.md §10.2. The
+    // minimal-API JSON binder must accept these (regression guard for the
+    // JsonStringEnumConverter wired in Program.cs).
+    [Theory]
+    [InlineData("info")]
+    [InlineData("warning")]
+    [InlineData("error")]
+    [InlineData("critical")]
+    public async Task PostEvent_StringSeverity_Accepted(string severity)
+    {
+        var json = $"{{\"eventId\":\"evt_{Guid.NewGuid():N}\",\"eventType\":\"{RuntimeEventTypes.Status}\",\"severity\":\"{severity}\",\"message\":\"ok\"}}";
+        using var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+        var response = await _client.PostAsync($"/runs/{_runId}/events", content);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
     // ── Validation: far-future occurredAt ──────────────────────────
 
     [Fact]

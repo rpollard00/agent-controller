@@ -1,9 +1,22 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using AgentController.Api;
 using AgentController.Api.Models;
 using AgentController.Application;
 using AgentController.Domain;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Runtime events arrive over HTTP with severity as a lowercase string
+// (e.g. "info", "warning", "error", "critical" — see docs/arch.md §10.2).
+// Configure the minimal-API JSON binder to accept enums as case-insensitive
+// strings (it still accepts numeric values, so existing typed clients are
+// unaffected).
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.Converters.Add(
+        new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
+});
 
 // Register configuration options with validation-on-start
 builder.Services.AddAgentControllerOptions(builder.Configuration);
