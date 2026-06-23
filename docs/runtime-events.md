@@ -77,8 +77,14 @@ All event types use the `runtime.` prefix.
 The runtime accepted the run and has started work.
 
 - **State effect**: Transitions to `AgentRunning` only if the run is prior to
-  `AgentRunning`. Rejected if the run has already progressed beyond `AgentRunning`
-  (regression prevention).
+  `AgentRunning`. If the run has already reached `AgentRunning` or later
+  (e.g. `AwaitingResult`), the event is **tolerated as informational** — the
+  state is not regressed, but the runtime fields and heartbeat are still
+  refreshed. This accommodates the benign ordering race where the controller's
+  `PollingWorker` advances a run to `AwaitingResult` synchronously (in
+  milliseconds) before a real runtime finishes booting and posts `accepted`
+  (which can take seconds). Runs in a terminal state are still rejected
+  upstream (see §7.x).
 - **Runtime fields updated**: `RuntimeRunId`, `LastHeartbeatAt`, `StartedAt` (if not already set).
 - **Work item status**: `Running`.
 
@@ -232,17 +238,23 @@ Events targeting a run in a terminal state (`Completed`, `Failed`, `Cancelled`,
 }
 ```
 
-### 7.3 `runtime.accepted` Regression Prevention
+### 7.3 `runtime.accepted` Ordering Tolerance
 
-`runtime.accepted` must never regress a run that has already progressed beyond
-`AgentRunning`. If a run is already in `AwaitingResult` or any later state, the event
-is rejected with `422 Unprocessable Entity`:
+`runtime.accepted` is **tolerated** when it arrives on a run that has already
+reached `AgentRunning` or later (`AwaitingResult`, `PrOpened`, `BranchPushed`,
+`NeedsHuman`). In that case it does not regress the state; it is treated as
+informational and only refreshes the runtime fields and `LastHeartbeatAt`.
 
-```json
-{
-  "error": "Cannot accept run '<runId>': run has already progressed to '<state>'. 'runtime.accepted' is only valid for runs prior to AgentRunning. Use 'runtime.heartbeat' or 'runtime.status' to report activity on active runs."
-}
-```
+This exists because the controller's `PollingWorker` advances a run from
+`AgentStarting` through `AgentRunning` to `AwaitingResult` synchronously within
+milliseconds of handing off to the runtime, while a real `pi` child process
+typically takes several seconds to boot before it POSTs `accepted`. Without this
+tolerance, the first `accepted` event would land on an `AwaitingResult` run and
+be rejected.
+
+Terminal-state runs (Completed/Failed/Cancelled/CleanedUp) still reject all
+runtime events upstream — `accepted` on a terminal run never reaches the
+handler.
 
 ### 7.4 Unsupported Event Type
 
@@ -260,6 +272,13 @@ The service layer rejects undefined `EventSeverity` values before idempotency or
 persistence checks (throwing `InvalidOperationException` for direct callers).
 The API layer catches this earlier and returns `400 Bad Request`. An out-of-range
 severity (e.g., `(EventSeverity)99`) produces:
+
+**Severity is accepted as a case-insensitive string.** The event envelope sends
+severity as a lowercase string (e.g. `"info"`, `"warning"`, `"error"`,
+`"critical"`) per §2, which is what runtimes like pi-materia POST. The API's JSON
+binder is configured with a case-insensitive `JsonStringEnumConverter`, so both
+string forms (`"info"`, `"Info"`) and the numeric form (`0`) are accepted; only
+values that map to no defined enum member are rejected as below.
 
 ```json
 {
@@ -381,7 +400,7 @@ POST /runs/run_abc123/events
 | `200 OK` | Event ingested successfully. Body includes updated run state. |
 | `400 Bad Request` | Missing required field (`eventId`, `eventType`), `runId` mismatch, out-of-range `severity`, or far-future `occurredAt`. |
 | `409 Conflict` | Duplicate `eventId` — event was already processed. |
-| `422 Unprocessable Entity` | Unsupported event type, unsupported completion outcome, run not found, run in terminal state, or `runtime.accepted` on a progressed run. |
+| `422 Unprocessable Entity` | Unsupported event type, unsupported completion outcome, run not found, or run in terminal state. (`runtime.accepted` on a progressed (non-terminal) run is tolerated — see §7.3.) |
 
 ### 9.1 Success Response (200)
 

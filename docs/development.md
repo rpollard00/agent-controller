@@ -54,6 +54,30 @@ dotnet test
 
 Tests use [xUnit](https://xunit.net/). Test projects are under `tests/`.
 
+`PiMateriaRuntimeTests` covers the real pi runtime with a deterministic
+fake-`pi` process and a real HTTP listener — no LLM, no network, CI-friendly.
+
+## Integration harnesses (real `pi` + real controller)
+
+Two harnesses under `dev/` exercise real `pi` and pi-materia. They require
+per-machine prereqs that `dotnet test` does not (`.NET 10 SDK`, `pi` on PATH
+with pi-materia installed, a configured model + API key, `git`, `jj`).
+
+- **`dev/integration-test/` (Tier B — full controller-driven workflow).** Boots
+  the real `AgentController.Api` (PollingWorker + `PiMateriaRuntime`), scaffolds
+  a clean widget repo, seeds one `LocalFile` work item, and runs a complete Wedge
+  cast through the real `POST /runs/{runId}/events` endpoint. Polls `GET /runs/{id}`
+  to terminal and asserts `runtime.completed`. This is the only harness that
+  exercises the real poll loop, runtime, and pi against the real endpoint.
+  Run: `./dev/integration-test/run_test.sh`.
+
+- **`dev/integration-spike/` (real pi, stand-in listener).** Runs a single real
+  `/materia cast` against a throwaway repo with a minimal Python HTTP listener
+  in place of the controller. Faster to iterate on when you only want to verify
+  the pi-materia → controller webhook contract. Run: `./dev/integration-spike/run_spike.sh`.
+
+See each directory's `README.md` for options and prerequisites.
+
 ## Solution Structure
 
 ```

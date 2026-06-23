@@ -85,13 +85,18 @@ The local-first milestone (§13a) enables fully local controller runs without Az
 
 ### Remaining Local-First Gaps
 
-1. ~~**Real pi-materia process invocation**~~ — **Implemented:** `PiMateriaRuntime`
+1. ~~**Real pi-materia process invocation**~~ — **Implemented and validated
+   end-to-end:** `PiMateriaRuntime`
    (`src/AgentController.Infrastructure/PiMateriaRuntime.cs`) launches `pi` in RPC
-   mode and drives a `/materia cast`, validated by a deterministic fake-`pi`
-   integration test (`tests/AgentController.Infrastructure.Tests/PiMateriaRuntimeTests.cs`)
-   and by a real end-to-end spike (`dev/integration-spike/`) that ran a full
-   Wedge cast against a throwaway repo and confirmed the `agent-controller`
-   webhook contract over HTTP.
+   mode and drives a `/materia cast`. The full controller-driven chain — real
+   `PollingWorker` + real runtime + real `pi` + the real
+   `POST /runs/{runId}/events` endpoint — is exercised by the Tier B harness at
+   `dev/integration-test/`, which runs a complete Wedge cast through the real
+   controller and asserts `runtime.completed`. Coverage is layered: a
+   deterministic fake-`pi` test (`PiMateriaRuntimeTests`, `dotnet test`) covers
+   the runtime with no LLM; the standalone spike (`dev/integration-spike/`)
+   validates real pi against a stand-in listener; Tier B validates the whole
+   pipeline through the real controller.
 
 2. ~~Environment/source-control no-ops in PollingWorker~~ — **Fixed:** The `PollingWorker` now invokes `IEnvironmentProvider.CreateAsync` at `EnvironmentProvisioning`, `ISourceControlProvider.CloneAsync` at `RepositoryCloning`, writes context files at `ContextInjected`, and passes the full environment/repo context to `IAgentRuntime.StartAsync` at `AgentStarting`.
 
@@ -1728,10 +1733,16 @@ to observe.
 4. **Configuration example.** An `appsettings.local-e2e.example.json` file documents
 all the settings needed for a local-only run.
 
-## Slice 5 (Future): Pi-Materia Process Adapter
+## Slice 5: Pi-Materia Process Adapter ✓
 
-After the local-only E2E path works with the mock runtime, the next slice replaces
-the mock with a real pi-materia invocation. This is documented in §13b.
+The local-only E2E path works with the mock runtime, and the real pi-materia
+invocation is now implemented and validated end-to-end. `PiMateriaRuntime`
+(see §13b) launches `pi` in RPC mode and drives a `/materia cast`; the full
+controller-driven chain — real `PollingWorker` + real runtime + real `pi` + the
+real `POST /runs/{runId}/events` endpoint — is exercised by the Tier B harness
+at `dev/integration-test/`. The standalone spike at `dev/integration-spike/`
+validates real pi against a stand-in listener, and the deterministic fake-`pi`
+test `PiMateriaRuntimeTests` covers the runtime with no LLM.
 
 ### Runtime Contract (Recap)
 
@@ -1740,17 +1751,21 @@ The controller and pi-materia interact through:
 1. **Input (context files).** Written by the environment provider into
 `{runRoot}/{runId}/context/`:
    - `controller-run.json` — run metadata (runId, workItemId, repo path, branch)
-   - `work-item.md` — markdown work item description
+   - `work-item.md` — markdown work item description (its title becomes the
+     `/materia cast` prompt)
    - `acceptance-criteria.md` — acceptance criteria
    - `repository.json` — repository profile metadata
 
-2. **Runtime events (inbound).** Sent by pi-materia to `POST /runs/{runId}/events`.
-The minimal required events for a first integration are `runtime.accepted`,
-`runtime.status`, `runtime.heartbeat`, `runtime.completed`, and `runtime.failed`.
+2. **Runtime events (inbound).** Sent by pi-materia to `POST /runs/{runId}/events`
+over HTTP. The minimal required events are `runtime.accepted`,
+`runtime.status`, `runtime.heartbeat`, `runtime.completed`, and
+`runtime.failed`. pi-materia enables delivery via its `agent-controller`
+eventing preset (see §13b.5).
 
-3. **Process lifecycle.** The controller starts `pi` as a child process with the
-materia loadout, captures stderr into log files, monitors process exit,
-and handles cancellation via SIGTERM or equivalent.
+3. **Process lifecycle.** The controller starts `pi --mode rpc --no-session` as a
+child process, sends the cast as an RPC `prompt` command, captures stdout/stderr
+into log files, monitors process exit, and handles cancellation via RPC `abort`
+followed by SIGKILL after a grace period.
 
 4. **Webhook events.** pi-materia POSTs runtime events to the controller's
 `POST /runs/{runId}/events` endpoint. The controller receives these through the
