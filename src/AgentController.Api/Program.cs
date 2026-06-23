@@ -66,6 +66,10 @@ if (runtimeProvider.Equals("MockPiMateria", StringComparison.OrdinalIgnoreCase))
 {
     builder.Services.AddAgentControllerMockPiMateriaRuntime();
 }
+else if (runtimeProvider.Equals("PiMateria", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddAgentControllerPiMateriaRuntime();
+}
 // ── End provider wiring ───────────────────────────────────────
 
 // Register the background polling worker (disabled by default via agentController.workerEnabled).

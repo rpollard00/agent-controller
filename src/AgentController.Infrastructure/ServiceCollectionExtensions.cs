@@ -242,6 +242,30 @@ public static class AgentControllerServiceCollectionExtensions
     }
 
     /// <summary>
+    /// Registers the <see cref="PiMateriaRuntime"/> as a singleton
+    /// <see cref="IAgentRuntime"/> that launches <c>pi</c> as a child process in
+    /// RPC mode and drives a pi-materia cast via the <c>/materia cast</c> command.
+    /// pi-materia reports <c>runtime.*</c> events back to the controller over HTTP
+    /// (POST to the controller's <c>/runs/{runId}/events</c> endpoint).
+    ///
+    /// Requires <see cref="AddAgentControllerOptions"/> to be called first
+    /// (for <see cref="RuntimeOptions"/> and <see cref="AgentControllerOptions"/> binding).
+    /// Requires <see cref="RuntimeOptions.ControllerBaseUrl"/> to be configured so the
+    /// runtime can hand pi-materia the webhook URL.
+    ///
+    /// Callers should register this <em>after</em>
+    /// <see cref="AddAgentControllerNoOpProviders"/> so the last-registered
+    /// <see cref="IAgentRuntime"/> wins.
+    /// </summary>
+    public static IServiceCollection AddAgentControllerPiMateriaRuntime(
+        this IServiceCollection services)
+    {
+        services.AddSingleton<IAgentRuntime, PiMateriaRuntime>();
+
+        return services;
+    }
+
+    /// <summary>
     /// Registers the <see cref="MockPiMateriaRuntime"/> as a singleton
     /// <see cref="IAgentRuntime"/> that simulates a pi-materia runtime by
     /// emitting a deterministic sequence of runtime events in-process.
