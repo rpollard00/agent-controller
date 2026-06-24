@@ -3,7 +3,7 @@ using AgentController.Domain;
 namespace AgentController.Application;
 
 /// <summary>
-/// Port for calling Azure DevOps Boards REST APIs.
+/// Port for calling Azure DevOps REST APIs (Boards + Git).
 /// Provides the minimal surface needed by <see cref="IWorkSource"/>
 /// implementations that target Azure DevOps Boards.
 ///
@@ -43,6 +43,33 @@ public interface IAzureDevOpsBoardsClient
         ExternalWorkRef workRef,
         string comment,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Enumerate Git repositories in an Azure DevOps project.
+    /// Calls GET {project}/_apis/git/repositories?api-version=7.1
+    /// and returns parsed repository metadata.
+    /// </summary>
+    Task<IReadOnlyList<RepositoryInfo>> ListRepositoriesAsync(
+        string project,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Metadata for a Git repository in an Azure DevOps project.
+/// </summary>
+public sealed record RepositoryInfo
+{
+    /// <summary>Repository identifier (GUID string).</summary>
+    public string Id { get; init; } = string.Empty;
+
+    /// <summary>Repository name.</summary>
+    public string Name { get; init; } = string.Empty;
+
+    /// <summary>Default branch name (e.g. <c>refs/heads/main</c>), or <c>null</c> if not set.</summary>
+    public string? DefaultBranch { get; init; }
+
+    /// <summary>Remote URL for cloning, or <c>null</c> if unavailable.</summary>
+    public string? RemoteUrl { get; init; }
 }
 
 /// <summary>

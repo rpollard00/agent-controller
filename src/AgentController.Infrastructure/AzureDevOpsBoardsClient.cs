@@ -484,6 +484,75 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         response.EnsureSuccessStatusCode();
     }
 
+    public async Task<IReadOnlyList<RepositoryInfo>> ListRepositoriesAsync(
+        string project,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(project))
+        {
+            throw new InvalidOperationException(
+                "Azure DevOps project name is required for repository listing.");
+        }
+
+        var response = await _http.GetAsync(
+            $"{project}/_apis/git/repositories?api-version=7.1",
+            cancellationToken);
+
+        response.EnsureSuccessStatusCode();
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var doc = JsonDocument.Parse(json);
+
+        var repositories = new List<RepositoryInfo>();
+
+        if (doc.RootElement.TryGetProperty("value", out var valueArray)
+            && valueArray.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var repo in valueArray.EnumerateArray())
+            {
+                var id = repo.TryGetProperty("id", out var idEl)
+                         && idEl.ValueKind == JsonValueKind.String
+                    ? idEl.GetString() ?? string.Empty
+                    : string.Empty;
+
+                var name = repo.TryGetProperty("name", out var nameEl)
+                           && nameEl.ValueKind == JsonValueKind.String
+                    ? nameEl.GetString() ?? string.Empty
+                    : string.Empty;
+
+                string? defaultBranch = null;
+                if (repo.TryGetProperty("defaultBranch", out var dbEl)
+                    && dbEl.ValueKind == JsonValueKind.String)
+                {
+                    defaultBranch = dbEl.GetString();
+                }
+
+                string? remoteUrl = null;
+                if (repo.TryGetProperty("remoteUrl", out var ruEl)
+                    && ruEl.ValueKind == JsonValueKind.String)
+                {
+                    remoteUrl = ruEl.GetString();
+                }
+                else if (repo.TryGetProperty("webUrl", out var wuEl)
+                         && wuEl.ValueKind == JsonValueKind.String)
+                {
+                    // Fallback: use webUrl if remoteUrl is not present
+                    remoteUrl = wuEl.GetString();
+                }
+
+                repositories.Add(new RepositoryInfo
+                {
+                    Id = id,
+                    Name = name,
+                    DefaultBranch = defaultBranch,
+                    RemoteUrl = remoteUrl,
+                });
+            }
+        }
+
+        return repositories;
+    }
+
     // ─── WIQL builder ────────────────────────────────────
 
     private static string BuildWiql(string project, BoardsQueryParameters parameters)
