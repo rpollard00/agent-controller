@@ -20,11 +20,11 @@ public interface IWorkItemStore
 
     /// <summary>
     /// List work items matching the optional filters in <paramref name="query"/>.
-    /// Supports pagination via <see cref="WorkItemListQuery.Offset"/> and
-    /// <see cref="WorkItemListQuery.MaxResults"/>.
+    /// Supports pagination via <see cref="ListWorkItemsQuery.Offset"/> and
+    /// <see cref="ListWorkItemsQuery.MaxResults"/>.
     /// </summary>
     Task<IReadOnlyList<WorkCandidate>> ListAsync(
-        WorkItemListQuery query,
+        ListWorkItemsQuery query,
         CancellationToken cancellationToken
     );
 

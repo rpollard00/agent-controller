@@ -166,7 +166,7 @@ public sealed record RuntimeFieldUpdate
 /// Query parameters for listing agent runs.
 /// All fields are optional; implementations apply the provided filters.
 /// </summary>
-public sealed record RunListQuery
+public sealed record ListRunsQuery
 {
     /// <summary>Filter by lifecycle state.</summary>
     public RunLifecycleState? Status { get; init; }

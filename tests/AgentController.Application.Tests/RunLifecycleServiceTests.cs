@@ -1098,7 +1098,7 @@ public class RunLifecycleServiceTests
             return Task.CompletedTask;
         }
 
-        public Task<IReadOnlyList<AgentRunHandle>> ListAsync(RunListQuery query, CancellationToken ct)
+        public Task<IReadOnlyList<AgentRunHandle>> ListAsync(ListRunsQuery query, CancellationToken ct)
         {
             var results = _runs.Values.AsEnumerable();
             if (query.Status.HasValue)
@@ -1199,7 +1199,7 @@ public class RunLifecycleServiceTests
             return Task.FromResult(item);
         }
 
-        public Task<IReadOnlyList<WorkCandidate>> ListAsync(WorkItemListQuery query, CancellationToken ct)
+        public Task<IReadOnlyList<WorkCandidate>> ListAsync(ListWorkItemsQuery query, CancellationToken ct)
         {
             return Task.FromResult<IReadOnlyList<WorkCandidate>>(_items.Values.ToList());
         }

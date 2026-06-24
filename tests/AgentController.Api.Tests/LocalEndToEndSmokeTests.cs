@@ -161,7 +161,7 @@ public class LocalEndToEndSmokeTests : IAsyncLifetime
 
         // Find the work item that was seeded
         var workItems = await workItemStore.ListAsync(
-            new WorkItemListQuery { MaxResults = 10 },
+            new ListWorkItemsQuery { MaxResults = 10 },
             CancellationToken.None);
 
         Assert.NotEmpty(workItems);
@@ -171,7 +171,7 @@ public class LocalEndToEndSmokeTests : IAsyncLifetime
 
         // Find the run created for this work item
         var runs = await runStore.ListAsync(
-            new RunListQuery { MaxResults = 10 },
+            new ListRunsQuery { MaxResults = 10 },
             CancellationToken.None);
 
         Assert.NotEmpty(runs);

@@ -206,7 +206,7 @@ public sealed record CreateWorkItemRequest
 /// Query parameters for listing work items from the persistence store.
 /// All fields are optional; implementations apply the provided filters.
 /// </summary>
-public sealed record WorkItemListQuery
+public sealed record ListWorkItemsQuery
 {
     /// <summary>Filter by status string.</summary>
     public string? Status { get; init; }

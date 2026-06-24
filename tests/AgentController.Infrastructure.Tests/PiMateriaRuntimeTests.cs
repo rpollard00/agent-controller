@@ -898,7 +898,7 @@ main()
         }
 
         public Task<IReadOnlyList<AgentRunHandle>> ListAsync(
-            RunListQuery query,
+            ListRunsQuery query,
             CancellationToken ct
         )
         {
@@ -1001,7 +1001,7 @@ main()
         }
 
         public Task<IReadOnlyList<WorkCandidate>> ListAsync(
-            WorkItemListQuery query,
+            ListWorkItemsQuery query,
             CancellationToken ct
         ) => Task.FromResult<IReadOnlyList<WorkCandidate>>(_items.Values.ToList());
 

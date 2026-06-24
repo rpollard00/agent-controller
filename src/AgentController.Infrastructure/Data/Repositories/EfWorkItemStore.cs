@@ -53,7 +53,7 @@ internal sealed class EfWorkItemStore : IWorkItemStore
     }
 
     public async Task<IReadOnlyList<WorkCandidate>> ListAsync(
-        WorkItemListQuery query,
+        ListWorkItemsQuery query,
         CancellationToken cancellationToken)
     {
         IQueryable<WorkItemEntity> q = _db.WorkItems;

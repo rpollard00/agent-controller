@@ -142,7 +142,7 @@ internal sealed class EfAgentRunStore : IAgentRunStore
     }
 
     public async Task<IReadOnlyList<AgentRunHandle>> ListAsync(
-        RunListQuery query,
+        ListRunsQuery query,
         CancellationToken cancellationToken)
     {
         IQueryable<AgentRunEntity> q = _db.AgentRuns;

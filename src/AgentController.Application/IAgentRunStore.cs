@@ -51,11 +51,11 @@ public interface IAgentRunStore
 
     /// <summary>
     /// List agent runs matching the optional filters in <paramref name="query"/>.
-    /// Supports pagination via <see cref="RunListQuery.Offset"/> and
-    /// <see cref="RunListQuery.MaxResults"/>.
+    /// Supports pagination via <see cref="ListRunsQuery.Offset"/> and
+    /// <see cref="ListRunsQuery.MaxResults"/>.
     /// </summary>
     Task<IReadOnlyList<AgentRunHandle>> ListAsync(
-        RunListQuery query,
+        ListRunsQuery query,
         CancellationToken cancellationToken
     );
 

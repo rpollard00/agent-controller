@@ -271,7 +271,7 @@ public class PiMateriaRuntimeEndToEndTests : IAsyncLifetime
                     statusFilter = parsed;
                 }
 
-                var query = new RunListQuery
+                var query = new ListRunsQuery
                 {
                     Status = statusFilter,
                     WorkItemId = workItemId,

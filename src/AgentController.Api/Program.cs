@@ -312,7 +312,7 @@ app.MapGet(
     ) =>
     {
         var tagList = tags?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var query = new WorkItemListQuery
+        var query = new ListWorkItemsQuery
         {
             Status = status,
             RepoKey = repoKey,
@@ -480,7 +480,7 @@ app.MapGet(
             statusFilter = parsed;
         }
 
-        var query = new RunListQuery
+        var query = new ListRunsQuery
         {
             Status = statusFilter,
             WorkItemId = workItemId,

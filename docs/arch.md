@@ -1342,7 +1342,7 @@ code consume. These interfaces must not leak EF Core types:
 ```csharp
 // IWorkItemStore — CRUD for local fake work items + claim/lease
 Task<WorkCandidate> CreateAsync(CreateWorkItemRequest request, CancellationToken ct);
-Task<IReadOnlyList<WorkCandidate>> ListAsync(WorkItemListQuery query, CancellationToken ct);
+Task<IReadOnlyList<WorkCandidate>> ListAsync(ListWorkItemsQuery query, CancellationToken ct);
 Task<WorkCandidate?> GetByIdAsync(string id, CancellationToken ct);
 Task<IReadOnlyList<WorkCandidate>> FindEligibleAsync(WorkQuery query, CancellationToken ct);
 Task<ClaimResult> TryClaimAsync(string workItemId, ClaimRequest claim, CancellationToken ct);
@@ -1353,7 +1353,7 @@ Task<AgentRunHandle> CreateAsync(CreateRunRequest request, CancellationToken ct)
 Task<AgentRunHandle?> GetByIdAsync(string runId, CancellationToken ct);
 Task UpdateStatusAsync(string runId, RunLifecycleState status, CancellationToken ct);
 Task UpdateRuntimeFieldsAsync(string runId, RuntimeFieldUpdate update, CancellationToken ct);
-Task<IReadOnlyList<AgentRunHandle>> ListAsync(RunListQuery query, CancellationToken ct);
+Task<IReadOnlyList<AgentRunHandle>> ListAsync(ListRunsQuery query, CancellationToken ct);
 Task<IReadOnlyList<AgentRunHandle>> FindStaleAsync(TimeSpan staleTimeout, CancellationToken ct);
 
 // ILifecycleEventStore — append-only event log
