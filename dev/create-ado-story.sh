@@ -11,7 +11,7 @@
 #
 # Options:
 #   -t, --title TITLE          Work item title (required)
-#   -r, --repo-key KEY         Repository profile key for repo: tag (default: agent-router)
+#   -r, --repo-key KEY         Repository profile key for repo: tag (default: test1)
 #   -p, --project PROJECT      ADO project name (default: from env ADO_PROJECT or "Projecto")
 #   -o, --org ORG              ADO organization name (default: from env ADO_ORG or "rpollard0630")
 #   -w, --work-item-type TYPE  Work item type (default: User Story)

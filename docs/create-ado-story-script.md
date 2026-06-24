@@ -25,7 +25,7 @@ dev/create-ado-story.sh
 | Option | Short | Default | Description |
 |--------|-------|---------|-------------|
 | `--title` | `-t` | *(required)* | Work item title |
-| `--repo-key` | `-r` | `agent-router` | Repository profile key for the `repo:` tag |
+| `--repo-key` | `-r` | `test1` | Repository profile key for the `repo:` tag |
 | `--project` | `-p` | `ADO_PROJECT` env or `Projecto` | ADO project name |
 | `--org` | `-o` | `ADO_ORG` env or `rpollard0630` | ADO organization name |
 | `--work-item-type` | `-w` | `User Story` | ADO work item type (e.g. `Bug`, `Task`) |
