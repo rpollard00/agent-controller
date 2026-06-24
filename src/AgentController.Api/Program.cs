@@ -104,7 +104,7 @@ app.MapGet(
 
 app.MapGet(
     "/azure-devops/diagnostic",
-    (
+    async (
         IOptions<AgentController.Infrastructure.Options.WorkSourceOptions> workSourceOpts,
         IOptions<AgentController.Infrastructure.Options.AzureDevOpsBoardsOptions> boardsOpts,
         CancellationToken ct
@@ -152,7 +152,6 @@ app.MapGet(
                 organizationUrl = workSource.OrganizationUrl,
                 project = workSource.Project,
                 patConfigured = !string.IsNullOrWhiteSpace(resolvedPat),
-                pat = resolvedPat,
                 errors,
                 timestamp = DateTimeOffset.UtcNow,
             });
@@ -162,6 +161,7 @@ app.MapGet(
         string? apiError = null;
         int? statusCode = null;
         bool apiSuccess = false;
+        var repositories = new List<object>();
 
         try
         {
@@ -178,19 +178,79 @@ app.MapGet(
                     "Basic", Convert.ToBase64String(authBytes));
 
             // Lightweight test: GET project info (validates org URL + PAT + project)
-            using var result = http.GetAsync(
+            using var result = await http.GetAsync(
                 $"_apis/projects/{project}?api-version=7.1",
-                ct).GetAwaiter().GetResult();
+                ct);
 
             statusCode = (int)result.StatusCode;
 
             if (result.IsSuccessStatusCode)
             {
                 apiSuccess = true;
+
+                // (2b) Enumerate repositories after successful connectivity test
+                try
+                {
+                    using var reposResult = await http.GetAsync(
+                        $"{project}/_apis/git/repositories?api-version=7.1",
+                        ct);
+
+                    if (reposResult.IsSuccessStatusCode)
+                    {
+                        var reposJson = await reposResult.Content.ReadAsStringAsync(ct);
+                        using var reposDoc = System.Text.Json.JsonDocument.Parse(reposJson);
+                        if (reposDoc.RootElement.TryGetProperty("value", out var val)
+                            && val.ValueKind == System.Text.Json.JsonValueKind.Array)
+                        {
+                            foreach (var repo in val.EnumerateArray())
+                            {
+                                var id = repo.TryGetProperty("id", out var idEl) && idEl.ValueKind == System.Text.Json.JsonValueKind.String
+                                    ? idEl.GetString()
+                                    : null;
+                                var name = repo.TryGetProperty("name", out var nameEl) && nameEl.ValueKind == System.Text.Json.JsonValueKind.String
+                                    ? nameEl.GetString()
+                                    : null;
+                                var defaultBranch = repo.TryGetProperty("defaultBranch", out var dbEl) && dbEl.ValueKind == System.Text.Json.JsonValueKind.String
+                                    ? dbEl.GetString()
+                                    : null;
+                                var remoteUrl = repo.TryGetProperty("remoteUrl", out var ruEl) && ruEl.ValueKind == System.Text.Json.JsonValueKind.String
+                                    ? ruEl.GetString()
+                                    : null;
+
+                                repositories.Add(new
+                                {
+                                    id,
+                                    name,
+                                    defaultBranch,
+                                    remoteUrl,
+                                });
+                            }
+                        }
+                    }
+                    else
+                    {
+                        var reposErrorBody = await reposResult.Content.ReadAsStringAsync(ct);
+                        var reposError = $"Repository listing returned HTTP {(int)reposResult.StatusCode}: " +
+                                         (reposErrorBody.Length > 200 ? reposErrorBody[..200] + "..." : reposErrorBody);
+                        errors.Add(reposError);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    errors.Add("Repository listing timed out or was cancelled.");
+                }
+                catch (System.Net.Http.HttpRequestException ex)
+                {
+                    errors.Add($"Repository listing failed: {ex.Message}");
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"Repository listing unexpected error: {ex.Message}");
+                }
             }
             else
             {
-                var errorBody = result.Content.ReadAsStringAsync(ct).Result;
+                var errorBody = await result.Content.ReadAsStringAsync(ct);
                 apiError = $"HTTP {(int)result.StatusCode} {result.ReasonPhrase}: " +
                            (errorBody.Length > 200 ? errorBody[..200] + "..." : errorBody);
                 errors.Add(apiError);
@@ -212,16 +272,16 @@ app.MapGet(
             errors.Add(apiError);
         }
 
-        // (3) Return diagnostic response
+        // (3) Return diagnostic response (PAT is excluded for security)
         return Results.Ok(new
         {
             status = apiSuccess ? "Connected" : "ConnectionFailed",
             organizationUrl = workSource.OrganizationUrl,
             project = workSource.Project,
             patConfigured = true,
-            pat = resolvedPat,
             httpStatusCode = statusCode,
             apiError,
+            repositories,
             errors,
             timestamp = DateTimeOffset.UtcNow,
         });
