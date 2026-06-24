@@ -446,38 +446,48 @@ if [[ "$DEBUG" == true ]]; then
     echo "$BODY_RESPONSE" >&2
 fi
 
-if [[ "$HTTP_CODE" =~ ^2 ]]; then
-    # Validate the response is JSON before parsing
-    if is_html_response "$BODY_RESPONSE"; then
-        echo "✗ Unexpected: ADO returned HTML despite HTTP $HTTP_CODE" >&2
-        render_non_json_error "$BODY_RESPONSE" "$HTTP_CODE"
+case "$HTTP_CODE" in
+    2*)
+        # Validate the response is JSON before parsing
+        if is_html_response "$BODY_RESPONSE"; then
+            echo "✗ Unexpected: ADO returned HTML despite HTTP $HTTP_CODE" >&2
+            render_non_json_error "$BODY_RESPONSE" "$HTTP_CODE"
+            exit 1
+        elif ! is_valid_json "$BODY_RESPONSE"; then
+            echo "✗ Unexpected: ADO returned non-JSON response (HTTP $HTTP_CODE)" >&2
+            echo "  Response (truncated): $(echo "$BODY_RESPONSE" | head -c 200)" >&2
+            exit 1
+        fi
+
+        # Extract the work item ID from the response
+        ITEM_ID="$(echo "$BODY_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id', 'unknown'))" 2>/dev/null || echo "unknown")"
+        ITEM_URL="${BASE_URL}/${PROJECT}/_workitems/edit/${ITEM_ID}"
+
+        echo "✓ Work item created successfully!"
+        echo "  ID:           $ITEM_ID"
+        echo "  URL:          $ITEM_URL"
+        echo ""
+        echo "Next steps:"
+        echo "  1. Ensure agent router is running: export DOTNET_ENVIRONMENT=Live.ADO && dotnet run --project src/AgentController.Api"
+        echo "  2. Watch logs for discovery of work item #$ITEM_ID"
+        echo "  3. Check the board: $ITEM_URL"
+        ;;
+    000)
+        echo "✗ Failed to create work item: request never completed (HTTP $HTTP_CODE)" >&2
+        echo "  Request-level failure — got no HTTP response from the server." >&2
+        echo "  Hint: Check URL, network connectivity, and curl availability." >&2
+        echo "  URL: $API_URL" >&2
         exit 1
-    elif ! is_valid_json "$BODY_RESPONSE"; then
-        echo "✗ Unexpected: ADO returned non-JSON response (HTTP $HTTP_CODE)" >&2
-        echo "  Response (truncated): $(echo "$BODY_RESPONSE" | head -c 200)" >&2
+        ;;
+    *)
+        echo "✗ Failed to create work item (HTTP $HTTP_CODE)" >&2
+
+        if is_html_response "$BODY_RESPONSE"; then
+            render_non_json_error "$BODY_RESPONSE" "$HTTP_CODE"
+        else
+            # Non-HTML response — try to render JSON or print raw body.
+            echo "$BODY_RESPONSE" | python3 -m json.tool 2>/dev/null || echo "$BODY_RESPONSE" >&2
+        fi
         exit 1
-    fi
-
-    # Extract the work item ID from the response
-    ITEM_ID="$(echo "$BODY_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id', 'unknown'))" 2>/dev/null || echo "unknown")"
-    ITEM_URL="${BASE_URL}/${PROJECT}/_workitems/edit/${ITEM_ID}"
-
-    echo "✓ Work item created successfully!"
-    echo "  ID:           $ITEM_ID"
-    echo "  URL:          $ITEM_URL"
-    echo ""
-    echo "Next steps:"
-    echo "  1. Ensure agent router is running: export DOTNET_ENVIRONMENT=Live.ADO && dotnet run --project src/AgentController.Api"
-    echo "  2. Watch logs for discovery of work item #$ITEM_ID"
-    echo "  3. Check the board: $ITEM_URL"
-else
-    echo "✗ Failed to create work item (HTTP $HTTP_CODE)" >&2
-
-    if is_html_response "$BODY_RESPONSE"; then
-        render_non_json_error "$BODY_RESPONSE" "$HTTP_CODE"
-    else
-        # Non-HTML response — try to render JSON or print raw body.
-        echo "$BODY_RESPONSE" | python3 -m json.tool 2>/dev/null || echo "$BODY_RESPONSE" >&2
-    fi
-    exit 1
-fi
+        ;;
+esac
