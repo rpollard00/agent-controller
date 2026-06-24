@@ -118,10 +118,71 @@ public class OptionsSmokeTests
         Assert.Equal(2, options.EligibleTags.Count);
         Assert.Contains("agent-ready", options.EligibleTags);
         Assert.Contains("autonomous", options.EligibleTags);
-        Assert.Single(options.ExcludedTags);
+        // Defaults (3) + configured (1) = 4 total
+        Assert.Equal(4, options.ExcludedTags.Count);
+        Assert.Contains("agent-active", options.ExcludedTags);
+        Assert.Contains("agent-failed", options.ExcludedTags);
+        Assert.Contains("agent-needs-human", options.ExcludedTags);
         Assert.Contains("agent-blocked", options.ExcludedTags);
         Assert.Equal(2, options.EligibleStates.Count);
         Assert.Contains("New", options.EligibleStates);
+    }
+
+    [Fact]
+    public void WorkSourceOptions_DefaultExcludedTags_PreventRePickup()
+    {
+        // When no excludedTags are configured, the defaults should include
+        // agent-active, agent-failed, and agent-needs-human to prevent
+        // re-pickup of items the controller has already claimed, failed, or
+        // marked as needing human input.
+        var options = new WorkSourceOptions { Provider = "LocalFake" };
+
+        Assert.Equal(3, options.ExcludedTags.Count);
+        Assert.Contains("agent-active", options.ExcludedTags);
+        Assert.Contains("agent-failed", options.ExcludedTags);
+        Assert.Contains("agent-needs-human", options.ExcludedTags);
+    }
+
+    [Fact]
+    public void WorkSourceOptions_ExcludedTagsConfigurable()
+    {
+        // Users can add custom exclusion tags by configuring excludedTags.
+        // .NET config binding appends to existing default collections,
+        // so configured tags are merged with the defaults.
+        var config = BuildConfiguration(
+            new Dictionary<string, string?>
+            {
+                ["workSource:excludedTags:0"] = "agent-blocked",
+                ["workSource:excludedTags:1"] = "custom-exclude",
+            }
+        );
+
+        var services = new ServiceCollection();
+        services.AddOptions<WorkSourceOptions>().Bind(config.GetSection("workSource"));
+
+        var options = services
+            .BuildServiceProvider()
+            .GetRequiredService<IOptions<WorkSourceOptions>>()
+            .Value;
+
+        // Defaults (3) + configured (2) = 5 total
+        Assert.Equal(5, options.ExcludedTags.Count);
+        Assert.Contains("agent-active", options.ExcludedTags);
+        Assert.Contains("agent-failed", options.ExcludedTags);
+        Assert.Contains("agent-needs-human", options.ExcludedTags);
+        Assert.Contains("agent-blocked", options.ExcludedTags);
+        Assert.Contains("custom-exclude", options.ExcludedTags);
+    }
+
+    [Fact]
+    public void WorkSourceOptions_ExclusionTagConstants_MatchLifecycleTags()
+    {
+        // The default exclusion tag constants must match the tags used
+        // by RunLifecycleService.BuildExternalProjection to ensure
+        // claimed/failed/needs-human items are excluded from discovery.
+        Assert.Equal("agent-active", WorkSourceOptions.DefaultExcludedTagAgentActive);
+        Assert.Equal("agent-failed", WorkSourceOptions.DefaultExcludedTagAgentFailed);
+        Assert.Equal("agent-needs-human", WorkSourceOptions.DefaultExcludedTagAgentNeedsHuman);
     }
 
     [Fact]

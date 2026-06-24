@@ -34,8 +34,26 @@ public sealed class WorkSourceOptions : IWorkSourceOptions
 
     /// <summary>
     /// Tags that exclude a work item from autonomous execution.
+    /// Defaults to agent-controlled lifecycle tags so that items already
+    /// claimed, failed, or marked needs-human are not re-picked up on the
+    /// next discovery cycle. Items can be retried explicitly by removing
+    /// the exclusion tag from the work item in ADO.
     /// </summary>
-    public IReadOnlyList<string> ExcludedTags { get; init; } = [];
+    public IReadOnlyList<string> ExcludedTags { get; init; } =
+    [
+        DefaultExcludedTagAgentActive,
+        DefaultExcludedTagAgentFailed,
+        DefaultExcludedTagAgentNeedsHuman,
+    ];
+
+    /// <summary>Tag added when the controller claims a work item.</summary>
+    public const string DefaultExcludedTagAgentActive = "agent-active";
+
+    /// <summary>Tag added when a run fails.</summary>
+    public const string DefaultExcludedTagAgentFailed = "agent-failed";
+
+    /// <summary>Tag added when a run requires human input.</summary>
+    public const string DefaultExcludedTagAgentNeedsHuman = "agent-needs-human";
 
     /// <summary>
     /// Work item states that are eligible for autonomous pickup.

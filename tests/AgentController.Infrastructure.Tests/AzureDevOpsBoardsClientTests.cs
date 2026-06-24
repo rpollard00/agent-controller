@@ -607,6 +607,135 @@ public class AzureDevOpsBoardsClientTests
         Assert.Single(results);
     }
 
+    [Fact]
+    public async Task QueryWorkItemsAsync_ExcludedTags_GenerateNotContainsClauses()
+    {
+        // Verify that excluded tags generate NOT CONTAINS clauses in the WIQL query.
+        // This is the mechanism that prevents re-pickup of claimed/failed/needs-human items.
+        string? wiqlBody = null;
+
+        var handler = new CaptureHttpMessageHandler(async (req) =>
+        {
+            if (req.Method == HttpMethod.Post && req.RequestUri?.AbsoluteUri.Contains("wiql") == true)
+            {
+                wiqlBody = req.Content is not null
+                    ? await req.Content.ReadAsStringAsync()
+                    : string.Empty;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WiqlResponse(1),
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            // Batch response
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    BatchResponse(
+                        (id: 1, rev: 1, title: "Test", description: null,
+                         state: "New", tags: "agent-ready",
+                         assignedToDisplay: null, priority: 1,
+                         areaPath: "P", iterationPath: "P\\I", workItemType: "T")),
+                    Encoding.UTF8, "application/json"),
+            };
+        });
+
+        var http = new HttpClient(handler) { BaseAddress = new Uri(OrgUrl + "/") };
+        var authBytes = Encoding.ASCII.GetBytes(":test-pat");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            BaseUrl = OrgUrl,
+            Project = Project,
+            PersonalAccessToken = "test-pat",
+        };
+        var client = new AzureDevOpsBoardsClient(http, options);
+
+        var parameters = new BoardsQueryParameters
+        {
+            Project = Project,
+            ExcludedTags = new[] { "agent-active", "agent-failed", "agent-needs-human" },
+        };
+
+        var results = await client.QueryWorkItemsAsync(parameters, CancellationToken.None);
+
+        Assert.NotNull(wiqlBody);
+        // JSON serializer escapes single quotes as \u0027 in the wire format
+        Assert.Contains("NOT CONTAINS \\u0027agent-active\\u0027", wiqlBody);
+        Assert.Contains("NOT CONTAINS \\u0027agent-failed\\u0027", wiqlBody);
+        Assert.Contains("NOT CONTAINS \\u0027agent-needs-human\\u0027", wiqlBody);
+    }
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_ExcludedTagsWithDefaults_PreventsRePickup()
+    {
+        // Verify the default exclusion tags from WorkSourceOptions would
+        // prevent re-pickup of agent-active, agent-failed, and agent-needs-human items.
+        // This test verifies the WIQL excludes all three agent lifecycle tags.
+        string? wiqlBody = null;
+
+        var handler = new CaptureHttpMessageHandler(async (req) =>
+        {
+            if (req.Method == HttpMethod.Post && req.RequestUri?.AbsoluteUri.Contains("wiql") == true)
+            {
+                wiqlBody = req.Content is not null
+                    ? await req.Content.ReadAsStringAsync()
+                    : string.Empty;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WiqlResponse(0), // No results expected when all items are excluded
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "{\"value\":[]}",
+                    Encoding.UTF8, "application/json"),
+            };
+        });
+
+        var http = new HttpClient(handler) { BaseAddress = new Uri(OrgUrl + "/") };
+        var authBytes = Encoding.ASCII.GetBytes(":test-pat");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            BaseUrl = OrgUrl,
+            Project = Project,
+            PersonalAccessToken = "test-pat",
+        };
+        var client = new AzureDevOpsBoardsClient(http, options);
+
+        // Use the same exclusion tags that WorkSourceOptions defaults to
+        var parameters = new BoardsQueryParameters
+        {
+            Project = Project,
+            ExcludedTags = new[]
+            {
+                WorkSourceOptions.DefaultExcludedTagAgentActive,
+                WorkSourceOptions.DefaultExcludedTagAgentFailed,
+                WorkSourceOptions.DefaultExcludedTagAgentNeedsHuman,
+            },
+        };
+
+        var results = await client.QueryWorkItemsAsync(parameters, CancellationToken.None);
+
+        Assert.NotNull(wiqlBody);
+        // Verify all three default exclusion tags are in the WIQL
+        // JSON serializer escapes single quotes as \u0027 in the wire format
+        Assert.Contains("NOT CONTAINS \\u0027agent-active\\u0027", wiqlBody);
+        Assert.Contains("NOT CONTAINS \\u0027agent-failed\\u0027", wiqlBody);
+        Assert.Contains("NOT CONTAINS \\u0027agent-needs-human\\u0027", wiqlBody);
+    }
+
     // ──────────────────────────────────────────────
     // HTTP error handling
     // ──────────────────────────────────────────────
