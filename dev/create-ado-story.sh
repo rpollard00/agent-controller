@@ -219,6 +219,37 @@ is_html_response() {
     [[ "$trimmed" == "<"* ]]
 }
 
+# Check if a response body is valid JSON.
+# Returns 0 if valid JSON, 1 otherwise.
+is_valid_json() {
+    local body="$1"
+    echo "$body" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null
+}
+
+# Render a concise error for non-JSON (HTML) responses.
+# Prints the first meaningful HTML line (truncated) and targeted hints.
+# Usage: render_non_json_error <body> <http_code>
+render_non_json_error() {
+    local body="$1"
+    local http_code="${2:-unknown}"
+    local first_line
+
+    # Extract the first meaningful HTML tag (skip doctype, comments, whitespace)
+    first_line="$(echo "$body" | grep -m1 '<[a-zA-Z]' | head -c 200 || true)"
+
+    echo "  Received HTML instead of JSON (HTTP $http_code)." >&2
+    echo "  ADO served the web frontend — this is an auth or routing problem." >&2
+    if [[ -n "$first_line" ]]; then
+        echo "  First HTML line: ${first_line}" >&2
+    fi
+    echo "" >&2
+    echo "  Troubleshooting:" >&2
+    echo "    1. Check AZURE_DEVOPS_PAT is valid and has 'Work items: Read & write' scope." >&2
+    echo "    2. Verify org name '$ORG' (no trailing slashes, correct spelling)." >&2
+    echo "    3. Verify project name '$PROJECT' exists in org '$ORG'." >&2
+    echo "    4. Ensure Accept: application/json header is present in the request." >&2
+}
+
 # Perform a GET request and return HTTP code + body separated by last newline.
 # Usage: ado_get <url>
 ado_get() {
@@ -370,6 +401,17 @@ HTTP_CODE="$(echo "$RESPONSE" | tail -1)"
 BODY_RESPONSE="$(echo "$RESPONSE" | head -n -1)"
 
 if [[ "$HTTP_CODE" =~ ^2 ]]; then
+    # Validate the response is JSON before parsing
+    if is_html_response "$BODY_RESPONSE"; then
+        echo "✗ Unexpected: ADO returned HTML despite HTTP $HTTP_CODE" >&2
+        render_non_json_error "$BODY_RESPONSE" "$HTTP_CODE"
+        exit 1
+    elif ! is_valid_json "$BODY_RESPONSE"; then
+        echo "✗ Unexpected: ADO returned non-JSON response (HTTP $HTTP_CODE)" >&2
+        echo "  Response (truncated): $(echo "$BODY_RESPONSE" | head -c 200)" >&2
+        exit 1
+    fi
+
     # Extract the work item ID from the response
     ITEM_ID="$(echo "$BODY_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id', 'unknown'))" 2>/dev/null || echo "unknown")"
     ITEM_URL="${BASE_URL}/${PROJECT}/_workitems/edit/${ITEM_ID}"
@@ -384,6 +426,12 @@ if [[ "$HTTP_CODE" =~ ^2 ]]; then
     echo "  3. Check the board: $ITEM_URL"
 else
     echo "✗ Failed to create work item (HTTP $HTTP_CODE)" >&2
-    echo "$BODY_RESPONSE" >&2
+
+    if is_html_response "$BODY_RESPONSE"; then
+        render_non_json_error "$BODY_RESPONSE" "$HTTP_CODE"
+    else
+        # Non-HTML response — try to render JSON or print raw body.
+        echo "$BODY_RESPONSE" | python3 -m json.tool 2>/dev/null || echo "$BODY_RESPONSE" >&2
+    fi
     exit 1
 fi
