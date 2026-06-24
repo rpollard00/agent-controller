@@ -1638,6 +1638,12 @@ public class RunLifecycleServiceTests
             Comments.Add((workRef, comment));
             return Task.CompletedTask;
         }
+
+        public Task<IReadOnlyList<WorkItemComment>> GetCommentsAsync(
+            ExternalWorkRef workRef, int maxComments, CancellationToken cancellationToken)
+        {
+            return Task.FromResult<IReadOnlyList<WorkItemComment>>(Array.Empty<WorkItemComment>());
+        }
     }
 
     /// <summary>

@@ -66,6 +66,16 @@ public interface IAzureDevOpsBoardsClient
         string project,
         string personalAccessToken,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Fetch discussion comments (thread history) for a work item.
+    /// Returns comments in chronological order, bounded by <paramref name="maxComments"/>.
+    /// Used to surface ADO work item comments into runtime context for the agent.
+    /// </summary>
+    Task<IReadOnlyList<WorkItemComment>> GetCommentsAsync(
+        ExternalWorkRef workRef,
+        int maxComments,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>

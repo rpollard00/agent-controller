@@ -133,6 +133,16 @@ internal sealed partial class LocalFileWorkSource : IWorkSource, IDisposable
         return Task.CompletedTask;
     }
 
+    /// <inheritdoc/>
+    public Task<IReadOnlyList<WorkItemComment>> GetCommentsAsync(
+        ExternalWorkRef workRef,
+        int maxComments,
+        CancellationToken cancellationToken)
+    {
+        // Local file source has no external work item system to fetch comments from.
+        return Task.FromResult<IReadOnlyList<WorkItemComment>>(Array.Empty<WorkItemComment>());
+    }
+
     /// <summary>
     /// Lazily upsert work item definitions from configuration into the persistence
     /// store. Thread-safe; initialization happens exactly once across all callers.

@@ -488,6 +488,92 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         response.EnsureSuccessStatusCode();
     }
 
+    public async Task<IReadOnlyList<WorkItemComment>> GetCommentsAsync(
+        ExternalWorkRef workRef,
+        int maxComments,
+        CancellationToken cancellationToken)
+    {
+        var project = _options.Project;
+        if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(workRef.ExternalId))
+            return [];
+
+        // Fetch threads (discussion history) for the work item.
+        // ADO threads API: GET {project}/_apis/wit/workitems/{id}/threads?api-version=7.1
+        var response = await _http.GetAsync(
+            $"{project}/_apis/wit/workitems/{workRef.ExternalId}/threads?api-version=7.1",
+            cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            // Best-effort: missing comments do not block the run.
+            return [];
+        }
+
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var doc = JsonDocument.Parse(json);
+
+        var comments = new List<WorkItemComment>();
+
+        if (doc.RootElement.TryGetProperty("value", out var valueArray)
+            && valueArray.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var thread in valueArray.EnumerateArray())
+            {
+                // Each thread contains a "comments" array.
+                if (!thread.TryGetProperty("comments", out var commentsArray)
+                    || commentsArray.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                foreach (var comment in commentsArray.EnumerateArray())
+                {
+                    if (comments.Count >= maxComments)
+                        break;
+
+                    // Extract comment text
+                    var text = comment.TryGetProperty("comment", out var commentEl)
+                               && commentEl.ValueKind == JsonValueKind.String
+                        ? commentEl.GetString() ?? string.Empty
+                        : string.Empty;
+
+                    // Extract author display name
+                    string? author = null;
+                    if (comment.TryGetProperty("author", out var authorEl)
+                        && authorEl.ValueKind == JsonValueKind.Object
+                        && authorEl.TryGetProperty("displayName", out var displayNameEl))
+                    {
+                        author = displayNameEl.GetString();
+                    }
+
+                    // Extract posted date
+                    DateTimeOffset? postedAt = null;
+                    if (comment.TryGetProperty("publishedDate", out var dateEl)
+                        && dateEl.ValueKind == JsonValueKind.String
+                        && DateTimeOffset.TryParse(dateEl.GetString(), out var parsedDate))
+                    {
+                        postedAt = parsedDate;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        comments.Add(new WorkItemComment
+                        {
+                            Author = author,
+                            Text = text.Trim(),
+                            PostedAt = postedAt,
+                        });
+                    }
+                }
+
+                if (comments.Count >= maxComments)
+                    break;
+            }
+        }
+
+        return comments;
+    }
+
     public async Task<IReadOnlyList<RepositoryInfo>> ListRepositoriesAsync(
         string project,
         CancellationToken cancellationToken)

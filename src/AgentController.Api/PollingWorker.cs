@@ -323,8 +323,13 @@ public sealed partial class PollingWorker : BackgroundService
 
         // ── 5. ContextInjected ─────────────────────────────────────
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.ContextInjected, ct);
+
+        // Fetch discussion comments for ADO-sourced work items so the agent
+        // can see clarifications and ongoing discussion context.
+        var comments = await FetchCommentsAsync(workSource, candidate, ct);
+
         await InjectContextAsync(
-            run, candidate, envHandle, checkout, lifecycle, ct);
+            run, candidate, envHandle, checkout, lifecycle, comments, ct);
         await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.ContextInjected,
             "Context injected into run workspace.", RunLifecycleState.ContextInjected, ct);
 
@@ -597,8 +602,8 @@ public sealed partial class PollingWorker : BackgroundService
 
     /// <summary>
     /// Write context files into the environment's context/ directory so the
-    /// agent runtime has work-item metadata, acceptance criteria, and
-    /// controller run configuration.
+    /// agent runtime has work-item metadata, acceptance criteria, discussion
+    /// comments, and controller run configuration.
     /// This is best-effort: failures are logged but do not fail the run.
     /// </summary>
     private async Task InjectContextAsync(
@@ -607,6 +612,7 @@ public sealed partial class PollingWorker : BackgroundService
         EnvironmentHandle envHandle,
         RepositoryCheckout checkout,
         IRunLifecycleService lifecycle,
+        IReadOnlyList<WorkItemComment> comments,
         CancellationToken ct)
     {
         var contextDir = Path.Combine(envHandle.RootPath, "context");
@@ -626,6 +632,14 @@ public sealed partial class PollingWorker : BackgroundService
                 var acMd = BuildAcceptanceCriteriaMarkdown(candidate.AcceptanceCriteria);
                 await File.WriteAllTextAsync(
                     Path.Combine(contextDir, "acceptance-criteria.md"), acMd, ct);
+            }
+
+            // ── comments.md ────────────────────────────────────────
+            if (comments is { Count: > 0 })
+            {
+                var commentsMd = BuildCommentsMarkdown(comments);
+                await File.WriteAllTextAsync(
+                    Path.Combine(contextDir, "comments.md"), commentsMd, ct);
             }
 
             // ── controller-run.json ────────────────────────────────
@@ -890,6 +904,96 @@ public sealed partial class PollingWorker : BackgroundService
             sb.Append(":** ");
             sb.AppendLine(value);
             sb.AppendLine();
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Fetch discussion comments for a work candidate from the work source.
+    /// Only fetches for remote sources (e.g. Azure DevOps Boards) that support
+    /// comment retrieval. Returns an empty list for local sources.
+    /// </summary>
+    private static async Task<IReadOnlyList<WorkItemComment>> FetchCommentsAsync(
+        IWorkSource workSource,
+        WorkCandidate candidate,
+        CancellationToken ct)
+    {
+        // Only fetch comments for remote sources that support it.
+        if (candidate.Source == "LocalFake" || candidate.Source == "LocalFile")
+        {
+            return Array.Empty<WorkItemComment>();
+        }
+
+        var revision = candidate.SourceMetadata?.TryGetValue("revision", out var rev) == true
+            ? rev
+            : null;
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = candidate.Source,
+            ExternalId = candidate.ExternalId,
+            Url = candidate.ExternalUrl,
+            Revision = revision,
+        };
+
+        // Use a reasonable default for max comments.
+        // The actual bound is configurable via workSource:maxComments in the future.
+        const int maxComments = 50;
+
+        try
+        {
+            return await workSource.GetCommentsAsync(workRef, maxComments, ct);
+        }
+        catch
+        {
+            // Best-effort: missing comments do not block the run.
+            return Array.Empty<WorkItemComment>();
+        }
+    }
+
+    /// <summary>
+    /// Build a Markdown representation of work item comments for the context directory.
+    /// Each comment includes the author, timestamp, and text content.
+    /// </summary>
+    private static string BuildCommentsMarkdown(IReadOnlyList<WorkItemComment> comments)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("# Discussion Comments");
+        sb.AppendLine();
+
+        for (int i = 0; i < comments.Count; i++)
+        {
+            var comment = comments[i];
+
+            // Header with author and timestamp
+            var headerParts = new System.Collections.Generic.List<string>();
+            if (!string.IsNullOrWhiteSpace(comment.Author))
+            {
+                headerParts.Add(comment.Author);
+            }
+            if (comment.PostedAt.HasValue)
+            {
+                headerParts.Add(comment.PostedAt.Value.ToString(
+                    "yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture));
+            }
+
+            if (headerParts.Count > 0)
+            {
+                sb.Append("### ");
+                sb.AppendLine(string.Join(" · ", headerParts));
+                sb.AppendLine();
+            }
+
+            sb.AppendLine(comment.Text);
+            sb.AppendLine();
+
+            // Separator between comments (except after the last one)
+            if (i < comments.Count - 1)
+            {
+                sb.AppendLine("---");
+                sb.AppendLine();
+            }
         }
 
         return sb.ToString();

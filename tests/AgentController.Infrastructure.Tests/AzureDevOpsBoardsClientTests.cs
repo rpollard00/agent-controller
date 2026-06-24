@@ -1708,6 +1708,261 @@ public class AzureDevOpsBoardsClientTests
     }
 
     // ──────────────────────────────────────────────
+    // Comment fetching (GetCommentsAsync)
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetCommentsAsync_FetchesThreadComments()
+    {
+        var threadsJson = """
+        {
+          "count": 2,
+          "value": [
+            {
+              "id": 1,
+              "comments": [
+                {
+                  "comment": "Can we clarify the expected behavior for null inputs?",
+                  "author": { "displayName": "Alice Reviewer" },
+                  "publishedDate": "2024-06-15T10:30:00Z"
+                }
+              ]
+            },
+            {
+              "id": 2,
+              "comments": [
+                {
+                  "comment": "Yes, null should be treated as empty and return a default value.",
+                  "author": { "displayName": "Bob Dev" },
+                  "publishedDate": "2024-06-15T14:00:00Z"
+                },
+                {
+                  "comment": "Agreed, I'll update the spec.",
+                  "author": { "displayName": "Alice Reviewer" },
+                  "publishedDate": "2024-06-16T09:00:00Z"
+                }
+              ]
+            }
+          ]
+        }
+        """;
+
+        var client = CreateClient(
+            (urlContains: "threads", jsonResponse: threadsJson)
+        );
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "42",
+        };
+
+        var comments = await client.GetCommentsAsync(workRef, 10, CancellationToken.None);
+
+        Assert.Equal(3, comments.Count);
+
+        // First comment
+        Assert.Equal("Alice Reviewer", comments[0].Author);
+        Assert.Equal("Can we clarify the expected behavior for null inputs?", comments[0].Text);
+        Assert.NotNull(comments[0].PostedAt);
+        Assert.Equal(2024, comments[0].PostedAt!.Value.Year);
+
+        // Second comment
+        Assert.Equal("Bob Dev", comments[1].Author);
+        Assert.Equal("Yes, null should be treated as empty and return a default value.", comments[1].Text);
+
+        // Third comment
+        Assert.Equal("Alice Reviewer", comments[2].Author);
+        Assert.Equal("Agreed, I'll update the spec.", comments[2].Text);
+    }
+
+    [Fact]
+    public async Task GetCommentsAsync_BoundedByMaxComments()
+    {
+        var threadsJson = """
+        {
+          "count": 1,
+          "value": [
+            {
+              "id": 1,
+              "comments": [
+                { "comment": "First comment", "author": { "displayName": "A" }, "publishedDate": "2024-01-01T00:00:00Z" },
+                { "comment": "Second comment", "author": { "displayName": "B" }, "publishedDate": "2024-01-02T00:00:00Z" },
+                { "comment": "Third comment", "author": { "displayName": "C" }, "publishedDate": "2024-01-03T00:00:00Z" },
+                { "comment": "Fourth comment", "author": { "displayName": "D" }, "publishedDate": "2024-01-04T00:00:00Z" },
+                { "comment": "Fifth comment", "author": { "displayName": "E" }, "publishedDate": "2024-01-05T00:00:00Z" }
+              ]
+            }
+          ]
+        }
+        """;
+
+        var client = CreateClient(
+            (urlContains: "threads", jsonResponse: threadsJson)
+        );
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "42",
+        };
+
+        // Request only 2 comments
+        var comments = await client.GetCommentsAsync(workRef, 2, CancellationToken.None);
+
+        Assert.Equal(2, comments.Count);
+        Assert.Equal("First comment", comments[0].Text);
+        Assert.Equal("Second comment", comments[1].Text);
+    }
+
+    [Fact]
+    public async Task GetCommentsAsync_EmptyThreads_ReturnsEmptyList()
+    {
+        var threadsJson = """{"count":0,"value":[]}""";
+
+        var client = CreateClient(
+            (urlContains: "threads", jsonResponse: threadsJson)
+        );
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "42",
+        };
+
+        var comments = await client.GetCommentsAsync(workRef, 50, CancellationToken.None);
+
+        Assert.Empty(comments);
+    }
+
+    [Fact]
+    public async Task GetCommentsAsync_HttpError_ReturnsEmptyList()
+    {
+        var client = CreateClientWithStatusCodes(
+            (urlContains: "threads",
+             statusCode: HttpStatusCode.NotFound,
+             body: """{"message":"Work item not found."}""")
+        );
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "999",
+        };
+
+        // Should not throw — missing comments are best-effort
+        var ex = await Record.ExceptionAsync(() =>
+            client.GetCommentsAsync(workRef, 50, CancellationToken.None));
+
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public async Task GetCommentsAsync_MissingProject_ReturnsEmptyList()
+    {
+        var client = CreateClient();
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "42",
+        };
+
+        // Override project to empty to trigger the guard clause
+        var handler = new FakeHttpMessageHandler();
+        var http = new HttpClient(handler) { BaseAddress = new Uri(OrgUrl + "/") };
+        var authBytes = Encoding.ASCII.GetBytes(":test-pat");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            BaseUrl = OrgUrl,
+            Project = string.Empty, // Empty project
+            PersonalAccessToken = "test-pat",
+        };
+        var emptyClient = new AzureDevOpsBoardsClient(http, options);
+
+        var comments = await emptyClient.GetCommentsAsync(workRef, 50, CancellationToken.None);
+
+        Assert.Empty(comments);
+    }
+
+    [Fact]
+    public async Task GetCommentsAsync_CommentWithoutAuthor_UsesNullAuthor()
+    {
+        var threadsJson = """
+        {
+          "count": 1,
+          "value": [
+            {
+              "id": 1,
+              "comments": [
+                {
+                  "comment": "Comment with no author field",
+                  "publishedDate": "2024-06-15T10:30:00Z"
+                }
+              ]
+            }
+          ]
+        }
+        """;
+
+        var client = CreateClient(
+            (urlContains: "threads", jsonResponse: threadsJson)
+        );
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "42",
+        };
+
+        var comments = await client.GetCommentsAsync(workRef, 10, CancellationToken.None);
+
+        Assert.Single(comments);
+        Assert.Null(comments[0].Author);
+        Assert.Equal("Comment with no author field", comments[0].Text);
+    }
+
+    [Fact]
+    public async Task GetCommentsAsync_EmptyCommentText_IsSkipped()
+    {
+        var threadsJson = """
+        {
+          "count": 1,
+          "value": [
+            {
+              "id": 1,
+              "comments": [
+                { "comment": "Valid comment", "author": { "displayName": "A" }, "publishedDate": "2024-01-01T00:00:00Z" },
+                { "comment": "   ", "author": { "displayName": "B" }, "publishedDate": "2024-01-02T00:00:00Z" },
+                { "comment": "Another valid", "author": { "displayName": "C" }, "publishedDate": "2024-01-03T00:00:00Z" }
+              ]
+            }
+          ]
+        }
+        """;
+
+        var client = CreateClient(
+            (urlContains: "threads", jsonResponse: threadsJson)
+        );
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "42",
+        };
+
+        var comments = await client.GetCommentsAsync(workRef, 10, CancellationToken.None);
+
+        // Whitespace-only comment should be skipped
+        Assert.Equal(2, comments.Count);
+        Assert.Equal("Valid comment", comments[0].Text);
+        Assert.Equal("Another valid", comments[1].Text);
+    }
+
+    // ──────────────────────────────────────────────
     // JSON response helpers
     // ──────────────────────────────────────────────
 

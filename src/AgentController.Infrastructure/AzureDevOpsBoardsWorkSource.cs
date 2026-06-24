@@ -137,4 +137,15 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
 
         await client.AddCommentAsync(workRef, comment, cancellationToken);
     }
+
+    public async Task<IReadOnlyList<WorkItemComment>> GetCommentsAsync(
+        ExternalWorkRef workRef,
+        int maxComments,
+        CancellationToken cancellationToken)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var client = scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClient>();
+
+        return await client.GetCommentsAsync(workRef, maxComments, cancellationToken);
+    }
 }

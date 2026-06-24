@@ -69,4 +69,11 @@ public sealed class WorkSourceOptions : IWorkSourceOptions
     /// State to set on a work item when the controller completes it.
     /// </summary>
     public string? CompletedState { get; init; }
+
+    /// <summary>
+    /// Maximum number of discussion comments to fetch from the work source
+    /// and include in the agent runtime context. This bounds comment depth
+    /// to keep context manageable. Default: 50.
+    /// </summary>
+    public int MaxComments { get; init; } = 50;
 }

@@ -56,6 +56,29 @@ public sealed record WorkCandidate
     /// use optimistic concurrency and preserve field-level fidelity.
     /// </summary>
     public IReadOnlyDictionary<string, string>? SourceMetadata { get; init; }
+
+    /// <summary>
+    /// Discussion comments fetched from the work source at runtime.
+    /// For Azure DevOps Boards this contains the thread history (System.History
+    /// and linked-thread comments) so the agent can respond to clarifications
+    /// and see ongoing discussion context.
+    /// </summary>
+    public IReadOnlyList<WorkItemComment>? Comments { get; init; }
+}
+
+/// <summary>
+/// A single comment on a work item, fetched from the source system.
+/// </summary>
+public sealed record WorkItemComment
+{
+    /// <summary>Display name of the comment author.</summary>
+    public string? Author { get; init; }
+
+    /// <summary>Comment text content.</summary>
+    public string Text { get; init; } = string.Empty;
+
+    /// <summary>When the comment was posted.</summary>
+    public DateTimeOffset? PostedAt { get; init; }
 }
 
 /// <summary>

@@ -50,4 +50,13 @@ public sealed class NoOpWorkSource : IWorkSource
     {
         return Task.CompletedTask;
     }
+
+    public Task<IReadOnlyList<WorkItemComment>> GetCommentsAsync(
+        ExternalWorkRef workRef,
+        int maxComments,
+        CancellationToken cancellationToken
+    )
+    {
+        return Task.FromResult<IReadOnlyList<WorkItemComment>>(Array.Empty<WorkItemComment>());
+    }
 }

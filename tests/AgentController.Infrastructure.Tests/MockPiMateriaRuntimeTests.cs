@@ -719,6 +719,12 @@ public class MockPiMateriaRuntimeTests : IAsyncLifetime
         {
             return Task.CompletedTask;
         }
+
+        public Task<IReadOnlyList<WorkItemComment>> GetCommentsAsync(
+            ExternalWorkRef workRef, int maxComments, CancellationToken ct)
+        {
+            return Task.FromResult<IReadOnlyList<WorkItemComment>>(Array.Empty<WorkItemComment>());
+        }
     }
 
     /// <summary>

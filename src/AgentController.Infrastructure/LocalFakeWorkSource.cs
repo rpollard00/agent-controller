@@ -113,4 +113,13 @@ internal sealed class LocalFakeWorkSource : IWorkSource
         // comments are recorded through lifecycle events instead.
         return Task.CompletedTask;
     }
+
+    public Task<IReadOnlyList<WorkItemComment>> GetCommentsAsync(
+        ExternalWorkRef workRef,
+        int maxComments,
+        CancellationToken cancellationToken)
+    {
+        // Local fake has no external work item system to fetch comments from.
+        return Task.FromResult<IReadOnlyList<WorkItemComment>>(Array.Empty<WorkItemComment>());
+    }
 }
