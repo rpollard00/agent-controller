@@ -92,12 +92,7 @@ builder.Services.AddHostedService<PollingWorker>();
 
 var app = builder.Build();
 
-app.MapGet("/", () => "AgentController API");
-
-app.MapGet(
-    "/health",
-    () => Results.Ok(new { Status = "Healthy", Timestamp = DateTimeOffset.UtcNow })
-);
+app.MapHealthEndpoints();
 
 // --- ADO connection diagnostic endpoint ---
 
