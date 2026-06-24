@@ -207,24 +207,149 @@ BASE_URL="https://dev.azure.com/${ORG}"
 WORK_ITEM_TYPE_ENCODED="$(urlencode "$WORK_ITEM_TYPE")"
 API_URL="${BASE_URL}/${PROJECT}/_apis/wit/workitems/${WORK_ITEM_TYPE_ENCODED}?api-version=7.1"
 
+# ─── Preflight helpers ───────────────────────────────────────────────────────
+
+# Check if a response body looks like HTML (not JSON).
+# Returns 0 if HTML detected, 1 otherwise.
+is_html_response() {
+    local body="$1"
+    # HTML responses start with < (possibly after whitespace/BOM)
+    local trimmed
+    trimmed="$(echo "$body" | sed 's/^[[:space:]]*//')"
+    [[ "$trimmed" == "<"* ]]
+}
+
+# Perform a GET request and return HTTP code + body separated by last newline.
+# Usage: ado_get <url>
+ado_get() {
+    local url="$1"
+    curl -s -w "\n%{http_code}" -X GET "$url" \
+        -H "Authorization: Basic ${AUTH_HEADER}" \
+        -H "Accept: application/json"
+}
+
+# ─── Preflight checks ────────────────────────────────────────────────────────
+
+run_preflights() {
+    echo "Running preflight checks..."
+
+    # ── Preflight 1: Verify org + project + PAT ──────────────────────────────
+    local pf1_url="https://dev.azure.com/${ORG}/_apis/projects/${PROJECT}?api-version=7.1"
+    local pf1_response pf1_code pf1_body
+
+    pf1_response="$(ado_get "$pf1_url")"
+    pf1_code="$(echo "$pf1_response" | tail -1)"
+    pf1_body="$(echo "$pf1_response" | head -n -1)"
+
+    if is_html_response "$pf1_body"; then
+        echo "✗ Preflight FAILED: received HTML from ADO (auth/routing problem)" >&2
+        echo "  URL: $pf1_url" >&2
+        echo "  Hint: Check AZURE_DEVOPS_PAT is valid and has 'Work items: Read & write' scope." >&2
+        echo "  Hint: Verify org name '$ORG' is correct (no trailing slashes)." >&2
+        exit 1
+    fi
+
+    if [[ ! "$pf1_code" =~ ^2 ]]; then
+        case "$pf1_code" in
+            401|403)
+                echo "✗ Preflight FAILED: authentication error (HTTP $pf1_code)" >&2
+                echo "  Hint: AZURE_DEVOPS_PAT is invalid, expired, or lacks scope." >&2
+                exit 1
+                ;;
+            404)
+                echo "✗ Preflight FAILED: project not found (HTTP $pf1_code)" >&2
+                echo "  Hint: Verify project name '$PROJECT' exists in org '$ORG'." >&2
+                exit 1
+                ;;
+            *)
+                echo "✗ Preflight FAILED: unexpected response (HTTP $pf1_code)" >&2
+                echo "  URL: $pf1_url" >&2
+                echo "$pf1_body" >&2
+                exit 1
+                ;;
+        esac
+    fi
+
+    # Verify the response actually contains the expected project name
+    local pf1_project_name
+    pf1_project_name="$(echo "$pf1_body" | python3 -c "import sys,json; print(json.load(sys.stdin).get('name',''))" 2>/dev/null || echo "")"
+    if [[ -n "$pf1_project_name" && "$pf1_project_name" != "$PROJECT" ]]; then
+        echo "✗ Preflight WARNING: API returned project '$pf1_project_name', expected '$PROJECT'" >&2
+    fi
+
+    # ── Preflight 2: Verify work item type exists in project process ──────────
+    local pf2_url="https://dev.azure.com/${ORG}/${PROJECT}/_apis/wit/workitemtypes/${WORK_ITEM_TYPE}?api-version=7.1"
+    local pf2_response pf2_code pf2_body
+
+    pf2_response="$(ado_get "$pf2_url")"
+    pf2_code="$(echo "$pf2_response" | tail -1)"
+    pf2_body="$(echo "$pf2_response" | head -n -1)"
+
+    if is_html_response "$pf2_body"; then
+        echo "✗ Preflight FAILED: received HTML from ADO (auth/routing problem)" >&2
+        echo "  URL: $pf2_url" >&2
+        echo "  Hint: Check AZURE_DEVOPS_PAT and Accept header." >&2
+        exit 1
+    fi
+
+    if [[ ! "$pf2_code" =~ ^2 ]]; then
+        case "$pf2_code" in
+            401|403)
+                echo "✗ Preflight FAILED: authentication error on type check (HTTP $pf2_code)" >&2
+                echo "  Hint: PAT may have lost scope since project check." >&2
+                exit 1
+                ;;
+            404)
+                echo "✗ Preflight FAILED: work item type '$WORK_ITEM_TYPE' not found (HTTP $pf2_code)" >&2
+                echo "  Hint: This type may not be available in the project's process." >&2
+                echo "  Hint: For Agile process, valid types include: User Story, Bug, Task, Epic, Feature." >&2
+                exit 1
+                ;;
+            *)
+                echo "✗ Preflight FAILED: unexpected response on type check (HTTP $pf2_code)" >&2
+                echo "  URL: $pf2_url" >&2
+                echo "$pf2_body" >&2
+                exit 1
+                ;;
+        esac
+    fi
+
+    echo "✓ Preflight checks passed."
+}
+
 # ─── Execute ─────────────────────────────────────────────────────────────────
 
 AUTH_HEADER="$(printf ':%s' "$PAT" | base64 -w 0)"
 
 if [[ "$DRY_RUN" == true ]]; then
     echo "=== DRY RUN ==="
-    echo "URL: $API_URL"
-    echo "Body:"
+    echo ""
+    echo "Preflight 1 (verify org + project + PAT):"
+    echo "  curl -s -X GET \"https://dev.azure.com/${ORG}/_apis/projects/${PROJECT}?api-version=7.1\" \\"
+    echo "    -H \"Authorization: Basic <base64>\" \\"
+    echo "    -H \"Accept: application/json\""
+    echo ""
+    echo "Preflight 2 (verify work item type):"
+    echo "  curl -s -X GET \"https://dev.azure.com/${ORG}/${PROJECT}/_apis/wit/workitemtypes/${WORK_ITEM_TYPE}?api-version=7.1\" \\"
+    echo "    -H \"Authorization: Basic <base64>\" \\"
+    echo "    -H \"Accept: application/json\""
+    echo ""
+    echo "Create work item POST:"
+    echo "  URL: $API_URL"
+    echo "  Body:"
     echo "$BODY" | python3 -m json.tool 2>/dev/null || echo "$BODY"
     echo ""
-    echo "curl -s -X POST \"$API_URL\" \\" 
-    echo "  -H \"Authorization: Basic <base64>\" \\" 
-    echo "  -H \"Content-Type: application/json-patch+json\" \\" 
-    echo "  -H \"Accept: application/json\" \\" 
-    echo "  -d '$BODY'"
+    echo "  curl -s -X POST \"$API_URL\" \\"
+    echo "    -H \"Authorization: Basic <base64>\" \\"
+    echo "    -H \"Content-Type: application/json-patch+json\" \\"
+    echo "    -H \"Accept: application/json\" \\"
+    echo "    -d '$BODY'"
     exit 0
 fi
 
+run_preflights
+
+echo ""
 echo "Creating ADO work item..."
 echo "  Org:              $ORG"
 echo "  Project:          $PROJECT"
