@@ -229,6 +229,17 @@ public sealed partial class PollingWorker : BackgroundService
             Log.CandidateUpserted(_logger, candidate.Id, candidate.Source);
         }
 
+        // ── Validate repo:{key} tag against repository profiles ────
+        // Resolve the repo key from the work item tags against configured
+        // repository profiles. If no profile matches, skip the item and
+        // post a clarifying comment so typos are visible on the board.
+        // A missing repo: tag is treated as not-eligible (skip silently).
+        if (!await ValidateRepoKeyAsync(
+            candidate, workSource, repoConfig, ct))
+        {
+            return;
+        }
+
         // Claim the work item for exclusive execution
         var claim = new ClaimRequest
         {
@@ -337,6 +348,98 @@ public sealed partial class PollingWorker : BackgroundService
             "Run handed off to runtime, awaiting result.", RunLifecycleState.AwaitingResult, ct);
 
         Log.RunAdvanced(_logger, run.RunId, candidate.Id);
+    }
+
+    /// <summary>
+    /// Validate the <c>repo:{key}</c> tag on a work candidate against configured
+    /// repository profiles before claiming.
+    ///
+    /// <list type="bullet">
+    ///   <item><b>Missing repo: tag (empty RepoKey):</b> treat as not-eligible.
+    ///   Skip silently for local sources, post a clarifying comment for remote sources.</item>
+    ///   <item><b>repo: tag present but no matching profile:</b> skip the item and
+    ///   post a clarifying comment (e.g. "Skipped: no repository profile matches
+    ///   the `repo:xxx` tag") so typos are visible on the board.</item>
+    ///   <item><b>repo: tag matches a profile:</b> return true to allow the
+    ///   candidate to proceed to claim.</item>
+    /// </list>
+    ///
+    /// This validation runs <b>before</b> the claim attempt so we don't waste
+    /// a claim on an item that can't be processed.
+    /// </summary>
+    private async Task<bool> ValidateRepoKeyAsync(
+        WorkCandidate candidate,
+        IWorkSource workSource,
+        IReadOnlyDictionary<string, RepositoryProfileOptions> repoConfig,
+        CancellationToken ct)
+    {
+        var repoKey = candidate.RepoKey;
+
+        // No repo: tag at all — not eligible
+        if (string.IsNullOrWhiteSpace(repoKey))
+        {
+            // Remote sources get a clarifying comment so the board owner sees
+            // the item was discovered but skipped due to missing association.
+            if (candidate.Source != "LocalFake" && candidate.Source != "LocalFile")
+            {
+                await PostRepoKeyCommentAsync(workSource, candidate,
+                    "Skipped: work item has no `repo:` tag. Add a tag like `repo:example-service` " +
+                    "to associate this item with a configured repository profile.", ct);
+            }
+
+            Log.CandidateSkippedNoRepoTag(_logger, candidate.Id, candidate.Title);
+            return false;
+        }
+
+        // repo: tag present — check against configured profiles
+        if (repoConfig.TryGetValue(repoKey, out _))
+        {
+            return true; // Profile found — proceed to claim
+        }
+
+        // No matching profile — post clarifying comment for remote sources
+        if (candidate.Source != "LocalFake" && candidate.Source != "LocalFile")
+        {
+            await PostRepoKeyCommentAsync(workSource, candidate,
+                $"Skipped: no repository profile matches the `repo:{repoKey}` tag. " +
+                "Check for typos or add a matching profile to the 'repositories' configuration.", ct);
+        }
+
+        Log.CandidateSkippedNoProfile(_logger, candidate.Id, repoKey);
+        return false;
+    }
+
+    /// <summary>
+    /// Post a clarifying comment on a remote work item explaining why it was skipped.
+    /// Best-effort: failures are logged but do not propagate.
+    /// </summary>
+    private static async Task PostRepoKeyCommentAsync(
+        IWorkSource workSource,
+        WorkCandidate candidate,
+        string comment,
+        CancellationToken ct)
+    {
+        var revision = candidate.SourceMetadata?.TryGetValue("revision", out var rev) == true
+            ? rev
+            : null;
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = candidate.Source,
+            ExternalId = candidate.ExternalId,
+            Url = candidate.ExternalUrl,
+            Revision = revision,
+        };
+
+        try
+        {
+            await workSource.AddCommentAsync(workRef, comment, ct);
+        }
+        catch
+        {
+            // Best-effort: comment posting failure is not fatal.
+            // The item is still skipped regardless.
+        }
     }
 
     /// <summary>
@@ -878,6 +981,18 @@ public sealed partial class PollingWorker : BackgroundService
             Level = LogLevel.Information,
             Message = "Discovered {CandidateCount} eligible work candidate(s).")]
         public static partial void CandidatesDiscovered(ILogger logger, int candidateCount);
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "Skipping candidate {CandidateId} ({Title}): no `repo:` tag found.")]
+        public static partial void CandidateSkippedNoRepoTag(
+            ILogger logger, string candidateId, string title);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Skipping candidate {CandidateId}: no repository profile matches `repo:{RepoKey}`.")]
+        public static partial void CandidateSkippedNoProfile(
+            ILogger logger, string candidateId, string repoKey);
 
         [LoggerMessage(
             Level = LogLevel.Error,
