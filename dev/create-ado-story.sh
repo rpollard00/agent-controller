@@ -175,10 +175,37 @@ BODY="[
   { \"op\": \"add\", \"path\": \"/fields/Microsoft.VSTS.Common.AcceptanceCriteria\", \"value\": ${ACCEPTANCE_JSON} }
 ]"
 
+# ─── URL encoding helper ─────────────────────────────────────────────────────
+# Encodes spaces and reserved characters for safe use in URL path segments.
+# Uses printf to percent-encode each byte that is not unreserved (RFC 3986).
+
+urlencode() {
+    local str="$1"
+    local len=${#str}
+    local encoded=""
+    local i char hex
+
+    for (( i=0; i<len; i++ )); do
+        char="${str:$i:1}"
+        case "$char" in
+            [a-zA-Z0-9._-~])
+                encoded+="$char"
+                ;;
+            *)
+                hex="$(printf '%%%02X' "'$char")"
+                encoded+="$hex"
+                ;;
+        esac
+    done
+
+    echo "$encoded"
+}
+
 # ─── Construct the API URL ───────────────────────────────────────────────────
 
 BASE_URL="https://dev.azure.com/${ORG}"
-API_URL="${BASE_URL}/${PROJECT}/_apis/wit/workitems/${WORK_ITEM_TYPE}?api-version=7.1"
+WORK_ITEM_TYPE_ENCODED="$(urlencode "$WORK_ITEM_TYPE")"
+API_URL="${BASE_URL}/${PROJECT}/_apis/wit/workitems/${WORK_ITEM_TYPE_ENCODED}?api-version=7.1"
 
 # ─── Execute ─────────────────────────────────────────────────────────────────
 
