@@ -628,6 +628,7 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
                     break;
                 }
 
+                Log.PiStdoutLine(_logger, runId, line);
                 InterpretStdoutLine(line, runId, promptTcs);
             }
         }
@@ -660,7 +661,9 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
             return;
         }
 
-        var type = typeEl.GetString();
+        var type = typeEl.GetString() ?? "(null)";
+        Log.PiStdoutParsed(_logger, runId, type);
+
         if (type == "response")
         {
             var command = doc.RootElement.TryGetProperty("command", out var cmdEl)
@@ -690,7 +693,12 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
                 ? errEl.GetString()
                 : "(no message)";
             Log.PiExtensionError(_logger, runId, msg ?? "(no message)");
+            return;
         }
+
+        // Unrecognized type — warn with truncated raw line for diagnosis.
+        var truncated = line.Length > 512 ? line[..512] + "..." : line;
+        Log.PiStdoutUnknownType(_logger, runId, type, truncated);
     }
 
     private async Task ReadStderrAsync(Process process, string runId)
@@ -1133,8 +1141,28 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
             Exception ex
         );
 
-        [LoggerMessage(Level = LogLevel.Debug, Message = "[pi stdout] {Line}")]
-        public static partial void PiStdoutLine(ILogger logger, string line);
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "[pi stdout] ({RunId}) {Line}"
+        )]
+        public static partial void PiStdoutLine(ILogger logger, string runId, string line);
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "[pi stdout] ({RunId}) parsed type='{Type}'"
+        )]
+        public static partial void PiStdoutParsed(ILogger logger, string runId, string type);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "[pi stdout] ({RunId}) unrecognized type='{Type}': {RawLine}"
+        )]
+        public static partial void PiStdoutUnknownType(
+            ILogger logger,
+            string runId,
+            string type,
+            string rawLine
+        );
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "[pi stderr] ({RunId}) {Line}")]
         public static partial void PiStderr(ILogger logger, string runId, string line);
