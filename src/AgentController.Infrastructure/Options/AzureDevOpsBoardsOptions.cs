@@ -1,3 +1,5 @@
+using AgentController.Application.Abstractions;
+
 namespace AgentController.Infrastructure.Options;
 
 /// <summary>
@@ -9,7 +11,7 @@ namespace AgentController.Infrastructure.Options;
 /// This section holds only the auth/connection settings needed
 /// to authenticate REST API calls.
 /// </summary>
-public sealed class AzureDevOpsBoardsOptions
+public sealed class AzureDevOpsBoardsOptions : IAzureDevOpsBoardsOptions
 {
     public const string SectionName = "azureDevOps";
 

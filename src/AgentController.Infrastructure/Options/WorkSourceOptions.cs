@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using AgentController.Application.Abstractions;
 
 namespace AgentController.Infrastructure.Options;
 
@@ -6,7 +7,7 @@ namespace AgentController.Infrastructure.Options;
 /// Work source provider configuration.
 /// Section: "workSource"
 /// </summary>
-public sealed class WorkSourceOptions
+public sealed class WorkSourceOptions : IWorkSourceOptions
 {
     public const string SectionName = "workSource";
 
