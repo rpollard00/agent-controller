@@ -116,40 +116,42 @@ Repo key: ${REPO_KEY}
 Created: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 fi
 
-# ─── Build acceptance criteria JSON ──────────────────────────────────────────
-# ADO expects acceptance criteria as a JSON object with numeric string keys.
-# Input: semicolon-separated items (or a single string with no semicolons).
+# ─── Build acceptance criteria HTML ──────────────────────────────────────────
+# ADO's AcceptanceCriteria field is an HTML field. Build an <ol><li>...</li></ol>
+# string from semicolon-separated items. Each item is HTML-escaped before embedding.
+# Output: line 1 = HTML string, line 2 = count of items.
 
-build_acceptance_json() {
+html_escape() {
+    local val="$1"
+    # Use sed for HTML escaping — bash parameter expansion mishandles < > as redirection
+    printf '%s' "$val" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g"
+}
+
+build_acceptance_html() {
     local input="$1"
-    local json="{"
-    local index=1
+    local html="<ol>"
+    local count=0
     local IFS=';'
 
     for item in $input; do
         item="$(echo "$item" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
         if [[ -n "$item" ]]; then
-            # Escape double quotes in the criterion text
-            item="${item//\"/\\\"}"
-            if [[ $index -gt 1 ]]; then
-                json+=","
-            fi
-            json+="\"${index}\":\"${item}\""
-            ((index++))
+            html+="<li>$(html_escape "$item")</li>"
+            ((count++))
         fi
     done
 
-    json+="}"
-    echo "$json"
-    echo $((index - 1))
+    html+="</ol>"
+    echo "$html"
+    echo "$count"
 }
 
 if [[ -z "$ACCEPTANCE" ]]; then
     ACCEPTANCE="Verify the feature works as described"
 fi
 
-ACCEPTANCE_OUTPUT="$(build_acceptance_json "$ACCEPTANCE")"
-ACCEPTANCE_JSON="$(echo "$ACCEPTANCE_OUTPUT" | head -1)"
+ACCEPTANCE_OUTPUT="$(build_acceptance_html "$ACCEPTANCE")"
+ACCEPTANCE_HTML="$(echo "$ACCEPTANCE_OUTPUT" | head -1)"
 ACCEPTANCE_COUNT="$(echo "$ACCEPTANCE_OUTPUT" | tail -1)"
 
 # ─── Build the JSON-Patch body ───────────────────────────────────────────────
@@ -170,13 +172,14 @@ escape_json() {
 
 TITLE_ESCAPED="$(escape_json "$TITLE")"
 DESCRIPTION_ESCAPED="$(escape_json "$DESCRIPTION")"
+ACCEPTANCE_ESCAPED="$(escape_json "$ACCEPTANCE_HTML")"
 
 BODY="[
   { \"op\": \"add\", \"path\": \"/fields/System.Title\", \"value\": \"${TITLE_ESCAPED}\" },
   { \"op\": \"add\", \"path\": \"/fields/System.Description\", \"value\": \"${DESCRIPTION_ESCAPED}\" },
   { \"op\": \"add\", \"path\": \"/fields/System.Tags\", \"value\": \"${TAGS}\" },
   { \"op\": \"add\", \"path\": \"/fields/System.State\", \"value\": \"${STATE}\" },
-  { \"op\": \"add\", \"path\": \"/fields/Microsoft.VSTS.Common.AcceptanceCriteria\", \"value\": ${ACCEPTANCE_JSON} }
+  { \"op\": \"add\", \"path\": \"/fields/Microsoft.VSTS.Common.AcceptanceCriteria\", \"value\": \"${ACCEPTANCE_ESCAPED}\" }
 ]"
 
 # ─── URL encoding helper ─────────────────────────────────────────────────────
