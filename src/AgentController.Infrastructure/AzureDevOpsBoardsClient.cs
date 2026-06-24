@@ -651,6 +651,162 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         return string.Empty;
     }
 
+    public async Task<AzureDevOpsConnectivityResult> VerifyConnectivityAsync(
+        string organizationUrl,
+        string project,
+        string personalAccessToken,
+        CancellationToken cancellationToken)
+    {
+        // Build a dedicated HttpClient for this one-off connectivity check.
+        // The injected _http is scoped to the configured org/PAT from options;
+        // this method receives explicit credentials so it must construct its own.
+        using var http = new HttpClient();
+        http.BaseAddress = new Uri(organizationUrl.TrimEnd('/') + "/");
+
+        var authBytes = Encoding.ASCII.GetBytes($":{personalAccessToken}");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        try
+        {
+            // (1) Lightweight test: GET project info (validates org URL + PAT + project)
+            using var result = await http.GetAsync(
+                $"_apis/projects/{project}?api-version=7.1",
+                cancellationToken);
+
+            var statusCode = result.StatusCode;
+
+            if (!result.IsSuccessStatusCode)
+            {
+                var errorBody = await result.Content.ReadAsStringAsync(cancellationToken);
+                var error = $"HTTP {(int)result.StatusCode} {result.ReasonPhrase}: " +
+                            (errorBody.Length > 200 ? errorBody[..200] + "..." : errorBody);
+                return new AzureDevOpsConnectivityResult
+                {
+                    Success = false,
+                    Status = statusCode,
+                    Error = error,
+                };
+            }
+
+            // (2) Enumerate repositories after successful connectivity test
+            var repositories = await FetchRepositoriesAsync(http, project, cancellationToken);
+
+            return new AzureDevOpsConnectivityResult
+            {
+                Success = true,
+                Status = statusCode,
+                Repositories = repositories,
+            };
+        }
+        catch (OperationCanceledException)
+        {
+            return new AzureDevOpsConnectivityResult
+            {
+                Success = false,
+                Error = "Request timed out or was cancelled.",
+            };
+        }
+        catch (HttpRequestException ex)
+        {
+            return new AzureDevOpsConnectivityResult
+            {
+                Success = false,
+                Error = $"HTTP request failed: {ex.Message}",
+            };
+        }
+        catch (Exception ex)
+        {
+            return new AzureDevOpsConnectivityResult
+            {
+                Success = false,
+                Error = $"Unexpected error: {ex.Message}",
+            };
+        }
+    }
+
+    /// <summary>
+    /// Fetches Git repositories for a project. Returns an empty list on failure
+    /// rather than throwing — the caller is responsible for error handling.
+    /// </summary>
+    private static async Task<IReadOnlyList<RepositoryInfo>> FetchRepositoriesAsync(
+        HttpClient http,
+        string project,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var reposResult = await http.GetAsync(
+                $"{project}/_apis/git/repositories?api-version=7.1",
+                cancellationToken);
+
+            if (!reposResult.IsSuccessStatusCode)
+            {
+                // Repository listing failed — return empty list.
+                // The connectivity itself succeeded (project endpoint worked).
+                return Array.Empty<RepositoryInfo>();
+            }
+
+            var json = await reposResult.Content.ReadAsStringAsync(cancellationToken);
+            using var doc = JsonDocument.Parse(json);
+
+            var repositories = new List<RepositoryInfo>();
+
+            if (doc.RootElement.TryGetProperty("value", out var valueArray)
+                && valueArray.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var repo in valueArray.EnumerateArray())
+                {
+                    var id = repo.TryGetProperty("id", out var idEl)
+                             && idEl.ValueKind == JsonValueKind.String
+                        ? idEl.GetString() ?? string.Empty
+                        : string.Empty;
+
+                    var name = repo.TryGetProperty("name", out var nameEl)
+                               && nameEl.ValueKind == JsonValueKind.String
+                        ? nameEl.GetString() ?? string.Empty
+                        : string.Empty;
+
+                    string? defaultBranch = null;
+                    if (repo.TryGetProperty("defaultBranch", out var dbEl)
+                        && dbEl.ValueKind == JsonValueKind.String)
+                    {
+                        defaultBranch = dbEl.GetString();
+                    }
+
+                    string? remoteUrl = null;
+                    if (repo.TryGetProperty("remoteUrl", out var ruEl)
+                        && ruEl.ValueKind == JsonValueKind.String)
+                    {
+                        remoteUrl = ruEl.GetString();
+                    }
+
+                    repositories.Add(new RepositoryInfo
+                    {
+                        Id = id,
+                        Name = name,
+                        DefaultBranch = defaultBranch,
+                        RemoteUrl = remoteUrl,
+                    });
+                }
+            }
+
+            return repositories;
+        }
+        catch (OperationCanceledException)
+        {
+            return Array.Empty<RepositoryInfo>();
+        }
+        catch (HttpRequestException)
+        {
+            return Array.Empty<RepositoryInfo>();
+        }
+        catch
+        {
+            return Array.Empty<RepositoryInfo>();
+        }
+    }
+
     // ─── Field helpers ────────────────────────────────────
 
     private static string? GetStringField(JsonElement fields, string name)

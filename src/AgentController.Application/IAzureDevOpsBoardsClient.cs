@@ -1,3 +1,4 @@
+using System.Net;
 using AgentController.Domain;
 
 namespace AgentController.Application;
@@ -51,6 +52,19 @@ public interface IAzureDevOpsBoardsClient
     /// </summary>
     Task<IReadOnlyList<RepositoryInfo>> ListRepositoriesAsync(
         string project,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Verify connectivity to an Azure DevOps organization/project using a PAT.
+    /// Performs a lightweight GET on the project endpoint, and on success
+    /// enumerates Git repositories in the project.
+    /// Returns a result capturing success/failure, HTTP status, and any errors
+    /// rather than throwing on failure.
+    /// </summary>
+    Task<AzureDevOpsConnectivityResult> VerifyConnectivityAsync(
+        string organizationUrl,
+        string project,
+        string personalAccessToken,
         CancellationToken cancellationToken);
 }
 
