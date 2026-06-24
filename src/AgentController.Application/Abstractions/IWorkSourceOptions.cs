@@ -12,4 +12,18 @@ public interface IWorkSourceOptions
 
     /// <summary>Azure DevOps project name, or <c>null</c> if not configured.</summary>
     string? Project { get; }
+
+    /// <summary>
+    /// State to set on a work item when the controller starts working on it
+    /// (e.g. "Active"). Used for lifecycle projection to the external board.
+    /// When <c>null</c>, no state change is made on claim/active transitions.
+    /// </summary>
+    string? ActiveState { get; }
+
+    /// <summary>
+    /// State to set on a work item when the controller completes it
+    /// (e.g. "Resolved"). Used for lifecycle projection to the external board.
+    /// When <c>null</c>, no state change is made on completion.
+    /// </summary>
+    string? CompletedState { get; }
 }

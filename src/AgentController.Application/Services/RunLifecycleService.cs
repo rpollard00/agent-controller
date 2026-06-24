@@ -1,4 +1,6 @@
+using AgentController.Application.Abstractions;
 using AgentController.Domain;
+using Microsoft.Extensions.Options;
 
 namespace AgentController.Application.Services;
 
@@ -19,6 +21,7 @@ internal sealed class RunLifecycleService : IRunLifecycleService
     private readonly ILifecycleEventStore _eventStore;
     private readonly IWorkItemStore _workItemStore;
     private readonly IWorkSource _workSource;
+    private readonly IOptionsMonitor<WorkSourceOptionsView> _workSourceOptions;
 
     /// <summary>
     /// Legal state transitions.
@@ -61,12 +64,14 @@ internal sealed class RunLifecycleService : IRunLifecycleService
         IAgentRunStore runStore,
         ILifecycleEventStore eventStore,
         IWorkItemStore workItemStore,
-        IWorkSource workSource)
+        IWorkSource workSource,
+        IOptionsMonitor<WorkSourceOptionsView> workSourceOptions)
     {
         _runStore = runStore;
         _eventStore = eventStore;
         _workItemStore = workItemStore;
         _workSource = workSource;
+        _workSourceOptions = workSourceOptions;
     }
 
     /// <inheritdoc />
@@ -102,6 +107,10 @@ internal sealed class RunLifecycleService : IRunLifecycleService
                 ["repoKey"] = workItem.RepoKey,
             },
             ct);
+
+        // Project the initial Claimed state to the work item and external work source.
+        // This ensures ActiveState is set and agent-active tag is added on claim.
+        await MaybeUpdateWorkItemStatus(run, RunLifecycleState.Claimed, ct);
 
         return run;
     }
@@ -418,16 +427,22 @@ internal sealed class RunLifecycleService : IRunLifecycleService
             return;
 
         // Update work item status for key lifecycle milestones.
-        // The actual status values are configuration-driven; for Phase 1 we
-        // use descriptive internal status strings.
+        // The actual status values are driven by the configured
+        // ActiveState and CompletedState from WorkSourceOptions.
+        var options = _workSourceOptions.CurrentValue;
         var status = targetState switch
         {
-            RunLifecycleState.EnvironmentProvisioning => "Provisioning",
-            RunLifecycleState.AgentRunning => "Running",
-            RunLifecycleState.Completed => "Completed",
-            RunLifecycleState.Failed => "Failed",
-            RunLifecycleState.NeedsHuman => "NeedsHuman",
-            RunLifecycleState.Cancelled => "Cancelled",
+            // Active states map to the configured activeState.
+            RunLifecycleState.Claimed => options.ActiveState,
+            RunLifecycleState.EnvironmentProvisioning => options.ActiveState,
+            RunLifecycleState.AgentRunning => options.ActiveState,
+            RunLifecycleState.AwaitingResult => options.ActiveState,
+            // Terminal/completion states map to the configured completedState.
+            RunLifecycleState.Completed => options.CompletedState,
+            RunLifecycleState.PrOpened => options.CompletedState,
+            RunLifecycleState.BranchPushed => options.CompletedState,
+            // Failed/needs_human/cancelled remain in active state (or unchanged)
+            // so they stay visible on the active board columns.
             _ => null,
         };
 
@@ -484,7 +499,8 @@ internal sealed class RunLifecycleService : IRunLifecycleService
             Revision = revision,
         };
 
-        // Determine status update (tags, state) and comment for this lifecycle milestone
+        // Determine status update (tags, state) and comment for this lifecycle milestone.
+        // Uses configured ActiveState/CompletedState from WorkSourceOptions.
         var (extStatus, comment) = BuildExternalProjection(targetState, run);
 
         try
@@ -511,58 +527,98 @@ internal sealed class RunLifecycleService : IRunLifecycleService
     /// Builds the external status update and comment for a lifecycle state
     /// transition. Returns <c>null</c> for states that do not require
     /// external projection.
+    ///
+    /// Uses the configured <c>ActiveState</c> and <c>CompletedState</c> from
+    /// <see cref="WorkSourceOptions"/> to derive the ADO board state.
+    /// This makes the projection idempotent: re-projecting the same state
+    /// is a no-op at the ADO API level (PATCH with the same value is harmless).
     /// </summary>
-    private static (ExternalWorkStatus? Status, string? Comment) BuildExternalProjection(
+    private (ExternalWorkStatus? Status, string? Comment) BuildExternalProjection(
         RunLifecycleState targetState,
         AgentRunHandle run)
     {
+        var options = _workSourceOptions.CurrentValue;
+        var activeState = options.ActiveState;
+        var completedState = options.CompletedState;
+
         return targetState switch
         {
+            // ── Claim: move to active state, add claim tag ─────────
             RunLifecycleState.Claimed => (
                 new ExternalWorkStatus
                 {
+                    Status = activeState,
                     Tags = ["agent-active"],
                 },
                 "Agent controller claimed this work item and started processing."),
 
+            // ── Agent running: ensure active state ──────────────────
             RunLifecycleState.AgentRunning => (
-                null,
+                new ExternalWorkStatus
+                {
+                    Status = activeState,
+                },
                 "Agent runtime is now executing."),
 
+            // ── Awaiting result: ensure active state (idempotent) ───
             RunLifecycleState.AwaitingResult => (
-                null,
+                new ExternalWorkStatus
+                {
+                    Status = activeState,
+                },
                 "Agent runtime is working; awaiting result."),
 
+            // ── PR opened: move to completed state ──────────────────
             RunLifecycleState.PrOpened => (
-                null,
+                new ExternalWorkStatus
+                {
+                    Status = completedState,
+                },
                 !string.IsNullOrWhiteSpace(run.PullRequestUrl)
                     ? $"Pull request opened: {run.PullRequestUrl}"
                     : "Pull request opened."),
 
+            // ── Branch pushed: move to completed state ──────────────
             RunLifecycleState.BranchPushed => (
-                null,
+                new ExternalWorkStatus
+                {
+                    Status = completedState,
+                },
                 !string.IsNullOrWhiteSpace(run.BranchName)
                     ? $"Branch pushed: {run.BranchName}"
                     : "Branch pushed to remote."),
 
+            // ── Completed: move to completed state ──────────────────
             RunLifecycleState.Completed => (
-                new ExternalWorkStatus { Tags = null }, // Tags unchanged, status updated separately
+                new ExternalWorkStatus
+                {
+                    Status = completedState,
+                },
                 !string.IsNullOrWhiteSpace(run.ResultSummary)
                     ? $"Run completed: {run.ResultSummary}"
                     : "Run completed successfully."),
 
+            // ── Failed: add failure tag (keep in active state for visibility) ──
             RunLifecycleState.Failed => (
-                new ExternalWorkStatus { Tags = ["agent-failed"] },
+                new ExternalWorkStatus
+                {
+                    Tags = ["agent-failed"],
+                },
                 !string.IsNullOrWhiteSpace(run.Error)
                     ? $"Run failed: {run.Error}"
                     : "Run failed."),
 
+            // ── Needs human: add needs-human tag (keep in active state) ──
             RunLifecycleState.NeedsHuman => (
-                new ExternalWorkStatus { Tags = ["agent-needs-human"] },
+                new ExternalWorkStatus
+                {
+                    Tags = ["agent-needs-human"],
+                },
                 !string.IsNullOrWhiteSpace(run.ResultSummary)
                     ? $"Run requires human input: {run.ResultSummary}"
                     : "Run requires human input."),
 
+            // ── Cancelled: comment only ─────────────────────────────
             RunLifecycleState.Cancelled => (
                 null,
                 "Run was cancelled."),

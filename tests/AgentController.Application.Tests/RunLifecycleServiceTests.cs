@@ -1,6 +1,8 @@
 using AgentController.Application;
+using AgentController.Application.Abstractions;
 using AgentController.Application.Services;
 using AgentController.Domain;
+using Microsoft.Extensions.Options;
 
 namespace AgentController.Application.Tests;
 
@@ -21,13 +23,21 @@ public class RunLifecycleServiceTests
     private readonly InMemoryLifecycleEventStore _eventStore;
     private readonly InMemoryWorkItemStore _workItemStore;
     private readonly RunLifecycleService _service;
+    private readonly IOptionsMonitor<WorkSourceOptionsView> _workSourceOptions;
 
     public RunLifecycleServiceTests()
     {
         _runStore = new InMemoryAgentRunStore();
         _eventStore = new InMemoryLifecycleEventStore();
         _workItemStore = new InMemoryWorkItemStore();
-        _service = new RunLifecycleService(_runStore, _eventStore, _workItemStore, new StubWorkSource());
+        _workSourceOptions = new TestOptionsMonitor<WorkSourceOptionsView>(new WorkSourceOptionsView
+        {
+            ActiveState = "Active",
+            CompletedState = "Resolved",
+        });
+        _service = new RunLifecycleService(
+            _runStore, _eventStore, _workItemStore,
+            new StubWorkSource(), _workSourceOptions);
     }
 
     // ── CreateRunForWorkItemAsync ──────────────────────────────────
@@ -168,7 +178,7 @@ public class RunLifecycleServiceTests
         // comment projection to the work source via IWorkSource.AddCommentAsync.
         var stubWorkSource = new StubWorkSource();
         var serviceWithStub = new RunLifecycleService(
-            _runStore, _eventStore, _workItemStore, stubWorkSource);
+            _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
 
         // Upsert an Azure candidate with SourceMetadata (revision)
         var candidate = new WorkCandidate
@@ -973,6 +983,284 @@ public class RunLifecycleServiceTests
         Assert.Contains("terminal state", ex.Message);
     }
 
+    // ── Lifecycle projection — activeState / completedState ────────
+
+    [Fact]
+    public async Task Projection_UseActiveStateOnClaim()
+    {
+        // Verify that claiming an Azure-sourced work item projects ActiveState
+        // to the external work source.
+        var stubWorkSource = new StubWorkSource();
+        var service = new RunLifecycleService(
+            _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+
+        var candidate = new WorkCandidate
+        {
+            Id = "wi_proj_active",
+            ExternalId = "100",
+            Source = "AzureDevOpsBoards",
+            Title = "Projection active state test",
+            Status = "New",
+            RepoKey = "test-repo",
+            Tags = new[] { "agent-ready" },
+            ExternalUrl = "https://dev.azure.com/org/project/_workitems/edit/100",
+            SourceMetadata = new Dictionary<string, string> { ["revision"] = "1" },
+        };
+        await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
+
+        var run = await service.CreateRunForWorkItemAsync(
+            "wi_proj_active", "worker-1", CancellationToken.None);
+
+        // The Claimed transition should project ActiveState ("Active")
+        var statusUpdates = stubWorkSource.StatusUpdates;
+        Assert.Single(statusUpdates);
+        Assert.Equal("Active", statusUpdates[0].Status.Status);
+        Assert.Contains("agent-active", statusUpdates[0].Status.Tags!);
+    }
+
+    [Fact]
+    public async Task Projection_UseActiveStateOnAgentRunning()
+    {
+        var stubWorkSource = new StubWorkSource();
+        var service = new RunLifecycleService(
+            _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+
+        var candidate = new WorkCandidate
+        {
+            Id = "wi_proj_running",
+            ExternalId = "101",
+            Source = "AzureDevOpsBoards",
+            Title = "Projection running state test",
+            Status = "New",
+            RepoKey = "test-repo",
+            Tags = new[] { "agent-ready" },
+            ExternalUrl = "https://dev.azure.com/org/project/_workitems/edit/101",
+            SourceMetadata = new Dictionary<string, string> { ["revision"] = "1" },
+        };
+        await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
+
+        var run = await service.CreateRunForWorkItemAsync(
+            "wi_proj_running", "worker-1", CancellationToken.None);
+
+        // Advance through states to AgentRunning
+        await AdvanceToAsync(service, run.RunId, RunLifecycleState.AgentRunning, CancellationToken.None);
+
+        // Should have status updates for Claimed and AgentRunning, both using ActiveState
+        var statusUpdates = stubWorkSource.StatusUpdates;
+        Assert.All(statusUpdates, su => Assert.Equal("Active", su.Status.Status));
+    }
+
+    [Fact]
+    public async Task Projection_UseCompletedStateOnCompletion()
+    {
+        var stubWorkSource = new StubWorkSource();
+        var service = new RunLifecycleService(
+            _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+
+        var candidate = new WorkCandidate
+        {
+            Id = "wi_proj_completed",
+            ExternalId = "102",
+            Source = "AzureDevOpsBoards",
+            Title = "Projection completed state test",
+            Status = "Active",
+            RepoKey = "test-repo",
+            Tags = new[] { "agent-ready" },
+            ExternalUrl = "https://dev.azure.com/org/project/_workitems/edit/102",
+            SourceMetadata = new Dictionary<string, string> { ["revision"] = "1" },
+        };
+        await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
+
+        var run = await service.CreateRunForWorkItemAsync(
+            "wi_proj_completed", "worker-1", CancellationToken.None);
+
+        // Advance to AwaitingResult then ingest a completed event
+        await AdvanceToAsync(service, run.RunId, RunLifecycleState.AwaitingResult, CancellationToken.None);
+
+        await service.IngestRuntimeEventAsync(new RuntimeEvent
+        {
+            EventId = "evt_proj_comp",
+            RunId = run.RunId,
+            EventType = RuntimeEventTypes.Completed,
+            OccurredAt = DateTimeOffset.UtcNow,
+            Message = "Done",
+            Payload = new Dictionary<string, object?> { ["outcome"] = CompletionOutcomes.PullRequestOpened },
+        }, CancellationToken.None);
+
+        // The PrOpened transition (from completion) should project CompletedState ("Resolved")
+        var statusUpdates = stubWorkSource.StatusUpdates;
+        Assert.Contains(statusUpdates, su => su.Status.Status == "Resolved");
+    }
+
+    [Fact]
+    public async Task Projection_FailedDoesNotChangeBoardState()
+    {
+        // Failed runs should add tags but NOT change the board state,
+        // keeping the item visible on the active board.
+        var stubWorkSource = new StubWorkSource();
+        var service = new RunLifecycleService(
+            _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+
+        var candidate = new WorkCandidate
+        {
+            Id = "wi_proj_failed",
+            ExternalId = "103",
+            Source = "AzureDevOpsBoards",
+            Title = "Projection failed state test",
+            Status = "Active",
+            RepoKey = "test-repo",
+            Tags = new[] { "agent-ready" },
+            ExternalUrl = "https://dev.azure.com/org/project/_workitems/edit/103",
+            SourceMetadata = new Dictionary<string, string> { ["revision"] = "1" },
+        };
+        await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
+
+        var run = await service.CreateRunForWorkItemAsync(
+            "wi_proj_failed", "worker-1", CancellationToken.None);
+
+        await AdvanceToAsync(service, run.RunId, RunLifecycleState.AwaitingResult, CancellationToken.None);
+
+        await service.IngestRuntimeEventAsync(new RuntimeEvent
+        {
+            EventId = "evt_proj_fail",
+            RunId = run.RunId,
+            EventType = RuntimeEventTypes.Failed,
+            OccurredAt = DateTimeOffset.UtcNow,
+            Severity = EventSeverity.Error,
+            Message = "Something broke",
+        }, CancellationToken.None);
+
+        // Find the status update for the failure projection
+        var failedUpdate = stubWorkSource.StatusUpdates
+            .Where(su => su.Status.Tags?.Contains("agent-failed") == true)
+            .ToList();
+
+        Assert.Single(failedUpdate);
+        // State should NOT be set on failure (null = no state change)
+        Assert.Null(failedUpdate[0].Status.Status);
+    }
+
+    [Fact]
+    public async Task Projection_NeedsHumanDoesNotChangeBoardState()
+    {
+        var stubWorkSource = new StubWorkSource();
+        var service = new RunLifecycleService(
+            _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+
+        var candidate = new WorkCandidate
+        {
+            Id = "wi_proj_needs_human",
+            ExternalId = "104",
+            Source = "AzureDevOpsBoards",
+            Title = "Projection needs-human test",
+            Status = "Active",
+            RepoKey = "test-repo",
+            Tags = new[] { "agent-ready" },
+            ExternalUrl = "https://dev.azure.com/org/project/_workitems/edit/104",
+            SourceMetadata = new Dictionary<string, string> { ["revision"] = "1" },
+        };
+        await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
+
+        var run = await service.CreateRunForWorkItemAsync(
+            "wi_proj_needs_human", "worker-1", CancellationToken.None);
+
+        await AdvanceToAsync(service, run.RunId, RunLifecycleState.AwaitingResult, CancellationToken.None);
+
+        await service.IngestRuntimeEventAsync(new RuntimeEvent
+        {
+            EventId = "evt_proj_nh",
+            RunId = run.RunId,
+            EventType = RuntimeEventTypes.NeedsHuman,
+            OccurredAt = DateTimeOffset.UtcNow,
+            Message = "Need clarification",
+        }, CancellationToken.None);
+
+        var needsHumanUpdate = stubWorkSource.StatusUpdates
+            .Where(su => su.Status.Tags?.Contains("agent-needs-human") == true)
+            .ToList();
+
+        Assert.Single(needsHumanUpdate);
+        Assert.Null(needsHumanUpdate[0].Status.Status);
+    }
+
+    [Fact]
+    public async Task Projection_IdempotentReProjection()
+    {
+        // Re-projecting the same state should not cause errors.
+        // BuildExternalProjection sets the same ActiveState on Claimed and AgentRunning.
+        // The ADO client handles PATCH with same value as idempotent.
+        var stubWorkSource = new StubWorkSource();
+        var service = new RunLifecycleService(
+            _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+
+        var candidate = new WorkCandidate
+        {
+            Id = "wi_proj_idem",
+            ExternalId = "105",
+            Source = "AzureDevOpsBoards",
+            Title = "Idempotent projection test",
+            Status = "New",
+            RepoKey = "test-repo",
+            Tags = new[] { "agent-ready" },
+            ExternalUrl = "https://dev.azure.com/org/project/_workitems/edit/105",
+            SourceMetadata = new Dictionary<string, string> { ["revision"] = "1" },
+        };
+        await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
+
+        var run = await service.CreateRunForWorkItemAsync(
+            "wi_proj_idem", "worker-1", CancellationToken.None);
+
+        // Advance through multiple states that all project ActiveState
+        await AdvanceToAsync(service, run.RunId, RunLifecycleState.AwaitingResult, CancellationToken.None);
+
+        // All status updates for active states should have the same ActiveState value.
+        // This proves idempotent re-projection: same state PATCHed multiple times.
+        var activeStateUpdates = stubWorkSource.StatusUpdates
+            .Where(su => su.Status.Status == "Active")
+            .ToList();
+
+        // Claimed, AgentRunning, and AwaitingResult all project ActiveState
+        Assert.Equal(3, activeStateUpdates.Count);
+    }
+
+    [Fact]
+    public async Task Projection_NoActiveState_SkipsStateChange()
+    {
+        // When ActiveState is not configured, no board state change should occur.
+        var noActiveOptions = new TestOptionsMonitor<WorkSourceOptionsView>(new WorkSourceOptionsView
+        {
+            // ActiveState intentionally null
+            CompletedState = "Resolved",
+        });
+
+        var stubWorkSource = new StubWorkSource();
+        var service = new RunLifecycleService(
+            _runStore, _eventStore, _workItemStore, stubWorkSource, noActiveOptions);
+
+        var candidate = new WorkCandidate
+        {
+            Id = "wi_proj_no_active",
+            ExternalId = "106",
+            Source = "AzureDevOpsBoards",
+            Title = "No active state test",
+            Status = "New",
+            RepoKey = "test-repo",
+            Tags = new[] { "agent-ready" },
+            ExternalUrl = "https://dev.azure.com/org/project/_workitems/edit/106",
+            SourceMetadata = new Dictionary<string, string> { ["revision"] = "1" },
+        };
+        await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
+
+        var run = await service.CreateRunForWorkItemAsync(
+            "wi_proj_no_active", "worker-1", CancellationToken.None);
+
+        // Claimed should project tags but NOT state when ActiveState is null
+        var statusUpdates = stubWorkSource.StatusUpdates;
+        Assert.Single(statusUpdates);
+        Assert.Null(statusUpdates[0].Status.Status);
+        Assert.Contains("agent-active", statusUpdates[0].Status.Tags!);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────
 
     /// <summary>
@@ -1031,6 +1319,37 @@ public class RunLifecycleServiceTests
             Message = message,
             RuntimeRunId = runtimeRunId,
         };
+    }
+
+    /// <summary>
+    /// Advance a run through controller-owned states up to the target state.
+    /// Used by lifecycle projection tests that construct their own service instances.
+    /// </summary>
+    private static async Task AdvanceToAsync(
+        RunLifecycleService service,
+        string runId,
+        RunLifecycleState targetState,
+        CancellationToken ct)
+    {
+        var orderedStates = new[]
+        {
+            RunLifecycleState.EnvironmentProvisioning,
+            RunLifecycleState.EnvironmentReady,
+            RunLifecycleState.RepositoryCloning,
+            RunLifecycleState.RepositoryReady,
+            RunLifecycleState.ContextInjected,
+            RunLifecycleState.AgentStarting,
+            RunLifecycleState.AgentRunning,
+            RunLifecycleState.AwaitingResult,
+        };
+
+        foreach (var state in orderedStates)
+        {
+            if ((int)state > (int)targetState)
+                break;
+
+            await service.TransitionAsync(runId, state, ct);
+        }
     }
 
     // ── In-memory store implementations for testing ────────────────
@@ -1318,6 +1637,42 @@ public class RunLifecycleServiceTests
         {
             Comments.Add((workRef, comment));
             return Task.CompletedTask;
+        }
+    }
+
+    /// <summary>
+    /// Minimal <see cref="IOptionsMonitor{TOptions}"/> implementation for unit tests.
+    /// Returns a fixed value and does not support change notifications.
+    /// </summary>
+    private sealed class TestOptionsMonitor<TOptions> : IOptionsMonitor<TOptions>
+        where TOptions : class
+    {
+        private readonly TOptions _value;
+
+        public TestOptionsMonitor(TOptions value)
+        {
+            _value = value ?? throw new ArgumentNullException(nameof(value));
+        }
+
+        public TOptions CurrentValue => _value;
+
+        public TOptions Get(string? name) => _value;
+
+        public IDisposable OnChange(Action<TOptions, string?> listener) =>
+            Disposable.Create(() => { });
+
+        private sealed class Disposable : IDisposable
+        {
+            private static readonly IDisposable Instance = new NoopDisposable();
+
+            public static IDisposable Create(Action? action = null) => Instance;
+
+            public void Dispose() { }
+
+            private sealed class NoopDisposable : IDisposable
+            {
+                public void Dispose() { }
+            }
         }
     }
 }

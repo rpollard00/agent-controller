@@ -43,6 +43,26 @@ public static class AgentControllerServiceCollectionExtensions
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
+        // Register WorkSourceOptionsView as a projection of WorkSourceOptions.
+        // This allows the Application layer to read ActiveState/CompletedState
+        // via IOptionsMonitor<IWorkSourceOptions> without depending on the
+        // Infrastructure WorkSourceOptions type directly.
+        services
+            .Configure<WorkSourceOptionsView>(wsOptionsView =>
+            {
+                var wsOptions = configuration
+                    .GetSection(WorkSourceOptions.SectionName)
+                    .Get<WorkSourceOptions>();
+
+                if (wsOptions is not null)
+                {
+                    wsOptionsView.OrganizationUrl = wsOptions.OrganizationUrl;
+                    wsOptionsView.Project = wsOptions.Project;
+                    wsOptionsView.ActiveState = wsOptions.ActiveState;
+                    wsOptionsView.CompletedState = wsOptions.CompletedState;
+                }
+            });
+
         services
             .AddOptions<SourceControlOptions>()
             .Bind(configuration.GetSection(SourceControlOptions.SectionName))
