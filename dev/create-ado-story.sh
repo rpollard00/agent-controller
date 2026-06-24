@@ -20,6 +20,7 @@
 #                              (default: "Verify the feature works as described")
 #   -s, --state STATE          Initial state (default: New)
 #   --dry-run                  Print the curl command without executing
+#   --debug                    Print request URLs, redacted headers, and raw responses
 #
 # Environment variables:
 #   AZURE_DEVOPS_PAT           Personal Access Token with "Work items: Read & write" scope
@@ -52,6 +53,7 @@ DESCRIPTION=""
 ACCEPTANCE=""
 STATE="New"
 DRY_RUN=false
+DEBUG=false
 
 # ─── Argument parsing ────────────────────────────────────────────────────────
 
@@ -80,6 +82,8 @@ while [[ $# -gt 0 ]]; do
             STATE="$2"; shift 2 ;;
         --dry-run)
             DRY_RUN=true; shift ;;
+        --debug)
+            DEBUG=true; shift ;;
         -h|--help)
             usage 0 ;;
         *)
@@ -254,9 +258,22 @@ render_non_json_error() {
 # Usage: ado_get <url>
 ado_get() {
     local url="$1"
-    curl -s -w "\n%{http_code}" -X GET "$url" \
+    if [[ "$DEBUG" == true ]]; then
+        echo "[DEBUG] GET $url" >&2
+        echo "[DEBUG] Headers: Authorization: Basic <redacted>, Accept: application/json" >&2
+    fi
+    local response
+    response="$(curl -s -w "\n%{http_code}" -X GET "$url" \
         -H "Authorization: Basic ${AUTH_HEADER}" \
-        -H "Accept: application/json"
+        -H "Accept: application/json")"
+    if [[ "$DEBUG" == true ]]; then
+        local code body
+        code="$(echo "$response" | tail -1)"
+        body="$(echo "$response" | head -n -1)"
+        echo "[DEBUG] Response HTTP $code:" >&2
+        echo "$body" >&2
+    fi
+    echo "$response"
 }
 
 # ─── Preflight checks ────────────────────────────────────────────────────────
@@ -375,6 +392,9 @@ if [[ "$DRY_RUN" == true ]]; then
     echo "    -H \"Content-Type: application/json-patch+json\" \\"
     echo "    -H \"Accept: application/json\" \\"
     echo "    -d '$BODY'"
+    echo ""
+    echo "Run without --dry-run to execute these requests."
+    echo "Add --debug to see full request/response detail at runtime."
     exit 0
 fi
 
@@ -391,6 +411,13 @@ echo "  State:            $STATE"
 echo "  Acceptance items: $ACCEPTANCE_COUNT"
 echo ""
 
+if [[ "$DEBUG" == true ]]; then
+    echo "[DEBUG] POST $API_URL" >&2
+    echo "[DEBUG] Headers: Authorization: Basic <redacted>, Content-Type: application/json-patch+json, Accept: application/json" >&2
+    echo "[DEBUG] Body:" >&2
+    echo "$BODY" >&2
+fi
+
 RESPONSE="$(curl -s -w "\n%{http_code}" -X POST "$API_URL" \
     -H "Authorization: Basic ${AUTH_HEADER}" \
     -H "Content-Type: application/json-patch+json" \
@@ -399,6 +426,11 @@ RESPONSE="$(curl -s -w "\n%{http_code}" -X POST "$API_URL" \
 
 HTTP_CODE="$(echo "$RESPONSE" | tail -1)"
 BODY_RESPONSE="$(echo "$RESPONSE" | head -n -1)"
+
+if [[ "$DEBUG" == true ]]; then
+    echo "[DEBUG] Response HTTP $HTTP_CODE:" >&2
+    echo "$BODY_RESPONSE" >&2
+fi
 
 if [[ "$HTTP_CODE" =~ ^2 ]]; then
     # Validate the response is JSON before parsing
