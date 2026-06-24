@@ -326,7 +326,7 @@ run_preflights() {
     fi
 
     # ── Preflight 2: Verify work item type exists in project process ──────────
-    local pf2_url="https://dev.azure.com/${ORG}/${PROJECT}/_apis/wit/workitemtypes/${WORK_ITEM_TYPE}?api-version=7.1"
+    local pf2_url="https://dev.azure.com/${ORG}/${PROJECT}/_apis/wit/workitemtypes/${WORK_ITEM_TYPE_ENCODED}?api-version=7.1"
     local pf2_response pf2_code pf2_body
 
     pf2_response="$(ado_get "$pf2_url")"
@@ -378,7 +378,7 @@ if [[ "$DRY_RUN" == true ]]; then
     echo "    -H \"Accept: application/json\""
     echo ""
     echo "Preflight 2 (verify work item type):"
-    echo "  curl -s -X GET \"https://dev.azure.com/${ORG}/${PROJECT}/_apis/wit/workitemtypes/${WORK_ITEM_TYPE}?api-version=7.1\" \\"
+    echo "  curl -s -X GET \"https://dev.azure.com/${ORG}/${PROJECT}/_apis/wit/workitemtypes/${WORK_ITEM_TYPE_ENCODED}?api-version=7.1\" \\"
     echo "    -H \"Authorization: Basic <base64>\" \\"
     echo "    -H \"Accept: application/json\""
     echo ""
