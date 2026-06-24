@@ -209,7 +209,7 @@ urlencode() {
 
 BASE_URL="https://dev.azure.com/${ORG}"
 WORK_ITEM_TYPE_ENCODED="$(urlencode "$WORK_ITEM_TYPE")"
-API_URL="${BASE_URL}/${PROJECT}/_apis/wit/workitems/${WORK_ITEM_TYPE_ENCODED}?api-version=7.1"
+API_URL="${BASE_URL}/${PROJECT}/_apis/wit/workitems/\$${WORK_ITEM_TYPE_ENCODED}?api-version=7.1"
 
 # ─── Preflight helpers ───────────────────────────────────────────────────────
 
