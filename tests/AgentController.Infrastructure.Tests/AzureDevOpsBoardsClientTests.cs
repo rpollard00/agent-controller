@@ -1167,6 +1167,154 @@ public class AzureDevOpsBoardsClientTests
     }
 
     // ──────────────────────────────────────────────
+    // Repository listing (ListRepositoriesAsync)
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task ListRepositoriesAsync_SuccessfulListing_MultipleRepos()
+    {
+        var reposJson = """
+        {
+          "count": 3,
+          "value": [
+            {
+              "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+              "name": "web-app",
+              "defaultBranch": "refs/heads/main",
+              "remoteUrl": "https://dev.azure.com/testorg/TestProject/_git/web-app"
+            },
+            {
+              "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+              "name": "api-service",
+              "defaultBranch": "refs/heads/develop",
+              "remoteUrl": "https://dev.azure.com/testorg/TestProject/_git/api-service"
+            },
+            {
+              "id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
+              "name": "shared-lib",
+              "defaultBranch": "refs/heads/main",
+              "remoteUrl": "https://dev.azure.com/testorg/TestProject/_git/shared-lib"
+            }
+          ]
+        }
+        """;
+
+        var client = CreateClient(
+            (urlContains: "git/repositories", jsonResponse: reposJson)
+        );
+
+        var repos = await client.ListRepositoriesAsync(Project, CancellationToken.None);
+
+        Assert.Equal(3, repos.Count);
+
+        Assert.Equal("a1b2c3d4-e5f6-7890-abcd-ef1234567890", repos[0].Id);
+        Assert.Equal("web-app", repos[0].Name);
+        Assert.Equal("refs/heads/main", repos[0].DefaultBranch);
+        Assert.Equal("https://dev.azure.com/testorg/TestProject/_git/web-app", repos[0].RemoteUrl);
+
+        Assert.Equal("b2c3d4e5-f6a7-8901-bcde-f12345678901", repos[1].Id);
+        Assert.Equal("api-service", repos[1].Name);
+        Assert.Equal("refs/heads/develop", repos[1].DefaultBranch);
+
+        Assert.Equal("c3d4e5f6-a7b8-9012-cdef-123456789012", repos[2].Id);
+        Assert.Equal("shared-lib", repos[2].Name);
+    }
+
+    [Fact]
+    public async Task ListRepositoriesAsync_EmptyRepoList_ReturnsEmptyList()
+    {
+        var reposJson = """{"count":0,"value":[]}""";
+
+        var client = CreateClient(
+            (urlContains: "git/repositories", jsonResponse: reposJson)
+        );
+
+        var repos = await client.ListRepositoriesAsync(Project, CancellationToken.None);
+
+        Assert.NotNull(repos);
+        Assert.Empty(repos);
+    }
+
+    [Fact]
+    public async Task ListRepositoriesAsync_RepoWithoutOptionalFields_UsesDefaults()
+    {
+        // A repo missing defaultBranch and remoteUrl should get null and webUrl fallback
+        var reposJson = """
+        {
+          "count": 1,
+          "value": [
+            {
+              "id": "d4e5f6a7-b8c9-0123-defa-234567890123",
+              "name": "minimal-repo",
+              "webUrl": "https://dev.azure.com/testorg/TestProject/_git/minimal-repo"
+            }
+          ]
+        }
+        """;
+
+        var client = CreateClient(
+            (urlContains: "git/repositories", jsonResponse: reposJson)
+        );
+
+        var repos = await client.ListRepositoriesAsync(Project, CancellationToken.None);
+
+        Assert.Single(repos);
+        Assert.Equal("d4e5f6a7-b8c9-0123-defa-234567890123", repos[0].Id);
+        Assert.Equal("minimal-repo", repos[0].Name);
+        Assert.Null(repos[0].DefaultBranch);
+        // Should fall back to webUrl when remoteUrl is absent
+        Assert.Equal("https://dev.azure.com/testorg/TestProject/_git/minimal-repo", repos[0].RemoteUrl);
+    }
+
+    [Fact]
+    public async Task ListRepositoriesAsync_EmptyProject_ThrowsInvalidOperation()
+    {
+        var client = CreateClient();
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.ListRepositoriesAsync(string.Empty, CancellationToken.None));
+
+        Assert.Contains("project", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ListRepositoriesAsync_NullProject_ThrowsInvalidOperation()
+    {
+        var client = CreateClient();
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.ListRepositoriesAsync(null!, CancellationToken.None));
+
+        Assert.Contains("project", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ListRepositoriesAsync_Unauthorized_ThrowsHttpRequestException()
+    {
+        var client = CreateClientWithStatusCodes(
+            (urlContains: "git/repositories",
+             statusCode: HttpStatusCode.Unauthorized,
+             body: """{"message":"Unauthorized"}""")
+        );
+
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.ListRepositoriesAsync(Project, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ListRepositoriesAsync_ServerError_ThrowsHttpRequestException()
+    {
+        var client = CreateClientWithStatusCodes(
+            (urlContains: "git/repositories",
+             statusCode: HttpStatusCode.InternalServerError,
+             body: """{"message":"Internal server error"}""")
+        );
+
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.ListRepositoriesAsync(Project, CancellationToken.None));
+    }
+
+    // ──────────────────────────────────────────────
     // JSON response helpers
     // ──────────────────────────────────────────────
 
