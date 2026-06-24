@@ -2,9 +2,23 @@ using AgentController.Application;
 using AgentController.Application.Abstractions;
 using AgentController.Application.Services;
 using AgentController.Domain;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace AgentController.Application.Tests;
+
+/// <summary>
+/// Minimal null logger for unit tests. <c>NullLogger&lt;T&gt;</c> is not available
+/// in the Abstractions package for net10.0, so we provide a stub here.
+/// </summary>
+internal sealed class NullLogger<T> : ILogger<T>, ILogger
+{
+    public static NullLogger<T> Instance { get; } = new();
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null!;
+    public bool IsEnabled(LogLevel level) => false;
+    public void Log<TState>(LogLevel level, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) { }
+}
 
 /// <summary>
 /// Comprehensive tests for <see cref="RunLifecycleService"/>, covering:
@@ -36,6 +50,7 @@ public class RunLifecycleServiceTests
             CompletedState = "Resolved",
         });
         _service = new RunLifecycleService(
+            NullLogger<RunLifecycleService>.Instance,
             _runStore, _eventStore, _workItemStore,
             new StubWorkSource(), _workSourceOptions);
     }
@@ -178,7 +193,7 @@ public class RunLifecycleServiceTests
         // comment projection to the work source via IWorkSource.AddCommentAsync.
         var stubWorkSource = new StubWorkSource();
         var serviceWithStub = new RunLifecycleService(
-            _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
 
         // Upsert an Azure candidate with SourceMetadata (revision)
         var candidate = new WorkCandidate
@@ -992,7 +1007,7 @@ public class RunLifecycleServiceTests
         // to the external work source.
         var stubWorkSource = new StubWorkSource();
         var service = new RunLifecycleService(
-            _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
 
         var candidate = new WorkCandidate
         {
@@ -1023,7 +1038,7 @@ public class RunLifecycleServiceTests
     {
         var stubWorkSource = new StubWorkSource();
         var service = new RunLifecycleService(
-            _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
 
         var candidate = new WorkCandidate
         {
@@ -1055,7 +1070,7 @@ public class RunLifecycleServiceTests
     {
         var stubWorkSource = new StubWorkSource();
         var service = new RunLifecycleService(
-            _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
 
         var candidate = new WorkCandidate
         {
@@ -1099,7 +1114,7 @@ public class RunLifecycleServiceTests
         // keeping the item visible on the active board.
         var stubWorkSource = new StubWorkSource();
         var service = new RunLifecycleService(
-            _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
 
         var candidate = new WorkCandidate
         {
@@ -1145,7 +1160,7 @@ public class RunLifecycleServiceTests
     {
         var stubWorkSource = new StubWorkSource();
         var service = new RunLifecycleService(
-            _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
 
         var candidate = new WorkCandidate
         {
@@ -1191,7 +1206,7 @@ public class RunLifecycleServiceTests
         // The ADO client handles PATCH with same value as idempotent.
         var stubWorkSource = new StubWorkSource();
         var service = new RunLifecycleService(
-            _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
 
         var candidate = new WorkCandidate
         {
@@ -1235,7 +1250,7 @@ public class RunLifecycleServiceTests
 
         var stubWorkSource = new StubWorkSource();
         var service = new RunLifecycleService(
-            _runStore, _eventStore, _workItemStore, stubWorkSource, noActiveOptions);
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, noActiveOptions);
 
         var candidate = new WorkCandidate
         {

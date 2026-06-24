@@ -1,5 +1,6 @@
 using AgentController.Application.Abstractions;
 using AgentController.Domain;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace AgentController.Application.Services;
@@ -15,8 +16,9 @@ namespace AgentController.Application.Services;
 /// Registered as scoped so it shares the same unit-of-work (DbContext) as the
 /// stores it coordinates.
 /// </summary>
-internal sealed class RunLifecycleService : IRunLifecycleService
+internal sealed partial class RunLifecycleService : IRunLifecycleService
 {
+    private readonly ILogger<RunLifecycleService> _logger;
     private readonly IAgentRunStore _runStore;
     private readonly ILifecycleEventStore _eventStore;
     private readonly IWorkItemStore _workItemStore;
@@ -61,12 +63,14 @@ internal sealed class RunLifecycleService : IRunLifecycleService
     };
 
     public RunLifecycleService(
+        ILogger<RunLifecycleService> logger,
         IAgentRunStore runStore,
         ILifecycleEventStore eventStore,
         IWorkItemStore workItemStore,
         IWorkSource workSource,
         IOptionsMonitor<WorkSourceOptionsView> workSourceOptions)
     {
+        _logger = logger;
         _runStore = runStore;
         _eventStore = eventStore;
         _workItemStore = workItemStore;
@@ -203,120 +207,172 @@ internal sealed class RunLifecycleService : IRunLifecycleService
         RuntimeEvent evt,
         CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(evt.EventId))
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var previousState = default(RunLifecycleState?);
+
+        try
         {
-            throw new InvalidOperationException(
-                "Runtime event is missing required field 'eventId'.");
-        }
-
-        if (string.IsNullOrWhiteSpace(evt.RunId))
-        {
-            throw new InvalidOperationException(
-                "Runtime event is missing required field 'runId'.");
-        }
-
-        if (string.IsNullOrWhiteSpace(evt.EventType))
-        {
-            throw new InvalidOperationException(
-                "Runtime event is missing required field 'eventType'.");
-        }
-
-        if (!Enum.IsDefined(evt.Severity))
-        {
-            throw new InvalidOperationException(
-                $"Unsupported severity value {(int)evt.Severity}. " +
-                $"Valid values: {string.Join(", ", Enum.GetNames<EventSeverity>())}.");
-        }
-
-        // Idempotency check
-        var alreadyExists = await _eventStore.ExistsByEventIdAsync(evt.RunId, evt.EventId, ct);
-        if (alreadyExists)
-        {
-            throw new InvalidOperationException(
-                $"Runtime event '{evt.EventId}' has already been processed for run '{evt.RunId}'.");
-        }
-
-        var run = await _runStore.GetByIdAsync(evt.RunId, ct);
-        if (run is null)
-        {
-            throw new InvalidOperationException(
-                $"Cannot ingest runtime event for run '{evt.RunId}': run not found.");
-        }
-
-        if (IsTerminal(run.Status))
-        {
-            throw new InvalidOperationException(
-                $"Cannot ingest runtime event for run '{evt.RunId}': " +
-                $"run is in terminal state '{run.Status}'.");
-        }
-
-        // Dispatch by event type
-        switch (evt.EventType)
-        {
-            case RuntimeEventTypes.Accepted:
-                await HandleAcceptedAsync(run, evt, ct);
-                break;
-
-            case RuntimeEventTypes.Heartbeat:
-                await HandleHeartbeatAsync(run, evt, ct);
-                break;
-
-            case RuntimeEventTypes.Status:
-                await HandleStatusAsync(run, evt, ct);
-                break;
-
-            case RuntimeEventTypes.Completed:
-                await HandleCompletedAsync(run, evt, ct);
-                break;
-
-            case RuntimeEventTypes.Failed:
-                await HandleFailedAsync(run, evt, ct);
-                break;
-
-            case RuntimeEventTypes.NeedsHuman:
-                await HandleNeedsHumanAsync(run, evt, ct);
-                break;
-
-            case RuntimeEventTypes.Cancelled:
-                await HandleCancelledAsync(run, evt, ct);
-                break;
-
-            // Well-known but not yet implemented transitions
-            case RuntimeEventTypes.BranchCreated:
-            case RuntimeEventTypes.PrCreated:
-                await HandleInformationalEventAsync(run, evt, ct);
-                break;
-
-            default:
+            if (string.IsNullOrWhiteSpace(evt.EventId))
+            {
                 throw new InvalidOperationException(
-                    $"Unsupported runtime event type '{evt.EventType}'.");
+                    "Runtime event is missing required field 'eventId'.");
+            }
+
+            if (string.IsNullOrWhiteSpace(evt.RunId))
+            {
+                throw new InvalidOperationException(
+                    "Runtime event is missing required field 'runId'.");
+            }
+
+            if (string.IsNullOrWhiteSpace(evt.EventType))
+            {
+                throw new InvalidOperationException(
+                    "Runtime event is missing required field 'eventType'.");
+            }
+
+            if (!Enum.IsDefined(evt.Severity))
+            {
+                throw new InvalidOperationException(
+                    $"Unsupported severity value {(int)evt.Severity}. " +
+                    $"Valid values: {string.Join(", ", Enum.GetNames<EventSeverity>())}.");
+            }
+
+            // Idempotency check
+            var alreadyExists = await _eventStore.ExistsByEventIdAsync(evt.RunId, evt.EventId, ct);
+            if (alreadyExists)
+            {
+                throw new InvalidOperationException(
+                    $"Runtime event '{evt.EventId}' has already been processed for run '{evt.RunId}'.");
+            }
+
+            var run = await _runStore.GetByIdAsync(evt.RunId, ct);
+            if (run is null)
+            {
+                throw new InvalidOperationException(
+                    $"Cannot ingest runtime event for run '{evt.RunId}': run not found.");
+            }
+
+            if (IsTerminal(run.Status))
+            {
+                throw new InvalidOperationException(
+                    $"Cannot ingest runtime event for run '{evt.RunId}': " +
+                    $"run is in terminal state '{run.Status}'.");
+            }
+
+            previousState = run.Status;
+
+            // Dispatch by event type
+            switch (evt.EventType)
+            {
+                case RuntimeEventTypes.Accepted:
+                    await HandleAcceptedAsync(run, evt, ct);
+                    break;
+
+                case RuntimeEventTypes.Heartbeat:
+                    await HandleHeartbeatAsync(run, evt, ct);
+                    break;
+
+                case RuntimeEventTypes.Status:
+                    await HandleStatusAsync(run, evt, ct);
+                    break;
+
+                case RuntimeEventTypes.Completed:
+                    await HandleCompletedAsync(run, evt, ct);
+                    break;
+
+                case RuntimeEventTypes.Failed:
+                    await HandleFailedAsync(run, evt, ct);
+                    break;
+
+                case RuntimeEventTypes.NeedsHuman:
+                    await HandleNeedsHumanAsync(run, evt, ct);
+                    break;
+
+                case RuntimeEventTypes.Cancelled:
+                    await HandleCancelledAsync(run, evt, ct);
+                    break;
+
+                // Well-known but not yet implemented transitions
+                case RuntimeEventTypes.BranchCreated:
+                case RuntimeEventTypes.PrCreated:
+                    await HandleInformationalEventAsync(run, evt, ct);
+                    break;
+
+                default:
+                    throw new InvalidOperationException(
+                        $"Unsupported runtime event type '{evt.EventType}'.");
+            }
+
+            // Reload the run to observe the new state after dispatch
+            var updatedRun = await _runStore.GetByIdAsync(evt.RunId, ct);
+            var newState = updatedRun?.Status;
+
+            // Classify the dispatch outcome and log accordingly
+            if (IsNoOpEventType(evt.EventType))
+            {
+                Log.RuntimeEventNoOp(
+                    _logger, evt.EventType, evt.RunId, evt.EventId,
+                    previousState.Value, stopwatch.Elapsed.TotalMilliseconds);
+            }
+            else if (newState is not null && newState != previousState)
+            {
+                Log.RuntimeEventTransition(
+                    _logger, evt.EventType, evt.RunId, evt.EventId,
+                    previousState.Value, newState.Value, stopwatch.Elapsed.TotalMilliseconds);
+            }
+            else
+            {
+                // State didn't change but it wasn't a known no-op (e.g. accepted on AwaitingResult)
+                Log.RuntimeEventNoOp(
+                    _logger, evt.EventType, evt.RunId, evt.EventId,
+                    previousState.Value, stopwatch.Elapsed.TotalMilliseconds);
+            }
+
+            // Record the ingested event in the controller event log
+            await _eventStore.AppendAsync(
+                new LifecycleEvent
+                {
+                    RunId = evt.RunId,
+                    EventId = evt.EventId,
+                    EventType = evt.EventType,
+                    Severity = evt.Severity,
+                    Message = evt.Message,
+                    Payload = evt.Payload,
+                    CreatedAt = evt.OccurredAt,
+                },
+                ct);
+
+            await AppendControllerEventAsync(
+                evt.RunId,
+                ControllerEventTypes.RuntimeEventIngested,
+                $"Ingested runtime event '{evt.EventId}' of type '{evt.EventType}'.",
+                new Dictionary<string, object?>
+                {
+                    ["eventId"] = evt.EventId,
+                    ["eventType"] = evt.EventType,
+                    ["severity"] = evt.Severity.ToString(),
+                },
+                ct);
         }
+        catch (Exception ex)
+        {
+            Log.RuntimeEventDispatchError(
+                _logger, ex, evt.EventType, evt.RunId ?? "(unknown)",
+                evt.EventId ?? "(unknown)", stopwatch.Elapsed.TotalMilliseconds);
+            throw;
+        }
+    }
 
-        // Record the ingested event in the controller event log
-        await _eventStore.AppendAsync(
-            new LifecycleEvent
-            {
-                RunId = evt.RunId,
-                EventId = evt.EventId,
-                EventType = evt.EventType,
-                Severity = evt.Severity,
-                Message = evt.Message,
-                Payload = evt.Payload,
-                CreatedAt = evt.OccurredAt,
-            },
-            ct);
-
-        await AppendControllerEventAsync(
-            evt.RunId,
-            ControllerEventTypes.RuntimeEventIngested,
-            $"Ingested runtime event '{evt.EventId}' of type '{evt.EventType}'.",
-            new Dictionary<string, object?>
-            {
-                ["eventId"] = evt.EventId,
-                ["eventType"] = evt.EventType,
-                ["severity"] = evt.Severity.ToString(),
-            },
-            ct);
+    /// <summary>
+    /// Returns <c>true</c> for event types that never change the run state
+    /// (heartbeat, status, and informational events like branch_created/pr_created).
+    /// </summary>
+    private static bool IsNoOpEventType(string eventType)
+    {
+        return eventType is RuntimeEventTypes.Heartbeat or
+               RuntimeEventTypes.Status or
+               RuntimeEventTypes.BranchCreated or
+               RuntimeEventTypes.PrCreated;
     }
 
     /// <inheritdoc />
@@ -815,5 +871,49 @@ internal sealed class RunLifecycleService : IRunLifecycleService
             return null;
 
         return value.ToString();
+    }
+
+    // ── Source-generated LoggerMessage partials ─────────────────────
+
+    private static partial class Log
+    {
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Runtime event drove state transition — eventType={EventType}, " +
+                      "runId={RunId}, eventId={EventId}, from={FromState}, to={ToState}, " +
+                      "elapsed={ElapsedMilliseconds:F1}ms")]
+        public static partial void RuntimeEventTransition(
+            ILogger logger,
+            string eventType,
+            string runId,
+            string eventId,
+            RunLifecycleState fromState,
+            RunLifecycleState toState,
+            double elapsedMilliseconds);
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "Runtime event no-op — eventType={EventType}, " +
+                      "runId={RunId}, eventId={EventId}, state={State}, " +
+                      "elapsed={ElapsedMilliseconds:F1}ms")]
+        public static partial void RuntimeEventNoOp(
+            ILogger logger,
+            string eventType,
+            string runId,
+            string eventId,
+            RunLifecycleState state,
+            double elapsedMilliseconds);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Runtime event dispatch failed — eventType={EventType}, " +
+                      "runId={RunId}, eventId={EventId}, elapsed={ElapsedMilliseconds:F1}ms")]
+        public static partial void RuntimeEventDispatchError(
+            ILogger logger,
+            Exception ex,
+            string eventType,
+            string runId,
+            string eventId,
+            double elapsedMilliseconds);
     }
 }
