@@ -137,13 +137,16 @@ build_acceptance_json() {
 
     json+="}"
     echo "$json"
+    echo $((index - 1))
 }
 
 if [[ -z "$ACCEPTANCE" ]]; then
     ACCEPTANCE="Verify the feature works as described"
 fi
 
-ACCEPTANCE_JSON="$(build_acceptance_json "$ACCEPTANCE")"
+ACCEPTANCE_OUTPUT="$(build_acceptance_json "$ACCEPTANCE")"
+ACCEPTANCE_JSON="$(echo "$ACCEPTANCE_OUTPUT" | head -1)"
+ACCEPTANCE_COUNT="$(echo "$ACCEPTANCE_OUTPUT" | tail -1)"
 
 # ─── Build the JSON-Patch body ───────────────────────────────────────────────
 
@@ -201,7 +204,7 @@ echo "  Type:             $WORK_ITEM_TYPE"
 echo "  Title:            $TITLE"
 echo "  Tags:             $TAGS"
 echo "  State:            $STATE"
-echo "  Acceptance items: $(( ${#ACCEPTANCE_JSON//[^\"]}/2 ))"
+echo "  Acceptance items: $ACCEPTANCE_COUNT"
 echo ""
 
 RESPONSE="$(curl -s -w "\n%{http_code}" -X POST "$API_URL" \
