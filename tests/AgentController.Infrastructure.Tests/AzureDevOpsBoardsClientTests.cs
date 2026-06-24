@@ -1444,6 +1444,270 @@ public class AzureDevOpsBoardsClientTests
     }
 
     // ──────────────────────────────────────────────
+    // Acceptance criteria parsing
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_AcceptanceCriteriaField_MapsIntoWorkCandidate()
+    {
+        // Work item with a dedicated AcceptanceCriteria field (Agile process template).
+        var batchJson = """
+        {
+          "count": 1,
+          "value": [
+            {
+              "id": 10,
+              "rev": 2,
+              "fields": {
+                "System.Id": 10,
+                "System.Title": "Add login feature",
+                "System.State": "New",
+                "System.Tags": "agent-ready; repo:auth-service",
+                "Microsoft.VSTS.Common.Priority": 1,
+                "Microsoft.VSTS.Common.AcceptanceCriteria": "User can log in with email and password\nUser receives a token on successful login\nFailed login attempts are rate-limited",
+                "System.AreaPath": "Project",
+                "System.IterationPath": "Project\\Sprint",
+                "System.WorkItemType": "User Story"
+              },
+              "url": "https://dev.azure.com/org/_apis/wit/workItems/10"
+            }
+          ]
+        }
+        """;
+
+        var client = CreateClient(
+            (urlContains: "wiql", jsonResponse: WiqlResponse(10)),
+            (urlContains: "workitemsbatch", jsonResponse: batchJson)
+        );
+
+        var results = await client.QueryWorkItemsAsync(
+            new BoardsQueryParameters { Project = Project }, CancellationToken.None);
+
+        Assert.Single(results);
+        var wi = results[0];
+        Assert.NotNull(wi.AcceptanceCriteria);
+        Assert.Equal(3, wi.AcceptanceCriteria.Count);
+        Assert.Equal("User can log in with email and password", wi.AcceptanceCriteria["1"]);
+        Assert.Equal("User receives a token on successful login", wi.AcceptanceCriteria["2"]);
+        Assert.Equal("Failed login attempts are rate-limited", wi.AcceptanceCriteria["3"]);
+    }
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_DescriptionWithMarkdownChecklist_MapsIntoWorkCandidate()
+    {
+        // Work item with markdown checklist items in the description.
+        var batchJson = """
+        {
+          "count": 1,
+          "value": [
+            {
+              "id": 20,
+              "rev": 1,
+              "fields": {
+                "System.Id": 20,
+                "System.Title": "Fix navigation bug",
+                "System.Description": "The navigation bar is broken on mobile.\n\n## Acceptance Criteria\n\n- [ ] Nav collapses on screens < 768px\n- [ ] Hamburger menu opens/closes correctly\n- [x] Active page is highlighted\n- [ ] All links navigate to correct routes",
+                "System.State": "New",
+                "System.Tags": "agent-ready; repo:web-app",
+                "Microsoft.VSTS.Common.Priority": 2,
+                "System.AreaPath": "Project",
+                "System.IterationPath": "Project\\Sprint",
+                "System.WorkItemType": "Bug"
+              },
+              "url": "https://dev.azure.com/org/_apis/wit/workItems/20"
+            }
+          ]
+        }
+        """;
+
+        var client = CreateClient(
+            (urlContains: "wiql", jsonResponse: WiqlResponse(20)),
+            (urlContains: "workitemsbatch", jsonResponse: batchJson)
+        );
+
+        var results = await client.QueryWorkItemsAsync(
+            new BoardsQueryParameters { Project = Project }, CancellationToken.None);
+
+        Assert.Single(results);
+        var wi = results[0];
+        Assert.NotNull(wi.AcceptanceCriteria);
+        Assert.Equal(4, wi.AcceptanceCriteria.Count);
+        Assert.Equal("Nav collapses on screens < 768px", wi.AcceptanceCriteria["1"]);
+        Assert.Equal("Hamburger menu opens/closes correctly", wi.AcceptanceCriteria["2"]);
+        Assert.Equal("Active page is highlighted", wi.AcceptanceCriteria["3"]);
+        Assert.Equal("All links navigate to correct routes", wi.AcceptanceCriteria["4"]);
+    }
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_DescriptionWithHtmlCheckboxes_MapsIntoWorkCandidate()
+    {
+        // ADO rich-text editor renders checklists as HTML.
+        var batchJson = """
+        {
+          "count": 1,
+          "value": [
+            {
+              "id": 30,
+              "rev": 1,
+              "fields": {
+                "System.Id": 30,
+                "System.Title": "Add search feature",
+                "System.Description": "<div>Add a search bar to the header.</div><ul><li><input checked=\"false\" type=\"checkbox\" disabled=\"disabled\"> Search returns results from all categories</li><br><li><input checked=\"true\" type=\"checkbox\" disabled=\"disabled\"> Results are paginated</li><br><li><input checked=\"false\" type=\"checkbox\" disabled=\"disabled\"> Empty results show a message</li></ul>",
+                "System.State": "New",
+                "System.Tags": "agent-ready; repo:web-app",
+                "Microsoft.VSTS.Common.Priority": 1,
+                "System.AreaPath": "Project",
+                "System.IterationPath": "Project\\Sprint",
+                "System.WorkItemType": "User Story"
+              },
+              "url": "https://dev.azure.com/org/_apis/wit/workItems/30"
+            }
+          ]
+        }
+        """;
+
+        var client = CreateClient(
+            (urlContains: "wiql", jsonResponse: WiqlResponse(30)),
+            (urlContains: "workitemsbatch", jsonResponse: batchJson)
+        );
+
+        var results = await client.QueryWorkItemsAsync(
+            new BoardsQueryParameters { Project = Project }, CancellationToken.None);
+
+        Assert.Single(results);
+        var wi = results[0];
+        Assert.NotNull(wi.AcceptanceCriteria);
+        Assert.Equal(3, wi.AcceptanceCriteria.Count);
+        Assert.Equal("Search returns results from all categories", wi.AcceptanceCriteria["1"]);
+        Assert.Equal("Results are paginated", wi.AcceptanceCriteria["2"]);
+        Assert.Equal("Empty results show a message", wi.AcceptanceCriteria["3"]);
+    }
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_NoAcceptanceCriteria_ReturnsNull()
+    {
+        // Work item with no acceptance criteria field and no checklist in description.
+        var batchJson = """
+        {
+          "count": 1,
+          "value": [
+            {
+              "id": 40,
+              "rev": 1,
+              "fields": {
+                "System.Id": 40,
+                "System.Title": "Routine maintenance",
+                "System.Description": "Update dependencies and run tests.",
+                "System.State": "New",
+                "System.Tags": "agent-ready",
+                "Microsoft.VSTS.Common.Priority": 3,
+                "System.AreaPath": "Project",
+                "System.IterationPath": "Project\\Sprint",
+                "System.WorkItemType": "Task"
+              },
+              "url": "https://dev.azure.com/org/_apis/wit/workItems/40"
+            }
+          ]
+        }
+        """;
+
+        var client = CreateClient(
+            (urlContains: "wiql", jsonResponse: WiqlResponse(40)),
+            (urlContains: "workitemsbatch", jsonResponse: batchJson)
+        );
+
+        var results = await client.QueryWorkItemsAsync(
+            new BoardsQueryParameters { Project = Project }, CancellationToken.None);
+
+        Assert.Single(results);
+        Assert.Null(results[0].AcceptanceCriteria);
+    }
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_AcceptanceCriteriaField_TakesPrecedenceOverDescription()
+    {
+        // When both the AC field and description checklist exist, the AC field wins.
+        var batchJson = """
+        {
+          "count": 1,
+          "value": [
+            {
+              "id": 50,
+              "rev": 1,
+              "fields": {
+                "System.Id": 50,
+                "System.Title": "Complex work item",
+                "System.Description": "Some description with - [ ] a checklist item in the description",
+                "System.State": "New",
+                "System.Tags": "agent-ready",
+                "Microsoft.VSTS.Common.Priority": 1,
+                "Microsoft.VSTS.Common.AcceptanceCriteria": "Field criterion one\nField criterion two",
+                "System.AreaPath": "Project",
+                "System.IterationPath": "Project\\Sprint",
+                "System.WorkItemType": "User Story"
+              },
+              "url": "https://dev.azure.com/org/_apis/wit/workItems/50"
+            }
+          ]
+        }
+        """;
+
+        var client = CreateClient(
+            (urlContains: "wiql", jsonResponse: WiqlResponse(50)),
+            (urlContains: "workitemsbatch", jsonResponse: batchJson)
+        );
+
+        var results = await client.QueryWorkItemsAsync(
+            new BoardsQueryParameters { Project = Project }, CancellationToken.None);
+
+        Assert.Single(results);
+        var wi = results[0];
+        Assert.NotNull(wi.AcceptanceCriteria);
+        Assert.Equal(2, wi.AcceptanceCriteria.Count);
+        // Should use the AC field, not the description checklist
+        Assert.Equal("Field criterion one", wi.AcceptanceCriteria["1"]);
+        Assert.Equal("Field criterion two", wi.AcceptanceCriteria["2"]);
+    }
+
+    [Fact]
+    public async Task QueryWorkItemsAsync_EmptyDescription_ReturnsNullAcceptanceCriteria()
+    {
+        // Work item with no description and no AC field.
+        var batchJson = """
+        {
+          "count": 1,
+          "value": [
+            {
+              "id": 60,
+              "rev": 1,
+              "fields": {
+                "System.Id": 60,
+                "System.Title": "Minimal item",
+                "System.State": "New",
+                "System.Tags": "agent-ready",
+                "System.AreaPath": "Project",
+                "System.IterationPath": "Project\\Sprint",
+                "System.WorkItemType": "Task"
+              },
+              "url": "https://dev.azure.com/org/_apis/wit/workItems/60"
+            }
+          ]
+        }
+        """;
+
+        var client = CreateClient(
+            (urlContains: "wiql", jsonResponse: WiqlResponse(60)),
+            (urlContains: "workitemsbatch", jsonResponse: batchJson)
+        );
+
+        var results = await client.QueryWorkItemsAsync(
+            new BoardsQueryParameters { Project = Project }, CancellationToken.None);
+
+        Assert.Single(results);
+        Assert.Null(results[0].AcceptanceCriteria);
+    }
+
+    // ──────────────────────────────────────────────
     // JSON response helpers
     // ──────────────────────────────────────────────
 

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using AgentController.Application;
 using AgentController.Domain;
 using AgentController.Infrastructure.Options;
@@ -38,6 +39,7 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         "System.Tags",
         "System.AssignedTo",
         "Microsoft.VSTS.Common.Priority",
+        "Microsoft.VSTS.Common.AcceptanceCriteria",
         "System.AreaPath",
         "System.IterationPath",
         "System.WorkItemType",
@@ -182,7 +184,9 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                 RepoKey = repoKey,
                 Title = GetStringField(fields, "System.Title") ?? string.Empty,
                 Description = GetStringField(fields, "System.Description"),
-                AcceptanceCriteria = null, // Azure DevOps doesn't have a standard field; extensions may provide it
+                AcceptanceCriteria = ParseAcceptanceCriteria(
+                    fields,
+                    GetStringField(fields, "System.Description")),
                 Priority = GetIntField(fields, "Microsoft.VSTS.Common.Priority"),
                 Status = GetStringField(fields, "System.State"),
                 Tags = tags,
@@ -805,6 +809,127 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         {
             return Array.Empty<RepositoryInfo>();
         }
+    }
+
+    // ─── Acceptance criteria parsing ──────────────────────
+
+    /// <summary>
+    /// Extract acceptance criteria from an ADO work item.
+    ///
+    /// Priority:
+    /// 1. <c>Microsoft.VSTS.Common.AcceptanceCriteria</c> field (Agile process template).
+    /// 2. Markdown checklist items (<c>- [ ]</c> / <c>- [x]</c>) in the description.
+    /// 3. HTML checkbox list items (<c>&lt;input type="checkbox"&gt;</c>) in the description
+    ///    (ADO rich-text editor renders checklists as HTML).
+    ///
+    /// Returns <c>null</c> when no acceptance criteria are found.
+    /// </summary>
+    private static Dictionary<string, string>? ParseAcceptanceCriteria(
+        JsonElement fields,
+        string? description)
+    {
+        // (1) Try the dedicated AcceptanceCriteria field first.
+        //     This field exists in the Agile process template and some others.
+        var acField = GetStringField(fields, "Microsoft.VSTS.Common.AcceptanceCriteria");
+        if (!string.IsNullOrWhiteSpace(acField))
+        {
+            var parsed = ParseAcceptanceCriteriaText(acField);
+            if (parsed is not null)
+                return parsed;
+        }
+
+        // (2) Fall back to parsing checklist items from the description.
+        if (!string.IsNullOrWhiteSpace(description))
+        {
+            var parsed = ParseChecklistItems(description);
+            if (parsed is not null)
+                return parsed;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Parse acceptance criteria from plain text that may contain
+    /// markdown checklist items or newline-separated criteria.
+    /// </summary>
+    private static Dictionary<string, string>? ParseAcceptanceCriteriaText(string text)
+    {
+        // First try markdown checklist pattern
+        var checklistItems = ParseChecklistItems(text);
+        if (checklistItems is not null)
+            return checklistItems;
+
+        // Fall back to newline-separated non-empty lines
+        var lines = text
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(l => !string.IsNullOrWhiteSpace(l))
+            .ToList();
+
+        if (lines.Count == 0)
+            return null;
+
+        var dict = new Dictionary<string, string>();
+        for (int i = 0; i < lines.Count; i++)
+        {
+            dict[(i + 1).ToString(CultureInfo.InvariantCulture)] = lines[i].Trim();
+        }
+
+        return dict;
+    }
+
+    /// <summary>
+    /// Extract checklist items from text that may contain:
+    /// - Markdown checklists: <c>- [ ] text</c> or <c>- [x] text</c>
+    /// - HTML checkbox lists (ADO rich text): <c>&lt;input type="checkbox"&gt; text</c>
+    ///
+    /// Returns <c>null</c> when no checklist items are found.
+    /// </summary>
+    private static Dictionary<string, string>? ParseChecklistItems(string text)
+    {
+        var items = new List<string>();
+
+        // Pattern 1: Markdown checklist items (- [ ] or - [x])
+        // [xX]? makes the checkmark optional; \s*? minimizes whitespace before ].
+        var markdownPattern = new Regex(
+            "^\\s*-\\s*\\[[xX]?\\s*?\\]\\s+(.+)$",
+            RegexOptions.Multiline | RegexOptions.Compiled);
+
+        foreach (Match match in markdownPattern.Matches(text))
+        {
+            items.Add(match.Groups[1].Value.Trim());
+        }
+
+        // Pattern 2: HTML checkbox items (ADO rich text editor output)
+        // Matches: <input type="checkbox" ...> text or <input checked="..." type="checkbox" ...> text
+        if (items.Count == 0)
+        {
+            var htmlPattern = new Regex(
+                "<input[^>]*type=[\"']checkbox[\"'][^>]*>\\s*(.+?)?(?:</li>|<br[^>]*>|$)",
+                RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+            foreach (Match match in htmlPattern.Matches(text))
+            {
+                var criterion = match.Groups[1].Value.Trim();
+                // Strip any remaining HTML tags from the criterion text
+                criterion = Regex.Replace(criterion, "<[^>]+>", string.Empty).Trim();
+                if (!string.IsNullOrWhiteSpace(criterion))
+                {
+                    items.Add(criterion);
+                }
+            }
+        }
+
+        if (items.Count == 0)
+            return null;
+
+        var dict = new Dictionary<string, string>();
+        for (int i = 0; i < items.Count; i++)
+        {
+            dict[(i + 1).ToString(CultureInfo.InvariantCulture)] = items[i];
+        }
+
+        return dict;
     }
 
     // ─── Field helpers ────────────────────────────────────
