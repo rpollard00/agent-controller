@@ -159,6 +159,16 @@ This returns configuration validation results and a test ADO API call.
 
 ### 6.1 Create a Test Story in ADO
 
+**Option A: Use the dev script (recommended)**
+
+```bash
+./dev/create-ado-story.sh --title "Add greeting endpoint"
+```
+
+This creates a User Story pre-tagged with `agent-ready; repo:agent-router` and default acceptance criteria. See [create-ado-story.sh docs](./create-ado-story-script.md) for full options.
+
+**Option B: Create manually in the ADO UI**
+
 1. Navigate to your ADO project board.
 2. Create a new **User Story** (or Bug/Task).
 3. Set state to `New` (or whatever is in `eligibleStates`).

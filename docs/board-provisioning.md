@@ -317,4 +317,5 @@ If a run in `AwaitingResult` state exceeds `agentController.staleTimeoutSeconds`
 - [Architecture Document](./arch.md) — §3.6 (Work Item Eligibility), §8 (Azure DevOps Boards Integration), §10 (Runtime Event Contract).
 - [Runtime Event Contract](./runtime-events.md) — Event types, state transitions, and API contract.
 - [Development Guide](./development.md) — Local setup, running tests, and integration harnesses.
+- [create-ado-story.sh](./create-ado-story-script.md) — Dev script for creating pre-tagged test stories.
 - `appsettings.example.json` — Full configuration reference with examples.
