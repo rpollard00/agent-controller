@@ -217,9 +217,10 @@ if [[ "$DRY_RUN" == true ]]; then
     echo "Body:"
     echo "$BODY" | python3 -m json.tool 2>/dev/null || echo "$BODY"
     echo ""
-    echo "curl -s -X POST \"$API_URL\" \\"
-    echo "  -H \"Authorization: Basic <base64>\" \\"
-    echo "  -H \"Content-Type: application/json-patch+json\" \\"
+    echo "curl -s -X POST \"$API_URL\" \\" 
+    echo "  -H \"Authorization: Basic <base64>\" \\" 
+    echo "  -H \"Content-Type: application/json-patch+json\" \\" 
+    echo "  -H \"Accept: application/json\" \\" 
     echo "  -d '$BODY'"
     exit 0
 fi
@@ -237,6 +238,7 @@ echo ""
 RESPONSE="$(curl -s -w "\n%{http_code}" -X POST "$API_URL" \
     -H "Authorization: Basic ${AUTH_HEADER}" \
     -H "Content-Type: application/json-patch+json" \
+    -H "Accept: application/json" \
     -d "$BODY")"
 
 HTTP_CODE="$(echo "$RESPONSE" | tail -1)"
