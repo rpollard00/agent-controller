@@ -309,6 +309,13 @@ run_preflights() {
                 echo "  Hint: Verify project name '$PROJECT' exists in org '$ORG'." >&2
                 exit 1
                 ;;
+            000)
+                echo "✗ Preflight FAILED: request never completed (HTTP $pf1_code)" >&2
+                echo "  Request-level failure — got no HTTP response from the server." >&2
+                echo "  Hint: Check URL, network connectivity, and curl availability." >&2
+                echo "  URL: $pf1_url" >&2
+                exit 1
+                ;;
             *)
                 echo "✗ Preflight FAILED: unexpected response (HTTP $pf1_code)" >&2
                 echo "  URL: $pf1_url" >&2
@@ -351,6 +358,13 @@ run_preflights() {
                 echo "✗ Preflight FAILED: work item type '$WORK_ITEM_TYPE' not found (HTTP $pf2_code)" >&2
                 echo "  Hint: This type may not be available in the project's process." >&2
                 echo "  Hint: For Agile process, valid types include: User Story, Bug, Task, Epic, Feature." >&2
+                exit 1
+                ;;
+            000)
+                echo "✗ Preflight FAILED: request never completed on type check (HTTP $pf2_code)" >&2
+                echo "  Request-level failure — got no HTTP response from the server." >&2
+                echo "  Hint: Check URL encoding, network connectivity, and curl availability." >&2
+                echo "  URL: $pf2_url" >&2
                 exit 1
                 ;;
             *)
