@@ -175,7 +175,7 @@ public class RuntimeEventApiTests : IAsyncLifetime
     // ── Validation: missing required fields ────────────────────────
 
     [Fact]
-    public async Task PostEvent_MissingEventId_Returns400()
+    public async Task PostEvent_MissingEventId_Returns422()
     {
         var request = new
         {
@@ -184,14 +184,14 @@ public class RuntimeEventApiTests : IAsyncLifetime
         };
 
         var response = await _client.PostAsJsonAsync($"/runs/{_runId}/events", request);
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
 
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Contains("eventId", body.GetProperty("error").GetString());
     }
 
     [Fact]
-    public async Task PostEvent_MissingEventType_Returns400()
+    public async Task PostEvent_MissingEventType_Returns422()
     {
         var request = new
         {
@@ -200,7 +200,7 @@ public class RuntimeEventApiTests : IAsyncLifetime
         };
 
         var response = await _client.PostAsJsonAsync($"/runs/{_runId}/events", request);
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
 
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Contains("eventType", body.GetProperty("error").GetString());
@@ -209,7 +209,7 @@ public class RuntimeEventApiTests : IAsyncLifetime
     // ── Validation: runId mismatch ─────────────────────────────────
 
     [Fact]
-    public async Task PostEvent_RunIdMismatch_Returns400()
+    public async Task PostEvent_RunIdMismatch_Returns422()
     {
         var request = new RuntimeEventRequest
         {
@@ -219,13 +219,12 @@ public class RuntimeEventApiTests : IAsyncLifetime
         };
 
         var response = await _client.PostAsJsonAsync($"/runs/{_runId}/events", request);
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
 
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         var error = body.GetProperty("error").GetString();
         Assert.Contains("mismatch", error, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(_runId, body.GetProperty("routeRunId").GetString());
-        Assert.Equal("run_different", body.GetProperty("bodyRunId").GetString());
+        Assert.Equal(_runId, body.GetProperty("runId").GetString());
     }
 
     [Fact]
@@ -246,7 +245,7 @@ public class RuntimeEventApiTests : IAsyncLifetime
     // ── Validation: unsupported severity ──────────────────────────
 
     [Fact]
-    public async Task PostEvent_OutOfRangeSeverity_Returns400()
+    public async Task PostEvent_OutOfRangeSeverity_Returns422()
     {
         var request = new RuntimeEventRequest
         {
@@ -256,7 +255,7 @@ public class RuntimeEventApiTests : IAsyncLifetime
         };
 
         var response = await _client.PostAsJsonAsync($"/runs/{_runId}/events", request);
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
 
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Contains("severity", body.GetProperty("error").GetString(), StringComparison.OrdinalIgnoreCase);
@@ -284,7 +283,7 @@ public class RuntimeEventApiTests : IAsyncLifetime
     // ── Validation: far-future occurredAt ──────────────────────────
 
     [Fact]
-    public async Task PostEvent_FarFutureOccurredAt_Returns400()
+    public async Task PostEvent_FarFutureOccurredAt_Returns422()
     {
         var request = new RuntimeEventRequest
         {
@@ -294,7 +293,7 @@ public class RuntimeEventApiTests : IAsyncLifetime
         };
 
         var response = await _client.PostAsJsonAsync($"/runs/{_runId}/events", request);
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
 
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Contains("too far in the future", body.GetProperty("error").GetString(), StringComparison.OrdinalIgnoreCase);

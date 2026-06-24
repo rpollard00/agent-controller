@@ -35,6 +35,9 @@ builder.Services.AddAgentControllerRepositories();
 // for consistent run state transitions.
 builder.Services.AddAgentControllerLifecycleService();
 
+// Register CQRS command/query handlers (scoped).
+builder.Services.AddApplicationHandlers();
+
 // ── Provider wiring ───────────────────────────────────────────
 // Register no-op defaults first, then override with real providers
 // based on configuration sections (workSource:provider, sourceControl:provider,
@@ -93,21 +96,9 @@ builder.Services.AddHostedService<PollingWorker>();
 var app = builder.Build();
 
 app.MapHealthEndpoints();
-
-// --- ADO connection diagnostic endpoint ---
-
-app.MapAzureDevOpsDiagnosticEndpoints();
-
-// --- Work item endpoints ---
-
 app.MapWorkItemEndpoints();
-
-// --- Runtime event ingestion endpoint ---
-
-app.MapRuntimeEventEndpoints();
-
-// --- Run list and detail endpoints (Phase 1) ---
-
 app.MapRunEndpoints();
+app.MapRuntimeEventEndpoints();
+app.MapAzureDevOpsDiagnosticEndpoints();
 
 app.Run();

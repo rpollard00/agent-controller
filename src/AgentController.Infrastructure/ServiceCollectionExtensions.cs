@@ -1,4 +1,5 @@
 using AgentController.Application;
+using AgentController.Application.Abstractions;
 using AgentController.Application.Services;
 using AgentController.Infrastructure;
 using AgentController.Infrastructure.Data;
@@ -143,6 +144,7 @@ public static class AgentControllerServiceCollectionExtensions
         this IServiceCollection services)
     {
         services.AddScoped<IRunLifecycleService, RunLifecycleService>();
+        services.AddScoped<IAzureDevOpsDiagnosticConfig, AzureDevOpsDiagnosticConfig>();
 
         return services;
     }
