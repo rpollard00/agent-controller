@@ -184,8 +184,28 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
     }
 
     /// <summary>
+    /// Environment variables applied to every git subprocess to guarantee
+    /// non-interactive execution. Prevents the worker from hanging on
+    /// host-key or credential prompts.
+    /// </summary>
+    internal static readonly Dictionary<string, string?> GitNonInteractiveEnv =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            // Prevent git from opening a terminal for credentials.
+            ["GIT_TERMINAL_PROMPT"] = "0",
+            // Force SSH into batch mode (never prompt) and accept new host keys
+            // from the system known_hosts or accept them on first connect.
+            ["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
+        };
+
+    /// <summary>
     /// Run a git command with the given arguments.
     /// Returns the process exit code and captured stderr.
+    ///
+    /// All git invocations are hardened to never block on interactive prompts:
+    /// - GIT_TERMINAL_PROMPT=0 disables credential prompts
+    /// - GIT_SSH_COMMAND enforces SSH BatchMode and StrictHostKeyChecking
+    /// - stdin is disconnected (/dev/null) so no TTY can be inherited
     /// </summary>
     private static async Task<(int ExitCode, string StdErr)> RunGitAsync(
         IReadOnlyList<string> arguments,
@@ -203,8 +223,18 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
+                // Redirect stdin so the process never inherits the parent TTY.
+                // Combined with GIT_TERMINAL_PROMPT=0 and SSH BatchMode this
+                // guarantees no interactive prompt can ever be shown.
+                RedirectStandardInput = true,
             },
         };
+
+        // Apply non-interactive environment variables to every git invocation.
+        foreach (var (key, value) in GitNonInteractiveEnv)
+        {
+            process.StartInfo.EnvironmentVariables[key] = value;
+        }
 
         foreach (var arg in arguments)
         {
@@ -257,8 +287,16 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
                     RedirectStandardError = true,
                     UseShellExecute = false,
                     CreateNoWindow = true,
+                    // Redirect stdin so the process never inherits the parent TTY.
+                    RedirectStandardInput = true,
                 },
             };
+
+            // Apply non-interactive environment variables.
+            foreach (var (key, value) in GitNonInteractiveEnv)
+            {
+                process.StartInfo.EnvironmentVariables[key] = value;
+            }
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             cts.CancelAfter(TimeSpan.FromSeconds(30));
