@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace AgentController.Infrastructure.Options;
 
 /// <summary>
@@ -9,7 +11,9 @@ public sealed class RepositoryProfileOptions
 {
     /// <summary>
     /// Remote URL from which to clone the repository.
+    /// Must be a non-empty URL (e.g. HTTPS, SSH git@, or local path).
     /// </summary>
+    [Required(AllowEmptyStrings = false)]
     public string CloneUrl { get; init; } = string.Empty;
 
     /// <summary>

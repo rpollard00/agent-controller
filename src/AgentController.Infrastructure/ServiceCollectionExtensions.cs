@@ -83,7 +83,9 @@ public static class AgentControllerServiceCollectionExtensions
 
         services
             .AddOptions<Dictionary<string, RepositoryProfileOptions>>()
-            .Bind(configuration.GetSection(RepositoriesOptions.SectionName));
+            .Bind(configuration.GetSection(RepositoriesOptions.SectionName))
+            .Validate(ValidateRepositoryProfiles, "Repository profile validation failed.")
+            .ValidateOnStart();
 
         services
             .AddOptions<AzureDevOpsBoardsOptions>()
@@ -382,5 +384,30 @@ public static class AgentControllerServiceCollectionExtensions
         services.AddSingleton<IWorkSource, AzureDevOpsBoardsWorkSource>();
 
         return services;
+    }
+
+    /// <summary>
+    /// Validates each repository profile in the configuration dictionary.
+    /// Ensures every profile has a non-empty <c>cloneUrl</c> so that
+    /// misconfigured profiles fail fast at startup instead of silently no-op'ing
+    /// or hanging at clone time.
+    /// </summary>
+    private static bool ValidateRepositoryProfiles(
+        Dictionary<string, RepositoryProfileOptions> profiles)
+    {
+        if (profiles is null || profiles.Count == 0)
+        {
+            return true; // No profiles configured — not an error
+        }
+
+        foreach (var entry in profiles)
+        {
+            if (string.IsNullOrWhiteSpace(entry.Value?.CloneUrl))
+            {
+                return false; // Missing cloneUrl — validation error
+            }
+        }
+
+        return true;
     }
 }
