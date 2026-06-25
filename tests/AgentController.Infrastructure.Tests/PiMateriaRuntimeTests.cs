@@ -492,6 +492,83 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         );
     }
 
+    // ── Regression: Biggs loadout Socket-3 materia divergence ────────
+    //
+    // The "Biggs" loadout (user copy of default:full-auto) had Socket-3 bound
+    // to Interactive-Plani (multiTurn=true) instead of Auto-Plan (multiTurn=false).
+    // This caused agent-controller runs to stall because the controller never
+    // sends /materia continue for multiTurn materias.
+    //
+    // See: docs/investigations/socket-3-materia-divergence.md
+
+    [Fact]
+    public async Task StartAsync_BiggsLoadoutSocket3Divergence_MultiTurnPlannerFailsFast()
+    {
+        // Simulate the exact cast_start from the Biggs loadout where Socket-3
+        // is bound to Interactive-Plani (multiTurn=true) under agent-controller.
+        WriteFakePiScript(_fakePiPath, FakePiVariant.BiggsLoadoutSocket3Divergence);
+
+        await using var harness = await NewHarnessAsync(_fakePiPath);
+        var spec = await BuildSpecAsync(harness, "Biggs loadout Socket-3 divergence regression");
+
+        var runtime = harness.Runtime!;
+        _ = await runtime.StartAsync(spec, CancellationToken.None);
+
+        // The runtime must detect Socket-3's multiTurn agent socket and fail fast
+        // under agent-controller eventing — preventing the silent stall that
+        // occurred in the original incident.
+        await WaitForStateAsync(
+            spec.RunId,
+            s => s == RunLifecycleState.Failed,
+            TimeSpan.FromSeconds(15)
+        );
+
+        var run = await _runStore.GetByIdAsync(spec.RunId, CancellationToken.None);
+        Assert.NotNull(run);
+        Assert.Equal(RunLifecycleState.Failed, run!.Status);
+
+        // Verify the failure names the offending socket and materia.
+        var events = await _eventStore.ListByRunIdAsync(spec.RunId, CancellationToken.None);
+        var failureEvents = events.Where(e => e.EventType == RuntimeEventTypes.Failed).ToList();
+        Assert.NotEmpty(failureEvents);
+        var failureEvent = failureEvents.First();
+
+        // Must mention multiTurn (the root cause).
+        Assert.True(
+            failureEvent.Message != null && failureEvent.Message.Contains("multiTurn", StringComparison.OrdinalIgnoreCase),
+            $"Expected failure to mention 'multiTurn'. Got: {failureEvent.Message}"
+        );
+
+        // Must name Socket-3 (the offending socket from the Biggs loadout).
+        Assert.True(
+            failureEvent.Message != null && failureEvent.Message.Contains("Socket-3", StringComparison.Ordinal),
+            $"Expected failure to name 'Socket-3'. Got: {failureEvent.Message}"
+        );
+
+        // Verify the cast_start artifact was persisted with full socket metadata
+        // so the divergence is diagnosable from the run artifact log.
+        var castStartEvents = events.Where(e =>
+            e.EventType == RuntimeEventTypes.Status &&
+            e.Payload is { } p &&
+            p.ContainsKey("sockets")
+        ).ToList();
+        Assert.NotEmpty(castStartEvents);
+        var castStartPayload = castStartEvents.First().Payload!;
+
+        // The persisted artifact should flag the multiTurn agent socket.
+        Assert.True(
+            castStartPayload.TryGetValue("hasMultiTurnAgentSockets", out var hasMultiTurn) &&
+            hasMultiTurn is true,
+            "Expected cast_start artifact to flag hasMultiTurnAgentSockets=true"
+        );
+
+        // The persisted artifact should contain socket metadata naming Interactive-Plani.
+        Assert.True(
+            castStartPayload.ContainsKey("sockets"),
+            "Expected cast_start artifact to contain socket metadata for diagnosis"
+        );
+    }
+
     // ── Conformance: every contract event type is recognized ─────────
 
     [Fact]
@@ -904,6 +981,7 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         SingleTurnAgentSocket,
         MultiTurnInteractive,
         AllRecognizedTypes,
+        BiggsLoadoutSocket3Divergence,
     }
 
     /// <summary>
@@ -931,6 +1009,7 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
             FakePiVariant.SingleTurnAgentSocket => FakePiScripts.SingleTurnAgentSocket,
             FakePiVariant.MultiTurnInteractive => FakePiScripts.MultiTurnInteractive,
             FakePiVariant.AllRecognizedTypes => FakePiScripts.AllRecognizedTypes,
+            FakePiVariant.BiggsLoadoutSocket3Divergence => FakePiScripts.BiggsLoadoutSocket3Divergence,
             _ => FakePiScripts.HappyPr,
         };
 
@@ -1259,6 +1338,62 @@ def main():
             post_event({'eventId': 'fp-completed', 'eventType': 'runtime.completed', 'occurredAt': '2026-06-23T00:00:01Z', 'severity': 'info', 'message': 'done', 'payload': {'outcome': 'no_changes_needed', 'summary': 'all types recognized'}})
             # Stay alive until the controller shuts us down.
             continue
+        if msg.get('type') == 'abort':
+            return
+
+main()
+""";
+
+        /// <summary>
+        /// Regression test for the Biggs loadout Socket-3 materia divergence incident.
+        ///
+        /// The "Biggs" loadout (user copy of default:full-auto) had Socket-3 bound
+        /// to Interactive-Plani (multiTurn=true) instead of Auto-Plan (multiTurn=false).
+        /// This caused the agent-controller run to stall because the controller never
+        /// sends /materia continue for multiTurn materias.
+        ///
+        /// This test simulates the exact cast_start event shape from the Biggs loadout
+        /// and asserts the runtime fails fast with a clear multiTurn error.
+        ///
+        /// See: docs/investigations/socket-3-materia-divergence.md
+        /// </summary>
+        public const string BiggsLoadoutSocket3Divergence =
+            Header
+            + """
+def main():
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return
+        try:
+            msg = json.loads(line)
+        except Exception:
+            continue
+        if msg.get('type') == 'prompt':
+            send_response({'type': 'response', 'command': 'prompt', 'success': True})
+            # Emit cast_start matching the Biggs loadout's resolved socket configuration.
+            # Socket-3 is bound to Interactive-Plani (multiTurn=true) — the divergence.
+            # The runtime must detect this and fail the run under agent-controller eventing.
+            send_response({
+                'type': 'cast_start',
+                'castId': 'biggs-divergence-regression',
+                'eventing': {'preset': 'agent-controller'},
+                'loadout': 'Biggs',
+                'loadoutId': 'user:rude-copy:15d29129-5e29-4bb2-8562-0356fc3ebc2f',
+                'sockets': [
+                    {'socketName': 'Socket-1', 'type': 'utility', 'materiaName': 'Ignore-Artifacts', 'multiTurn': False},
+                    {'socketName': 'Socket-2', 'type': 'utility', 'materiaName': 'Blackbelt-Bootstrap', 'multiTurn': False},
+                    {'socketName': 'Socket-3', 'type': 'agent', 'materiaName': 'Interactive-Plani', 'multiTurn': True},
+                    {'socketName': 'Socket-4', 'type': 'agent', 'materiaName': 'Builda', 'multiTurn': False},
+                    {'socketName': 'Socket-5', 'type': 'agent', 'materiaName': 'Auto-Evala', 'multiTurn': False},
+                    {'socketName': 'Socket-6', 'type': 'utility', 'materiaName': 'Blackbelt-Maintain', 'multiTurn': False},
+                    {'socketName': 'Socket-7', 'type': 'agent', 'materiaName': 'Narrata', 'multiTurn': False},
+                    {'socketName': 'Socket-8', 'type': 'utility', 'materiaName': 'Commit-Sigil', 'multiTurn': False}
+                ]
+            })
+            # Stay alive so the monitor can detect the multiTurn flag.
+            time.sleep(3)
+            return
         if msg.get('type') == 'abort':
             return
 
