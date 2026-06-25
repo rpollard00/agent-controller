@@ -1,3 +1,4 @@
+using AgentController.Domain;
 using AgentController.Infrastructure;
 using AgentController.Infrastructure.Options;
 using Microsoft.Extensions.Configuration;
@@ -877,6 +878,65 @@ public class OptionsSmokeTests
 
         Assert.True(options.ContainsKey("example-service"));
         Assert.Equal("/home/user/projects/repo", options["example-service"].CloneUrl);
+    }
+
+    [Fact]
+    public void RepositoryProfiles_TransportBindsFromConfig_Ssh()
+    {
+        var config = BuildConfiguration(
+            new Dictionary<string, string?>
+            {
+                ["repositories:example-service:cloneUrl"] = "git@ssh.dev.azure.com:v3/org/project/repo",
+                ["repositories:example-service:transport"] = "Ssh",
+            }
+        );
+
+        var services = new ServiceCollection();
+        services.AddAgentControllerOptions(config);
+
+        var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<IOptions<Dictionary<string, RepositoryProfileOptions>>>().Value;
+
+        Assert.Equal(CloneTransport.Ssh, options["example-service"].Transport);
+    }
+
+    [Fact]
+    public void RepositoryProfiles_TransportBindsFromConfig_HttpsPat()
+    {
+        var config = BuildConfiguration(
+            new Dictionary<string, string?>
+            {
+                ["repositories:example-service:cloneUrl"] = "https://dev.azure.com/org/project/_git/repo",
+                ["repositories:example-service:transport"] = "HttpsPat",
+            }
+        );
+
+        var services = new ServiceCollection();
+        services.AddAgentControllerOptions(config);
+
+        var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<IOptions<Dictionary<string, RepositoryProfileOptions>>>().Value;
+
+        Assert.Equal(CloneTransport.HttpsPat, options["example-service"].Transport);
+    }
+
+    [Fact]
+    public void RepositoryProfiles_TransportDefaultsToUnspecified()
+    {
+        var config = BuildConfiguration(
+            new Dictionary<string, string?>
+            {
+                ["repositories:example-service:cloneUrl"] = "https://example.com/repo",
+            }
+        );
+
+        var services = new ServiceCollection();
+        services.AddAgentControllerOptions(config);
+
+        var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<IOptions<Dictionary<string, RepositoryProfileOptions>>>().Value;
+
+        Assert.Equal(CloneTransport.Unspecified, options["example-service"].Transport);
     }
 
     [Fact]

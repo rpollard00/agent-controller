@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using AgentController.Domain;
 
 namespace AgentController.Infrastructure.Options;
 
@@ -15,6 +16,12 @@ public sealed class RepositoryProfileOptions
     /// </summary>
     [Required(AllowEmptyStrings = false)]
     public string CloneUrl { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Clone transport type: "Ssh", "HttpsPat", or "Local".
+    /// When omitted ("Unspecified"), the provider infers the transport from the clone URL.
+    /// </summary>
+    public CloneTransport Transport { get; init; } = CloneTransport.Unspecified;
 
     /// <summary>
     /// Default branch to check out after cloning.

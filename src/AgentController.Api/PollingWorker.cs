@@ -528,16 +528,19 @@ public sealed partial class PollingWorker : BackgroundService
 
             string? cloneUrl;
             string defaultBranch;
+            var transport = CloneTransport.Unspecified;
 
             if (repoProfile is not null)
             {
                 cloneUrl = repoProfile.CloneUrl;
                 defaultBranch = repoProfile.DefaultBranch;
+                transport = repoProfile.Transport;
             }
             else if (repoConfig.TryGetValue(repoKey, out var configured))
             {
                 cloneUrl = configured.CloneUrl;
                 defaultBranch = configured.DefaultBranch;
+                transport = configured.Transport;
 
                 // Seed the profile into the store for future lookups
                 try
@@ -547,6 +550,7 @@ public sealed partial class PollingWorker : BackgroundService
                         Key = repoKey,
                         CloneUrl = cloneUrl,
                         DefaultBranch = defaultBranch,
+                        Transport = transport,
                         EnvironmentProfile = configured.EnvironmentProfile,
                         RuntimeProfile = configured.RuntimeProfile,
                         AllowedPaths = configured.AllowedPaths,
@@ -562,6 +566,7 @@ public sealed partial class PollingWorker : BackgroundService
                     Key = repoKey,
                     CloneUrl = cloneUrl,
                     DefaultBranch = defaultBranch,
+                    Transport = transport,
                     EnvironmentProfile = configured.EnvironmentProfile,
                     RuntimeProfile = configured.RuntimeProfile,
                     AllowedPaths = configured.AllowedPaths,
@@ -579,6 +584,7 @@ public sealed partial class PollingWorker : BackgroundService
                 RepoKey = repoKey,
                 CloneUrl = cloneUrl,
                 DefaultBranch = defaultBranch,
+                Transport = transport,
                 Profile = repoProfile,
             };
 

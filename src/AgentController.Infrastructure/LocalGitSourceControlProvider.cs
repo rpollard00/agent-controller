@@ -64,6 +64,7 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
         }
 
         var cloneUrl = NormalizeCloneUrl(spec.CloneUrl);
+        var transport = ResolveTransport(spec.Transport, cloneUrl);
         var targetDir = Path.Combine(environment.RootPath, "repo");
 
         // Ensure the parent directory exists (environment provider should have created it,
@@ -74,7 +75,7 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
             Directory.CreateDirectory(parentDir);
         }
 
-        Log.CloningRepository(_logger, spec.RepoKey, cloneUrl, targetDir);
+        Log.CloningRepository(_logger, spec.RepoKey, cloneUrl, targetDir, transport);
 
         // Build git clone arguments.
         // --quiet suppresses progress output.
@@ -102,7 +103,7 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
                 $"(cloneUrl: '{cloneUrl}', exit code: {exitCode}).{errorDetail}");
         }
 
-        Log.CloneCompleted(_logger, spec.RepoKey, targetDir);
+        Log.CloneCompleted(_logger, spec.RepoKey, targetDir, transport);
 
         // Resolve the HEAD commit SHA for auditability.
         var commitSha = await GetHeadCommitShaAsync(targetDir, cancellationToken);
@@ -113,6 +114,7 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
             LocalPath = targetDir,
             Branch = spec.DefaultBranch,
             CommitSha = commitSha,
+            Transport = transport,
             ClonedAt = DateTimeOffset.UtcNow,
         };
     }
@@ -181,6 +183,36 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
         }
 
         return url;
+    }
+
+    /// <summary>
+    /// Resolve the effective transport for a clone operation.
+    /// If the spec provides an explicit transport, use it.
+    /// Otherwise, infer from the clone URL pattern.
+    /// </summary>
+    internal static CloneTransport ResolveTransport(CloneTransport explicitTransport, string cloneUrl)
+    {
+        // Explicit transport takes priority.
+        if (explicitTransport != CloneTransport.Unspecified)
+        {
+            return explicitTransport;
+        }
+
+        // Infer from URL pattern.
+        if (cloneUrl.StartsWith("git@", StringComparison.Ordinal) ||
+            cloneUrl.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase))
+        {
+            return CloneTransport.Ssh;
+        }
+
+        if (cloneUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
+            cloneUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+        {
+            return CloneTransport.HttpsPat;
+        }
+
+        // file:// URLs and bare local paths are local transport.
+        return CloneTransport.Local;
     }
 
     /// <summary>
@@ -320,14 +352,14 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
     {
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Cloning repository '{RepoKey}' from '{CloneUrl}' into '{TargetDir}'.")]
+            Message = "Cloning repository '{RepoKey}' from '{CloneUrl}' into '{TargetDir}' (transport: {Transport}).")]
         public static partial void CloningRepository(
-            ILogger logger, string repoKey, string cloneUrl, string targetDir);
+            ILogger logger, string repoKey, string cloneUrl, string targetDir, CloneTransport transport);
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Repository '{RepoKey}' cloned successfully into '{TargetDir}'.")]
+            Message = "Repository '{RepoKey}' cloned successfully into '{TargetDir}' (transport: {Transport}).")]
         public static partial void CloneCompleted(
-            ILogger logger, string repoKey, string targetDir);
+            ILogger logger, string repoKey, string targetDir, CloneTransport transport);
     }
 }

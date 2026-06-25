@@ -1,3 +1,5 @@
+using AgentController.Domain;
+
 namespace AgentController.Infrastructure.Data.Entities;
 
 /// <summary>
@@ -15,6 +17,9 @@ internal sealed class RepositoryEntity
 
     /// <summary>Default branch to check out after cloning.</summary>
     public string DefaultBranch { get; set; } = "main";
+
+    /// <summary>Clone transport type (SSH, HTTPS+PAT, Local, or inferred).</summary>
+    public CloneTransport Transport { get; set; } = CloneTransport.Unspecified;
 
     /// <summary>Name of the environment profile to use for this repository.</summary>
     public string EnvironmentProfile { get; set; } = string.Empty;

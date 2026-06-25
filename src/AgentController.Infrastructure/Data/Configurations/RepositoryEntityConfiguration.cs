@@ -26,6 +26,9 @@ internal sealed class RepositoryEntityConfiguration : IEntityTypeConfiguration<R
             .IsRequired()
             .HasMaxLength(256);
 
+        builder.Property(x => x.Transport)
+            .IsRequired();
+
         builder.Property(x => x.EnvironmentProfile)
             .IsRequired()
             .HasMaxLength(128);

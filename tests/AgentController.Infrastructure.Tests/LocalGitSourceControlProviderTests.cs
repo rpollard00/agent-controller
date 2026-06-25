@@ -90,7 +90,81 @@ public class LocalGitSourceControlProviderTests : IAsyncLifetime
         };
     }
 
-    // ── NormalizeCloneUrl tests ─────────────────────────────────────
+    // ── ResolveTransport tests ──────────────────────────────────────
+
+    [Fact]
+    public void ResolveTransport_ExplicitSsh_UsesExplicit()
+    {
+        var result = LocalGitSourceControlProvider.ResolveTransport(
+            CloneTransport.Ssh, "https://example.com/repo");
+        Assert.Equal(CloneTransport.Ssh, result);
+    }
+
+    [Fact] 
+    public void ResolveTransport_ExplicitHttpsPat_UsesExplicit()
+    {
+        var result = LocalGitSourceControlProvider.ResolveTransport(
+            CloneTransport.HttpsPat, "git@github.com:user/repo.git");
+        Assert.Equal(CloneTransport.HttpsPat, result);
+    }
+
+    [Fact]
+    public void ResolveTransport_ExplicitLocal_UsesExplicit()
+    {
+        var result = LocalGitSourceControlProvider.ResolveTransport(
+            CloneTransport.Local, "https://example.com/repo");
+        Assert.Equal(CloneTransport.Local, result);
+    }
+
+    [Fact] 
+    public void ResolveTransport_Unspecified_GitAtInfersSsh()
+    {
+        var result = LocalGitSourceControlProvider.ResolveTransport(
+            CloneTransport.Unspecified, "git@ssh.dev.azure.com:v3/org/project/repo");
+        Assert.Equal(CloneTransport.Ssh, result);
+    }
+
+    [Fact]
+    public void ResolveTransport_Unspecified_SshUrlInfersSsh()
+    {
+        var result = LocalGitSourceControlProvider.ResolveTransport(
+            CloneTransport.Unspecified, "ssh://git@github.com/user/repo.git");
+        Assert.Equal(CloneTransport.Ssh, result);
+    }
+
+    [Fact]
+    public void ResolveTransport_Unspecified_HttpsInfersHttpsPat()
+    {
+        var result = LocalGitSourceControlProvider.ResolveTransport(
+            CloneTransport.Unspecified, "https://dev.azure.com/org/project/_git/repo");
+        Assert.Equal(CloneTransport.HttpsPat, result);
+    }
+
+    [Fact]
+    public void ResolveTransport_Unspecified_HttpInfersHttpsPat()
+    {
+        var result = LocalGitSourceControlProvider.ResolveTransport(
+            CloneTransport.Unspecified, "http://example.com/repo");
+        Assert.Equal(CloneTransport.HttpsPat, result);
+    }
+
+    [Fact]
+    public void ResolveTransport_Unspecified_FileUrlInfersLocal()
+    {
+        var result = LocalGitSourceControlProvider.ResolveTransport(
+            CloneTransport.Unspecified, "file:///home/user/repo");
+        Assert.Equal(CloneTransport.Local, result);
+    }
+
+    [Fact]
+    public void ResolveTransport_Unspecified_AbsolutePathInfersLocal()
+    {
+        var result = LocalGitSourceControlProvider.ResolveTransport(
+            CloneTransport.Unspecified, "/home/user/projects/repo");
+        Assert.Equal(CloneTransport.Local, result);
+    }
+
+    // ── NormalizeCloneUrl tests ──────────────────────────────────────
 
     [Fact]
     public void NormalizeCloneUrl_PassthroughRemoteHttps()

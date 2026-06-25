@@ -14,6 +14,9 @@ public sealed record RepositorySpec
     /// <summary>Default branch to check out after cloning.</summary>
     public string DefaultBranch { get; init; } = "main";
 
+    /// <summary>Clone transport type (SSH, HTTPS+PAT, Local, or inferred).</summary>
+    public CloneTransport Transport { get; init; } = CloneTransport.Unspecified;
+
     /// <summary>Optional resolved repository profile from configuration.</summary>
     public RepositoryProfile? Profile { get; init; }
 }
@@ -35,6 +38,9 @@ public sealed record RepositoryCheckout
     /// <summary>HEAD commit SHA at clone time, if available.</summary>
     public string? CommitSha { get; init; }
 
+    /// <summary>Transport type used for the clone (e.g. SSH, HTTPS+PAT, Local).</summary>
+    public CloneTransport Transport { get; init; } = CloneTransport.Unspecified;
+
     /// <summary>When the clone was completed.</summary>
     public DateTimeOffset ClonedAt { get; init; } = DateTimeOffset.UtcNow;
 }
@@ -53,6 +59,9 @@ public sealed record RepositoryProfile
 
     /// <summary>Default branch to check out after cloning.</summary>
     public string DefaultBranch { get; init; } = "main";
+
+    /// <summary>Clone transport type (SSH, HTTPS+PAT, Local, or inferred).</summary>
+    public CloneTransport Transport { get; init; } = CloneTransport.Unspecified;
 
     /// <summary>Name of the environment profile to use for this repository.</summary>
     public string EnvironmentProfile { get; init; } = string.Empty;

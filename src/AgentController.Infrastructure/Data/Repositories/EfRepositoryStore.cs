@@ -43,6 +43,7 @@ internal sealed class EfRepositoryStore : IRepositoryStore
         {
             existing.CloneUrl = profile.CloneUrl;
             existing.DefaultBranch = profile.DefaultBranch;
+            existing.Transport = profile.Transport;
             existing.EnvironmentProfile = profile.EnvironmentProfile;
             existing.RuntimeProfile = profile.RuntimeProfile;
             existing.AllowedPathsJson = SerializeList(profile.AllowedPaths);
@@ -55,6 +56,7 @@ internal sealed class EfRepositoryStore : IRepositoryStore
                 Key = profile.Key,
                 CloneUrl = profile.CloneUrl,
                 DefaultBranch = profile.DefaultBranch,
+                Transport = profile.Transport,
                 EnvironmentProfile = profile.EnvironmentProfile,
                 RuntimeProfile = profile.RuntimeProfile,
                 AllowedPathsJson = SerializeList(profile.AllowedPaths),
@@ -74,6 +76,7 @@ internal sealed class EfRepositoryStore : IRepositoryStore
             Key = entity.Key,
             CloneUrl = entity.CloneUrl,
             DefaultBranch = entity.DefaultBranch,
+            Transport = entity.Transport,
             EnvironmentProfile = entity.EnvironmentProfile,
             RuntimeProfile = entity.RuntimeProfile,
             AllowedPaths = DeserializeList(entity.AllowedPathsJson),

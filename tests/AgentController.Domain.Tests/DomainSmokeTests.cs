@@ -196,11 +196,13 @@ public class DomainSmokeTests
             RepoKey = "example-service",
             CloneUrl = "https://dev.azure.com/org/project/_git/example-service",
             DefaultBranch = "main",
+            Transport = CloneTransport.HttpsPat,
             Profile = new RepositoryProfile
             {
                 Key = "example-service",
                 CloneUrl = "https://dev.azure.com/org/project/_git/example-service",
                 DefaultBranch = "main",
+                Transport = CloneTransport.HttpsPat,
                 EnvironmentProfile = "local-default",
                 RuntimeProfile = "pi-materia-default",
                 AllowedPaths = new List<string> { "src/", "tests/" },
@@ -222,6 +224,7 @@ public class DomainSmokeTests
             LocalPath = "/tmp/runs/run-1/repo",
             Branch = "main",
             CommitSha = "abc123def456",
+            Transport = CloneTransport.HttpsPat,
             ClonedAt = DateTimeOffset.UtcNow,
         };
 
@@ -237,6 +240,7 @@ public class DomainSmokeTests
         {
             Key = "no-restrictions",
             CloneUrl = "https://example.com/repo.git",
+            Transport = CloneTransport.HttpsPat,
             EnvironmentProfile = "local",
             RuntimeProfile = "pi",
         };
