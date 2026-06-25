@@ -300,6 +300,10 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
                 Type = "prompt",
                 Message = $"/materia cast {taskText}",
             };
+
+            // RPC log: request being dispatched to the autonomous Elene runtime
+            Log.RpcPromptSent(_logger, runId, prompt.Id, prompt.Message);
+
             await WriteLineAsync(active.Process.StandardInput, prompt, token);
 
             // Wait for the prompt to be accepted (RPC response).
@@ -674,6 +678,9 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
 
             if (command == "prompt")
             {
+                // RPC log: response received from the autonomous Elene runtime
+                Log.RpcResponseReceived(_logger, runId, command ?? "(null)", success);
+
                 promptTcs.TrySetResult(success);
                 if (!success)
                 {
@@ -1175,5 +1182,22 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "stdout read error for run '{RunId}'.")]
         public static partial void StdoutReadError(ILogger logger, string runId, Exception ex);
+
+        // ── RPC logging surface ─────────────────────────────────
+        // These logs make the RPC calls to the autonomous Elene runtime
+        // visible from agent-router. Request/response at debug, dispatch
+        // failures at error.
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "[rpc] Prompt sent to pi — runId={RunId}, promptId={PromptId}, message='{Message}'.")]
+        public static partial void RpcPromptSent(
+            ILogger logger, string runId, string promptId, string message);
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "[rpc] Response from pi — runId={RunId}, command={Command}, success={Success}.")]
+        public static partial void RpcResponseReceived(
+            ILogger logger, string runId, string command, bool success);
     }
 }

@@ -208,6 +208,9 @@ public sealed partial class PollingWorker : BackgroundService
     /// <see cref="LocalGitSourceControlProvider"/>) are registered, real work
     /// is performed and the run can complete end-to-end without Azure DevOps.
     /// </summary>
+    // CA1859: repoConfig is IReadOnlyDictionary at the call site; narrowing would
+    // require changing the caller. The interface is the correct abstraction here.
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1859:Use concrete types when possible for improved performance", Justification = "Interface parameter from caller.")]
     private async Task ProcessCandidateAsync(
         WorkCandidate candidate,
         IWorkSource workSource,
@@ -264,6 +267,10 @@ public sealed partial class PollingWorker : BackgroundService
 
         Log.CandidateClaimed(_logger, candidate.Id, candidate.Title);
 
+        // Lifecycle log: claim acquired with full context (before run creation)
+        Log.ClaimAcquired(
+            _logger, options.WorkerId, candidate.Id, candidate.Title);
+
         // Create the agent run (starts in Claimed state, records controller.claimed event)
         var run = await lifecycle.CreateRunForWorkItemAsync(
             candidate.Id,
@@ -308,9 +315,19 @@ public sealed partial class PollingWorker : BackgroundService
         if (ct.IsCancellationRequested) return;
 
         // ── 3. RepositoryCloning ───────────────────────────────────
+        // Resolve transport for lifecycle logging before the clone begins.
+        var transportForLog = CloneTransport.Unspecified;
+        if (!string.IsNullOrWhiteSpace(candidate.RepoKey) &&
+            repoConfig.TryGetValue(candidate.RepoKey!, out var transportProfile))
+        {
+            transportForLog = transportProfile.Transport;
+        }
+
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.RepositoryCloning, ct);
         await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.RepositoryCloning,
             "Repository cloning started.", RunLifecycleState.RepositoryCloning, ct);
+
+        Log.CloneStarting(_logger, run.RunId, candidate.RepoKey ?? "(unknown)", transportForLog);
 
         checkout = await CloneRepositoryAsync(
             run, candidate, envHandle, sourceControlProvider, repositoryStore, repoConfig, runStore, lifecycle, ct);
@@ -331,6 +348,9 @@ public sealed partial class PollingWorker : BackgroundService
             $"Repository cloned and ready at '{checkout.LocalPath}'.",
             RunLifecycleState.RepositoryReady, ct);
 
+        Log.WorkspaceReady(
+            _logger, run.RunId, envHandle.RootPath, checkout.LocalPath);
+
         if (ct.IsCancellationRequested) return;
 
         // ── 5. ContextInjected ─────────────────────────────────────
@@ -346,6 +366,10 @@ public sealed partial class PollingWorker : BackgroundService
             "Context injected into run workspace.", RunLifecycleState.ContextInjected, ct);
 
         if (ct.IsCancellationRequested) return;
+
+        // Lifecycle log: RPC dispatch to autonomous runtime starting
+        Log.RpcDispatchStarting(
+            _logger, run.RunId, candidate.Id, agentRuntime.GetType().Name);
 
         // ── 6. AgentStarting ───────────────────────────────────────
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.AgentStarting, ct);
@@ -755,6 +779,7 @@ public sealed partial class PollingWorker : BackgroundService
         catch (Exception ex)
         {
             Log.RuntimeHandoffFailed(_logger, run.RunId, ex);
+            Log.RpcDispatchFailed(_logger, run.RunId, candidate.Id, ex.Message);
 
             // Runtime start failure is non-fatal for the poll cycle.
             // Record the failure so the run can be diagnosed, but don't
@@ -1328,5 +1353,37 @@ public sealed partial class PollingWorker : BackgroundService
             Message = "Failed to destroy workspace for run {RunId} at '{WorkspacePath}'.")]
         public static partial void WorkspaceDestroyFailed(
             ILogger logger, string runId, string workspacePath, Exception ex);
+
+        // ── Lifecycle logging (Claimed → AgentStarting gap) ────────
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "[lifecycle] Claim acquired — workerId={WorkerId}, workItemId={WorkItemId}, title='{Title}'.")]
+        public static partial void ClaimAcquired(
+            ILogger logger, string workerId, string workItemId, string title);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "[lifecycle] Source-control clone starting — runId={RunId}, repoKey={RepoKey}, transport={Transport}.")]
+        public static partial void CloneStarting(
+            ILogger logger, string runId, string repoKey, CloneTransport transport);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "[lifecycle] Workspace ready — runId={RunId}, envRoot='{EnvRoot}', repoPath='{RepoPath}'.")]
+        public static partial void WorkspaceReady(
+            ILogger logger, string runId, string envRoot, string repoPath);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "[lifecycle] RPC dispatch to autonomous runtime starting — runId={RunId}, workItemId={WorkItemId}, runtimeType={RuntimeType}.")]
+        public static partial void RpcDispatchStarting(
+            ILogger logger, string runId, string workItemId, string runtimeType);
+
+        [LoggerMessage(
+            Level = LogLevel.Error,
+            Message = "[lifecycle] RPC dispatch to autonomous runtime FAILED — runId={RunId}, workItemId={WorkItemId}, reason='{Reason}'.")]
+        public static partial void RpcDispatchFailed(
+            ILogger logger, string runId, string workItemId, string reason);
     }
 }
