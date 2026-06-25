@@ -160,13 +160,13 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
         var promptTcs = new TaskCompletionSource<bool>();
         var stdoutDone = new TaskCompletionSource<bool>();
 
-        // Begin draining stdout (RPC responses + diagnostic events) and stderr.
-        _ = ReadStdoutAsync(process, spec.RunId, promptTcs, stdoutDone);
-        _ = ReadStderrAsync(process, spec.RunId);
-
         var active = new ActiveProcess(process, cts, promptTcs, stdoutDone);
         _activeProcesses[spec.RunId] = active;
         _processesByRunId[spec.RunId] = process;
+
+        // Begin draining stdout (RPC responses + diagnostic events) and stderr.
+        _ = ReadStdoutAsync(process, spec.RunId, promptTcs, stdoutDone, active);
+        _ = ReadStderrAsync(process, spec.RunId);
 
         // ── 5. Background monitor: send prompt, await terminal/exit ───
         _ = MonitorAsync(spec.RunId, runtimeRunId, taskText, active, options, cancellationToken);
@@ -350,6 +350,22 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
     /// Poll until the run reaches a terminal state (via webhook) or the pi
     /// process exits. On exit without a terminal state, synthesize a final
     /// event from the exit code.
+    ///
+    /// Additionally monitors for:
+    /// <list type="bullet">
+    ///   <item>MultiTurn agent sockets — parsed from the <c>cast_start</c> stdout
+    ///       event. Under agent-controller eventing the controller never sends
+    ///       <c>/materia continue</c>, so a multiTurn agent socket can never
+    ///       complete and is a guaranteed token sink. Fails the run immediately.
+    ///   </item>
+    ///   <item><c>agent_end</c> on stdout — signals the agent's single-turn cast
+    ///       is complete. Initiates graceful shutdown so the run does not stall
+    ///       waiting for a <c>/materia continue</c> that the agent-controller
+    ///       never sends.</item>
+    ///   <item>Unrecognized stdout event types — under agent-controller eventing
+    ///       this indicates contract drift between pi-materia and the controller.
+    ///       Fails the run to prevent silent token-sinking stalls.</item>
+    /// </list>
     /// </summary>
     private async Task WaitForTerminalOrExitAsync(
         string runId,
@@ -374,6 +390,58 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
                 return;
             }
 
+            // MultiTurn agent sockets detected in cast_start event: the
+            // agent-controller preset is active (autonomous run) and the
+            // controller never sends /materia continue, so a multiTurn agent
+            // socket can never complete and is a guaranteed token sink.
+            // Fail the cast immediately — but ONLY under the agent-controller
+            // preset. Under interactive/CLI eventing a human can drive continue
+            // so multiTurn sockets are valid.
+            if (active.HasMultiTurnAgentSockets &&
+                string.Equals(active.EventingPreset, "agent-controller", StringComparison.Ordinal))
+            {
+                var socketList = string.Join(", ", active.MultiTurnSocketNames);
+                await SynthesizeFailureAsync(
+                    runId,
+                    $"Cast aborted: multiTurn agent socket(s) detected under agent-controller eventing preset: {socketList}. " +
+                    "The agent-controller sends a single /materia cast prompt and never sends /materia continue, " +
+                    "so a multiTurn agent socket can never complete and is a guaranteed token sink. " +
+                    "Use a single-turn agent materia (multiTurn: false or omitted) for autonomous runs.",
+                    ct
+                );
+                await ShutdownProcessAsync(runId, active, ct);
+                return;
+            }
+
+            // agent_end on stdout: the agent's single-turn cast is complete.
+            // The agent-controller never sends /materia continue, so a multiTurn
+            // agent socket would stall here forever. On agent_end, initiate
+            // graceful shutdown — if the webhook hasn't driven the run terminal
+            // yet, the process exit handler will synthesize a final event.
+            if (active.AgentEndReceived)
+            {
+                Log.AgentEndInitiatingShutdown(_logger, runId);
+                await ShutdownProcessAsync(runId, active, ct);
+                return;
+            }
+
+            // Unrecognized stdout event type: contract drift between pi-materia
+            // and the controller. Under agent-controller eventing (always the
+            // case for this runtime), fail the run to prevent silent stalls.
+            if (active.HasUnrecognizedEventType)
+            {
+                var unrecognizedType = active.UnrecognizedEventType ?? "(unknown)";
+                await SynthesizeFailureAsync(
+                    runId,
+                    $"pi emitted an unrecognized stdout event type '{unrecognizedType}'. " +
+                    "This indicates contract drift between pi-materia and the agent-controller. " +
+                    "The cast has been aborted to prevent a silent stall.",
+                    ct
+                );
+                await ShutdownProcessAsync(runId, active, ct);
+                return;
+            }
+
             try
             {
                 await Task.Delay(TimeSpan.FromSeconds(1), ct);
@@ -391,6 +459,10 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
     /// code: exit 0 → no_changes_needed; non-zero → failed. If the run is
     /// already terminal, the webhook already delivered the final event — no
     /// synthesis needed.
+    ///
+    /// Defense-in-depth: if an unrecognized stdout event type was seen during
+    /// the run, fail the run instead of synthesizing a completion. This catches
+    /// contract drift even when the process exits before the monitor detects it.
     /// </summary>
     private async Task HandleProcessExitAsync(string runId, Process process, CancellationToken ct)
     {
@@ -407,6 +479,22 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
             catch
             {
                 // Best-effort drain.
+            }
+
+            // Defense-in-depth: if an unrecognized stdout event type was seen,
+            // fail the run instead of synthesizing a completion from exit code.
+            if (active.HasUnrecognizedEventType && !await IsRunTerminalAsync(runId, ct))
+            {
+                var unrecognizedType = active.UnrecognizedEventType ?? "(unknown)";
+                Log.ContractDriftOnExit(_logger, runId, unrecognizedType);
+                await SynthesizeFailureAsync(
+                    runId,
+                    $"pi emitted an unrecognized stdout event type '{unrecognizedType}' before exiting. " +
+                    "This indicates contract drift between pi-materia and the agent-controller. " +
+                    "The cast has been aborted to prevent a silent stall.",
+                    ct
+                );
+                return;
             }
         }
 
@@ -609,7 +697,8 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
         Process process,
         string runId,
         TaskCompletionSource<bool> promptTcs,
-        TaskCompletionSource<bool> stdoutDone
+        TaskCompletionSource<bool> stdoutDone,
+        ActiveProcess active
     )
     {
         try
@@ -633,7 +722,7 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
                 }
 
                 Log.PiStdoutLine(_logger, runId, line);
-                InterpretStdoutLine(line, runId, promptTcs);
+                await InterpretStdoutLine(line, runId, promptTcs, active);
             }
         }
         finally
@@ -643,15 +732,31 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
     }
 
     /// <summary>
-    /// Parse one RPC stdout line. We only act on the <c>prompt</c> response
-    /// (to signal acceptance) and surface <c>extension_error</c> lines; we do
-    /// not derive runtime lifecycle events from stdout — that is the webhook's
-    /// responsibility.
+    /// Parse one RPC stdout line. Recognized types:
+    /// <list type="bullet">
+    ///   <item><c>response</c> — RPC command response (signals prompt acceptance).</item>
+    ///   <item><c>extension_error</c> — pi-materia extension error (logged as warning).</item>
+    ///   <item><c>cast_start</c> — pi-materia cast initialization event containing
+    ///       resolved socket metadata. Under agent-controller eventing, the runtime
+    ///       inspects this for multiTurn agent sockets and fails the cast fast if
+    ///       any are found (the controller never sends <c>/materia continue</c>).
+    ///       The full socket metadata is persisted as a lifecycle artifact for
+    ///       diagnosability.</item>
+    ///   <item><c>agent_end</c> — pi-materia agent socket completed its single turn.
+    ///       Under agent-controller eventing this signals the cast is done; the
+    ///       monitor will initiate graceful shutdown so the run does not stall
+    ///       waiting for a <c>/materia continue</c> that the controller never sends.</item>
+    /// </list>
+    /// Unrecognized types are tracked for fail-closed handling under agent-controller
+    /// eventing (contract drift defense). We do not derive runtime lifecycle events
+    /// from stdout — that is the webhook's responsibility.
     /// </summary>
-    private void InterpretStdoutLine(
+    private async Task InterpretStdoutLine(
         string line,
         string runId,
-        TaskCompletionSource<bool> promptTcs
+        TaskCompletionSource<bool> promptTcs,
+        ActiveProcess? active = null,
+        CancellationToken ct = default
     )
     {
         if (string.IsNullOrWhiteSpace(line))
@@ -703,9 +808,203 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
             return;
         }
 
+        if (type == "agent_end")
+        {
+            // pi-materia agent socket completed its turn. Under agent-controller
+            // eventing the controller never sends /materia continue, so this
+            // signals the cast is done. Signal the monitor to shut down.
+            Log.PiAgentEndReceived(_logger, runId);
+            active?.SetAgentEndReceived();
+            return;
+        }
+
+        if (type == "cast_start")
+        {
+            // pi-materia cast initialization event containing resolved socket
+            // metadata. Under agent-controller eventing, inspect for multiTurn
+            // agent sockets and fail the cast fast if any are found.
+            // Also persist the full socket metadata as a lifecycle artifact.
+
+            // Extract the eventing preset from cast_start.
+            var eventingPreset = doc.RootElement.TryGetProperty("eventing", out var eventingEl) &&
+                                 eventingEl.TryGetProperty("preset", out var presetEl)
+                ? presetEl.GetString()
+                : null;
+
+            // Extract all socket metadata for artifact enrichment.
+            var socketMetadata = ExtractAllSocketMetadata(doc);
+            if (socketMetadata.Count > 0 && active is not null)
+            {
+                active.SetSocketMetadata(socketMetadata);
+            }
+
+            var multiTurnSockets = ExtractMultiTurnAgentSockets(doc);
+            if (multiTurnSockets.Count > 0 && active is not null)
+            {
+                active.SetMultiTurnAgentSockets(multiTurnSockets, eventingPreset);
+                Log.MultiTurnAgentSocketsDetected(
+                    _logger,
+                    runId,
+                    string.Join(", ", multiTurnSockets)
+                );
+            }
+            else if (eventingPreset is not null && active is not null)
+            {
+                // Even without multiTurn sockets, store the preset for correctness.
+                active.EventingPreset = eventingPreset;
+            }
+
+            // Persist the cast_start event as a lifecycle artifact with enriched
+            // socket metadata (names + multiTurn flags) for diagnosability.
+            await IngestCastStartArtifactAsync(runId, doc, socketMetadata, ct);
+            return;
+        }
+
         // Unrecognized type — warn with truncated raw line for diagnosis.
+        // Under agent-controller eventing, track for fail-closed handling.
         var truncated = line.Length > 512 ? line[..512] + "..." : line;
         Log.PiStdoutUnknownType(_logger, runId, type, truncated);
+        active?.SetUnrecognizedType(type);
+    }
+
+    /// <summary>
+    /// Extract names of agent sockets with <c>multiTurn: true</c> from a
+    /// <c>cast_start</c> stdout event. The expected JSON shape:
+    /// <code>{ "type": "cast_start", "sockets": [ { "socketName": "Socket-4", "type": "agent", "multiTurn": true }, ... ] }</code>
+    /// Returns an empty list if the sockets array is missing, malformed, or
+    /// contains no multiTurn agent sockets.
+    /// </summary>
+    private static List<string> ExtractMultiTurnAgentSockets(JsonDocument doc)
+    {
+        var result = new List<string>();
+
+        if (!doc.RootElement.TryGetProperty("sockets", out var socketsEl))
+        {
+            return result;
+        }
+
+        if (socketsEl.ValueKind != JsonValueKind.Array)
+        {
+            return result;
+        }
+
+        foreach (var socket in socketsEl.EnumerateArray())
+        {
+            // Only agent-type sockets matter for the multiTurn fail-fast check.
+            if (socket.TryGetProperty("type", out var socketTypeEl)
+                && socketTypeEl.GetString() == "agent")
+            {
+                if (socket.TryGetProperty("multiTurn", out var multiTurnEl)
+                    && multiTurnEl.GetBoolean())
+                {
+                    var name = socket.TryGetProperty("socketName", out var nameEl)
+                        ? nameEl.GetString()
+                        : "(unnamed)";
+                    if (!string.IsNullOrEmpty(name))
+                    {
+                        result.Add(name);
+                    }
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Extract all socket metadata from a <c>cast_start</c> stdout event.
+    /// Returns a list of <see cref="ActiveProcess.SocketMetadata"/> for every
+    /// socket in the pipeline, regardless of type or multiTurn flag.
+    /// </summary>
+    private static List<ActiveProcess.SocketMetadataEntry> ExtractAllSocketMetadata(JsonDocument doc)
+    {
+        var result = new List<ActiveProcess.SocketMetadataEntry>();
+
+        if (!doc.RootElement.TryGetProperty("sockets", out var socketsEl))
+        {
+            return result;
+        }
+
+        if (socketsEl.ValueKind != JsonValueKind.Array)
+        {
+            return result;
+        }
+
+        foreach (var socket in socketsEl.EnumerateArray())
+        {
+            result.Add(new ActiveProcess.SocketMetadataEntry
+            {
+                SocketName = socket.TryGetProperty("socketName", out var nameEl)
+                    ? nameEl.GetString()
+                    : null,
+                Type = socket.TryGetProperty("type", out var typeEl)
+                    ? typeEl.GetString()
+                    : null,
+                MateriaName = socket.TryGetProperty("materiaName", out var materiaEl)
+                    ? materiaEl.GetString()
+                    : null,
+                MultiTurn = socket.TryGetProperty("multiTurn", out var mtEl)
+                    && mtEl.GetBoolean(),
+            });
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Ingest the <c>cast_start</c> event as a lifecycle artifact with enriched
+    /// socket metadata. This persists the resolved per-socket materia names
+    /// along with their multiTurn flags so future misconfigurations are
+    /// diagnosable at a glance from the run artifact log.
+    /// </summary>
+    private async Task IngestCastStartArtifactAsync(
+        string runId,
+        JsonDocument castStartDoc,
+        List<ActiveProcess.SocketMetadataEntry> socketMetadata,
+        CancellationToken ct
+    )
+    {
+        var socketArray = new List<Dictionary<string, object?>>();
+        foreach (var sm in socketMetadata)
+        {
+            socketArray.Add(new Dictionary<string, object?>
+            {
+                ["socketName"] = sm.SocketName,
+                ["type"] = sm.Type,
+                ["materiaName"] = sm.MateriaName,
+                ["multiTurn"] = sm.MultiTurn,
+            });
+        }
+
+        var castId = castStartDoc.RootElement.TryGetProperty("castId", out var castIdEl)
+            ? castIdEl.GetString()
+            : null;
+
+        await TryIngestAsync(
+            runId,
+            new RuntimeEvent
+            {
+                EventId = $"pi-cast-start-{runId}-{Guid.NewGuid():N}",
+                RunId = runId,
+                // Use runtime.status as the event type — it is an informational
+                // no-op in the lifecycle service (does not drive state transitions)
+                // but still persists the event and payload as a run artifact.
+                EventType = RuntimeEventTypes.Status,
+                OccurredAt = DateTimeOffset.UtcNow,
+                Severity = EventSeverity.Info,
+                Message = $"Cast started{(!string.IsNullOrEmpty(castId) ? $" (castId={castId})" : "")} with {socketMetadata.Count} socket(s).",
+                Payload = new Dictionary<string, object?>
+                {
+                    ["castId"] = castId,
+                    ["sockets"] = socketArray,
+                    ["socketCount"] = socketMetadata.Count,
+                    ["hasMultiTurnAgentSockets"] = socketMetadata.Any(
+                        s => s.Type == "agent" && s.MultiTurn
+                    ),
+                },
+            },
+            ct
+        );
     }
 
     private async Task ReadStderrAsync(Process process, string runId)
@@ -965,6 +1264,87 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
         public CancellationTokenSource Cts { get; }
         public TaskCompletionSource<bool> PromptAccepted { get; }
         public TaskCompletionSource<bool> StdoutDone { get; }
+
+        /// <summary>
+        /// Signaled when pi emits <c>agent_end</c> on stdout, indicating the
+        /// agent's single-turn cast is complete. The monitor uses this to
+        /// initiate graceful shutdown so the run does not stall waiting for
+        /// a <c>/materia continue</c> that the agent-controller never sends.
+        /// </summary>
+        public bool AgentEndReceived { get; set; }
+
+        /// <summary>
+        /// Set when an unrecognized stdout event type is encountered under
+        /// agent-controller eventing. The monitor checks this flag and
+        /// fails the run to prevent silent stalls from contract drift.
+        /// </summary>
+        public bool HasUnrecognizedEventType { get; set; }
+
+        /// <summary>The first unrecognized event type string, for diagnostics.</summary>
+        public string? UnrecognizedEventType { get; set; }
+
+        /// <summary>
+        /// Eventing preset extracted from the <c>cast_start</c> stdout event
+        /// (e.g. "agent-controller", "interactive"). Used to determine whether
+        /// the multiTurn-agent-socket fail-fast guard applies.
+        /// </summary>
+        public string? EventingPreset { get; set; }
+
+        /// <summary>
+        /// Set when a <c>cast_start</c> stdout event reveals one or more agent
+        /// sockets with <c>multiTurn: true</c> in the resolved pipeline. Under
+        /// agent-controller eventing this is a fatal misconfiguration: the
+        /// controller never sends <c>/materia continue</c> so a multiTurn agent
+        /// socket can never complete and is a guaranteed token sink.
+        /// </summary>
+        public bool HasMultiTurnAgentSockets { get; set; }
+
+        /// <summary>
+        /// Names of agent sockets that have <c>multiTurn: true</c>, captured from
+        /// the <c>cast_start</c> stdout event. Used in failure diagnostics to name
+        /// the offending socket(s).
+        /// </summary>
+        public string[] MultiTurnSocketNames { get; set; } = Array.Empty<string>();
+
+        /// <summary>
+        /// Full socket metadata captured from the <c>cast_start</c> stdout event.
+        /// Persisted as a run artifact for diagnosability.
+        /// </summary>
+        public SocketMetadataEntry[] SocketMetadata { get; set; } = Array.Empty<SocketMetadataEntry>();
+
+        public void SetAgentEndReceived() => AgentEndReceived = true;
+
+        public void SetUnrecognizedType(string type)
+        {
+            HasUnrecognizedEventType = true;
+            if (UnrecognizedEventType is null)
+            {
+                UnrecognizedEventType = type;
+            }
+        }
+
+        public void SetMultiTurnAgentSockets(IEnumerable<string> socketNames, string? eventingPreset)
+        {
+            HasMultiTurnAgentSockets = true;
+            MultiTurnSocketNames = socketNames.ToArray();
+            EventingPreset = eventingPreset;
+        }
+
+        public void SetSocketMetadata(IEnumerable<SocketMetadataEntry> metadata)
+        {
+            SocketMetadata = metadata.ToArray();
+        }
+
+        /// <summary>
+        /// Per-socket metadata extracted from a <c>cast_start</c> event.
+        /// </summary>
+        public sealed class SocketMetadataEntry
+        {
+            public string? SocketName { get; init; }
+            public string? Type { get; init; }
+            public string? MateriaName { get; init; }
+            public bool MultiTurn { get; init; }
+        }
     }
 
     private sealed record RpcPrompt
@@ -1199,5 +1579,28 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
             Message = "[rpc] Response from pi — runId={RunId}, command={Command}, success={Success}.")]
         public static partial void RpcResponseReceived(
             ILogger logger, string runId, string command, bool success);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "[pi stdout] agent_end received for run '{RunId}'; agent single-turn cast is complete.")]
+        public static partial void PiAgentEndReceived(ILogger logger, string runId);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "agent_end received for run '{RunId}'; initiating graceful shutdown of pi process.")]
+        public static partial void AgentEndInitiatingShutdown(ILogger logger, string runId);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Contract drift detected on process exit for run '{RunId}': unrecognized type '{UnrecognizedType}'. Failing the run.")]
+        public static partial void ContractDriftOnExit(
+            ILogger logger, string runId, string unrecognizedType);
+
+        [LoggerMessage(
+            Level = LogLevel.Error,
+            Message = "multiTurn agent socket(s) detected in cast_start for run '{RunId}': {MultiTurnSocketNames}. " +
+                      "The agent-controller eventing preset is active and cannot drive multiTurn agent sockets.")]
+        public static partial void MultiTurnAgentSocketsDetected(
+            ILogger logger, string runId, string multiTurnSocketNames);
     }
 }

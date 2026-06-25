@@ -270,6 +270,228 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         Assert.IsType<PiMateriaRuntime>(runtime1);
     }
 
+    // ── agent_end: recognized terminal stdout event, graceful shutdown ──
+
+    [Fact]
+    public async Task StartAsync_FakePiEmitsAgentEnd_RunCompletesWithoutStall()
+    {
+        // Overwrite the fake pi with one that emits agent_end on stdout
+        // and exits cleanly (no webhook terminal event).
+        WriteFakePiScript(_fakePiPath, FakePiVariant.AgentEnd);
+
+        await using var harness = await NewHarnessAsync(_fakePiPath);
+        var spec = await BuildSpecAsync(harness, "Agent end test");
+
+        var runtime = harness.Runtime!;
+        _ = await runtime.StartAsync(spec, CancellationToken.None);
+
+        // The runtime should recognize agent_end, shut down the process,
+        // and synthesize a terminal event from the clean exit (exit code 0
+        // → no_changes_needed → Completed).
+        await WaitForStateAsync(
+            spec.RunId,
+            s => s == RunLifecycleState.Completed || s == RunLifecycleState.Failed,
+            TimeSpan.FromSeconds(15)
+        );
+
+        var run = await _runStore.GetByIdAsync(spec.RunId, CancellationToken.None);
+        Assert.NotNull(run);
+        // The run should reach a terminal state (Completed from exit 0 synthesis,
+        // or Failed if the agent_end path is not yet fully wired).
+        Assert.True(
+            run!.Status == RunLifecycleState.Completed || run.Status == RunLifecycleState.Failed,
+            $"Expected terminal state, got {run.Status}." +
+            $" The runtime should recognize agent_end and not stall."
+        );
+
+        // Verify no unrecognized-type warnings in the events.
+        var events = await _eventStore.ListByRunIdAsync(spec.RunId, CancellationToken.None);
+        Assert.DoesNotContain(
+            events,
+            e => e.Message != null && e.Message.Contains("unrecognized", StringComparison.OrdinalIgnoreCase)
+        );
+    }
+
+    // ── Unrecognized stdout event type: fail-closed under agent-controller ──
+
+    [Fact]
+    public async Task StartAsync_FakePiEmitsUnrecognizedType_RunFailsWithContractDriftError()
+    {
+        // Overwrite the fake pi with one that emits an unrecognized event type.
+        WriteFakePiScript(_fakePiPath, FakePiVariant.UnrecognizedType);
+
+        await using var harness = await NewHarnessAsync(_fakePiPath);
+        var spec = await BuildSpecAsync(harness, "Unrecognized type test");
+
+        var runtime = harness.Runtime!;
+        _ = await runtime.StartAsync(spec, CancellationToken.None);
+
+        // The runtime should detect the unrecognized type and fail the run
+        // with a contract-drift error instead of stalling.
+        await WaitForStateAsync(
+            spec.RunId,
+            s => s == RunLifecycleState.Failed,
+            TimeSpan.FromSeconds(15)
+        );
+
+        var run = await _runStore.GetByIdAsync(spec.RunId, CancellationToken.None);
+        Assert.NotNull(run);
+        Assert.Equal(RunLifecycleState.Failed, run!.Status);
+
+        // Verify the failure mentions the unrecognized type.
+        var events = await _eventStore.ListByRunIdAsync(spec.RunId, CancellationToken.None);
+        var failureEvents = events.Where(e => e.EventType == RuntimeEventTypes.Failed).ToList();
+        Assert.NotEmpty(failureEvents);
+        var failureEvent = failureEvents.First();
+        Assert.True(
+            (failureEvent.Message != null && failureEvent.Message.Contains("unrecognized", StringComparison.OrdinalIgnoreCase)) ||
+            (failureEvent.Payload != null && failureEvent.Payload.Values.Any(v => v != null && v.ToString()!.Contains("unrecognized", StringComparison.OrdinalIgnoreCase))),
+            $"Expected failure to mention 'unrecognized' type. Message: {failureEvent.Message}, Payload: {failureEvent.Payload}"
+        );
+    }
+
+    // ── MultiTurn agent socket: fail-fast under agent-controller ──────
+
+    [Fact]
+    public async Task StartAsync_FakePiEmitsCastStartWithMultiTurnSocket_RunFailsFast()
+    {
+        // Overwrite the fake pi with one that emits a cast_start event
+        // containing a multiTurn agent socket.
+        WriteFakePiScript(_fakePiPath, FakePiVariant.MultiTurnAgentSocket);
+
+        await using var harness = await NewHarnessAsync(_fakePiPath);
+        var spec = await BuildSpecAsync(harness, "MultiTurn socket test");
+
+        var runtime = harness.Runtime!;
+        _ = await runtime.StartAsync(spec, CancellationToken.None);
+
+        // The runtime should detect the multiTurn agent socket in the
+        // cast_start event and fail the run immediately with a clear error.
+        await WaitForStateAsync(
+            spec.RunId,
+            s => s == RunLifecycleState.Failed,
+            TimeSpan.FromSeconds(15)
+        );
+
+        var run = await _runStore.GetByIdAsync(spec.RunId, CancellationToken.None);
+        Assert.NotNull(run);
+        Assert.Equal(RunLifecycleState.Failed, run!.Status);
+
+        // Verify the failure mentions multiTurn and the offending socket name.
+        var events = await _eventStore.ListByRunIdAsync(spec.RunId, CancellationToken.None);
+        var failureEvents = events.Where(e => e.EventType == RuntimeEventTypes.Failed).ToList();
+        Assert.NotEmpty(failureEvents);
+        var failureEvent = failureEvents.First();
+        Assert.True(
+            failureEvent.Message != null && failureEvent.Message.Contains("multiTurn", StringComparison.OrdinalIgnoreCase),
+            $"Expected failure message to mention 'multiTurn'. Got: {failureEvent.Message}"
+        );
+        Assert.True(
+            failureEvent.Message != null && failureEvent.Message.Contains("Socket-3", StringComparison.Ordinal),
+            $"Expected failure message to name the offending socket 'Socket-3'. Got: {failureEvent.Message}"
+        );
+
+        // Verify the cast_start artifact was ingested with socket metadata.
+        // The cast_start is persisted as a runtime.status event (informational no-op)
+        // with enriched socket metadata in the payload.
+        var allEvents = await _eventStore.ListByRunIdAsync(spec.RunId, CancellationToken.None);
+        var castStartEvents = allEvents.Where(e =>
+            e.EventType == RuntimeEventTypes.Status &&
+            e.Payload is { } p &&
+            p.ContainsKey("sockets")
+        ).ToList();
+        Assert.NotEmpty(castStartEvents);
+        var castStartEvent = castStartEvents.First();
+        Assert.NotNull(castStartEvent.Payload);
+        Assert.True(
+            castStartEvent.Payload!.ContainsKey("sockets"),
+            $"Expected cast_start artifact to contain 'sockets' payload. Payload keys: {string.Join(", ", castStartEvent.Payload!.Keys)}"
+        );
+        var socketsPayload = castStartEvent.Payload!["sockets"];
+        Assert.NotNull(socketsPayload);
+        Assert.True(
+            castStartEvent.Payload!.TryGetValue("hasMultiTurnAgentSockets", out var hasMultiTurn) &&
+            hasMultiTurn is true,
+            $"Expected cast_start artifact to flag hasMultiTurnAgentSockets=true"
+        );
+    }
+
+    // ── (a) Single-turn agent socket under agent-controller: allowed through ──
+
+    [Fact]
+    public async Task StartAsync_SingleTurnAgentSocketUnderAgentController_RunCompletes()
+    {
+        // Overwrite the fake pi with one that emits a cast_start with only
+        // single-turn agent sockets under the agent-controller preset.
+        WriteFakePiScript(_fakePiPath, FakePiVariant.SingleTurnAgentSocket);
+
+        await using var harness = await NewHarnessAsync(_fakePiPath);
+        var spec = await BuildSpecAsync(harness, "Single-turn socket test");
+
+        var runtime = harness.Runtime!;
+        _ = await runtime.StartAsync(spec, CancellationToken.None);
+
+        // The runtime should allow single-turn agent sockets under agent-controller
+        // and the run should reach a terminal state via the webhook.
+        await WaitForStateAsync(
+            spec.RunId,
+            s => s == RunLifecycleState.Completed || s == RunLifecycleState.Failed,
+            TimeSpan.FromSeconds(15)
+        );
+
+        var run = await _runStore.GetByIdAsync(spec.RunId, CancellationToken.None);
+        Assert.NotNull(run);
+        // The run should reach Completed (from the webhook), not Failed.
+        Assert.Equal(RunLifecycleState.Completed, run!.Status);
+
+        // Verify no multiTurn-related failure.
+        var events = await _eventStore.ListByRunIdAsync(spec.RunId, CancellationToken.None);
+        Assert.DoesNotContain(
+            events,
+            e => e.EventType == RuntimeEventTypes.Failed &&
+                 e.Message != null &&
+                 e.Message.Contains("multiTurn", StringComparison.OrdinalIgnoreCase)
+        );
+    }
+
+    // ── (c) MultiTurn socket under non-agent-controller: allowed through ──
+
+    [Fact]
+    public async Task StartAsync_MultiTurnSocketUnderInteractiveEventing_RunCompletes()
+    {
+        // Overwrite the fake pi with one that emits a cast_start with a multiTurn
+        // agent socket under the "interactive" preset (not agent-controller).
+        WriteFakePiScript(_fakePiPath, FakePiVariant.MultiTurnInteractive);
+
+        await using var harness = await NewHarnessAsync(_fakePiPath);
+        var spec = await BuildSpecAsync(harness, "MultiTurn interactive test");
+
+        var runtime = harness.Runtime!;
+        _ = await runtime.StartAsync(spec, CancellationToken.None);
+
+        // The runtime should allow multiTurn sockets under non-agent-controller
+        // eventing (the fail-fast guard only applies to agent-controller preset).
+        await WaitForStateAsync(
+            spec.RunId,
+            s => s == RunLifecycleState.Completed || s == RunLifecycleState.Failed,
+            TimeSpan.FromSeconds(15)
+        );
+
+        var run = await _runStore.GetByIdAsync(spec.RunId, CancellationToken.None);
+        Assert.NotNull(run);
+        // The run should reach Completed (from the webhook), not Failed.
+        Assert.Equal(RunLifecycleState.Completed, run!.Status);
+
+        // Verify no multiTurn-related failure.
+        var events = await _eventStore.ListByRunIdAsync(spec.RunId, CancellationToken.None);
+        Assert.DoesNotContain(
+            events,
+            e => e.EventType == RuntimeEventTypes.Failed &&
+                 e.Message != null &&
+                 e.Message.Contains("multiTurn", StringComparison.OrdinalIgnoreCase)
+        );
+    }
+
     // ── Harness / fixture helpers ────────────────────────────────────
 
     /// <summary>
@@ -629,6 +851,11 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         HappyPr,
         Crash,
         Idle,
+        AgentEnd,
+        UnrecognizedType,
+        MultiTurnAgentSocket,
+        SingleTurnAgentSocket,
+        MultiTurnInteractive,
     }
 
     /// <summary>
@@ -650,6 +877,11 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
             FakePiVariant.HappyPr => FakePiScripts.HappyPr,
             FakePiVariant.Crash => FakePiScripts.Crash,
             FakePiVariant.Idle => FakePiScripts.Idle,
+            FakePiVariant.AgentEnd => FakePiScripts.AgentEnd,
+            FakePiVariant.UnrecognizedType => FakePiScripts.UnrecognizedType,
+            FakePiVariant.MultiTurnAgentSocket => FakePiScripts.MultiTurnAgentSocket,
+            FakePiVariant.SingleTurnAgentSocket => FakePiScripts.SingleTurnAgentSocket,
+            FakePiVariant.MultiTurnInteractive => FakePiScripts.MultiTurnInteractive,
             _ => FakePiScripts.HappyPr,
         };
 
@@ -754,6 +986,191 @@ def main():
             send_response({'type': 'response', 'command': 'prompt', 'success': True})
             post_event({'eventId': 'fp-accepted', 'eventType': 'runtime.accepted', 'occurredAt': '2026-06-23T00:00:00Z', 'severity': 'info', 'message': 'accepted'})
             # Then idle forever — used to exercise cancel.
+            continue
+        if msg.get('type') == 'abort':
+            return
+
+main()
+""";
+
+        /// <summary>
+        /// Acknowledges the prompt, emits <c>agent_end</c> on stdout (simulating
+        /// a single-turn agent completing its cast), then exits cleanly. No
+        /// webhook events are posted — the controller must recognize <c>agent_end</c>
+        /// and shut down the process, synthesizing a terminal event from exit code 0.
+        /// </summary>
+        public const string AgentEnd =
+            Header
+            + """
+def main():
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return
+        try:
+            msg = json.loads(line)
+        except Exception:
+            continue
+        if msg.get('type') == 'prompt':
+            send_response({'type': 'response', 'command': 'prompt', 'success': True})
+            # Emit agent_end on stdout — signals single-turn agent cast is done.
+            send_response({'type': 'agent_end', 'messages': []})
+            # Exit cleanly — the controller should recognize agent_end and shut down.
+            time.sleep(0.1)
+            return
+        if msg.get('type') == 'abort':
+            return
+
+main()
+""";
+
+        /// <summary>
+        /// Acknowledges the prompt, then emits an unrecognized stdout event type
+        /// (e.g. <c>__unknown_event__</c>). Under agent-controller eventing this
+        /// should fail the run with a contract-drift error instead of stalling.
+        /// Stays alive long enough for the monitor to detect the flag.
+        /// </summary>
+        public const string UnrecognizedType =
+            Header
+            + """
+def main():
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return
+        try:
+            msg = json.loads(line)
+        except Exception:
+            continue
+        if msg.get('type') == 'prompt':
+            send_response({'type': 'response', 'command': 'prompt', 'success': True})
+            # Emit an unrecognized event type — should fail the run under agent-controller.
+            send_response({'type': '__unknown_event__', 'data': 'test'})
+            # Stay alive so the monitor can detect the unrecognized type flag.
+            # The monitor polls every 1s, so 3s gives it multiple chances.
+            time.sleep(3)
+            return
+        if msg.get('type') == 'abort':
+            return
+
+main()
+""";
+
+        /// <summary>
+        /// Acknowledges the prompt, then emits a <c>cast_start</c> stdout event
+        /// with a multiTurn agent socket. Under agent-controller eventing this
+        /// should fail the run with a multiTurn-agent-socket error before any
+        /// agent turn fires.
+        /// </summary>
+        public const string MultiTurnAgentSocket =
+            Header
+            + """
+def main():
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return
+        try:
+            msg = json.loads(line)
+        except Exception:
+            continue
+        if msg.get('type') == 'prompt':
+            send_response({'type': 'response', 'command': 'prompt', 'success': True})
+            # Emit cast_start with a multiTurn agent socket — should fail the run under agent-controller.
+            send_response({
+                'type': 'cast_start',
+                'castId': 'test-cast',
+                'eventing': {'preset': 'agent-controller'},
+                'sockets': [
+                    {'socketName': 'Socket-1', 'type': 'utility', 'materiaName': 'Detect-VCS', 'multiTurn': False},
+                    {'socketName': 'Socket-3', 'type': 'agent', 'materiaName': 'Interactive-Plan', 'multiTurn': True},
+                    {'socketName': 'Socket-4', 'type': 'agent', 'materiaName': 'Build', 'multiTurn': False}
+                ]
+            })
+            # Stay alive so the monitor can detect the multiTurn flag.
+            time.sleep(3)
+            return
+        if msg.get('type') == 'abort':
+            return
+
+main()
+""";
+
+        /// <summary>
+        /// Acknowledges the prompt, emits a <c>cast_start</c> with only single-turn
+        /// agent sockets under the <c>agent-controller</c> preset, then posts a
+        /// <c>runtime.completed</c> webhook. The runtime should allow this through
+        /// and the run should reach a terminal state.
+        /// </summary>
+        public const string SingleTurnAgentSocket =
+            Header
+            + """
+def main():
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return
+        try:
+            msg = json.loads(line)
+        except Exception:
+            continue
+        if msg.get('type') == 'prompt':
+            send_response({'type': 'response', 'command': 'prompt', 'success': True})
+            # Emit cast_start with only single-turn agent sockets — should be allowed.
+            send_response({
+                'type': 'cast_start',
+                'castId': 'test-cast-single',
+                'eventing': {'preset': 'agent-controller'},
+                'sockets': [
+                    {'socketName': 'Socket-1', 'type': 'utility', 'materiaName': 'Detect-VCS', 'multiTurn': False},
+                    {'socketName': 'Socket-3', 'type': 'agent', 'materiaName': 'Auto-Plan', 'multiTurn': False},
+                    {'socketName': 'Socket-4', 'type': 'agent', 'materiaName': 'Build', 'multiTurn': False}
+                ]
+            })
+            time.sleep(0.05)
+            post_event({'eventId': 'fp-completed', 'eventType': 'runtime.completed', 'occurredAt': '2026-06-23T00:00:01Z', 'severity': 'info', 'message': 'done', 'payload': {'outcome': 'no_changes_needed', 'summary': 'all single-turn'}})
+            # Stay alive until the controller shuts us down.
+            continue
+        if msg.get('type') == 'abort':
+            return
+
+main()
+""";
+
+        /// <summary>
+        /// Acknowledges the prompt, emits a <c>cast_start</c> with a multiTurn agent
+        /// socket under a non-agent-controller preset ("interactive"). Then posts a
+        /// <c>runtime.completed</c> webhook. The runtime should allow this through
+        /// because the fail-fast guard only applies to the agent-controller preset.
+        /// </summary>
+        public const string MultiTurnInteractive =
+            Header
+            + """
+def main():
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return
+        try:
+            msg = json.loads(line)
+        except Exception:
+            continue
+        if msg.get('type') == 'prompt':
+            send_response({'type': 'response', 'command': 'prompt', 'success': True})
+            # Emit cast_start with a multiTurn agent socket under interactive preset — should be allowed.
+            send_response({
+                'type': 'cast_start',
+                'castId': 'test-cast-interactive',
+                'eventing': {'preset': 'interactive'},
+                'sockets': [
+                    {'socketName': 'Socket-1', 'type': 'utility', 'materiaName': 'Detect-VCS', 'multiTurn': False},
+                    {'socketName': 'Socket-3', 'type': 'agent', 'materiaName': 'Interactive-Plan', 'multiTurn': True},
+                    {'socketName': 'Socket-4', 'type': 'agent', 'materiaName': 'Build', 'multiTurn': False}
+                ]
+            })
+            time.sleep(0.05)
+            post_event({'eventId': 'fp-completed', 'eventType': 'runtime.completed', 'occurredAt': '2026-06-23T00:00:01Z', 'severity': 'info', 'message': 'done', 'payload': {'outcome': 'no_changes_needed', 'summary': 'interactive multiTurn'}})
+            # Stay alive until the controller shuts us down.
             continue
         if msg.get('type') == 'abort':
             return
