@@ -270,6 +270,84 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         Assert.IsType<PiMateriaRuntime>(runtime1);
     }
 
+    // ── Regression E2E: agent_end terminal handling under agent-controller ──
+    //
+    // This test exercises the exact path that stalled in the original E2E run:
+    // an agent-controller-preset cast goes through cast_start → materia_start →
+    // materia_end → agent_end, and the runtime must recognize agent_end as the
+    // canonical terminal event, initiate graceful shutdown, and NOT stall or
+    // emit an unrecognized-type warning.
+    //
+    // The original stall occurred because agent_end was not in the recognized
+    // event-type allowlist, so it was logged as a warning and the runtime waited
+    // indefinitely for a webhook event that never came.
+
+    [Fact]
+    public async Task StartAsync_AgentEndTerminalRegression_RunCompletesWithoutStall()
+    {
+        // Overwrite the fake pi with one that emits the full cast lifecycle
+        // (cast_start → materia_start → materia_end → agent_end) under the
+        // agent-controller preset, then exits cleanly.
+        WriteFakePiScript(_fakePiPath, FakePiVariant.AgentEndTerminalRegression);
+
+        await using var harness = await NewHarnessAsync(_fakePiPath);
+        var spec = await BuildSpecAsync(harness, "Agent end terminal regression");
+
+        var runtime = harness.Runtime!;
+        _ = await runtime.StartAsync(spec, CancellationToken.None);
+
+        // The runtime should recognize agent_end as a terminal event,
+        // initiate graceful shutdown, and synthesize a terminal event from
+        // the clean exit (exit code 0 → Completed).
+        await WaitForStateAsync(
+            spec.RunId,
+            s => s == RunLifecycleState.Completed || s == RunLifecycleState.Failed,
+            TimeSpan.FromSeconds(15)
+        );
+
+        var run = await _runStore.GetByIdAsync(spec.RunId, CancellationToken.None);
+        Assert.NotNull(run);
+        // The run should reach a terminal state (Completed from exit 0 synthesis).
+        Assert.True(
+            run!.Status == RunLifecycleState.Completed || run.Status == RunLifecycleState.Failed,
+            $"Expected terminal state, got {run.Status}. " +
+            "The runtime should recognize agent_end and not stall."
+        );
+
+        // Verify no unrecognized-type warnings — agent_end must be recognized.
+        var events = await _eventStore.ListByRunIdAsync(spec.RunId, CancellationToken.None);
+        Assert.DoesNotContain(
+            events,
+            e => e.Message != null && e.Message.Contains("unrecognized", StringComparison.OrdinalIgnoreCase)
+        );
+
+        // Verify the cast_start artifact was ingested with socket metadata.
+        var castStartEvents = events.Where(e =>
+            e.EventType == RuntimeEventTypes.Status &&
+            e.Payload is { } p &&
+            p.ContainsKey("sockets")
+        ).ToList();
+        Assert.NotEmpty(castStartEvents);
+
+        // Verify the cast_start payload has the agent-controller preset and single-turn sockets.
+        var castStartPayload = castStartEvents.First().Payload!;
+        Assert.True(
+            castStartPayload.TryGetValue("hasMultiTurnAgentSockets", out var hasMultiTurn) &&
+            hasMultiTurn is false,
+            "Expected cast_start artifact to flag hasMultiTurnAgentSockets=false"
+        );
+
+        // Verify the run reached a terminal state without stalling.
+        // This is the key regression assertion: the original E2E stalled because
+        // agent_end was unrecognized and the runtime waited for a webhook that
+        // never came. Post-fix, agent_end triggers graceful shutdown.
+        Assert.True(
+            run!.Status == RunLifecycleState.Completed || run.Status == RunLifecycleState.Failed,
+            $"Run stalled! Final state: {run.Status}. " +
+            "This is the exact regression from the original E2E — agent_end was not recognized."
+        );
+    }
+
     // ── agent_end: recognized terminal stdout event, graceful shutdown ──
 
     [Fact]
@@ -1041,6 +1119,7 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         Crash,
         Idle,
         AgentEnd,
+        AgentEndTerminalRegression,
         UnrecognizedType,
         UnrecognizedTypeInteractive,
         MultiTurnAgentSocket,
@@ -1070,6 +1149,7 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
             FakePiVariant.Crash => FakePiScripts.Crash,
             FakePiVariant.Idle => FakePiScripts.Idle,
             FakePiVariant.AgentEnd => FakePiScripts.AgentEnd,
+            FakePiVariant.AgentEndTerminalRegression => FakePiScripts.AgentEndTerminalRegression,
             FakePiVariant.UnrecognizedType => FakePiScripts.UnrecognizedType,
             FakePiVariant.UnrecognizedTypeInteractive => FakePiScripts.UnrecognizedTypeInteractive,
             FakePiVariant.MultiTurnAgentSocket => FakePiScripts.MultiTurnAgentSocket,
@@ -1209,6 +1289,61 @@ def main():
         if msg.get('type') == 'prompt':
             send_response({'type': 'response', 'command': 'prompt', 'success': True})
             # Emit agent_end on stdout — signals single-turn agent cast is done.
+            send_response({'type': 'agent_end', 'messages': []})
+            # Exit cleanly — the controller should recognize agent_end and shut down.
+            time.sleep(0.1)
+            return
+        if msg.get('type') == 'abort':
+            return
+
+main()
+""";
+
+        /// <summary>
+        /// Regression E2E: exercises the exact path that stalled in the original
+        /// agent-controller E2E run. Emits the full cast lifecycle under the
+        /// agent-controller preset:
+        /// <c>cast_start</c> → <c>materia_start</c> → <c>materia_end</c> → <c>agent_end</c>.
+        /// No webhook events are posted — the runtime must recognize <c>agent_end</c>
+        /// as the canonical terminal event, initiate graceful shutdown, and synthesize
+        /// a terminal event from exit code 0.
+        ///
+        /// This guards the specific regression where <c>agent_end</c> was not in the
+        /// recognized event-type allowlist, causing the runtime to stall silently
+        /// waiting for a webhook that never came.
+        /// </summary>
+        public const string AgentEndTerminalRegression =
+            Header
+            + """
+def main():
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return
+        try:
+            msg = json.loads(line)
+        except Exception:
+            continue
+        if msg.get('type') == 'prompt':
+            send_response({'type': 'response', 'command': 'prompt', 'success': True})
+            # Emit the full cast lifecycle that the original E2E went through.
+            # cast_start with agent-controller preset and single-turn agent socket.
+            send_response({
+                'type': 'cast_start',
+                'castId': 'regression-agent-end-terminal',
+                'eventing': {'preset': 'agent-controller'},
+                'sockets': [
+                    {'socketName': 'Socket-1', 'type': 'utility', 'materiaName': 'Detect-VCS', 'multiTurn': False},
+                    {'socketName': 'Socket-4', 'type': 'agent', 'materiaName': 'Builda', 'multiTurn': False}
+                ]
+            })
+            # materia_start — the agent materia begins its turn.
+            send_response({'type': 'materia_start', 'materiaName': 'Builda', 'socketName': 'Socket-4'})
+            # materia_end — the agent materia completes its turn.
+            send_response({'type': 'materia_end', 'materiaName': 'Builda', 'socketName': 'Socket-4'})
+            # agent_end — the canonical terminal event. The runtime must recognize
+            # this and initiate graceful shutdown. This is the exact event that
+            # caused the original E2E to stall when it was unrecognized.
             send_response({'type': 'agent_end', 'messages': []})
             # Exit cleanly — the controller should recognize agent_end and shut down.
             time.sleep(0.1)
