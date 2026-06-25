@@ -247,6 +247,42 @@ public sealed partial class PollingWorker : BackgroundService
             return;
         }
 
+        // ── Run clone preflight before claiming ────────────────────
+        // Validate clone-readiness before committing to a claim so
+        // misconfiguration surfaces early instead of as a silent hang.
+        // The preflight checks: URL parseable, transport prerequisites,
+        // and a non-interactive git ls-remote probe.
+        var repoKey = candidate.RepoKey!; // non-null: validated above
+        var preflightSpec = await BuildPreflightSpecAsync(
+            repoKey, repositoryStore, repoConfig, ct);
+
+        if (preflightSpec is not null)
+        {
+            var preflightResult = await sourceControlProvider.CheckClonePreflightAsync(
+                preflightSpec, ct);
+
+            if (!preflightResult.Success)
+            {
+                Log.CandidateSkippedPreflight(
+                    _logger, candidate.Id, candidate.Title,
+                    preflightResult.Transport, preflightResult.Reason);
+
+                // Post a clarifying comment for remote sources so the board
+                // owner sees the concrete failure reason.
+                if (candidate.Source != "LocalFake" && candidate.Source != "LocalFile")
+                {
+                    await PostRepoKeyCommentAsync(workSource, candidate,
+                        $"Skipped: clone preflight failed (transport: {preflightResult.Transport}). " +
+                        $"{preflightResult.Reason}", ct);
+                }
+
+                return;
+            }
+
+            Log.CandidatePreflightPassed(
+                _logger, candidate.Id, preflightResult.Transport);
+        }
+
         // Claim the work item for exclusive execution
         var claim = new ClaimRequest
         {
@@ -448,6 +484,53 @@ public sealed partial class PollingWorker : BackgroundService
 
         Log.CandidateSkippedNoProfile(_logger, candidate.Id, repoKey);
         return false;
+    }
+
+    /// <summary>
+    /// Build a <see cref="RepositorySpec"/> for the clone preflight check.
+    /// Resolves clone URL, branch, and transport from the persistent store
+    /// first, then falls back to configuration options.
+    /// Returns null if no profile can be resolved (should not happen after
+    /// ValidateRepoKeyAsync succeeds, but be defensive).
+    /// </summary>
+    private static async Task<RepositorySpec?> BuildPreflightSpecAsync(
+        string repoKey,
+        IRepositoryStore repositoryStore,
+        IReadOnlyDictionary<string, RepositoryProfileOptions> repoConfig,
+        CancellationToken ct)
+    {
+        // Try the persistent store first (may contain cached profiles),
+        // then fall back to configuration options.
+        var repoProfile = await repositoryStore.GetByKeyAsync(repoKey, ct);
+
+        string? cloneUrl;
+        string defaultBranch;
+        var transport = CloneTransport.Unspecified;
+
+        if (repoProfile is not null)
+        {
+            cloneUrl = repoProfile.CloneUrl;
+            defaultBranch = repoProfile.DefaultBranch;
+            transport = repoProfile.Transport;
+        }
+        else if (repoConfig.TryGetValue(repoKey, out var configured))
+        {
+            cloneUrl = configured.CloneUrl;
+            defaultBranch = configured.DefaultBranch;
+            transport = configured.Transport;
+        }
+        else
+        {
+            return null; // No profile found — should not reach here after ValidateRepoKeyAsync.
+        }
+
+        return new RepositorySpec
+        {
+            RepoKey = repoKey,
+            CloneUrl = cloneUrl,
+            DefaultBranch = defaultBranch,
+            Transport = transport,
+        };
     }
 
     /// <summary>
@@ -1361,6 +1444,19 @@ public sealed partial class PollingWorker : BackgroundService
             Message = "[lifecycle] Claim acquired — workerId={WorkerId}, workItemId={WorkItemId}, title='{Title}'.")]
         public static partial void ClaimAcquired(
             ILogger logger, string workerId, string workItemId, string title);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Skipping candidate {CandidateId} ({Title}): clone preflight failed "
+                + "(transport={Transport}): {Reason}")]
+        public static partial void CandidateSkippedPreflight(
+            ILogger logger, string candidateId, string title, CloneTransport transport, string reason);
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "Clone preflight passed for candidate {CandidateId} (transport={Transport}).")]
+        public static partial void CandidatePreflightPassed(
+            ILogger logger, string candidateId, CloneTransport transport);
 
         [LoggerMessage(
             Level = LogLevel.Information,

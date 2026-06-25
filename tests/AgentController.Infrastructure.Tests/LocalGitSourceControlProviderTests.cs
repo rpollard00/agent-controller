@@ -539,6 +539,126 @@ public class LocalGitSourceControlProviderTests : IAsyncLifetime
         Assert.True(Directory.Exists(Path.Combine(checkout.LocalPath, ".git")));
     }
 
+    // ── ClonePreflightCheck tests ─────────────────────────────
+
+    [Fact]
+    public async Task CheckClonePreflightAsync_LocalPath_Passes()
+    {
+        var provider = CreateProvider();
+        var spec = new RepositorySpec
+        {
+            RepoKey = "test-repo",
+            CloneUrl = _sourceRepo,
+            DefaultBranch = "main",
+        };
+
+        var result = await provider.CheckClonePreflightAsync(spec, CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.Equal(CloneTransport.Local, result.Transport);
+        Assert.Equal(_sourceRepo, result.CloneUrl);
+        Assert.Empty(result.Reason);
+    }
+
+    [Fact]
+    public async Task CheckClonePreflightAsync_FileUrl_Passes()
+    {
+        var provider = CreateProvider();
+        var spec = new RepositorySpec
+        {
+            RepoKey = "test-repo",
+            CloneUrl = _sourceRepoFileUrl,
+            DefaultBranch = "main",
+        };
+
+        var result = await provider.CheckClonePreflightAsync(spec, CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.Equal(CloneTransport.Local, result.Transport);
+    }
+
+    [Fact]
+    public async Task CheckClonePreflightAsync_EmptyCloneUrl_Fails()
+    {
+        var provider = CreateProvider();
+        var spec = new RepositorySpec
+        {
+            RepoKey = "test-repo",
+            CloneUrl = "",
+        };
+
+        var result = await provider.CheckClonePreflightAsync(spec, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Contains("empty", result.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CheckClonePreflightAsync_NonExistentLocalPath_Fails()
+    {
+        var provider = CreateProvider();
+        var spec = new RepositorySpec
+        {
+            RepoKey = "test-repo",
+            CloneUrl = Path.Combine(_tempRoot, "nonexistent-local-repo"),
+        };
+
+        var result = await provider.CheckClonePreflightAsync(spec, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Contains("does not exist", result.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CheckClonePreflightAsync_ExplicitTransport_Preserved()
+    {
+        var provider = CreateProvider();
+        var spec = new RepositorySpec
+        {
+            RepoKey = "test-repo",
+            CloneUrl = _sourceRepo,
+            Transport = CloneTransport.Ssh, // explicit, won't match local path
+        };
+
+        var result = await provider.CheckClonePreflightAsync(spec, CancellationToken.None);
+
+        // The transport is resolved from the explicit value, even though the
+        // URL is a local path. The preflight reports the resolved transport.
+        Assert.Equal(CloneTransport.Ssh, result.Transport);
+    }
+
+    [Fact]
+    public async Task CheckClonePreflightAsync_WithBranch_Passes()
+    {
+        var provider = CreateProvider();
+        var spec = new RepositorySpec
+        {
+            RepoKey = "test-repo",
+            CloneUrl = _sourceRepo,
+            DefaultBranch = "feature-branch",
+        };
+
+        var result = await provider.CheckClonePreflightAsync(spec, CancellationToken.None);
+
+        Assert.True(result.Success);
+    }
+
+    [Fact]
+    public async Task CheckClonePreflightAsync_ResultFactoryMethods()
+    {
+        // Verify the static factory methods on ClonePreflightResult.
+        var ok = ClonePreflightResult.Ok(CloneTransport.Ssh, "git@host:repo");
+        Assert.True(ok.Success);
+        Assert.Equal(CloneTransport.Ssh, ok.Transport);
+        Assert.Empty(ok.Reason);
+
+        var failed = ClonePreflightResult.Failed(
+            CloneTransport.HttpsPat, "https://example.com/repo", "auth failed");
+        Assert.False(failed.Success);
+        Assert.Equal(CloneTransport.HttpsPat, failed.Transport);
+        Assert.Equal("auth failed", failed.Reason);
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────
 
     private static async Task RunGitAsync(IReadOnlyList<string> args, string workingDir)

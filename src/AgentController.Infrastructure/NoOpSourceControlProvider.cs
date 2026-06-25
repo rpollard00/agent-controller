@@ -44,4 +44,16 @@ public sealed class NoOpSourceControlProvider : ISourceControlProvider
             }
         );
     }
+
+    public Task<ClonePreflightResult> CheckClonePreflightAsync(
+        RepositorySpec spec,
+        CancellationToken cancellationToken
+    )
+    {
+        // No-op provider always passes preflight.
+        return Task.FromResult(
+            ClonePreflightResult.Ok(
+                spec.Transport,
+                spec.CloneUrl));
+    }
 }

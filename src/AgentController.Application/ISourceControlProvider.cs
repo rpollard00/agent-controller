@@ -26,4 +26,25 @@ public interface ISourceControlProvider
         SourceControlRef sourceControlRef,
         CancellationToken cancellationToken
     );
+
+    /// <summary>
+    /// Run a diagnostic preflight that validates clone-readiness before
+    /// the worker commits to a claim.
+    ///
+    /// Verifies:
+    /// <list type="bullet">
+    ///   <item>The configured clone URL is parseable.</item>
+    ///   <item>The selected transport has its prerequisites
+    ///   (SSH key/known_hosts or PAT).</item>
+    ///   <item>A non-interactive <c>git ls-remote</c> succeeds.</item>
+    /// </list>
+    ///
+    /// On failure the returned <see cref="ClonePreflightResult"/> contains
+    /// a concrete reason so misconfiguration surfaces early instead of
+    /// as a silent hang.
+    /// </summary>
+    Task<ClonePreflightResult> CheckClonePreflightAsync(
+        RepositorySpec spec,
+        CancellationToken cancellationToken
+    );
 }
