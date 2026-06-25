@@ -1173,9 +1173,10 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
     }
 
     /// <summary>
-    /// Read the cast task text. Prefers the title line from the controller's
-    /// <c>work-item.md</c> context file; falls back to a generic task derived
-    /// from the work reference.
+    /// Read the cast task text. Reads the full contents of
+    /// <c>work-item.md</c> and appends <c>acceptance-criteria.md</c> and
+    /// <c>comments.md</c> when present. Falls back to a generic task derived
+    /// from the work reference when <c>work-item.md</c> is absent.
     /// </summary>
     private static string ReadCastTask(AgentRunSpec spec, string contextDir)
     {
@@ -1184,13 +1185,42 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
         {
             try
             {
-                foreach (var raw in File.ReadLines(workItemPath))
+                var parts = new List<string>();
+
+                // Full work-item body (entire markdown, not just the title line).
+                var workItemContent = File.ReadAllText(workItemPath).TrimEnd('\r', '\n');
+                if (!string.IsNullOrEmpty(workItemContent))
                 {
-                    var line = raw.TrimStart();
-                    if (line.StartsWith("# ", StringComparison.Ordinal))
+                    parts.Add(workItemContent);
+                }
+
+                // Append acceptance criteria if present.
+                var acPath = Path.Combine(contextDir, "acceptance-criteria.md");
+                if (File.Exists(acPath))
+                {
+                    var acContent = File.ReadAllText(acPath).TrimEnd('\r', '\n');
+                    if (!string.IsNullOrEmpty(acContent))
                     {
-                        return line[2..].Trim();
+                        parts.Add("## Acceptance Criteria");
+                        parts.Add(acContent);
                     }
+                }
+
+                // Append comments if present.
+                var commentsPath = Path.Combine(contextDir, "comments.md");
+                if (File.Exists(commentsPath))
+                {
+                    var commentsContent = File.ReadAllText(commentsPath).TrimEnd('\r', '\n');
+                    if (!string.IsNullOrEmpty(commentsContent))
+                    {
+                        parts.Add("## Comments");
+                        parts.Add(commentsContent);
+                    }
+                }
+
+                if (parts.Count > 0)
+                {
+                    return string.Join("\n\n", parts);
                 }
             }
             catch
