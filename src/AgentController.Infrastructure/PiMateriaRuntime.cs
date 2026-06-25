@@ -35,6 +35,12 @@ namespace AgentController.Infrastructure;
 /// then points pi at it via the <c>MATERIA_CONFIG</c> environment variable. This
 /// avoids mutating the cloned repository.</para>
 ///
+/// <para><b>Stdout event contract.</b> The stdout JSONL events parsed by this class
+/// are defined by <see cref="PiMateriaStdoutEventTypes"/> and
+/// <see cref="PiMateriaStdoutEventContract"/> in the Domain layer. See
+/// <c>docs/pi-materia-eventing-contract.md</c> for the full contract documentation
+/// including the multiTurn fail-fast rule and unrecognized-type fail-closed behavior.</para>
+///
 /// <para>Registered as a singleton via
 /// <see cref="AgentControllerServiceCollectionExtensions.AddAgentControllerPiMateriaRuntime"/>.
 /// Uses <see cref="IServiceScopeFactory"/> internally to resolve the scoped
