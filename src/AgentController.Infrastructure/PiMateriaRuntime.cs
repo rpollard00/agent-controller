@@ -426,16 +426,27 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
             }
 
             // Unrecognized stdout event type: contract drift between pi-materia
-            // and the controller. Under agent-controller eventing (always the
-            // case for this runtime), fail the run to prevent silent stalls.
-            if (active.HasUnrecognizedEventType)
+            // and the controller. Under agent-controller eventing (autonomous run),
+            // fail the run to prevent silent token-sinking stalls. Under interactive/CLI
+            // eventing a human is present to handle the situation, so warn-and-continue.
+            if (active.HasUnrecognizedEventType &&
+                string.Equals(active.EventingPreset, "agent-controller", StringComparison.Ordinal))
             {
                 var unrecognizedType = active.UnrecognizedEventType ?? "(unknown)";
+                var castId = active.CastId ?? "(unknown)";
+                var materiaName = active.CurrentMateriaName ?? "(unknown)";
                 await SynthesizeFailureAsync(
                     runId,
-                    $"pi emitted an unrecognized stdout event type '{unrecognizedType}'. " +
+                    $"pi emitted an unrecognized stdout event type '{unrecognizedType}' " +
+                    $"(castId={castId}, materia={materiaName}). " +
                     "This indicates contract drift between pi-materia and the agent-controller. " +
                     "The cast has been aborted to prevent a silent stall.",
+                    new Dictionary<string, object?>
+                    {
+                        ["unrecognizedType"] = unrecognizedType,
+                        ["castId"] = castId,
+                        ["materiaName"] = materiaName,
+                    },
                     ct
                 );
                 await ShutdownProcessAsync(runId, active, ct);
@@ -481,17 +492,30 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
                 // Best-effort drain.
             }
 
-            // Defense-in-depth: if an unrecognized stdout event type was seen,
-            // fail the run instead of synthesizing a completion from exit code.
-            if (active.HasUnrecognizedEventType && !await IsRunTerminalAsync(runId, ct))
+            // Defense-in-depth: if an unrecognized stdout event type was seen
+            // under agent-controller eventing, fail the run instead of synthesizing
+            // a completion from exit code. Under interactive/CLI eventing a human
+            // is present, so allow the normal exit-code synthesis path.
+            if (active.HasUnrecognizedEventType &&
+                string.Equals(active.EventingPreset, "agent-controller", StringComparison.Ordinal) &&
+                !await IsRunTerminalAsync(runId, ct))
             {
                 var unrecognizedType = active.UnrecognizedEventType ?? "(unknown)";
+                var castId = active.CastId ?? "(unknown)";
+                var materiaName = active.CurrentMateriaName ?? "(unknown)";
                 Log.ContractDriftOnExit(_logger, runId, unrecognizedType);
                 await SynthesizeFailureAsync(
                     runId,
-                    $"pi emitted an unrecognized stdout event type '{unrecognizedType}' before exiting. " +
+                    $"pi emitted an unrecognized stdout event type '{unrecognizedType}' " +
+                    $"(castId={castId}, materia={materiaName}) before exiting. " +
                     "This indicates contract drift between pi-materia and the agent-controller. " +
                     "The cast has been aborted to prevent a silent stall.",
+                    new Dictionary<string, object?>
+                    {
+                        ["unrecognizedType"] = unrecognizedType,
+                        ["castId"] = castId,
+                        ["materiaName"] = materiaName,
+                    },
                     ct
                 );
                 return;
@@ -1236,6 +1260,44 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
                     ["summary"] = reason,
                     ["synthesized"] = true,
                 },
+            },
+            ct
+        );
+    }
+
+    /// <summary>
+    /// Synthesize a failure event with additional diagnostic payload fields.
+    /// Used for contract-drift failures that include cast id, materia name, etc.
+    /// </summary>
+    private Task SynthesizeFailureAsync(
+        string runId,
+        string reason,
+        Dictionary<string, object?> extraPayload,
+        CancellationToken ct
+    )
+    {
+        Log.SynthesizingFailure(_logger, runId, reason);
+        var payload = new Dictionary<string, object?>
+        {
+            ["reason"] = "runtime_launch_or_monitor_failure",
+            ["summary"] = reason,
+            ["synthesized"] = true,
+        };
+        foreach (var kvp in extraPayload)
+        {
+            payload[kvp.Key] = kvp.Value;
+        }
+        return TryIngestAsync(
+            runId,
+            new RuntimeEvent
+            {
+                EventId = $"pi-failed-{runId}-{Guid.NewGuid():N}",
+                RunId = runId,
+                EventType = RuntimeEventTypes.Failed,
+                OccurredAt = DateTimeOffset.UtcNow,
+                Severity = EventSeverity.Error,
+                Message = reason,
+                Payload = payload,
             },
             ct
         );

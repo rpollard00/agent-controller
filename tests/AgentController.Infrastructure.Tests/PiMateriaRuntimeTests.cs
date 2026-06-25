@@ -338,15 +338,80 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         Assert.NotNull(run);
         Assert.Equal(RunLifecycleState.Failed, run!.Status);
 
-        // Verify the failure mentions the unrecognized type.
+        // Verify the failure mentions the unrecognized type and includes diagnostics.
         var events = await _eventStore.ListByRunIdAsync(spec.RunId, CancellationToken.None);
         var failureEvents = events.Where(e => e.EventType == RuntimeEventTypes.Failed).ToList();
         Assert.NotEmpty(failureEvents);
         var failureEvent = failureEvents.First();
+
+        // The message should mention the unrecognized type.
         Assert.True(
-            (failureEvent.Message != null && failureEvent.Message.Contains("unrecognized", StringComparison.OrdinalIgnoreCase)) ||
-            (failureEvent.Payload != null && failureEvent.Payload.Values.Any(v => v != null && v.ToString()!.Contains("unrecognized", StringComparison.OrdinalIgnoreCase))),
-            $"Expected failure to mention 'unrecognized' type. Message: {failureEvent.Message}, Payload: {failureEvent.Payload}"
+            failureEvent.Message != null && failureEvent.Message.Contains("unrecognized", StringComparison.OrdinalIgnoreCase),
+            $"Expected failure message to mention 'unrecognized' type. Got: {failureEvent.Message}"
+        );
+
+        // The message should include the cast id and materia name for diagnostics.
+        Assert.True(
+            failureEvent.Message != null && failureEvent.Message.Contains("castId="),
+            $"Expected failure message to include castId. Got: {failureEvent.Message}"
+        );
+        Assert.True(
+            failureEvent.Message != null && failureEvent.Message.Contains("materia="),
+            $"Expected failure message to include materia name. Got: {failureEvent.Message}"
+        );
+
+        // The payload should contain structured diagnostic fields.
+        Assert.NotNull(failureEvent.Payload);
+        Assert.True(
+            failureEvent.Payload!.ContainsKey("unrecognizedType"),
+            $"Expected payload to contain 'unrecognizedType'. Keys: {string.Join(", ", failureEvent.Payload!.Keys)}"
+        );
+        Assert.True(
+            failureEvent.Payload!.ContainsKey("castId"),
+            $"Expected payload to contain 'castId'. Keys: {string.Join(", ", failureEvent.Payload!.Keys)}"
+        );
+        Assert.True(
+            failureEvent.Payload!.ContainsKey("materiaName"),
+            $"Expected payload to contain 'materiaName'. Keys: {string.Join(", ", failureEvent.Payload!.Keys)}"
+        );
+    }
+
+    // ── (interactive) Unrecognized type under interactive eventing: warn-and-continue ──
+
+    [Fact]
+    public async Task StartAsync_UnrecognizedTypeUnderInteractiveEventing_RunCompletes()
+    {
+        // Overwrite the fake pi with one that emits an unrecognized event type
+        // under the "interactive" eventing preset. The runtime should warn
+        // but NOT fail the run — a human is present to handle the situation.
+        WriteFakePiScript(_fakePiPath, FakePiVariant.UnrecognizedTypeInteractive);
+
+        await using var harness = await NewHarnessAsync(_fakePiPath);
+        var spec = await BuildSpecAsync(harness, "Unrecognized type interactive test");
+
+        var runtime = harness.Runtime!;
+        _ = await runtime.StartAsync(spec, CancellationToken.None);
+
+        // The runtime should allow the run to complete (warn-and-continue)
+        // because the eventing preset is "interactive" not "agent-controller".
+        await WaitForStateAsync(
+            spec.RunId,
+            s => s == RunLifecycleState.Completed || s == RunLifecycleState.Failed,
+            TimeSpan.FromSeconds(15)
+        );
+
+        var run = await _runStore.GetByIdAsync(spec.RunId, CancellationToken.None);
+        Assert.NotNull(run);
+        // The run should reach Completed (from the webhook), NOT Failed.
+        Assert.Equal(RunLifecycleState.Completed, run!.Status);
+
+        // Verify no contract-drift failure events.
+        var events = await _eventStore.ListByRunIdAsync(spec.RunId, CancellationToken.None);
+        Assert.DoesNotContain(
+            events,
+            e => e.EventType == RuntimeEventTypes.Failed &&
+                 e.Message != null &&
+                 e.Message.Contains("unrecognized", StringComparison.OrdinalIgnoreCase)
         );
     }
 
@@ -977,6 +1042,7 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         Idle,
         AgentEnd,
         UnrecognizedType,
+        UnrecognizedTypeInteractive,
         MultiTurnAgentSocket,
         SingleTurnAgentSocket,
         MultiTurnInteractive,
@@ -1005,6 +1071,7 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
             FakePiVariant.Idle => FakePiScripts.Idle,
             FakePiVariant.AgentEnd => FakePiScripts.AgentEnd,
             FakePiVariant.UnrecognizedType => FakePiScripts.UnrecognizedType,
+            FakePiVariant.UnrecognizedTypeInteractive => FakePiScripts.UnrecognizedTypeInteractive,
             FakePiVariant.MultiTurnAgentSocket => FakePiScripts.MultiTurnAgentSocket,
             FakePiVariant.SingleTurnAgentSocket => FakePiScripts.SingleTurnAgentSocket,
             FakePiVariant.MultiTurnInteractive => FakePiScripts.MultiTurnInteractive,
@@ -1153,10 +1220,10 @@ main()
 """;
 
         /// <summary>
-        /// Acknowledges the prompt, then emits an unrecognized stdout event type
-        /// (e.g. <c>__unknown_event__</c>). Under agent-controller eventing this
-        /// should fail the run with a contract-drift error instead of stalling.
-        /// Stays alive long enough for the monitor to detect the flag.
+        /// Acknowledges the prompt, emits cast_start with agent-controller preset,
+        /// then emits an unrecognized stdout event type (e.g. <c>__unknown_event__</c>).
+        /// Under agent-controller eventing this should fail the run with a
+        /// contract-drift error instead of stalling.
         /// </summary>
         public const string UnrecognizedType =
             Header
@@ -1172,12 +1239,64 @@ def main():
             continue
         if msg.get('type') == 'prompt':
             send_response({'type': 'response', 'command': 'prompt', 'success': True})
+            # Emit cast_start with agent-controller preset so the runtime knows the eventing mode.
+            send_response({
+                'type': 'cast_start',
+                'castId': 'test-cast-unrecognized',
+                'eventing': {'preset': 'agent-controller'},
+                'sockets': [
+                    {'socketName': 'Socket-1', 'type': 'utility', 'materiaName': 'Detect-VCS', 'multiTurn': False}
+                ]
+            })
             # Emit an unrecognized event type — should fail the run under agent-controller.
             send_response({'type': '__unknown_event__', 'data': 'test'})
             # Stay alive so the monitor can detect the unrecognized type flag.
             # The monitor polls every 1s, so 3s gives it multiple chances.
             time.sleep(3)
             return
+        if msg.get('type') == 'abort':
+            return
+
+main()
+""";
+
+        /// <summary>
+        /// Acknowledges the prompt, emits cast_start with interactive preset,
+        /// then emits an unrecognized stdout event type. Under interactive eventing
+        /// the runtime should warn-and-continue (not fail the run), because a human
+        /// is present to handle the situation. Posts runtime.completed webhook so
+        /// the run reaches a terminal state.
+        /// </summary>
+        public const string UnrecognizedTypeInteractive =
+            Header
+            + """
+def main():
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return
+        try:
+            msg = json.loads(line)
+        except Exception:
+            continue
+        if msg.get('type') == 'prompt':
+            send_response({'type': 'response', 'command': 'prompt', 'success': True})
+            # Emit cast_start with interactive preset — unrecognized types should NOT fail.
+            send_response({
+                'type': 'cast_start',
+                'castId': 'test-cast-interactive-unrecognized',
+                'eventing': {'preset': 'interactive'},
+                'sockets': [
+                    {'socketName': 'Socket-1', 'type': 'utility', 'materiaName': 'Detect-VCS', 'multiTurn': False}
+                ]
+            })
+            # Emit an unrecognized event type — should warn but NOT fail under interactive.
+            send_response({'type': '__unknown_event__', 'data': 'test'})
+            # Post a completed webhook so the run reaches a terminal state.
+            time.sleep(0.05)
+            post_event({'eventId': 'fp-completed', 'eventType': 'runtime.completed', 'occurredAt': '2026-06-23T00:00:01Z', 'severity': 'info', 'message': 'done', 'payload': {'outcome': 'no_changes_needed', 'summary': 'interactive warn-and-continue'}})
+            # Stay alive until the controller shuts us down.
+            continue
         if msg.get('type') == 'abort':
             return
 
