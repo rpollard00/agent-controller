@@ -60,6 +60,7 @@ public static class AgentControllerServiceCollectionExtensions
                     wsOptionsView.Project = wsOptions.Project;
                     wsOptionsView.ActiveState = wsOptions.ActiveState;
                     wsOptionsView.CompletedState = wsOptions.CompletedState;
+                    wsOptionsView.EligibleStates = wsOptions.EligibleStates;
                 }
             });
 

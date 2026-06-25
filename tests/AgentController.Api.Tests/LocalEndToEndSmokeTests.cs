@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using AgentController.Api;
 using AgentController.Application;
+using AgentController.Application.Abstractions;
 using AgentController.Domain;
 using AgentController.Infrastructure;
 using AgentController.Infrastructure.Data;
@@ -137,9 +138,10 @@ public class LocalEndToEndSmokeTests : IAsyncLifetime
 
         // ── 4. Create PollingWorker and run a poll cycle ────────────
         var optionsMonitor = provider.GetRequiredService<IOptionsMonitor<AgentControllerOptions>>();
+        var workSourceMonitor = provider.GetRequiredService<IOptionsMonitor<WorkSourceOptionsView>>();
         var logger = provider.GetRequiredService<ILogger<PollingWorker>>();
 
-        var worker = new PollingWorker(scopeFactory, optionsMonitor, logger);
+        var worker = new PollingWorker(scopeFactory, optionsMonitor, workSourceMonitor, logger);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 

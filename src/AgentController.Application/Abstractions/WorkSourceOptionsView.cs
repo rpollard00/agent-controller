@@ -19,4 +19,7 @@ public sealed class WorkSourceOptionsView : IWorkSourceOptions
 
     /// <inheritdoc />
     public string? CompletedState { get; set; }
+
+    /// <inheritdoc />
+    public IReadOnlyList<string>? EligibleStates { get; set; }
 }

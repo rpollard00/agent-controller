@@ -407,6 +407,54 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             });
         }
 
+        // Handle tag removal: read current tags, filter out removed tags, write back.
+        if (status.RemovedTags is { Count: > 0 })
+        {
+            // Fetch current work item to read existing tags
+            var getResponse = await _http.GetAsync(
+                $"{project}/_apis/wit/workitems/{workRef.ExternalId}?api-version=7.1&$expand=minimal",
+                cancellationToken);
+
+            if (getResponse.IsSuccessStatusCode)
+            {
+                var getJson = await getResponse.Content.ReadAsStringAsync(cancellationToken);
+                using var getDoc = JsonDocument.Parse(getJson);
+
+                var currentTags = string.Empty;
+                if (getDoc.RootElement.TryGetProperty("fields", out var fields)
+                    && fields.TryGetProperty("System.Tags", out var tagsEl)
+                    && tagsEl.ValueKind == JsonValueKind.String)
+                {
+                    currentTags = tagsEl.GetString() ?? string.Empty;
+                }
+
+                var existingTags = currentTags
+                    .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                // Remove the specified tags
+                foreach (var tagToRemove in status.RemovedTags)
+                {
+                    if (!string.IsNullOrWhiteSpace(tagToRemove))
+                    {
+                        existingTags.RemoveWhere(t =>
+                            t.Equals(tagToRemove.Trim(), StringComparison.OrdinalIgnoreCase));
+                    }
+                }
+
+                var newTags = existingTags.Count > 0
+                    ? string.Join("; ", existingTags.OrderBy(t => t, StringComparer.OrdinalIgnoreCase))
+                    : string.Empty;
+
+                patchOps.Add(new
+                {
+                    op = "add",
+                    path = "/fields/System.Tags",
+                    value = newTags,
+                });
+            }
+        }
+
         if (patchOps.Count == 0)
             return;
 
@@ -641,6 +689,126 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         }
 
         return repositories;
+    }
+
+    public async Task ReleaseClaimWorkItemAsync(
+        ReleaseClaimRequest request,
+        CancellationToken cancellationToken)
+    {
+        var project = _options.Project;
+        if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(request.WorkRef.ExternalId))
+            return;
+
+        try
+        {
+            // 1. GET the current work item to read revision and tags
+            var getResponse = await _http.GetAsync(
+                $"{project}/_apis/wit/workitems/{request.WorkRef.ExternalId}?api-version=7.1&$expand=minimal",
+                cancellationToken);
+
+            if (!getResponse.IsSuccessStatusCode)
+            {
+                // Best-effort: if we can't read the work item, we can't release the claim.
+                return;
+            }
+
+            var getJson = await getResponse.Content.ReadAsStringAsync(cancellationToken);
+            using var getDoc = JsonDocument.Parse(getJson);
+
+            var currentRev = getDoc.RootElement.TryGetProperty("rev", out var revEl)
+                             && revEl.ValueKind == JsonValueKind.Number
+                             && revEl.TryGetInt32(out var rev)
+                ? rev
+                : (int?)null;
+
+            // 2. Read current tags and strip agent-controlled tags
+            var currentTags = string.Empty;
+            if (getDoc.RootElement.TryGetProperty("fields", out var fields)
+                && fields.TryGetProperty("System.Tags", out var tagsEl)
+                && tagsEl.ValueKind == JsonValueKind.String)
+            {
+                currentTags = tagsEl.GetString() ?? string.Empty;
+            }
+
+            var existingTags = currentTags
+                .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToList();
+
+            // Strip agent-active and any agent-worker:* tags
+            existingTags.RemoveAll(t =>
+                t.Equals("agent-active", StringComparison.OrdinalIgnoreCase) ||
+                t.StartsWith("agent-worker:", StringComparison.OrdinalIgnoreCase));
+
+            var newTags = existingTags.Count > 0
+                ? string.Join("; ", existingTags)
+                : string.Empty;
+
+            // 3. Build PATCH operations: update tags, optionally revert state, add history
+            var patchOps = new List<object>
+            {
+                new
+                {
+                    op = "add",
+                    path = "/fields/System.Tags",
+                    value = newTags,
+                },
+            };
+
+            // Optionally revert to target state (e.g. "New")
+            if (!string.IsNullOrWhiteSpace(request.TargetState))
+            {
+                patchOps.Add(new
+                {
+                    op = "add",
+                    path = "/fields/System.State",
+                    value = request.TargetState,
+                });
+            }
+
+            // Add a history entry explaining the release
+            var releasedAt = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd HH:mm:ss UTC",
+                System.Globalization.CultureInfo.InvariantCulture);
+            var reason = string.IsNullOrWhiteSpace(request.Reason)
+                ? "Claim released by agent controller."
+                : $"Claim released by agent controller: {request.Reason}";
+
+            patchOps.Add(new
+            {
+                op = "add",
+                path = "/fields/System.History",
+                value = $"[{releasedAt}] {reason}",
+            });
+
+            var body = JsonSerializer.Serialize(patchOps, JsonOptions);
+            var content = new StringContent(body, Encoding.UTF8, "application/json-patch+json");
+
+            var patchRequest = new HttpRequestMessage(HttpMethod.Patch,
+                $"{project}/_apis/wit/workitems/{request.WorkRef.ExternalId}?api-version=7.1")
+            {
+                Content = content,
+            };
+
+            if (currentRev.HasValue)
+            {
+                patchRequest.Headers.TryAddWithoutValidation(
+                    "If-Match", currentRev.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+
+            var patchResponse = await _http.SendAsync(patchRequest, cancellationToken);
+
+            // 412 Precondition Failed: concurrent modification — best-effort, not fatal.
+            if (patchResponse.StatusCode == System.Net.HttpStatusCode.PreconditionFailed)
+            {
+                return;
+            }
+
+            patchResponse.EnsureSuccessStatusCode();
+        }
+        catch
+        {
+            // Best-effort: claim release failures are not fatal.
+            // The work item may be recovered on the next poll cycle via stale-run recovery.
+        }
     }
 
     // ─── WIQL builder ────────────────────────────────────

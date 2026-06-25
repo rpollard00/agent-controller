@@ -122,4 +122,13 @@ internal sealed class LocalFakeWorkSource : IWorkSource
         // Local fake has no external work item system to fetch comments from.
         return Task.FromResult<IReadOnlyList<WorkItemComment>>(Array.Empty<WorkItemComment>());
     }
+
+    public Task ReleaseClaimAsync(
+        ReleaseClaimRequest request,
+        CancellationToken cancellationToken)
+    {
+        // Local fake has no external system to release claims on.
+        // The local persistence store handles lease expiry automatically.
+        return Task.CompletedTask;
+    }
 }

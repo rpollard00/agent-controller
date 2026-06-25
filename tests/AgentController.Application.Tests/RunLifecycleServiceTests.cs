@@ -1145,14 +1145,25 @@ public class RunLifecycleServiceTests
             Message = "Something broke",
         }, CancellationToken.None);
 
-        // Find the status update for the failure projection
-        var failedUpdate = stubWorkSource.StatusUpdates
-            .Where(su => su.Status.Tags?.Contains("agent-failed") == true)
+        // Failed state should NOT add agent-failed tag (a bad runtime environment
+        // should not dirty the external record). The projection returns null,
+        // meaning no status update is sent for the Failed transition.
+        // Earlier transitions (Claimed, AgentRunning, AwaitingResult) do send
+        // status updates with Active state, but Failed itself sends none.
+        var statusUpdatesWithTags = stubWorkSource.StatusUpdates
+            .Where(su => su.Status?.Tags is { Count: > 0 })
             .ToList();
 
-        Assert.Single(failedUpdate);
-        // State should NOT be set on failure (null = no state change)
-        Assert.Null(failedUpdate[0].Status.Status);
+        // None of the status updates should carry an agent-failed tag
+        Assert.DoesNotContain(
+            statusUpdatesWithTags,
+            su => su.Status.Tags!.Any(t => t.Contains("agent-failed", StringComparison.OrdinalIgnoreCase)));
+
+        // A comment should have been added for the failure
+        var failedComments = stubWorkSource.Comments
+            .Where(c => c.Comment.Contains("failed", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        Assert.Single(failedComments);
     }
 
     [Fact]
@@ -1658,6 +1669,12 @@ public class RunLifecycleServiceTests
             ExternalWorkRef workRef, int maxComments, CancellationToken cancellationToken)
         {
             return Task.FromResult<IReadOnlyList<WorkItemComment>>(Array.Empty<WorkItemComment>());
+        }
+
+        public Task ReleaseClaimAsync(
+            ReleaseClaimRequest request, CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
         }
     }
 

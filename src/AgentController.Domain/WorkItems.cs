@@ -115,8 +115,35 @@ public sealed record ExternalWorkStatus
     /// <summary>Tags to add or set on the work item.</summary>
     public IReadOnlyList<string>? Tags { get; init; }
 
+    /// <summary>
+    /// Tags to remove from the work item. The work source implementation
+    /// must read the current tags, filter out the listed tags, and write
+    /// the remaining tags back.
+    /// </summary>
+    public IReadOnlyList<string>? RemovedTags { get; init; }
+
     /// <summary>Comment to append to the work item.</summary>
     public string? Comment { get; init; }
+}
+
+/// <summary>
+/// Request to release a previously claimed work item back to the work source.
+/// Strips agent-controlled tags (agent-active, agent-worker:*) and optionally
+/// reverts the work item state so it becomes eligible for re-discovery.
+/// </summary>
+public sealed record ReleaseClaimRequest
+{
+    /// <summary>Reference to the work item whose claim should be released.</summary>
+    public ExternalWorkRef WorkRef { get; init; } = new ExternalWorkRef();
+
+    /// <summary>Worker ID that originally claimed the item (used for logging and tag matching).</summary>
+    public string WorkerId { get; init; } = string.Empty;
+
+    /// <summary>State to revert the work item to after releasing (e.g. "New"). Null to leave unchanged.</summary>
+    public string? TargetState { get; init; }
+
+    /// <summary>Human-readable reason for the release (recorded as a comment/history entry).</summary>
+    public string? Reason { get; init; }
 }
 
 /// <summary>

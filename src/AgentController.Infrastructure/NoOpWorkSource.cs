@@ -59,4 +59,12 @@ public sealed class NoOpWorkSource : IWorkSource
     {
         return Task.FromResult<IReadOnlyList<WorkItemComment>>(Array.Empty<WorkItemComment>());
     }
+
+    public Task ReleaseClaimAsync(
+        ReleaseClaimRequest request,
+        CancellationToken cancellationToken
+    )
+    {
+        return Task.CompletedTask;
+    }
 }

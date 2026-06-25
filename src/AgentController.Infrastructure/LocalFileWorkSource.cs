@@ -143,6 +143,16 @@ internal sealed partial class LocalFileWorkSource : IWorkSource, IDisposable
         return Task.FromResult<IReadOnlyList<WorkItemComment>>(Array.Empty<WorkItemComment>());
     }
 
+    /// <inheritdoc/>
+    public Task ReleaseClaimAsync(
+        ReleaseClaimRequest request,
+        CancellationToken cancellationToken)
+    {
+        // Local file source has no external system to release claims on.
+        // The local persistence store handles lease expiry automatically.
+        return Task.CompletedTask;
+    }
+
     /// <summary>
     /// Lazily upsert work item definitions from configuration into the persistence
     /// store. Thread-safe; initialization happens exactly once across all callers.

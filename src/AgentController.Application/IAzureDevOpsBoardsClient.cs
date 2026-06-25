@@ -76,6 +76,15 @@ public interface IAzureDevOpsBoardsClient
         ExternalWorkRef workRef,
         int maxComments,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Release a previously claimed work item back to the work source.
+    /// Strips agent-controlled tags (agent-active, agent-worker:*) and
+    /// optionally reverts the work item state so it becomes eligible for re-discovery.
+    /// </summary>
+    Task ReleaseClaimWorkItemAsync(
+        ReleaseClaimRequest request,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>

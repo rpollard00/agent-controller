@@ -654,12 +654,14 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
                     ? $"Run completed: {run.ResultSummary}"
                     : "Run completed successfully."),
 
-            // ── Failed: add failure tag (keep in active state for visibility) ──
+            // ── Failed: comment only, no agent-failed tag ──
+            // A bad runtime environment should not dirty the external record.
+            // For pre-agent setup failures (clone, environment), the claim is
+            // released via ReleaseClaimAsync which strips agent-active/agent-worker
+            // tags and reverts the item to an eligible state.
+            // For runtime failures, the work item stays in active state for visibility.
             RunLifecycleState.Failed => (
-                new ExternalWorkStatus
-                {
-                    Tags = ["agent-failed"],
-                },
+                null,
                 !string.IsNullOrWhiteSpace(run.Error)
                     ? $"Run failed: {run.Error}"
                     : "Run failed."),

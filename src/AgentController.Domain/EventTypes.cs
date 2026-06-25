@@ -108,4 +108,8 @@ public static class ControllerEventTypes
 
     /// <summary>Run failed due to a controller-side error.</summary>
     public const string Failed = "controller.failed";
+
+    /// <summary>Claim was released due to a pre-agent setup failure (e.g. clone failure).
+    /// Agent tags stripped, work item reverted to eligible state.</summary>
+    public const string ClaimReleased = "controller.claim_released";
 }

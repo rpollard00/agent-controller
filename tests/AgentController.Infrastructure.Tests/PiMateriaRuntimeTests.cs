@@ -1064,6 +1064,11 @@ main()
             int maxComments,
             CancellationToken ct
         ) => Task.FromResult<IReadOnlyList<WorkItemComment>>(Array.Empty<WorkItemComment>());
+
+        public Task ReleaseClaimAsync(
+            ReleaseClaimRequest request,
+            CancellationToken ct
+        ) => Task.CompletedTask;
     }
 
     private sealed class StaticOptionsMonitor<TOptions> : IOptionsMonitor<TOptions>

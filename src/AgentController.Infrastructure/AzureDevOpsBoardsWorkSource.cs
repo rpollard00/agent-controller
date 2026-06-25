@@ -148,4 +148,18 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
 
         return await client.GetCommentsAsync(workRef, maxComments, cancellationToken);
     }
+
+    public async Task ReleaseClaimAsync(
+        ReleaseClaimRequest request,
+        CancellationToken cancellationToken)
+    {
+        var options = _options.CurrentValue;
+        if (string.IsNullOrWhiteSpace(options.Project))
+            return;
+
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var client = scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClient>();
+
+        await client.ReleaseClaimWorkItemAsync(request, cancellationToken);
+    }
 }

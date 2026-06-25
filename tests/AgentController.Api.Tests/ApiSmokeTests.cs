@@ -1,5 +1,6 @@
 using AgentController.Api;
 using AgentController.Application;
+using AgentController.Application.Abstractions;
 using AgentController.Infrastructure;
 using AgentController.Infrastructure.Options;
 using Microsoft.AspNetCore.Builder;
@@ -134,6 +135,7 @@ public class ApiSmokeTests
         var options = Options.Create(new AgentControllerOptions { WorkerId = "test-worker" });
         var loggerFactory = LoggerFactory.Create(b => b.AddConsole());
         var monitor = new TestOptionsMonitor<AgentControllerOptions>(options.Value);
+        var workSourceMonitor = new TestOptionsMonitor<WorkSourceOptionsView>(new WorkSourceOptionsView());
 
         // Build a service provider to get an IServiceScopeFactory.
         var services = new ServiceCollection();
@@ -142,6 +144,7 @@ public class ApiSmokeTests
         var worker = new PollingWorker(
             scopeFactory,
             monitor,
+            workSourceMonitor,
             loggerFactory.CreateLogger<PollingWorker>()
         );
 

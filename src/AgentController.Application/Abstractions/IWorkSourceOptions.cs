@@ -26,4 +26,11 @@ public interface IWorkSourceOptions
     /// When <c>null</c>, no state change is made on completion.
     /// </summary>
     string? CompletedState { get; }
+
+    /// <summary>
+    /// Work item states that are eligible for autonomous pickup.
+    /// Used to determine the target state when releasing a claim
+    /// so the work item becomes immediately retryable.
+    /// </summary>
+    IReadOnlyList<string>? EligibleStates { get; }
 }

@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using AgentController.Api;
 using AgentController.Api.Models;
 using AgentController.Application;
+using AgentController.Application.Abstractions;
 using AgentController.Domain;
 using AgentController.Infrastructure;
 using AgentController.Infrastructure.Data;
@@ -391,9 +392,10 @@ public class PiMateriaRuntimeEndToEndTests : IAsyncLifetime
         // so it won't poll automatically. We resolve it and drive it manually.
         var scopeFactory = _host.Services.GetRequiredService<IServiceScopeFactory>();
         var optionsMonitor = _host.Services.GetRequiredService<IOptionsMonitor<AgentControllerOptions>>();
+        var workSourceMonitor = _host.Services.GetRequiredService<IOptionsMonitor<WorkSourceOptionsView>>();
         var logger = _host.Services.GetRequiredService<ILogger<PollingWorker>>();
 
-        var worker = new PollingWorker(scopeFactory, optionsMonitor, logger);
+        var worker = new PollingWorker(scopeFactory, optionsMonitor, workSourceMonitor, logger);
 
         using var pollCts = new CancellationTokenSource(TimeSpan.FromSeconds(25));
 

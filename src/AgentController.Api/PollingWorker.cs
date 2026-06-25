@@ -1,4 +1,5 @@
 using AgentController.Application;
+using AgentController.Application.Abstractions;
 using AgentController.Domain;
 using AgentController.Infrastructure.Options;
 using Microsoft.Extensions.DependencyInjection;
@@ -34,16 +35,19 @@ public sealed partial class PollingWorker : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IOptionsMonitor<AgentControllerOptions> _options;
+    private readonly IOptionsMonitor<WorkSourceOptionsView> _workSourceOptions;
     private readonly ILogger<PollingWorker> _logger;
 
     public PollingWorker(
         IServiceScopeFactory scopeFactory,
         IOptionsMonitor<AgentControllerOptions> options,
+        IOptionsMonitor<WorkSourceOptionsView> workSourceOptions,
         ILogger<PollingWorker> logger
     )
     {
         _scopeFactory = scopeFactory;
         _options = options;
+        _workSourceOptions = workSourceOptions;
         _logger = logger;
     }
 
@@ -289,6 +293,10 @@ public sealed partial class PollingWorker : BackgroundService
         if (envHandle is null)
         {
             // Environment provisioning failed — run is already transitioned to Failed.
+            // Release the ADO claim and destroy the workspace to free concurrency.
+            await ReleaseClaimAndCleanupAsync(
+                run, candidate, workSource, environmentProvider, envHandle,
+                "Environment provisioning failed.", lifecycle, ct);
             return;
         }
 
@@ -310,6 +318,10 @@ public sealed partial class PollingWorker : BackgroundService
         if (checkout is null)
         {
             // Repository clone failed — run is already transitioned to Failed.
+            // Release the ADO claim and destroy the workspace to free concurrency.
+            await ReleaseClaimAndCleanupAsync(
+                run, candidate, workSource, environmentProvider, envHandle,
+                "Repository clone failed.", lifecycle, ct);
             return;
         }
 
@@ -821,6 +833,99 @@ public sealed partial class PollingWorker : BackgroundService
     }
 
     /// <summary>
+    /// Release the ADO claim (strip agent-active/agent-worker tags, revert state),
+    /// destroy the workspace, and log the release. Called when a pre-agent setup
+    /// step (environment provisioning, clone) fails so the concurrency slot is
+    /// freed immediately and the work item becomes retryable.
+    ///
+    /// Does NOT add an agent-failed tag — a bad runtime environment should not
+    /// dirty the external record.
+    /// </summary>
+    private async Task ReleaseClaimAndCleanupAsync(
+        AgentRunHandle run,
+        WorkCandidate candidate,
+        IWorkSource workSource,
+        IEnvironmentProvider environmentProvider,
+        EnvironmentHandle? envHandle,
+        string reason,
+        IRunLifecycleService lifecycle,
+        CancellationToken ct)
+    {
+        // Determine target state: use the first eligible state or default to "New"
+        var eligibleStates = _workSourceOptions.CurrentValue.EligibleStates;
+        var targetState = eligibleStates is { Count: > 0 } ? eligibleStates[0] : "New";
+
+        // 1. Release the ADO claim (strip agent-active, agent-worker tags, revert state)
+        if (candidate.Source != "LocalFake" && candidate.Source != "LocalFile"
+            && !string.IsNullOrWhiteSpace(candidate.ExternalId))
+        {
+            var revision = candidate.SourceMetadata?.TryGetValue("revision", out var rev) == true
+                ? rev
+                : null;
+
+            var releaseRequest = new ReleaseClaimRequest
+            {
+                WorkRef = new ExternalWorkRef
+                {
+                    Source = candidate.Source,
+                    ExternalId = candidate.ExternalId,
+                    Url = candidate.ExternalUrl,
+                    Revision = revision,
+                },
+                WorkerId = _options.CurrentValue.WorkerId,
+                TargetState = targetState,
+                Reason = reason,
+            };
+
+            try
+            {
+                await workSource.ReleaseClaimAsync(releaseRequest, ct);
+                Log.ClaimReleased(_logger, run.RunId, candidate.Id, targetState);
+            }
+            catch (Exception ex)
+            {
+                // Best-effort: claim release failure is logged but not fatal.
+                Log.ClaimReleaseFailed(_logger, run.RunId, candidate.Id, ex);
+            }
+        }
+
+        // 2. Destroy the workspace
+        if (envHandle is not null && !string.IsNullOrWhiteSpace(envHandle.RootPath))
+        {
+            try
+            {
+                await environmentProvider.DestroyAsync(envHandle, ct);
+                Log.WorkspaceDestroyed(_logger, run.RunId, envHandle.RootPath);
+            }
+            catch (Exception ex)
+            {
+                // Best-effort: workspace destruction failure is logged but not fatal.
+                Log.WorkspaceDestroyFailed(_logger, run.RunId, envHandle.RootPath, ex);
+            }
+        }
+
+        // 3. Log the release as a controller event
+        try
+        {
+            await lifecycle.AppendControllerEventAsync(
+                run.RunId,
+                ControllerEventTypes.ClaimReleased,
+                $"Claim released due to setup failure: {reason}",
+                new Dictionary<string, object?>
+                {
+                    ["reason"] = reason,
+                    ["targetState"] = targetState,
+                },
+                EventSeverity.Warning,
+                ct);
+        }
+        catch
+        {
+            // Best-effort logging.
+        }
+    }
+
+    /// <summary>
     /// Append a milestone controller event for a lifecycle state transition.
     /// </summary>
     private static async Task AppendMilestoneEvent(
@@ -1198,5 +1303,30 @@ public sealed partial class PollingWorker : BackgroundService
             Level = LogLevel.Information,
             Message = "Recovered {StaleCount} stale run(s).")]
         public static partial void StaleRecoverySummary(ILogger logger, int staleCount);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Released ADO claim for run {RunId} (work item {WorkItemId}). "
+                + "Stripped agent-active/agent-worker tags, reverted to '{TargetState}'.")]
+        public static partial void ClaimReleased(
+            ILogger logger, string runId, string workItemId, string targetState);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Failed to release ADO claim for run {RunId} (work item {WorkItemId}).")]
+        public static partial void ClaimReleaseFailed(
+            ILogger logger, string runId, string workItemId, Exception ex);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Destroyed workspace for run {RunId} at '{WorkspacePath}'.")]
+        public static partial void WorkspaceDestroyed(
+            ILogger logger, string runId, string workspacePath);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Failed to destroy workspace for run {RunId} at '{WorkspacePath}'.")]
+        public static partial void WorkspaceDestroyFailed(
+            ILogger logger, string runId, string workspacePath, Exception ex);
     }
 }

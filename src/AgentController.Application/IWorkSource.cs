@@ -57,4 +57,16 @@ public interface IWorkSource
         int maxComments,
         CancellationToken cancellationToken
     );
+
+    /// <summary>
+    /// Release a previously claimed work item back to the work source.
+    /// Strips agent-controlled tags (agent-active, agent-worker:*) and
+    /// optionally reverts the work item state so it becomes eligible for re-discovery.
+    /// Does NOT add an agent-failed tag — a bad runtime environment should not
+    /// dirty the external record.
+    /// </summary>
+    Task ReleaseClaimAsync(
+        ReleaseClaimRequest request,
+        CancellationToken cancellationToken
+    );
 }
