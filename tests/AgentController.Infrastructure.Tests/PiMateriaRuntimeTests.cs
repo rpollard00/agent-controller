@@ -492,6 +492,53 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         );
     }
 
+    // ── Conformance: every contract event type is recognized ─────────
+
+    [Fact]
+    public async Task StartAsync_AllContractEventTypesRecognized_NoUnrecognizedWarnings()
+    {
+        // Conformance test: emit ALL recognized stdout event types from the
+        // PiMateriaStdoutEventTypes contract. The runtime must handle every
+        // one without triggering unrecognized-type warnings or failing the run.
+        // This guards against contract drift between the emitter and parser.
+        WriteFakePiScript(_fakePiPath, FakePiVariant.AllRecognizedTypes);
+
+        await using var harness = await NewHarnessAsync(_fakePiPath);
+        var spec = await BuildSpecAsync(harness, "Conformance test");
+
+        var runtime = harness.Runtime!;
+        _ = await runtime.StartAsync(spec, CancellationToken.None);
+
+        // The runtime should recognize all event types and reach a terminal state.
+        await WaitForStateAsync(
+            spec.RunId,
+            s => s == RunLifecycleState.Completed || s == RunLifecycleState.Failed,
+            TimeSpan.FromSeconds(15)
+        );
+
+        var run = await _runStore.GetByIdAsync(spec.RunId, CancellationToken.None);
+        Assert.NotNull(run);
+        // The run should reach Completed (from the webhook), not Failed.
+        Assert.Equal(RunLifecycleState.Completed, run!.Status);
+
+        // Verify no unrecognized-type warnings in the events.
+        // This is the conformance assertion: every type in the contract
+        // (PiMateriaStdoutEventTypes) must be recognized by the parser.
+        var events = await _eventStore.ListByRunIdAsync(spec.RunId, CancellationToken.None);
+        Assert.DoesNotContain(
+            events,
+            e => e.Message != null && e.Message.Contains("unrecognized", StringComparison.OrdinalIgnoreCase)
+        );
+
+        // Verify no multiTurn-related failures (cast_start had only single-turn sockets).
+        Assert.DoesNotContain(
+            events,
+            e => e.EventType == RuntimeEventTypes.Failed &&
+                 e.Message != null &&
+                 e.Message.Contains("multiTurn", StringComparison.OrdinalIgnoreCase)
+        );
+    }
+
     // ── Harness / fixture helpers ────────────────────────────────────
 
     /// <summary>
@@ -856,6 +903,7 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         MultiTurnAgentSocket,
         SingleTurnAgentSocket,
         MultiTurnInteractive,
+        AllRecognizedTypes,
     }
 
     /// <summary>
@@ -882,6 +930,7 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
             FakePiVariant.MultiTurnAgentSocket => FakePiScripts.MultiTurnAgentSocket,
             FakePiVariant.SingleTurnAgentSocket => FakePiScripts.SingleTurnAgentSocket,
             FakePiVariant.MultiTurnInteractive => FakePiScripts.MultiTurnInteractive,
+            FakePiVariant.AllRecognizedTypes => FakePiScripts.AllRecognizedTypes,
             _ => FakePiScripts.HappyPr,
         };
 
@@ -1170,6 +1219,44 @@ def main():
             })
             time.sleep(0.05)
             post_event({'eventId': 'fp-completed', 'eventType': 'runtime.completed', 'occurredAt': '2026-06-23T00:00:01Z', 'severity': 'info', 'message': 'done', 'payload': {'outcome': 'no_changes_needed', 'summary': 'interactive multiTurn'}})
+            # Stay alive until the controller shuts us down.
+            continue
+        if msg.get('type') == 'abort':
+            return
+
+main()
+""";
+
+        /// <summary>
+        /// Emits ALL recognized stdout event types from the contract in sequence,
+        /// then posts a <c>runtime.completed</c> webhook. This is the conformance
+        /// test: the runtime must recognize every type and NOT emit any
+        /// unrecognized-type warnings or fail the run.
+        /// </summary>
+        public const string AllRecognizedTypes =
+            Header
+            + """
+def main():
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return
+        try:
+            msg = json.loads(line)
+        except Exception:
+            continue
+        if msg.get('type') == 'prompt':
+            send_response({'type': 'response', 'command': 'prompt', 'success': True})
+            # Emit all recognized stdout event types from the contract.
+            # The runtime must handle every one without triggering unrecognized-type.
+            send_response({'type': 'cast_start', 'castId': 'conformance-cast', 'eventing': {'preset': 'agent-controller'}, 'sockets': [{'socketName': 'Socket-1', 'type': 'utility', 'materiaName': 'Detect-VCS', 'multiTurn': False}]})
+            send_response({'type': 'materia_start', 'materiaName': 'Detect-VCS', 'socketName': 'Socket-1'})
+            send_response({'type': 'materia_end', 'materiaName': 'Detect-VCS', 'socketName': 'Socket-1'})
+            send_response({'type': 'cast_end', 'castId': 'conformance-cast'})
+            send_response({'type': 'agent_end', 'messages': []})
+            # Post a completed webhook so the run reaches a terminal state.
+            time.sleep(0.05)
+            post_event({'eventId': 'fp-completed', 'eventType': 'runtime.completed', 'occurredAt': '2026-06-23T00:00:01Z', 'severity': 'info', 'message': 'done', 'payload': {'outcome': 'no_changes_needed', 'summary': 'all types recognized'}})
             # Stay alive until the controller shuts us down.
             continue
         if msg.get('type') == 'abort':

@@ -732,7 +732,8 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
     }
 
     /// <summary>
-    /// Parse one RPC stdout line. Recognized types:
+    /// Parse one RPC stdout line. Recognized types are defined by
+    /// <see cref="PiMateriaStdoutEventTypes.AllRecognizedTypes">:
     /// <list type="bullet">
     ///   <item><c>response</c> — RPC command response (signals prompt acceptance).</item>
     ///   <item><c>extension_error</c> — pi-materia extension error (logged as warning).</item>
@@ -742,10 +743,13 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
     ///       any are found (the controller never sends <c>/materia continue</c>).
     ///       The full socket metadata is persisted as a lifecycle artifact for
     ///       diagnosability.</item>
+    ///   <item><c>cast_end</c> — pi-materia cast completion event (informational).</item>
     ///   <item><c>agent_end</c> — pi-materia agent socket completed its single turn.
     ///       Under agent-controller eventing this signals the cast is done; the
     ///       monitor will initiate graceful shutdown so the run does not stall
     ///       waiting for a <c>/materia continue</c> that the controller never sends.</item>
+    ///   <item><c>materia_start</c> — pi-materia materia socket started (informational).</item>
+    ///   <item><c>materia_end</c> — pi-materia materia socket completed (informational).</item>
     /// </list>
     /// Unrecognized types are tracked for fail-closed handling under agent-controller
     /// eventing (contract drift defense). We do not derive runtime lifecycle events
@@ -773,7 +777,7 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
         var type = typeEl.GetString() ?? "(null)";
         Log.PiStdoutParsed(_logger, runId, type);
 
-        if (type == "response")
+        if (type == AgentController.Domain.PiMateriaStdoutEventTypes.Response)
         {
             var command = doc.RootElement.TryGetProperty("command", out var cmdEl)
                 ? cmdEl.GetString()
@@ -799,7 +803,7 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
             return;
         }
 
-        if (type == "extension_error")
+        if (type == AgentController.Domain.PiMateriaStdoutEventTypes.ExtensionError)
         {
             var msg = doc.RootElement.TryGetProperty("error", out var errEl)
                 ? errEl.GetString()
@@ -808,7 +812,7 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
             return;
         }
 
-        if (type == "agent_end")
+        if (type == AgentController.Domain.PiMateriaStdoutEventTypes.AgentEnd)
         {
             // pi-materia agent socket completed its turn. Under agent-controller
             // eventing the controller never sends /materia continue, so this
@@ -818,7 +822,7 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
             return;
         }
 
-        if (type == "cast_start")
+        if (type == AgentController.Domain.PiMateriaStdoutEventTypes.CastStart)
         {
             // pi-materia cast initialization event containing resolved socket
             // metadata. Under agent-controller eventing, inspect for multiTurn
@@ -854,16 +858,59 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
                 active.EventingPreset = eventingPreset;
             }
 
+            // Extract and store the castId for diagnostic enrichment of later
+            // unrecognized-type warnings.
+            var castStartId = doc.RootElement.TryGetProperty("castId", out var castIdEl)
+                ? castIdEl.GetString()
+                : null;
+            if (castStartId is not null && active is not null)
+            {
+                active.CastId = castStartId;
+            }
+
             // Persist the cast_start event as a lifecycle artifact with enriched
             // socket metadata (names + multiTurn flags) for diagnosability.
             await IngestCastStartArtifactAsync(runId, doc, socketMetadata, ct);
             return;
         }
 
-        // Unrecognized type — warn with truncated raw line for diagnosis.
-        // Under agent-controller eventing, track for fail-closed handling.
+        if (type == AgentController.Domain.PiMateriaStdoutEventTypes.CastEnd)
+        {
+            // pi-materia cast completion event (informational).
+            // The runtime does not derive lifecycle state from this; the webhook
+            // (runtime.completed) is authoritative.
+            Log.PiStdoutIntermediate(_logger, runId, type);
+            return;
+        }
+
+        if (type == AgentController.Domain.PiMateriaStdoutEventTypes.MateriaStart)
+        {
+            // pi-materia materia socket started execution (informational).
+            // Track the current materia name for diagnostic enrichment.
+            var startMateriaName = doc.RootElement.TryGetProperty("materiaName", out var mnEl)
+                ? mnEl.GetString()
+                : null;
+            if (startMateriaName is not null && active is not null)
+            {
+                active.CurrentMateriaName = startMateriaName;
+            }
+            Log.PiStdoutIntermediate(_logger, runId, type);
+            return;
+        }
+
+        if (type == AgentController.Domain.PiMateriaStdoutEventTypes.MateriaEnd)
+        {
+            // pi-materia materia socket completed execution (informational).
+            Log.PiStdoutIntermediate(_logger, runId, type);
+            return;
+        }
+
+        // Enrich the unrecognized-type warning with cast id and resolved materia
+        // name so future contract drift is immediately traceable.
+        var castId = active?.CastId ?? "(unknown)";
+        var materiaName = active?.CurrentMateriaName ?? "(unknown)";
         var truncated = line.Length > 512 ? line[..512] + "..." : line;
-        Log.PiStdoutUnknownType(_logger, runId, type, truncated);
+        Log.PiStdoutUnknownType(_logger, runId, type, castId, materiaName, truncated);
         active?.SetUnrecognizedType(type);
     }
 
@@ -1312,6 +1359,20 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
         /// </summary>
         public SocketMetadataEntry[] SocketMetadata { get; set; } = Array.Empty<SocketMetadataEntry>();
 
+        /// <summary>
+        /// Cast ID extracted from the <c>cast_start</c> stdout event.
+        /// Used to enrich unrecognized-type warnings so future contract drift
+        /// is immediately traceable to the specific cast.
+        /// </summary>
+        public string? CastId { get; set; }
+
+        /// <summary>
+        /// Current materia name extracted from <c>materia_start</c> stdout events.
+        /// Used to enrich unrecognized-type warnings so future contract drift
+        /// is immediately traceable to the specific materia.
+        /// </summary>
+        public string? CurrentMateriaName { get; set; }
+
         public void SetAgentEndReceived() => AgentEndReceived = true;
 
         public void SetUnrecognizedType(string type)
@@ -1542,13 +1603,25 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "[pi stdout] ({RunId}) unrecognized type='{Type}': {RawLine}"
+            Message = "[pi stdout] ({RunId}) unrecognized type='{Type}' (castId={CastId}, materia={MateriaName}): {RawLine}"
         )]
         public static partial void PiStdoutUnknownType(
             ILogger logger,
             string runId,
             string type,
+            string castId,
+            string materiaName,
             string rawLine
+        );
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "[pi stdout] ({RunId}) intermediate type='{Type}'"
+        )]
+        public static partial void PiStdoutIntermediate(
+            ILogger logger,
+            string runId,
+            string type
         );
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "[pi stderr] ({RunId}) {Line}")]
