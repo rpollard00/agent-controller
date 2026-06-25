@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using AgentController.Application;
@@ -757,6 +758,176 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
                  e.Message != null &&
                  e.Message.Contains("multiTurn", StringComparison.OrdinalIgnoreCase)
         );
+    }
+
+    // ── Regression: full-context cast task construction ──────────────
+    //
+    // Guards the fix for the E2E symptom where the agent self-terminated
+    // because ReadCastTask fed only the work-item title ("# This is a story")
+    // to the planning materia instead of the full story body.
+    //
+    // ReadCastTask is private static, so these tests invoke it via reflection
+    // with on-disk temp directories containing the expected artifact files.
+
+    [Fact]
+    public void ReadCastTask_FullWorkItemWithAcceptanceCriteriaAndComments_ContainsAllSections()
+    {
+        // Arrange: create temp directory with work-item.md, acceptance-criteria.md, comments.md.
+        var contextDir = Path.Combine(Path.GetTempPath(), $"pimateria-readcasttask-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(contextDir);
+
+        try
+        {
+            File.WriteAllText(
+                Path.Combine(contextDir, "work-item.md"),
+                "# This is a story\n\nImplement the feature that does the thing.\n\nIt should handle edge cases.\n"
+            );
+            File.WriteAllText(
+                Path.Combine(contextDir, "acceptance-criteria.md"),
+                "- Given the system is running\n- When the user clicks the button\n- Then the feature activates\n"
+            );
+            File.WriteAllText(
+                Path.Combine(contextDir, "comments.md"),
+                "This should use the existing infrastructure layer.\n"
+            );
+
+            var spec = new AgentRunSpec
+            {
+                RunId = "test-run-id",
+                WorkRef = new ExternalWorkRef { Source = "Local", ExternalId = "WI-42" },
+            };
+
+            // Act: invoke ReadCastTask via reflection.
+            var taskText = InvokeReadCastTask(spec, contextDir);
+
+            // Assert: full work-item body is present (not just the title line).
+            Assert.Contains("# This is a story", taskText);
+            Assert.Contains("Implement the feature that does the thing.", taskText);
+            Assert.Contains("It should handle edge cases.", taskText);
+
+            // Assert: acceptance criteria section is appended.
+            Assert.Contains("## Acceptance Criteria", taskText);
+            Assert.Contains("Given the system is running", taskText);
+            Assert.Contains("When the user clicks the button", taskText);
+            Assert.Contains("Then the feature activates", taskText);
+
+            // Assert: comments section is appended.
+            Assert.Contains("## Comments", taskText);
+            Assert.Contains("This should use the existing infrastructure layer.", taskText);
+
+            // Assert: sections are separated by blank lines (double newline join).
+            Assert.Contains("\n\n## Acceptance Criteria\n\n", taskText);
+            Assert.Contains("\n\n## Comments\n\n", taskText);
+        }
+        finally
+        {
+            Directory.Delete(contextDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ReadCastTask_WorkItemOnly_ContainsFullBodyWithoutTitleOnly()
+    {
+        // Arrange: work-item.md with title + body, no acceptance-criteria.md or comments.md.
+        var contextDir = Path.Combine(Path.GetTempPath(), $"pimateria-readcasttask-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(contextDir);
+
+        try
+        {
+            File.WriteAllText(
+                Path.Combine(contextDir, "work-item.md"),
+                "# This is a story\n\nImplement the feature that does the thing.\n\nIt should handle edge cases.\n"
+            );
+            // No acceptance-criteria.md or comments.md.
+
+            var spec = new AgentRunSpec
+            {
+                RunId = "test-run-id",
+                WorkRef = new ExternalWorkRef { Source = "Local", ExternalId = "WI-42" },
+            };
+
+            // Act.
+            var taskText = InvokeReadCastTask(spec, contextDir);
+
+            // Assert: full body is present, not truncated to title only.
+            Assert.Contains("# This is a story", taskText);
+            Assert.Contains("Implement the feature that does the thing.", taskText);
+            Assert.Contains("It should handle edge cases.", taskText);
+
+            // Assert: no extra sections appended.
+            Assert.DoesNotContain("## Acceptance Criteria", taskText);
+            Assert.DoesNotContain("## Comments", taskText);
+            Assert.DoesNotContain("Complete work item", taskText);
+        }
+        finally
+        {
+            Directory.Delete(contextDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ReadCastTask_NoWorkItemFile_ReturnsGenericFallback()
+    {
+        // Arrange: context directory with no work-item.md.
+        var contextDir = Path.Combine(Path.GetTempPath(), $"pimateria-readcasttask-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(contextDir);
+
+        try
+        {
+            var spec = new AgentRunSpec
+            {
+                RunId = "test-run-id",
+                WorkRef = new ExternalWorkRef { Source = "Local", ExternalId = "WI-99" },
+            };
+
+            // Act.
+            var taskText = InvokeReadCastTask(spec, contextDir);
+
+            // Assert: generic fallback string with the external work reference.
+            Assert.Equal("Complete work item WI-99.", taskText);
+        }
+        finally
+        {
+            Directory.Delete(contextDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ReadCastTask_NoWorkItemFile_FallsBackToRunIdWhenExternalIdMissing()
+    {
+        // Arrange: context directory with no work-item.md, spec with no ExternalId.
+        var contextDir = Path.Combine(Path.GetTempPath(), $"pimateria-readcasttask-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(contextDir);
+
+        try
+        {
+            var spec = new AgentRunSpec
+            {
+                RunId = "test-run-id-abc",
+                WorkRef = new ExternalWorkRef { Source = "Local" },
+            };
+
+            // Act.
+            var taskText = InvokeReadCastTask(spec, contextDir);
+
+            // Assert: falls back to RunId when ExternalId is absent.
+            Assert.Equal("Complete work item test-run-id-abc.", taskText);
+        }
+        finally
+        {
+            Directory.Delete(contextDir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Invoke the private static <c>ReadCastTask</c> method via reflection.
+    /// </summary>
+    private static string InvokeReadCastTask(AgentRunSpec spec, string contextDir)
+    {
+        var method = typeof(PiMateriaRuntime)
+            .GetMethod("ReadCastTask", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+        return (string)method.Invoke(null, new object?[] { spec, contextDir })!;
     }
 
     // ── Harness / fixture helpers ────────────────────────────────────
