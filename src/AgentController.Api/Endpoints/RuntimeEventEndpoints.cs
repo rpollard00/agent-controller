@@ -1,8 +1,10 @@
+using System.Net;
 using AgentController.Application.Abstractions;
 using AgentController.Application.Commands;
 using AgentController.Application.Results;
 using AgentController.Api.Models;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.Extensions.Logging;
 
 namespace AgentController.Api.Endpoints;
 
@@ -12,8 +14,13 @@ namespace AgentController.Api.Endpoints;
 /// invokes the CQRS handler, and maps the discriminated result to HTTP.
 /// All validation (required fields, runId consistency, severity enum,
 /// occurredAt skew) lives in <see cref="IngestRuntimeEventCommandHandler"/>.
+///
+/// <para>Endpoint-level observability: every incoming POST is logged at
+/// Information with method, path, runId, eventType (if present), and
+/// outcome status + reason so empty bodies and 422s are visible at
+/// the default log level without requiring Debug.</para>
 /// </summary>
-public static class RuntimeEventEndpoints
+public static partial class RuntimeEventEndpoints
 {
     public static IEndpointRouteBuilder MapRuntimeEventEndpoints(this IEndpointRouteBuilder app)
     {
@@ -23,9 +30,22 @@ public static class RuntimeEventEndpoints
                 string runId,
                 RuntimeEventRequest request,
                 ICommandHandler<IngestRuntimeEventCommand, IngestRuntimeEventResult> handler,
+                ILoggerFactory loggerFactory,
                 CancellationToken ct
             ) =>
             {
+                var logger = loggerFactory.CreateLogger("AgentController.Api.Endpoints.RuntimeEventEndpoints");
+
+                // ── Endpoint-level request observability ──────────────────
+#pragma warning disable CA1873 // LoggerMessage source-gen has its own IsEnabled guard
+                Log.IncomingEventRequest(
+                    logger,
+                    "POST",
+                    $"/runs/{runId}/events",
+                    runId,
+                    request.EventType);
+#pragma warning restore CA1873
+
                 var command = new IngestRuntimeEventCommand(
                     RouteRunId: runId,
                     BodyRunId: request.RunId,
@@ -40,6 +60,16 @@ public static class RuntimeEventEndpoints
                 );
 
                 var result = await handler.HandleAsync(command, ct);
+
+                // ── Endpoint-level outcome observability ──────────────────
+#pragma warning disable CA1873 // LoggerMessage source-gen has its own IsEnabled guard
+                Log.EventRequestOutcome(
+                    logger,
+                    runId,
+                    request.EventType,
+                    (int)MapToStatusCode(result.Status),
+                    result.ConflictReason);
+#pragma warning restore CA1873
 
                 return result.Status switch
                 {
@@ -78,4 +108,40 @@ public static class RuntimeEventEndpoints
 
         return app;
     }
+
+    private static HttpStatusCode MapToStatusCode(IngestRuntimeEventStatus status) =>
+        status switch
+        {
+            IngestRuntimeEventStatus.Ingested => HttpStatusCode.OK,
+            IngestRuntimeEventStatus.NotFound => HttpStatusCode.NotFound,
+            IngestRuntimeEventStatus.Conflict => HttpStatusCode.Conflict,
+            IngestRuntimeEventStatus.Unprocessable => HttpStatusCode.UnprocessableEntity,
+            _ => HttpStatusCode.BadRequest,
+        };
+
+    // ── Source-generated LoggerMessage partials ─────────────────────
+
+    private static partial class Log
+    {
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Runtime event request — method={Method}, path={Path}, runId={RunId}, eventType={EventType}" )]
+        public static partial void IncomingEventRequest(
+            ILogger logger,
+            string method,
+            string path,
+            string runId,
+            string? eventType);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Runtime event outcome — runId={RunId}, eventType={EventType}, statusCode={StatusCode}, reason={Reason}" )]
+        public static partial void EventRequestOutcome(
+            ILogger logger,
+            string runId,
+            string? eventType,
+            int statusCode,
+            string? reason);
+    }
 }
+

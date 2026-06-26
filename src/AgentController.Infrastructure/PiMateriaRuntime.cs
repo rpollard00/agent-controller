@@ -73,6 +73,7 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
         }
 
         var eventUrl = $"{baseUrl.TrimEnd('/')}/runs/{spec.RunId}/events";
+        Log.EventUrlResolved(_logger, spec.RunId, baseUrl, eventUrl);
 
         // ── 2. Prepare context directory and task text ────────────────
         var contextDir = Path.Combine(spec.EnvironmentHandle.RootPath, "context");
@@ -288,6 +289,17 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
 
     private static partial class Log
     {
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Event URL resolved for run '{RunId}' — controllerBaseUrl='{ControllerBaseUrl}', eventUrl='{EventUrl}'."
+        )]
+        public static partial void EventUrlResolved(
+            ILogger logger,
+            string runId,
+            string controllerBaseUrl,
+            string eventUrl
+        );
+
         [LoggerMessage(
             Level = LogLevel.Information,
             Message = "PiMateria runtime starting for run '{RunId}' as '{RuntimeRunId}' (exe='{PiExe}', cwd='{RepoPath}')."
