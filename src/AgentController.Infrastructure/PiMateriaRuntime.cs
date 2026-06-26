@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using AgentController.Application;
 using AgentController.Application.Services;
 using AgentController.Domain;
@@ -93,7 +94,10 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
             WorkingDirectory = Directory.Exists(repoPath) ? repoPath : contextDir,
             UseShellExecute = false,
             CreateNoWindow = true,
-            // No redirected streams — detached process, fire and forget.
+            // Redirect streams so the inherited pipe is always consumed (prevents child
+            // from blocking on a full pipe buffer). Drained to log files, fire-and-forget.
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
         };
 
         // CLI invocation: pi "/materia loadout Elena" "/materia cast {task}"
@@ -105,15 +109,49 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
         psi.Environment["CONTROLLER_EVENT_URL"] = eventUrl;
         psi.Environment["CONTROLLER_CONTEXT_DIR"] = contextDir;
 
-        // ── 4. Start process (fire and forget) ────────────────────────
+        // ── 4. Prepare log directory and file writers ─────────────────
+        var logsDir = Path.Combine(spec.EnvironmentHandle.RootPath, "logs");
+        Directory.CreateDirectory(logsDir);
+
+        var stdoutPath = Path.Combine(logsDir, "pi.stdout.log");
+        var stderrPath = Path.Combine(logsDir, "pi.stderr.log");
+
+        // Open file writers once per invocation. WriteThrough flushes on each write;
+        // FileShare.Read allows external readers. Writers are fire-and-forget — they
+        // live for the process lifetime and are GC'd when the process exits.
+        var stdoutWriter = new StreamWriter(
+            new FileStream(stdoutPath, FileMode.Create, FileAccess.Write, FileShare.Read,
+                bufferSize: 4096, FileOptions.WriteThrough));
+        var stderrWriter = new StreamWriter(
+            new FileStream(stderrPath, FileMode.Create, FileAccess.Write, FileShare.Read,
+                bufferSize: 4096, FileOptions.WriteThrough));
+
+        // ── 5. Start process (fire and forget) ────────────────────────
         try
         {
-            using (var process = new Process { StartInfo = psi })
+            var process = new Process { StartInfo = psi };
+
+            // Wire up drain handlers — fire-and-forget background work on framework read threads.
+            process.OutputDataReceived += (sender, e) =>
             {
-                process.Start();
-                var runtimeRunId = $"pi-{process.Id}";
-                Log.RuntimeStarting(_logger, spec.RunId, runtimeRunId, piExe, repoPath);
-            }
+                if (e.Data == null) return; // EndOfEvent
+                try { stdoutWriter.WriteLine(e.Data); } catch { /* swallow — never kill the run */ }
+            };
+            process.ErrorDataReceived += (sender, e) =>
+            {
+                if (e.Data == null) return; // EndOfEvent
+                try { stderrWriter.WriteLine(e.Data); } catch { /* swallow — never kill the run */ }
+            };
+
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            var runtimeRunId = $"pi-{process.Id}";
+            Log.RuntimeStarting(_logger, spec.RunId, runtimeRunId, piExe, repoPath);
+
+            // Detach: do NOT retain the Process handle, do NOT WaitForExit.
+            // The drain handlers run on the framework's internal read threads.
         }
         catch (Exception ex)
         {
