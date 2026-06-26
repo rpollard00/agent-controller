@@ -174,6 +174,7 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
         var active = new ActiveProcess(process, cts, promptTcs, stdoutDone)
         {
             IsAutonomous = isAutonomous,
+            LastEventAt = DateTimeOffset.UtcNow,
         };
         _activeProcesses[spec.RunId] = active;
         _processesByRunId[spec.RunId] = process;
@@ -458,6 +459,63 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
                 return;
             }
 
+            // Keepalive-stall detection: if no runtime event (stdout line, heartbeat,
+            // socket completion, etc.) has been observed within the stall deadline,
+            // the run is considered orphaned and is failed with a retryable error.
+            // This prevents runs from hanging indefinitely when pi-materia dies
+            // without reaching a valid terminal state (mid-flight abort, environment
+            // unreachable, process crash, etc.).
+            // Distinct from the existing StaleTimeout path which goes straight to
+            // NeedsHuman: stall here produces a retryable failure consumed by the
+            // run-level retry work item.
+            if (!active.StallDetected)
+            {
+                var options = _runtimeOptions.CurrentValue;
+                var heartbeatIntervalSeconds = Math.Max(1, options.HeartbeatIntervalSeconds);
+                var keepaliveStallSeconds = Math.Max(1, options.KeepaliveStallSeconds);
+                var stallDeadlineSeconds = Math.Max(
+                    keepaliveStallSeconds,
+                    heartbeatIntervalSeconds * 3
+                );
+                var lastEventAge = (DateTimeOffset.UtcNow - active.LastEventAt).TotalSeconds;
+
+                if (lastEventAge > stallDeadlineSeconds)
+                {
+                    active.StallDetected = true;
+                    var castId = active.CastId ?? "(unknown)";
+                    var completedSockets = active.CompletedSockets.ToList();
+                    Log.KeepaliveStallDetected(
+                        _logger,
+                        runId,
+                        lastEventAge,
+                        stallDeadlineSeconds,
+                        heartbeatIntervalSeconds,
+                        castId,
+                        completedSockets.Count
+                    );
+                    await SynthesizeFailureAsync(
+                        runId,
+                        $"Keepalive-stall detected: no runtime event for {lastEventAge:F0}s " +
+                        $"(stall deadline: {stallDeadlineSeconds}s, heartbeat interval: {heartbeatIntervalSeconds}s, " +
+                        $"castId={castId}, completed sockets: {completedSockets.Count}). " +
+                        "The run has been failed as retryable.",
+                        new Dictionary<string, object?>
+                        {
+                            ["reason"] = "keepalive_stall",
+                            ["lastEventAgeSeconds"] = lastEventAge,
+                            ["stallDeadlineSeconds"] = stallDeadlineSeconds,
+                            ["heartbeatIntervalSeconds"] = heartbeatIntervalSeconds,
+                            ["castId"] = castId,
+                            ["completedSockets"] = completedSockets,
+                            ["retryable"] = true,
+                        },
+                        ct
+                    );
+                    await ShutdownProcessAsync(runId, active, ct);
+                    return;
+                }
+            }
+
             try
             {
                 await Task.Delay(TimeSpan.FromSeconds(1), ct);
@@ -615,6 +673,15 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
                 if (await IsRunTerminalAsync(runId, ct))
                 {
                     return;
+                }
+
+                // Refresh the keepalive-stall detector timestamp on synthetic
+                // heartbeats. This is the safety net that keeps the stall
+                // detector from firing during healthy runs where pi-materia
+                // isn't yet emitting its own periodic heartbeats.
+                if (_activeProcesses.TryGetValue(runId, out var active))
+                {
+                    active.UpdateLastEventAt();
                 }
 
                 await TryIngestAsync(
@@ -794,6 +861,10 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
         {
             return;
         }
+
+        // Refresh the keepalive-stall detector timestamp on every stdout line.
+        // Any stdout event from pi-materia counts as a runtime event.
+        active?.UpdateLastEventAt();
 
         using var doc = JsonDocument.Parse(line);
         if (!doc.RootElement.TryGetProperty("type", out var typeEl))
@@ -1551,6 +1622,24 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
         /// </summary>
         public HashSet<string> CompletedSockets { get; } = new();
 
+        /// <summary>
+        /// Timestamp of the last runtime event (stdout line, heartbeat, socket
+        /// completion, etc.). Used by the keepalive-stall detector to determine
+        /// if the run has stalled. Updated on every stdout line and synthetic
+        /// heartbeat.
+        /// </summary>
+        public DateTimeOffset LastEventAt { get; set; }
+
+        /// <summary>
+        /// Whether the keepalive-stall detector has already fired for this run.
+        /// Prevents duplicate stall failures if the monitor loop polls multiple
+        /// times before the process is shut down.
+        /// </summary>
+        public bool StallDetected { get; set; }
+
+        /// <summary>Refresh the last-event timestamp for the keepalive-stall detector.</summary>
+        public void UpdateLastEventAt() => LastEventAt = DateTimeOffset.UtcNow;
+
         public void SetUnrecognizedType(string type)
         {
             HasUnrecognizedEventType = true;
@@ -1886,5 +1975,21 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
                       "The agent-controller eventing preset is active and cannot drive multiTurn agent sockets.")]
         public static partial void MultiTurnAgentSocketsDetected(
             ILogger logger, string runId, string multiTurnSocketNames);
+
+        [LoggerMessage(
+            Level = LogLevel.Error,
+            Message = "Keepalive-stall detected for run '{RunId}': no runtime event for {LastEventAge:F0}s " +
+                      "(stall deadline: {StallDeadline}s, heartbeat interval: {HeartbeatInterval}s, " +
+                      "castId={CastId}, completed sockets: {CompletedSocketCount}). " +
+                      "Transitioning to retryable FAILED state."
+        )]
+        public static partial void KeepaliveStallDetected(
+            ILogger logger,
+            string runId,
+            double lastEventAge,
+            double stallDeadline,
+            int heartbeatInterval,
+            string castId,
+            int completedSocketCount);
     }
 }

@@ -77,4 +77,15 @@ public sealed class RuntimeOptions
     /// </summary>
     [Range(1, int.MaxValue)]
     public int CancelGracePeriodSeconds { get; init; } = 10;
+
+    /// <summary>
+    /// Keepalive-stall detection threshold in seconds. When no runtime event
+    /// (stdout line, heartbeat, socket completion, etc.) is observed for this
+    /// duration, the run is transitioned to a retryable FAILED state.
+    /// The effective stall deadline is <c>max(KeepaliveStallSeconds,
+    /// HeartbeatIntervalSeconds × 3)</c> to self-scale with the configured
+    /// heartbeat interval. Must be positive. Default: 90 seconds.
+    /// </summary>
+    [Range(1, int.MaxValue)]
+    public int KeepaliveStallSeconds { get; init; } = 90;
 }

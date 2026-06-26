@@ -1171,6 +1171,161 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         return (string)method.Invoke(null, new object?[] { spec, contextDir })!;
     }
 
+    // ── Keepalive-stall detection ──────────────────────────────────
+    //
+    // The keepalive-stall detector prevents runs from hanging indefinitely
+    // when pi-materia dies without reaching a valid terminal state.
+    // It tracks the last runtime event (stdout line, heartbeat, etc.) and
+    // fails the run with a retryable error if no event is observed within
+    // max(KeepaliveStallSeconds, HeartbeatIntervalSeconds × 3).
+
+    [Fact]
+    public async Task StartAsync_KeepaliveStallDetected_RunFailsWithRetryableError()
+    {
+        // Overwrite the fake pi with one that accepts the prompt but goes
+        // completely silent (no stdout events, no webhook events).
+        WriteFakePiScript(_fakePiPath, FakePiVariant.KeepaliveStall);
+
+        // Build a harness but don't dispose it until after the stall fires.
+        var harness = await NewHarnessAsync(_fakePiPath);
+
+        var runId = await SeedRunAsync();
+        var envDir = Path.Combine(_tempRoot, runId);
+        var contextDir = Path.Combine(envDir, "context");
+        var repoDir = Path.Combine(envDir, "repo");
+        Directory.CreateDirectory(contextDir);
+        Directory.CreateDirectory(repoDir);
+        await File.WriteAllTextAsync(
+            Path.Combine(contextDir, "work-item.md"),
+            "# Keepalive stall test\n\nSome acceptance criteria.\n"
+        );
+
+        // Use a very short stall threshold for the test:
+        // HeartbeatIntervalSeconds=2, KeepaliveStallSeconds=4.
+        // Effective deadline = max(4, 2×3) = 6 seconds.
+        // Disable synthetic heartbeat so the stall detector can fire
+        // (the fake pi goes silent after cast_start, and the synthetic
+        // heartbeat would keep refreshing LastEventAt preventing stall).
+        var runtime = new PiMateriaRuntime(
+            _scopeFactory,
+            new StaticOptionsMonitor<RuntimeOptions>(
+                new RuntimeOptions
+                {
+                    Provider = "PiMateria",
+                    PiExecutablePath = harness.FakePiPath,
+                    ControllerBaseUrl = harness.BaseUrl,
+                    DefaultMateriaLoadout = "Wedge",
+                    HeartbeatIntervalSeconds = 2,
+                    KeepaliveStallSeconds = 4,
+                    DisableSyntheticHeartbeat = true,
+                    PromptAcceptanceTimeoutSeconds = 4,
+                    CancelGracePeriodSeconds = 3,
+                }
+            ),
+            _provider.GetRequiredService<ILogger<PiMateriaRuntime>>()
+        );
+
+        var spec = new AgentRunSpec
+        {
+            RunId = runId,
+            WorkRef = new ExternalWorkRef { Source = "LocalFile", ExternalId = "test-stall" },
+            EnvironmentHandle = new EnvironmentHandle { RootPath = envDir },
+            RepoCheckout = new RepositoryCheckout { LocalPath = repoDir, RepoKey = "widget" },
+        };
+
+        _ = await runtime.StartAsync(spec, CancellationToken.None);
+
+        // The stall detector should fire within the effective deadline
+        // (max(4, 2×3) = 6s) plus a small polling margin. We give it 15s total.
+        await WaitForStateAsync(
+            runId,
+            s => s == RunLifecycleState.Failed,
+            TimeSpan.FromSeconds(15)
+        );
+
+        var run = await _runStore.GetByIdAsync(runId, CancellationToken.None);
+        Assert.NotNull(run);
+        Assert.Equal(RunLifecycleState.Failed, run!.Status);
+
+        // Verify the failure is a keepalive-stall with retryable=true.
+        var events = await _eventStore.ListByRunIdAsync(runId, CancellationToken.None);
+        var failureEvents = events.Where(e => e.EventType == RuntimeEventTypes.Failed).ToList();
+        Assert.NotEmpty(failureEvents);
+        var failureEvent = failureEvents.First();
+
+        // The message should mention keepalive-stall.
+        Assert.True(
+            failureEvent.Message != null && failureEvent.Message.Contains("Keepalive-stall", StringComparison.OrdinalIgnoreCase),
+            $"Expected failure message to mention 'Keepalive-stall'. Got: {failureEvent.Message}"
+        );
+
+        // The payload should contain the stall reason and retryable flag.
+        Assert.NotNull(failureEvent.Payload);
+        Assert.True(
+            failureEvent.Payload!.TryGetValue("reason", out var reason) &&
+            reason?.ToString() == "keepalive_stall",
+            $"Expected payload reason='keepalive_stall'. Got: {string.Join(", ", failureEvent.Payload!.Select(kv => kv.Key + "=" + kv.Value))}"
+        );
+        Assert.True(
+            failureEvent.Payload!.TryGetValue("retryable", out var retryable) &&
+            retryable is true,
+            $"Expected payload retryable=true. Got: {string.Join(", ", failureEvent.Payload!.Select(kv => kv.Key + "=" + kv.Value))}"
+        );
+
+        runtime.Dispose();
+        await harness.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task StartAsync_HealthyProgression_SyntheticHeartbeatPreventsStall()
+    {
+        // The Idle variant accepts the prompt and posts a runtime.accepted webhook,
+        // then stays alive with no further stdout events. The synthetic heartbeat
+        // should keep the keepalive-stall detector from firing.
+        WriteFakePiScript(_fakePiPath, FakePiVariant.Idle);
+
+        await using var harness = await NewHarnessAsync(_fakePiPath);
+        var spec = await BuildSpecAsync(harness, "Healthy progression test");
+
+        var runtime = harness.Runtime!;
+        var handle = await runtime.StartAsync(spec, CancellationToken.None);
+
+        // Wait for the accepted webhook to be processed.
+        await WaitForStateAsync(
+            spec.RunId,
+            s => s == RunLifecycleState.AwaitingResult || s == RunLifecycleState.AgentRunning,
+            TimeSpan.FromSeconds(15)
+        );
+
+        // Let the synthetic heartbeat run for a few cycles (heartbeat interval is 2s).
+        // The stall detector should NOT fire because synthetic heartbeats refresh
+        // the LastEventAt timestamp.
+        await Task.Delay(TimeSpan.FromSeconds(8));
+
+        // The run should still be non-terminal (not failed from stall).
+        var run = await _runStore.GetByIdAsync(spec.RunId, CancellationToken.None);
+        Assert.NotNull(run);
+        Assert.True(
+            run!.Status == RunLifecycleState.AgentRunning ||
+            run.Status == RunLifecycleState.AwaitingResult,
+            $"Expected non-terminal state during healthy progression, got {run.Status}. " +
+            "The synthetic heartbeat should keep the stall detector from firing."
+        );
+
+        // Verify no keepalive-stall failure events.
+        var events = await _eventStore.ListByRunIdAsync(spec.RunId, CancellationToken.None);
+        Assert.DoesNotContain(
+            events,
+            e => e.EventType == RuntimeEventTypes.Failed &&
+                 e.Message != null &&
+                 e.Message.Contains("Keepalive-stall", StringComparison.OrdinalIgnoreCase)
+        );
+
+        // Clean up: cancel the run.
+        await runtime.CancelAsync(handle, CancellationToken.None);
+        runtime.Dispose();
+    }
+
     // ── Harness / fixture helpers ────────────────────────────────────
 
     /// <summary>
@@ -1540,6 +1695,7 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         AllRecognizedTypes,
         MultiSocketAgentEnd,
         BiggsLoadoutSocket3Divergence,
+        KeepaliveStall,
     }
 
     /// <summary>
@@ -1571,6 +1727,7 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
             FakePiVariant.AllRecognizedTypes => FakePiScripts.AllRecognizedTypes,
             FakePiVariant.MultiSocketAgentEnd => FakePiScripts.MultiSocketAgentEnd,
             FakePiVariant.BiggsLoadoutSocket3Divergence => FakePiScripts.BiggsLoadoutSocket3Divergence,
+            FakePiVariant.KeepaliveStall => FakePiScripts.KeepaliveStall,
             _ => FakePiScripts.HappyPr,
         };
 
@@ -2105,6 +2262,50 @@ def main():
             })
             # Stay alive so the monitor can detect the multiTurn flag.
             time.sleep(3)
+            return
+        if msg.get('type') == 'abort':
+            return
+
+main()
+""";
+
+        /// <summary>
+        /// Simulates an orphaned AwaitingResult: accepts the prompt, emits cast_start,
+        /// then goes completely silent (no stdout events, no webhook events).
+        /// The keepalive-stall detector should fire and fail the run.
+        /// Stays alive long enough for the stall detector to trigger.
+        /// </summary>
+        public const string KeepaliveStall =
+            Header
+            + """
+def main():
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return
+        try:
+            msg = json.loads(line)
+        except Exception:
+            continue
+        if msg.get('type') == 'prompt':
+            send_response({'type': 'response', 'command': 'prompt', 'success': True})
+            # Emit cast_start so the runtime has a castId for diagnostics.
+            send_response({
+                'type': 'cast_start',
+                'castId': 'stall-test-cast',
+                'eventing': {'preset': 'agent-controller'},
+                'sockets': [
+                    {'socketName': 'Socket-4', 'type': 'agent', 'materiaName': 'Builda', 'multiTurn': False}
+                ]
+            })
+            # Then go completely silent — no stdout events, no webhook events.
+            # The keepalive-stall detector should fire and fail the run.
+            # Stay alive long enough for the stall detector to trigger (60s).
+            diag('stall-test: going silent...')
+            for _ in range(600):
+                if not sys.stdin.readline():
+                    break
+                time.sleep(0.1)
             return
         if msg.get('type') == 'abort':
             return
