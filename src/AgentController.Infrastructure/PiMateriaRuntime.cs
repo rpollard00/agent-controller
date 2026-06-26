@@ -107,6 +107,11 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
         var materiaConfigPath = ResolveMateriaConfigPath(options, contextDir);
         WriteControllerMateriaConfigIfNeeded(options, materiaConfigPath);
 
+        // Derive autonomous-mode from the controller-owned config at startup,
+        // not from the cast_start stdout event (which is itself a pi-materia
+        // deliverable that may not be present yet — startup-ordering race).
+        var isAutonomous = ReadControllerConfigAutonomousMode(materiaConfigPath, spec.RunId);
+
         var repoPath = spec.RepoCheckout.LocalPath;
         var taskText = ReadCastTask(spec, contextDir);
 
@@ -166,7 +171,10 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
         var promptTcs = new TaskCompletionSource<bool>();
         var stdoutDone = new TaskCompletionSource<bool>();
 
-        var active = new ActiveProcess(process, cts, promptTcs, stdoutDone);
+        var active = new ActiveProcess(process, cts, promptTcs, stdoutDone)
+        {
+            IsAutonomous = isAutonomous,
+        };
         _activeProcesses[spec.RunId] = active;
         _processesByRunId[spec.RunId] = process;
 
@@ -404,8 +412,7 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
             // Fail the cast immediately — but ONLY under the agent-controller
             // preset. Under interactive/CLI eventing a human can drive continue
             // so multiTurn sockets are valid.
-            if (active.HasMultiTurnAgentSockets &&
-                string.Equals(active.EventingPreset, "agent-controller", StringComparison.Ordinal))
+            if (active.IsAutonomous && active.HasMultiTurnAgentSockets)
             {
                 var socketList = string.Join(", ", active.MultiTurnSocketNames);
                 await SynthesizeFailureAsync(
@@ -428,8 +435,7 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
             // and the controller. Under agent-controller eventing (autonomous run),
             // fail the run to prevent silent token-sinking stalls. Under interactive/CLI
             // eventing a human is present to handle the situation, so warn-and-continue.
-            if (active.HasUnrecognizedEventType &&
-                string.Equals(active.EventingPreset, "agent-controller", StringComparison.Ordinal))
+            if (active.IsAutonomous && active.HasUnrecognizedEventType)
             {
                 var unrecognizedType = active.UnrecognizedEventType ?? "(unknown)";
                 var castId = active.CastId ?? "(unknown)";
@@ -492,11 +498,10 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
             }
 
             // Defense-in-depth: if an unrecognized stdout event type was seen
-            // under agent-controller eventing, fail the run instead of synthesizing
-            // a completion from exit code. Under interactive/CLI eventing a human
-            // is present, so allow the normal exit-code synthesis path.
-            if (active.HasUnrecognizedEventType &&
-                string.Equals(active.EventingPreset, "agent-controller", StringComparison.Ordinal) &&
+            // in autonomous mode, fail the run instead of synthesizing a completion
+            // from exit code. Under interactive/CLI eventing a human is present,
+            // so allow the normal exit-code synthesis path.
+            if (active.IsAutonomous && active.HasUnrecognizedEventType &&
                 !await IsRunTerminalAsync(runId, ct))
             {
                 var unrecognizedType = active.UnrecognizedEventType ?? "(unknown)";
@@ -1184,6 +1189,9 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
                 ActiveLoadout = string.IsNullOrWhiteSpace(options.DefaultMateriaLoadout)
                     ? null
                     : options.DefaultMateriaLoadout,
+                // The controller-owned config always represents an autonomous run:
+                // the controller is the sole driver, there is no human in the loop.
+                AutonomousMode = true,
                 Eventing = new MateriaEventingConfig
                 {
                     Enabled = true,
@@ -1198,6 +1206,41 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
         catch (Exception ex)
         {
             Log.WriteMateriaConfigFailed(_logger, materiaConfigPath, ex);
+        }
+    }
+
+    /// <summary>
+    /// Read the <c>autonomousMode</c> field from the controller-owned
+    /// <c>materia-controller.json</c> config. Returns <c>true</c> if the config
+    /// exists and has <c>autonomousMode: true</c>, <c>false</c> otherwise.
+    /// Config read failures surface a clear error and abort the run.
+    /// </summary>
+    private bool ReadControllerConfigAutonomousMode(string materiaConfigPath, string runId)
+    {
+        if (!File.Exists(materiaConfigPath))
+        {
+            Log.ConfigFileNotFound(_logger, runId, materiaConfigPath);
+            return false;
+        }
+
+        try
+        {
+            var json = File.ReadAllText(materiaConfigPath);
+            using var doc = JsonDocument.Parse(json);
+
+            if (doc.RootElement.TryGetProperty("autonomousMode", out var amEl))
+            {
+                return amEl.GetBoolean();
+            }
+
+            // Config exists but has no autonomousMode field — default to false.
+            Log.ConfigMissingAutonomousMode(_logger, runId, materiaConfigPath);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Log.ConfigReadFailed(_logger, runId, materiaConfigPath, ex);
+            return false;
         }
     }
 
@@ -1451,10 +1494,20 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
 
         /// <summary>
         /// Eventing preset extracted from the <c>cast_start</c> stdout event
-        /// (e.g. "agent-controller", "interactive"). Used to determine whether
-        /// the multiTurn-agent-socket fail-fast guard applies.
+        /// (e.g. "agent-controller", "interactive"). Retained for artifact
+        /// enrichment and diagnostic logging only; autonomous-mode is now
+        /// derived from the controller-owned config at startup.
         /// </summary>
         public string? EventingPreset { get; set; }
+
+        /// <summary>
+        /// Whether this run is autonomous (controller-driven, no human in the loop).
+        /// Derived from <c>autonomousMode</c> in the controller-owned
+        /// <c>materia-controller.json</c> at startup, not from the <c>cast_start</c>
+        /// stdout event. Drives the multiTurn-agent-socket fail-fast guard and
+        /// the unrecognized-type fail-closed behavior.
+        /// </summary>
+        public bool IsAutonomous { get; set; }
 
         /// <summary>
         /// Set when a <c>cast_start</c> stdout event reveals one or more agent
@@ -1547,6 +1600,9 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
     {
         [JsonPropertyName("activeLoadout")]
         public string? ActiveLoadout { get; init; }
+
+        [JsonPropertyName("autonomousMode")]
+        public bool AutonomousMode { get; init; }
 
         [JsonPropertyName("eventing")]
         public MateriaEventingConfig? Eventing { get; init; }
@@ -1708,6 +1764,37 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
         )]
         public static partial void WriteMateriaConfigFailed(
             ILogger logger,
+            string path,
+            Exception ex
+        );
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Controller-owned materia config not found for run '{RunId}' at '{Path}'. Defaulting to non-autonomous mode."
+        )]
+        public static partial void ConfigFileNotFound(
+            ILogger logger,
+            string runId,
+            string path
+        );
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Controller-owned materia config for run '{RunId}' at '{Path}' is missing 'autonomousMode' field. Defaulting to non-autonomous mode."
+        )]
+        public static partial void ConfigMissingAutonomousMode(
+            ILogger logger,
+            string runId,
+            string path
+        );
+
+        [LoggerMessage(
+            Level = LogLevel.Error,
+            Message = "Failed to read controller-owned materia config for run '{RunId}' at '{Path}'."
+        )]
+        public static partial void ConfigReadFailed(
+            ILogger logger,
+            string runId,
             string path,
             Exception ex
         );

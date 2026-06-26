@@ -448,6 +448,190 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         }
     }
 
+    // ── Config-driven autonomous-mode: derive from controller-owned config ──
+    //
+    // The runtime derives autonomous-mode from the controller-owned
+    // materia-controller.json config at startup, not from the cast_start
+    // stdout event. This removes the startup-ordering race where the runtime
+    // aborted because cast_start (the signal it was keying off of) was not
+    // yet present.
+
+    [Fact]
+    public async Task StartAsync_ControllerWrittenConfig_HasAutonomousModeTrue()
+    {
+        // The controller writes materia-controller.json with autonomousMode: true.
+        // Verify the written config file has the expected field.
+        WriteFakePiScript(_fakePiPath, FakePiVariant.Idle);
+
+        await using var harness = await NewHarnessAsync(_fakePiPath);
+        var spec = await BuildSpecAsync(harness, "Config autonomous mode test");
+
+        var runtime = harness.Runtime!;
+        var handle = await runtime.StartAsync(spec, CancellationToken.None);
+
+        // Give the runtime a moment to write the config.
+        await Task.Delay(TimeSpan.FromMilliseconds(500));
+
+        // The controller writes the config to context/materia-controller.json.
+        // EnvironmentHandle.RootPath is envDir (which includes runId).
+        var contextDir = Path.Combine(spec.EnvironmentHandle.RootPath, "context");
+        var configPath = Path.Combine(contextDir, "materia-controller.json");
+
+        Assert.True(File.Exists(configPath), $"Config file should exist at {configPath}");
+
+        var configJson = File.ReadAllText(configPath);
+        using var doc = JsonDocument.Parse(configJson);
+
+        Assert.True(
+            doc.RootElement.TryGetProperty("autonomousMode", out var amEl),
+            "Config should have autonomousMode field"
+        );
+        Assert.True(amEl.GetBoolean(), "autonomousMode should be true in controller-written config");
+
+        await runtime.CancelAsync(handle, CancellationToken.None);
+        runtime.Dispose();
+    }
+
+    [Fact]
+    public async Task StartAsync_CustomConfigWithAutonomousModeFalse_AllowsMultiTurnSockets()
+    {
+        // When the operator provides a custom config with autonomousMode: false,
+        // the runtime should treat the run as interactive (non-autonomous).
+        // Under non-autonomous mode, multiTurn agent sockets are allowed
+        // (the fail-fast guard only applies to autonomous runs).
+        var customConfigPath = Path.Combine(_tempRoot, "custom-config.json");
+        File.WriteAllText(customConfigPath, @"{
+            ""activeLoadout"": ""Wedge"",
+            ""autonomousMode"": false,
+            ""eventing"": {""enabled"": true, ""presets"": [""interactive""], ""heartbeatIntervalMs"": 30000}
+        }");
+
+        WriteFakePiScript(_fakePiPath, FakePiVariant.MultiTurnAgentSocket);
+
+        await using var harness = await NewHarnessAsync(_fakePiPath);
+
+        var runId = await SeedRunAsync();
+        var envDir = Path.Combine(_tempRoot, runId);
+        var contextDir = Path.Combine(envDir, "context");
+        var repoDir = Path.Combine(envDir, "repo");
+        Directory.CreateDirectory(contextDir);
+        Directory.CreateDirectory(repoDir);
+        await File.WriteAllTextAsync(
+            Path.Combine(contextDir, "work-item.md"),
+            "# Custom config test\n\nSome acceptance criteria.\n"
+        );
+
+        var runtime = new PiMateriaRuntime(
+            _scopeFactory,
+            new StaticOptionsMonitor<RuntimeOptions>(
+                new RuntimeOptions
+                {
+                    Provider = "PiMateria",
+                    PiExecutablePath = harness.FakePiPath,
+                    ControllerBaseUrl = harness.BaseUrl,
+                    MateriaConfigPath = customConfigPath,
+                    HeartbeatIntervalSeconds = 2,
+                    PromptAcceptanceTimeoutSeconds = 4,
+                    CancelGracePeriodSeconds = 3,
+                }
+            ),
+            _provider.GetRequiredService<ILogger<PiMateriaRuntime>>()
+        );
+
+        var spec = new AgentRunSpec
+        {
+            RunId = runId,
+            WorkRef = new ExternalWorkRef { Source = "LocalFile", ExternalId = "test-custom-config" },
+            EnvironmentHandle = new EnvironmentHandle { RootPath = envDir },
+            RepoCheckout = new RepositoryCheckout { LocalPath = repoDir, RepoKey = "widget" },
+        };
+
+        _ = await runtime.StartAsync(spec, CancellationToken.None);
+
+        // Under non-autonomous mode (autonomousMode: false), multiTurn sockets
+        // are allowed. The fake pi exits cleanly, and the process exit handler
+        // synthesizes a terminal event from exit code 0.
+        await WaitForStateAsync(
+            runId,
+            s => s == RunLifecycleState.Completed || s == RunLifecycleState.Failed,
+            TimeSpan.FromSeconds(15)
+        );
+
+        var run = await _runStore.GetByIdAsync(runId, CancellationToken.None);
+        Assert.NotNull(run);
+        // The run should reach Completed (from exit 0 synthesis), not Failed
+        // from multiTurn socket rejection.
+        Assert.Equal(RunLifecycleState.Completed, run!.Status);
+
+        runtime.Dispose();
+    }
+
+    [Fact]
+    public async Task StartAsync_MissingConfigFile_DefaultsToNonAutonomous()
+    {
+        // When MateriaConfigPath points to a non-existent file, the runtime
+        // should default to non-autonomous mode (no fail-fast on multiTurn).
+        var nonexistentConfigPath = Path.Combine(_tempRoot, "nonexistent-config.json");
+        Assert.False(File.Exists(nonexistentConfigPath));
+
+        WriteFakePiScript(_fakePiPath, FakePiVariant.MultiTurnAgentSocket);
+
+        await using var harness = await NewHarnessAsync(_fakePiPath);
+
+        var runId = await SeedRunAsync();
+        var envDir = Path.Combine(_tempRoot, runId);
+        var contextDir = Path.Combine(envDir, "context");
+        var repoDir = Path.Combine(envDir, "repo");
+        Directory.CreateDirectory(contextDir);
+        Directory.CreateDirectory(repoDir);
+        await File.WriteAllTextAsync(
+            Path.Combine(contextDir, "work-item.md"),
+            "# Missing config test\n\nSome acceptance criteria.\n"
+        );
+
+        var runtime = new PiMateriaRuntime(
+            _scopeFactory,
+            new StaticOptionsMonitor<RuntimeOptions>(
+                new RuntimeOptions
+                {
+                    Provider = "PiMateria",
+                    PiExecutablePath = harness.FakePiPath,
+                    ControllerBaseUrl = harness.BaseUrl,
+                    MateriaConfigPath = nonexistentConfigPath,
+                    HeartbeatIntervalSeconds = 2,
+                    PromptAcceptanceTimeoutSeconds = 4,
+                    CancelGracePeriodSeconds = 3,
+                }
+            ),
+            _provider.GetRequiredService<ILogger<PiMateriaRuntime>>()
+        );
+
+        var spec = new AgentRunSpec
+        {
+            RunId = runId,
+            WorkRef = new ExternalWorkRef { Source = "LocalFile", ExternalId = "test-missing-config" },
+            EnvironmentHandle = new EnvironmentHandle { RootPath = envDir },
+            RepoCheckout = new RepositoryCheckout { LocalPath = repoDir, RepoKey = "widget" },
+        };
+
+        _ = await runtime.StartAsync(spec, CancellationToken.None);
+
+        // Under non-autonomous mode (default when config is missing), multiTurn
+        // sockets are allowed. The fake pi exits cleanly, and the process exit
+        // handler synthesizes a terminal event from exit code 0.
+        await WaitForStateAsync(
+            runId,
+            s => s == RunLifecycleState.Completed || s == RunLifecycleState.Failed,
+            TimeSpan.FromSeconds(15)
+        );
+
+        var run = await _runStore.GetByIdAsync(runId, CancellationToken.None);
+        Assert.NotNull(run);
+        Assert.Equal(RunLifecycleState.Completed, run!.Status);
+
+        runtime.Dispose();
+    }
+
     // ── Unrecognized stdout event type: fail-closed under agent-controller ──
 
     [Fact]
