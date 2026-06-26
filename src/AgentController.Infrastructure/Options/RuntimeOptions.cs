@@ -48,4 +48,31 @@ public sealed class RuntimeOptions
     /// When <see cref="PtyWrapperPath"/> is unset this property is ignored.
     /// </summary>
     public string? PtyWrapperArgs { get; init; } = "-qfc";
+
+    /// <summary>
+    /// Target-to-source map for environment variables forwarded into the pi child process.
+    ///
+    /// Each entry maps a <c>target</c> environment variable name (set on the pi child)
+    /// to a <c>source</c> environment variable name (read from the controller's own process environment).
+    /// At runtime, each source variable is looked up via <c>Environment.GetEnvironmentVariable</c>;
+    /// if the value is non-null and non-empty it is injected into the child, otherwise the entry
+    /// is silently skipped (no exception is thrown).
+    ///
+    /// Default entries:
+    /// <list type="bullet">
+    ///   <item><term>AZURE_DEVOPS_EXT_PAT → AZURE_DEVOPS_PAT</term>
+    ///     <description>Primary target for Azure DevOps CLI / <c>az</c> extension authentication.</description></item>
+    ///   <item><term>AZURE_DEVOPS_PAT → AZURE_DEVOPS_PAT</term>
+    ///     <description>Also forwarded for any pi tooling that reads the PAT directly by this name.</description></item>
+    /// </list>
+    ///
+    /// This mirrors the <see cref="PtyWrapperPath"/> / <see cref="PtyWrapperArgs"/> config-seam pattern:
+    /// operators can override the map in <c>appsettings</c> by providing a JSON object under
+    /// <c>runtime:forwardEnvironmentVariables</c> with target names as keys and source names as values.
+    /// </summary>
+    public IDictionary<string, string> ForwardEnvironmentVariables { get; init; } = new Dictionary<string, string>
+    {
+        ["AZURE_DEVOPS_EXT_PAT"] = "AZURE_DEVOPS_PAT",
+        ["AZURE_DEVOPS_PAT"] = "AZURE_DEVOPS_PAT"
+    };
 }
