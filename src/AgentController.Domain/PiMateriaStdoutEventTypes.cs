@@ -68,15 +68,18 @@ public static class PiMateriaStdoutEventTypes
     // ── Agent lifecycle events ──────────────────────────────────────
 
     /// <summary>
-    /// pi-materia agent socket completed its turn. Emitted when an agent
-    /// socket finishes its single-turn work. Under agent-controller eventing
-    /// this signals the cast is done (the controller never sends
-    /// <c>/materia continue</c>), so the runtime initiates graceful shutdown.
+    /// pi-materia agent socket completed its turn. Emitted per-socket when an
+    /// agent socket finishes its work. In multi-socket casts (e.g. Plani →
+    /// Builda → Evala), <c>agent_end</c> fires once for each socket, not when
+    /// the whole cast is done. This is a per-socket completion signal that
+    /// does NOT transition the run to a terminal state.
     /// </summary>
     /// <remarks>
-    /// Terminal for single-turn agent sockets under agent-controller eventing.
-    /// The runtime recognizes this and shuts down the pi process so the run
-    /// does not stall waiting for a <c>/materia continue</c> that never comes.
+    /// Intermediate (non-terminal). The runtime tracks per-socket completion
+    /// but does NOT stop the runtime or send <c>runtime.completed</c> on
+    /// <c>agent_end</c>. Terminal detection for the cast comes from the
+    /// <c>runtime.completed</c> webhook (controller-confirmed), the
+    /// keepalive-stall detector, and/or the <c>cast_end</c> stdout signal.
     /// </remarks>
     public const string AgentEnd = "agent_end";
 
@@ -119,26 +122,33 @@ public static class PiMateriaStdoutEventTypes
     /// is complete and the runtime should initiate shutdown.
     /// </summary>
     /// <remarks>
-    /// Under agent-controller eventing, <c>agent_end</c> is the primary terminal
-    /// indicator for single-turn agent sockets. The webhook (<c>runtime.completed</c>)
-    /// is the authoritative terminal signal; stdout terminal types are used to
-    /// prevent stalls when the webhook is delayed.
+    /// Under agent-controller eventing, the webhook (<c>runtime.completed</c>)
+    /// is the authoritative terminal signal. Stdout terminal types are used to
+    /// prevent stalls when the webhook is delayed. Currently this set is empty;
+    /// <c>agent_end</c> is per-socket and non-terminal (see <see cref="AgentEnd"/>).
     /// </remarks>
     public static IReadOnlySet<string> TerminalTypes { get; } = new HashSet<string>
     {
-        AgentEnd,
+        // agent_end is per-socket and non-terminal in multi-socket casts.
+        // Terminal detection comes from runtime.completed webhook, keepalive-stall,
+        // and/or cast_end stdout signal.
     };
 
     /// <summary>
     /// Returns the set of intermediate (non-terminal) event types.
     /// These are recognized and processed but do not signal completion.
     /// </summary>
+    /// <remarks>
+    /// <c>agent_end</c> is intermediate because it fires per-socket in multi-socket
+    /// casts; the runtime must stay alive for subsequent sockets to complete.
+    /// </remarks>
     public static IReadOnlySet<string> IntermediateTypes { get; } = new HashSet<string>
     {
         Response,
         ExtensionError,
         CastStart,
         CastEnd,
+        AgentEnd,
         MateriaStart,
         MateriaEnd,
     };
@@ -275,8 +285,8 @@ public static class PiMateriaStdoutEventContract
         new StdoutEventSchemaEntry(
             Type: PiMateriaStdoutEventTypes.AgentEnd,
             Category: "agent",
-            IsTerminal: true,
-            Description: "pi-materia agent socket completed its turn. Under agent-controller eventing this signals the cast is done and the runtime should initiate graceful shutdown.",
+            IsTerminal: false,
+            Description: "pi-materia agent socket completed its turn. Per-socket completion signal — does NOT terminate the cast. In multi-socket casts this fires once per socket.",
             Fields: new[]
             {
                 new StdoutEventField("type", "string", true, "Always 'agent_end'"),

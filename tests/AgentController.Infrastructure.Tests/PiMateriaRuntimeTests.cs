@@ -271,20 +271,19 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         Assert.IsType<PiMateriaRuntime>(runtime1);
     }
 
-    // ── Regression E2E: agent_end terminal handling under agent-controller ──
+    // ── Regression E2E: agent_end per-socket non-terminal handling ──
     //
-    // This test exercises the exact path that stalled in the original E2E run:
-    // an agent-controller-preset cast goes through cast_start → materia_start →
-    // materia_end → agent_end, and the runtime must recognize agent_end as the
-    // canonical terminal event, initiate graceful shutdown, and NOT stall or
-    // emit an unrecognized-type warning.
+    // This test exercises the multi-socket cast path that stalled in the original
+    // E2E run. agent_end is per-socket and non-terminal — the runtime must NOT
+    // shut down on agent_end. The fake pi exits cleanly, and the process exit
+    // handler synthesizes a terminal event from exit code 0.
     //
-    // The original stall occurred because agent_end was not in the recognized
-    // event-type allowlist, so it was logged as a warning and the runtime waited
-    // indefinitely for a webhook event that never came.
+    // The original stall occurred because the first agent_end (from one socket)
+    // was misread as overall completion, orphaning downstream sockets in an
+    // AwaitingResult state.
 
     [Fact]
-    public async Task StartAsync_AgentEndTerminalRegression_RunCompletesWithoutStall()
+    public async Task StartAsync_AgentEndNonTerminal_RunCompletesWithoutStall()
     {
         // Overwrite the fake pi with one that emits the full cast lifecycle
         // (cast_start → materia_start → materia_end → agent_end) under the
@@ -297,9 +296,9 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         var runtime = harness.Runtime!;
         _ = await runtime.StartAsync(spec, CancellationToken.None);
 
-        // The runtime should recognize agent_end as a terminal event,
-        // initiate graceful shutdown, and synthesize a terminal event from
-        // the clean exit (exit code 0 → Completed).
+        // agent_end is per-socket and non-terminal — the runtime stays alive.
+        // The fake pi exits cleanly, and the process exit handler synthesizes
+        // a terminal event from exit code 0 (→ Completed).
         await WaitForStateAsync(
             spec.RunId,
             s => s == RunLifecycleState.Completed || s == RunLifecycleState.Failed,
@@ -312,7 +311,7 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         Assert.True(
             run!.Status == RunLifecycleState.Completed || run.Status == RunLifecycleState.Failed,
             $"Expected terminal state, got {run.Status}. " +
-            "The runtime should recognize agent_end and not stall."
+            "The runtime should recognize agent_end as non-terminal and not stall."
         );
 
         // Verify no unrecognized-type warnings — agent_end must be recognized.
@@ -339,17 +338,18 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         );
 
         // Verify the run reached a terminal state without stalling.
-        // This is the key regression assertion: the original E2E stalled because
-        // agent_end was unrecognized and the runtime waited for a webhook that
-        // never came. Post-fix, agent_end triggers graceful shutdown.
+        // Key regression assertion: the original E2E aborted mid-flight because
+        // the first agent_end (from one socket) was misread as overall completion,
+        // orphaning downstream sockets. Post-fix, agent_end is per-socket and
+        // non-terminal — the runtime stays alive for subsequent sockets.
         Assert.True(
             run!.Status == RunLifecycleState.Completed || run.Status == RunLifecycleState.Failed,
             $"Run stalled! Final state: {run.Status}. " +
-            "This is the exact regression from the original E2E — agent_end was not recognized."
+            "This is the exact regression from the original E2E — agent_end was treated as terminal."
         );
     }
 
-    // ── agent_end: recognized terminal stdout event, graceful shutdown ──
+    // ── agent_end: recognized per-socket non-terminal event ──
 
     [Fact]
     public async Task StartAsync_FakePiEmitsAgentEnd_RunCompletesWithoutStall()
@@ -364,9 +364,9 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         var runtime = harness.Runtime!;
         _ = await runtime.StartAsync(spec, CancellationToken.None);
 
-        // The runtime should recognize agent_end, shut down the process,
-        // and synthesize a terminal event from the clean exit (exit code 0
-        // → no_changes_needed → Completed).
+        // agent_end is per-socket and non-terminal — the runtime stays alive.
+        // The fake pi exits cleanly, and the process exit handler synthesizes
+        // a terminal event from exit code 0 (→ Completed).
         await WaitForStateAsync(
             spec.RunId,
             s => s == RunLifecycleState.Completed || s == RunLifecycleState.Failed,
@@ -375,12 +375,11 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
 
         var run = await _runStore.GetByIdAsync(spec.RunId, CancellationToken.None);
         Assert.NotNull(run);
-        // The run should reach a terminal state (Completed from exit 0 synthesis,
-        // or Failed if the agent_end path is not yet fully wired).
+        // The run should reach a terminal state (Completed from exit 0 synthesis).
         Assert.True(
             run!.Status == RunLifecycleState.Completed || run.Status == RunLifecycleState.Failed,
             $"Expected terminal state, got {run.Status}." +
-            $" The runtime should recognize agent_end and not stall."
+            $" The runtime should recognize agent_end as non-terminal and not stall."
         );
 
         // Verify no unrecognized-type warnings in the events.
@@ -389,6 +388,64 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
             events,
             e => e.Message != null && e.Message.Contains("unrecognized", StringComparison.OrdinalIgnoreCase)
         );
+    }
+
+    // ── Multi-socket agent_end: status events and socket-local tracking ──
+
+    [Fact]
+    public async Task StartAsync_MultiSocketAgentEnd_EmitsSocketCompletionStatusEvents()
+    {
+        // Overwrite the fake pi with one that emits agent_end for 3 sockets,
+        // each with a socketName field.
+        WriteFakePiScript(_fakePiPath, FakePiVariant.MultiSocketAgentEnd);
+
+        await using var harness = await NewHarnessAsync(_fakePiPath);
+        var spec = await BuildSpecAsync(harness, "Multi-socket agent end test");
+
+        var runtime = harness.Runtime!;
+        _ = await runtime.StartAsync(spec, CancellationToken.None);
+
+        // Wait for the run to reach a terminal state (synthesized from exit 0).
+        await WaitForStateAsync(
+            spec.RunId,
+            s => s == RunLifecycleState.Completed || s == RunLifecycleState.Failed,
+            TimeSpan.FromSeconds(15)
+        );
+
+        var run = await _runStore.GetByIdAsync(spec.RunId, CancellationToken.None);
+        Assert.NotNull(run);
+        Assert.True(
+            run!.Status == RunLifecycleState.Completed || run.Status == RunLifecycleState.Failed,
+            $"Expected terminal state, got {run.Status}."
+        );
+
+        // Verify socket completion status events were emitted.
+        var events = await _eventStore.ListByRunIdAsync(spec.RunId, CancellationToken.None);
+
+        // Find all runtime.status events with "Socket ... completed" messages.
+        var socketCompletionEvents = events.Where(e =>
+            e.EventType == RuntimeEventTypes.Status &&
+            e.Message != null &&
+            e.Message.Contains("Socket", StringComparison.Ordinal) &&
+            e.Message.Contains("completed", StringComparison.OrdinalIgnoreCase)
+        ).ToList();
+
+        // Should have 3 socket completion events (one per agent_end).
+        Assert.Equal(3, socketCompletionEvents.Count);
+
+        // Verify each socket name appears in a completion event.
+        var socketCompletionMessages = socketCompletionEvents.Select(e => e.Message!).ToList();
+        Assert.Contains(socketCompletionMessages, m => m.Contains("Socket-3", StringComparison.Ordinal));
+        Assert.Contains(socketCompletionMessages, m => m.Contains("Socket-4", StringComparison.Ordinal));
+        Assert.Contains(socketCompletionMessages, m => m.Contains("Socket-5", StringComparison.Ordinal));
+
+        // Verify the payload includes socketName and completedSockets.
+        foreach (var evt in socketCompletionEvents)
+        {
+            Assert.NotNull(evt.Payload);
+            Assert.True(evt.Payload!.ContainsKey("socketName"));
+            Assert.True(evt.Payload!.ContainsKey("completedSockets"));
+        }
     }
 
     // ── Unrecognized stdout event type: fail-closed under agent-controller ──
@@ -1297,6 +1354,7 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         SingleTurnAgentSocket,
         MultiTurnInteractive,
         AllRecognizedTypes,
+        MultiSocketAgentEnd,
         BiggsLoadoutSocket3Divergence,
     }
 
@@ -1327,6 +1385,7 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
             FakePiVariant.SingleTurnAgentSocket => FakePiScripts.SingleTurnAgentSocket,
             FakePiVariant.MultiTurnInteractive => FakePiScripts.MultiTurnInteractive,
             FakePiVariant.AllRecognizedTypes => FakePiScripts.AllRecognizedTypes,
+            FakePiVariant.MultiSocketAgentEnd => FakePiScripts.MultiSocketAgentEnd,
             FakePiVariant.BiggsLoadoutSocket3Divergence => FakePiScripts.BiggsLoadoutSocket3Divergence,
             _ => FakePiScripts.HappyPr,
         };
@@ -1442,8 +1501,8 @@ main()
         /// <summary>
         /// Acknowledges the prompt, emits <c>agent_end</c> on stdout (simulating
         /// a single-turn agent completing its cast), then exits cleanly. No
-        /// webhook events are posted — the controller must recognize <c>agent_end</c>
-        /// and shut down the process, synthesizing a terminal event from exit code 0.
+        /// webhook events are posted — agent_end is per-socket and non-terminal,
+        /// so the process exit handler synthesizes a terminal event from exit code 0.
         /// </summary>
         public const string AgentEnd =
             Header
@@ -1459,9 +1518,9 @@ def main():
             continue
         if msg.get('type') == 'prompt':
             send_response({'type': 'response', 'command': 'prompt', 'success': True})
-            # Emit agent_end on stdout — signals single-turn agent cast is done.
+            # Emit agent_end on stdout — per-socket completion (non-terminal).
             send_response({'type': 'agent_end', 'messages': []})
-            # Exit cleanly — the controller should recognize agent_end and shut down.
+            # Exit cleanly — the process exit handler synthesizes a terminal event from exit code 0.
             time.sleep(0.1)
             return
         if msg.get('type') == 'abort':
@@ -1471,17 +1530,15 @@ main()
 """;
 
         /// <summary>
-        /// Regression E2E: exercises the exact path that stalled in the original
-        /// agent-controller E2E run. Emits the full cast lifecycle under the
+        /// Regression E2E: exercises the multi-socket cast path that stalled in the
+        /// original agent-controller E2E run. Emits the full cast lifecycle under the
         /// agent-controller preset:
         /// <c>cast_start</c> → <c>materia_start</c> → <c>materia_end</c> → <c>agent_end</c>.
-        /// No webhook events are posted — the runtime must recognize <c>agent_end</c>
-        /// as the canonical terminal event, initiate graceful shutdown, and synthesize
-        /// a terminal event from exit code 0.
+        /// No webhook events are posted — agent_end is per-socket and non-terminal;
+        /// the process exit handler synthesizes a terminal event from exit code 0.
         ///
-        /// This guards the specific regression where <c>agent_end</c> was not in the
-        /// recognized event-type allowlist, causing the runtime to stall silently
-        /// waiting for a webhook that never came.
+        /// This guards the regression where the first agent_end (from one socket)
+        /// was misread as overall completion, orphaning downstream sockets.
         /// </summary>
         public const string AgentEndTerminalRegression =
             Header
@@ -1512,11 +1569,10 @@ def main():
             send_response({'type': 'materia_start', 'materiaName': 'Builda', 'socketName': 'Socket-4'})
             # materia_end — the agent materia completes its turn.
             send_response({'type': 'materia_end', 'materiaName': 'Builda', 'socketName': 'Socket-4'})
-            # agent_end — the canonical terminal event. The runtime must recognize
-            # this and initiate graceful shutdown. This is the exact event that
-            # caused the original E2E to stall when it was unrecognized.
+            # agent_end — per-socket completion (non-terminal). The original E2E
+            # aborted mid-flight because this was misread as overall completion.
             send_response({'type': 'agent_end', 'messages': []})
-            # Exit cleanly — the controller should recognize agent_end and shut down.
+            # Exit cleanly — the process exit handler synthesizes a terminal event from exit code 0.
             time.sleep(0.1)
             return
         if msg.get('type') == 'abort':
@@ -1763,6 +1819,53 @@ def main():
             post_event({'eventId': 'fp-completed', 'eventType': 'runtime.completed', 'occurredAt': '2026-06-23T00:00:01Z', 'severity': 'info', 'message': 'done', 'payload': {'outcome': 'no_changes_needed', 'summary': 'all types recognized'}})
             # Stay alive until the controller shuts us down.
             continue
+        if msg.get('type') == 'abort':
+            return
+
+main()
+""";
+
+        /// <summary>
+        /// Multi-socket agent_end with socketName field.
+        /// Emits cast_start with 3 agent sockets, then agent_end for each
+        /// with socketName, then exits cleanly. The runtime should emit
+        /// "Socket Socket-N completed" status events for each agent_end
+        /// and NOT transition to a terminal state.
+        /// </summary>
+        public const string MultiSocketAgentEnd =
+            Header
+            + """
+def main():
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return
+        try:
+            msg = json.loads(line)
+        except Exception:
+            continue
+        if msg.get('type') == 'prompt':
+            send_response({'type': 'response', 'command': 'prompt', 'success': True})
+            # cast_start with 3 agent sockets.
+            send_response({
+                'type': 'cast_start',
+                'castId': 'multi-socket-agent-end',
+                'eventing': {'preset': 'agent-controller'},
+                'sockets': [
+                    {'socketName': 'Socket-3', 'type': 'agent', 'materiaName': 'Interactive-Plani', 'multiTurn': False},
+                    {'socketName': 'Socket-4', 'type': 'agent', 'materiaName': 'Builda', 'multiTurn': False},
+                    {'socketName': 'Socket-5', 'type': 'agent', 'materiaName': 'Auto-Evala', 'multiTurn': False}
+                ]
+            })
+            # agent_end for Socket-3 (Interactive-Plani) — per-socket, non-terminal.
+            send_response({'type': 'agent_end', 'socketName': 'Socket-3', 'messages': []})
+            # agent_end for Socket-4 (Builda) — per-socket, non-terminal.
+            send_response({'type': 'agent_end', 'socketName': 'Socket-4', 'messages': []})
+            # agent_end for Socket-5 (Auto-Evala) — per-socket, non-terminal.
+            send_response({'type': 'agent_end', 'socketName': 'Socket-5', 'messages': []})
+            # Exit cleanly — the process exit handler synthesizes a terminal event.
+            time.sleep(0.1)
+            return
         if msg.get('type') == 'abort':
             return
 

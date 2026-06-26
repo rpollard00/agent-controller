@@ -138,16 +138,20 @@ public class PiMateriaStdoutEventContractTests
     }
 
     [Fact]
-    public void TerminalTypes_ContainsOnlyAgentEnd()
+    public void TerminalTypes_IsEmpty()
     {
-        Assert.Single(PiMateriaStdoutEventTypes.TerminalTypes);
-        Assert.Contains(PiMateriaStdoutEventTypes.AgentEnd, PiMateriaStdoutEventTypes.TerminalTypes);
+        // agent_end is per-socket and non-terminal in multi-socket casts.
+        // Terminal detection comes from runtime.completed webhook, keepalive-stall,
+        // and/or cast_end stdout signal.
+        Assert.Empty(PiMateriaStdoutEventTypes.TerminalTypes);
     }
 
     [Fact]
-    public void IntermediateTypes_ExcludesAgentEnd()
+    public void IntermediateTypes_ContainsAgentEnd()
     {
-        Assert.DoesNotContain(
+        // agent_end is per-socket and non-terminal — it fires once per socket
+        // in multi-socket casts, so the runtime must stay alive for subsequent sockets.
+        Assert.Contains(
             PiMateriaStdoutEventTypes.AgentEnd,
             PiMateriaStdoutEventTypes.IntermediateTypes
         );
@@ -193,7 +197,7 @@ public class PiMateriaStdoutEventContractTests
     {
         var entry = PiMateriaStdoutEventContract.GetEntry(PiMateriaStdoutEventTypes.AgentEnd);
         Assert.NotNull(entry);
-        Assert.True(entry.IsTerminal);
+        Assert.False(entry.IsTerminal);
         Assert.Equal("agent", entry.Category);
     }
 
@@ -262,10 +266,10 @@ public class PiMateriaStdoutEventContractTests
     }
 
     [Fact]
-    public void AgentEndEvent_IsTerminal()
+    public void AgentEndEvent_IsNonTerminal()
     {
         var entry = PiMateriaStdoutEventContract.GetEntry(PiMateriaStdoutEventTypes.AgentEnd)!;
-        Assert.True(entry.IsTerminal);
+        Assert.False(entry.IsTerminal);
         Assert.Equal("agent", entry.Category);
     }
 

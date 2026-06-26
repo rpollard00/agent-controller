@@ -364,10 +364,11 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
     ///       <c>/materia continue</c>, so a multiTurn agent socket can never
     ///       complete and is a guaranteed token sink. Fails the run immediately.
     ///   </item>
-    ///   <item><c>agent_end</c> on stdout — signals the agent's single-turn cast
-    ///       is complete. Initiates graceful shutdown so the run does not stall
-    ///       waiting for a <c>/materia continue</c> that the agent-controller
-    ///       never sends.</item>
+    ///   <item><c>agent_end</c> on stdout — per-socket completion signal. In
+    ///       multi-socket casts this fires once per socket and does NOT
+    ///       terminate the cast. The runtime stays alive for subsequent sockets.
+    ///       Terminal detection comes from the <c>runtime.completed</c> webhook,
+    ///       keepalive-stall detector, or <c>cast_end</c> stdout signal.</item>
     ///   <item>Unrecognized stdout event types — under agent-controller eventing
     ///       this indicates contract drift between pi-materia and the controller.
     ///       Fails the run to prevent silent token-sinking stalls.</item>
@@ -419,18 +420,10 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
                 return;
             }
 
-            // agent_end on stdout: the agent's single-turn cast is complete.
-            // The agent-controller never sends /materia continue, so a multiTurn
-            // agent socket would stall here forever. On agent_end, initiate
-            // graceful shutdown — if the webhook hasn't driven the run terminal
-            // yet, the process exit handler will synthesize a final event.
-            if (active.AgentEndReceived)
-            {
-                Log.AgentEndInitiatingShutdown(_logger, runId);
-                await ShutdownProcessAsync(runId, active, ct);
-                return;
-            }
-
+            // NOTE: agent_end is per-socket and non-terminal in multi-socket casts.
+            // The runtime does NOT shut down on agent_end — it stays alive for
+            // subsequent sockets to complete. Terminal detection comes from the
+            // runtime.completed webhook, keepalive-stall detector, or cast_end.
             // Unrecognized stdout event type: contract drift between pi-materia
             // and the controller. Under agent-controller eventing (autonomous run),
             // fail the run to prevent silent token-sinking stalls. Under interactive/CLI
@@ -774,10 +767,9 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
     ///       The full socket metadata is persisted as a lifecycle artifact for
     ///       diagnosability.</item>
     ///   <item><c>cast_end</c> — pi-materia cast completion event (informational).</item>
-    ///   <item><c>agent_end</c> — pi-materia agent socket completed its single turn.
-    ///       Under agent-controller eventing this signals the cast is done; the
-    ///       monitor will initiate graceful shutdown so the run does not stall
-    ///       waiting for a <c>/materia continue</c> that the controller never sends.</item>
+    ///   <item><c>agent_end</c> — pi-materia agent socket completed its turn.
+    ///       Per-socket completion signal — does NOT terminate the cast. In
+    ///       multi-socket casts this fires once per socket.</item>
     ///   <item><c>materia_start</c> — pi-materia materia socket started (informational).</item>
     ///   <item><c>materia_end</c> — pi-materia materia socket completed (informational).</item>
     /// </list>
@@ -844,11 +836,48 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
 
         if (type == AgentController.Domain.PiMateriaStdoutEventTypes.AgentEnd)
         {
-            // pi-materia agent socket completed its turn. Under agent-controller
-            // eventing the controller never sends /materia continue, so this
-            // signals the cast is done. Signal the monitor to shut down.
-            Log.PiAgentEndReceived(_logger, runId);
-            active?.SetAgentEndReceived();
+            // pi-materia agent socket completed its turn. This is a per-socket
+            // completion signal — in multi-socket casts (e.g. Plani → Builda →
+            // Evala) agent_end fires once per socket, not when the whole cast
+            // is done. Log it as informational; do NOT transition the run to a
+            // terminal state or stop the runtime.
+            Log.PiAgentEndPerSocket(_logger, runId);
+
+            // Extract socket name from the agent_end event (if present).
+            var socketName = doc.RootElement.TryGetProperty("socketName", out var socketNameEl)
+                ? socketNameEl.GetString()
+                : null;
+
+            // Track per-socket completion status.
+            if (socketName is not null && active is not null)
+            {
+                active.CompletedSockets.Add(socketName);
+                Log.PiSocketCompleted(_logger, runId, socketName, active.CompletedSockets.Count);
+            }
+
+            // Emit a "Socket Socket-N completed" status event as a run artifact.
+            // This is a runtime.status event — informational, no state transition.
+            await TryIngestAsync(
+                runId,
+                new RuntimeEvent
+                {
+                    EventId = $"pi-socket-completed-{runId}-{Guid.NewGuid():N}",
+                    RunId = runId,
+                    EventType = RuntimeEventTypes.Status,
+                    OccurredAt = DateTimeOffset.UtcNow,
+                    Severity = EventSeverity.Info,
+                    Message = socketName is not null
+                        ? $"Socket {socketName} completed"
+                        : "Agent socket completed",
+                    Payload = new Dictionary<string, object?>
+                    {
+                        ["socketName"] = socketName,
+                        ["completedSockets"] = active?.CompletedSockets.ToList(),
+                    },
+                },
+                CancellationToken.None
+            );
+
             return;
         }
 
@@ -1411,14 +1440,6 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
         public TaskCompletionSource<bool> StdoutDone { get; }
 
         /// <summary>
-        /// Signaled when pi emits <c>agent_end</c> on stdout, indicating the
-        /// agent's single-turn cast is complete. The monitor uses this to
-        /// initiate graceful shutdown so the run does not stall waiting for
-        /// a <c>/materia continue</c> that the agent-controller never sends.
-        /// </summary>
-        public bool AgentEndReceived { get; set; }
-
-        /// <summary>
         /// Set when an unrecognized stdout event type is encountered under
         /// agent-controller eventing. The monitor checks this flag and
         /// fails the run to prevent silent stalls from contract drift.
@@ -1471,7 +1492,11 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
         /// </summary>
         public string? CurrentMateriaName { get; set; }
 
-        public void SetAgentEndReceived() => AgentEndReceived = true;
+        /// <summary>
+        /// Set of socket names that have reported completion via <c>agent_end</c>.
+        /// Used to track per-socket completion status in multi-socket casts.
+        /// </summary>
+        public HashSet<string> CompletedSockets { get; } = new();
 
         public void SetUnrecognizedType(string type)
         {
@@ -1753,13 +1778,14 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "[pi stdout] agent_end received for run '{RunId}'; agent single-turn cast is complete.")]
-        public static partial void PiAgentEndReceived(ILogger logger, string runId);
+            Message = "[pi stdout] agent_end received for run '{RunId}'; per-socket completion (non-terminal).")]
+        public static partial void PiAgentEndPerSocket(ILogger logger, string runId);
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "agent_end received for run '{RunId}'; initiating graceful shutdown of pi process.")]
-        public static partial void AgentEndInitiatingShutdown(ILogger logger, string runId);
+            Message = "[pi stdout] Socket '{SocketName}' completed for run '{RunId}' ({CompletedCount} socket(s) done).")]
+        public static partial void PiSocketCompleted(
+            ILogger logger, string runId, string socketName, int completedCount);
 
         [LoggerMessage(
             Level = LogLevel.Warning,
