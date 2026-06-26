@@ -2,10 +2,8 @@ using AgentController.Application;
 using AgentController.Application.Services;
 using AgentController.Domain;
 using AgentController.Infrastructure;
-using AgentController.Infrastructure.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace AgentController.Infrastructure.Tests;
 
@@ -15,7 +13,6 @@ namespace AgentController.Infrastructure.Tests;
 ///   <item>The runtime emits the expected sequence of events (accepted → heartbeat → status → completed).</item>
 ///   <item>Events emitted by the mock runtime drive a run from AwaitingResult to Completed.</item>
 ///   <item>The runtime reports its assigned ID via the returned handle.</item>
-///   <item>Configured failure loadout causes a failed completion.</item>
 ///   <item>The runtime handles already-terminal runs gracefully.</item>
 /// </list>
 ///
@@ -41,17 +38,6 @@ public class MockPiMateriaRuntimeTests : IAsyncLifetime
 
         // Stub work source
         services.AddSingleton<IWorkSource, StubWorkSource>();
-
-        // Options
-        services.AddSingleton<IOptionsMonitor<RuntimeOptions>>(sp =>
-        {
-            var opts = new RuntimeOptions
-            {
-                Provider = "MockPiMateria",
-                DefaultMateriaLoadout = "success-pr",
-            };
-            return new StaticOptionsMonitor<RuntimeOptions>(opts);
-        });
 
         // Logging
         services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Warning));
@@ -92,12 +78,6 @@ public class MockPiMateriaRuntimeTests : IAsyncLifetime
     {
         var services = new ServiceCollection();
 
-        // MockPiMateriaRuntime requires IOptionsMonitor<RuntimeOptions>
-        services.AddSingleton<IOptionsMonitor<RuntimeOptions>>(_ =>
-            new StaticOptionsMonitor<RuntimeOptions>(new RuntimeOptions
-            {
-                Provider = "MockPiMateria",
-            }));
         services.AddSingleton<IServiceScopeFactory>(sp =>
         {
             // Minimal scope factory for DI resolution (not used in smoke test)
@@ -200,153 +180,6 @@ public class MockPiMateriaRuntimeTests : IAsyncLifetime
         Assert.Contains(events, e => e.EventType == RuntimeEventTypes.Status);
         Assert.Contains(events, e => e.EventType == RuntimeEventTypes.Completed);
         Assert.Contains(events, e => e.EventType == "controller.runtime_event_ingested");
-    }
-
-    // ── Completion outcome: failure loadout ──────────────────────────
-
-    [Fact]
-    public async Task StartAsync_FailureLoadout_DrivesToFailed()
-    {
-        // Build a separate provider with failure loadout
-        var services = new ServiceCollection();
-        services.AddSingleton<InMemoryAgentRunStore>();
-        services.AddSingleton<InMemoryLifecycleEventStore>();
-        services.AddSingleton<InMemoryWorkItemStore>();
-        services.AddSingleton<IAgentRunStore>(sp => sp.GetRequiredService<InMemoryAgentRunStore>());
-        services.AddSingleton<ILifecycleEventStore>(sp => sp.GetRequiredService<InMemoryLifecycleEventStore>());
-        services.AddSingleton<IWorkItemStore>(sp => sp.GetRequiredService<InMemoryWorkItemStore>());
-        services.AddSingleton<IWorkSource, StubWorkSource>();
-        services.AddSingleton<IOptionsMonitor<RuntimeOptions>>(_ =>
-            new StaticOptionsMonitor<RuntimeOptions>(new RuntimeOptions
-            {
-                Provider = "MockPiMateria",
-                DefaultMateriaLoadout = "fail-fast",
-            }));
-        services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Warning));
-        services.AddScoped<IRunLifecycleService, RunLifecycleService>();
-        services.AddSingleton<IAgentRuntime, MockPiMateriaRuntime>();
-
-        await using var provider = services.BuildServiceProvider();
-        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
-        var runtime = provider.GetRequiredService<IAgentRuntime>();
-        var runStore = provider.GetRequiredService<InMemoryAgentRunStore>();
-
-        // ── Arrange: advance a run to AgentStarting ──
-        string runId;
-        await using (var setupScope = scopeFactory.CreateAsyncScope())
-        {
-            var lifecycle = setupScope.ServiceProvider.GetRequiredService<IRunLifecycleService>();
-            var workItemStore = setupScope.ServiceProvider.GetRequiredService<IWorkItemStore>();
-
-            var wi = await workItemStore.CreateAsync(
-                new CreateWorkItemRequest { RepoKey = "repo", Title = "Fail Test" },
-                CancellationToken.None);
-
-            var run = await lifecycle.CreateRunForWorkItemAsync(wi.Id, "w", CancellationToken.None);
-            runId = run.RunId;
-
-            await lifecycle.TransitionAsync(runId, RunLifecycleState.EnvironmentProvisioning, CancellationToken.None);
-            await lifecycle.TransitionAsync(runId, RunLifecycleState.EnvironmentReady, CancellationToken.None);
-            await lifecycle.TransitionAsync(runId, RunLifecycleState.RepositoryCloning, CancellationToken.None);
-            await lifecycle.TransitionAsync(runId, RunLifecycleState.RepositoryReady, CancellationToken.None);
-            await lifecycle.TransitionAsync(runId, RunLifecycleState.ContextInjected, CancellationToken.None);
-            await lifecycle.TransitionAsync(runId, RunLifecycleState.AgentStarting, CancellationToken.None);
-        }
-
-        // ── Act ──
-        var spec = new AgentRunSpec
-        {
-            RunId = runId,
-            WorkRef = new ExternalWorkRef { Source = "LocalFile", ExternalId = "fail-1" },
-        };
-        _ = await runtime.StartAsync(spec, CancellationToken.None);
-
-        // ── Wait for completion ──
-        // Poll with a simple loop, logging state at each step
-        for (int i = 0; i < 60; i++)
-        {
-            var r = await runStore.GetByIdAsync(runId, CancellationToken.None);
-            if (r is not null && r.Status >= RunLifecycleState.Failed)
-            {
-                // Run reached Failed or beyond — success
-                Assert.Equal(RunLifecycleState.Failed, r.Status);
-                Assert.NotNull(r.Error);
-                return;
-            }
-            await Task.Delay(50);
-        }
-
-        // Timeout — diagnose
-        var diagnosticRun = await runStore.GetByIdAsync(runId, CancellationToken.None);
-        Assert.Fail($"Run '{runId}' did not reach Failed within 3s. Final state: {diagnosticRun?.Status.ToString() ?? "null"}.");
-    }
-
-    // ── Completion outcome: no-change loadout ────────────────────────
-
-    [Fact]
-    public async Task StartAsync_NoChangeLoadout_DrivesToCompleted()
-    {
-        var services = new ServiceCollection();
-        services.AddSingleton<InMemoryAgentRunStore>();
-        services.AddSingleton<InMemoryLifecycleEventStore>();
-        services.AddSingleton<InMemoryWorkItemStore>();
-        services.AddSingleton<IAgentRunStore>(sp => sp.GetRequiredService<InMemoryAgentRunStore>());
-        services.AddSingleton<ILifecycleEventStore>(sp => sp.GetRequiredService<InMemoryLifecycleEventStore>());
-        services.AddSingleton<IWorkItemStore>(sp => sp.GetRequiredService<InMemoryWorkItemStore>());
-        services.AddSingleton<IWorkSource, StubWorkSource>();
-        services.AddSingleton<IOptionsMonitor<RuntimeOptions>>(_ =>
-            new StaticOptionsMonitor<RuntimeOptions>(new RuntimeOptions
-            {
-                Provider = "MockPiMateria",
-                DefaultMateriaLoadout = "no-change",
-            }));
-        services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Warning));
-        services.AddScoped<IRunLifecycleService, RunLifecycleService>();
-        services.AddSingleton<IAgentRuntime, MockPiMateriaRuntime>();
-
-        await using var provider = services.BuildServiceProvider();
-        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
-        var runtime = provider.GetRequiredService<IAgentRuntime>();
-        var runStore = provider.GetRequiredService<InMemoryAgentRunStore>();
-
-        // ── Arrange ──
-        string runId;
-        await using (var setupScope = scopeFactory.CreateAsyncScope())
-        {
-            var lifecycle = setupScope.ServiceProvider.GetRequiredService<IRunLifecycleService>();
-            var workItemStore = setupScope.ServiceProvider.GetRequiredService<IWorkItemStore>();
-
-            var wi = await workItemStore.CreateAsync(
-                new CreateWorkItemRequest { RepoKey = "repo", Title = "No-Change Test" },
-                CancellationToken.None);
-
-            var run = await lifecycle.CreateRunForWorkItemAsync(wi.Id, "w", CancellationToken.None);
-            runId = run.RunId;
-
-            await lifecycle.TransitionAsync(runId, RunLifecycleState.EnvironmentProvisioning, CancellationToken.None);
-            await lifecycle.TransitionAsync(runId, RunLifecycleState.EnvironmentReady, CancellationToken.None);
-            await lifecycle.TransitionAsync(runId, RunLifecycleState.RepositoryCloning, CancellationToken.None);
-            await lifecycle.TransitionAsync(runId, RunLifecycleState.RepositoryReady, CancellationToken.None);
-            await lifecycle.TransitionAsync(runId, RunLifecycleState.ContextInjected, CancellationToken.None);
-            await lifecycle.TransitionAsync(runId, RunLifecycleState.AgentStarting, CancellationToken.None);
-        }
-
-        // ── Act ──
-        var spec = new AgentRunSpec
-        {
-            RunId = runId,
-            WorkRef = new ExternalWorkRef { Source = "LocalFile", ExternalId = "nochg-1" },
-        };
-        _ = await runtime.StartAsync(spec, CancellationToken.None);
-
-        // ── Wait for completion ──
-        await WaitForStateInStoreAsync(runStore, runId, s => s == RunLifecycleState.Completed, TimeSpan.FromSeconds(3));
-
-        // ── Assert ──
-        var finalRun = await runStore.GetByIdAsync(runId, CancellationToken.None);
-        Assert.NotNull(finalRun);
-        Assert.Equal(RunLifecycleState.Completed, finalRun!.Status);
-        Assert.Null(finalRun.PullRequestUrl); // no PR for no-change
     }
 
     // ── Idempotency: already-completed run ───────────────────────────
@@ -743,23 +576,5 @@ public class MockPiMateriaRuntimeTests : IAsyncLifetime
         {
             return Task.CompletedTask;
         }
-    }
-
-    /// <summary>
-    /// Minimal <see cref="IOptionsMonitor{TOptions}"/> that never changes.
-    /// </summary>
-    private sealed class StaticOptionsMonitor<TOptions> : IOptionsMonitor<TOptions>
-        where TOptions : class
-    {
-        public StaticOptionsMonitor(TOptions currentValue)
-        {
-            CurrentValue = currentValue;
-        }
-
-        public TOptions CurrentValue { get; }
-
-        public TOptions Get(string? name) => CurrentValue;
-
-        public IDisposable? OnChange(Action<TOptions, string?> listener) => null;
     }
 }

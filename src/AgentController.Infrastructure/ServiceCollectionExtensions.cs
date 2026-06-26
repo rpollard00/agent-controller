@@ -268,10 +268,10 @@ public static class AgentControllerServiceCollectionExtensions
 
     /// <summary>
     /// Registers the <see cref="PiMateriaRuntime"/> as a singleton
-    /// <see cref="IAgentRuntime"/> that launches <c>pi</c> as a child process in
-    /// RPC mode and drives a pi-materia cast via the <c>/materia cast</c> command.
-    /// pi-materia reports <c>runtime.*</c> events back to the controller over HTTP
-    /// (POST to the controller's <c>/runs/{runId}/events</c> endpoint).
+    /// <see cref="IAgentRuntime"/> that launches <c>pi</c> as a detached CLI process
+    /// via <c>pi "/materia loadout Elena" "/materia cast {task}"</c>.
+    /// The launched job reports important status back only via webhook;
+    /// the controller treats the launch as fire-and-forget.
     ///
     /// Requires <see cref="AddAgentControllerOptions"/> to be called first
     /// (for <see cref="RuntimeOptions"/> and <see cref="AgentControllerOptions"/> binding).
@@ -299,13 +299,6 @@ public static class AgentControllerServiceCollectionExtensions
     /// <c>runtime.status</c>, and <c>runtime.completed</c> events automatically
     /// after <see cref="IAgentRuntime.StartAsync"/> is called, driving the run
     /// through to completion without requiring an external process or HTTP calls.
-    ///
-    /// Completion outcome is configurable via <see cref="RuntimeOptions.DefaultMateriaLoadout"/>:
-    /// <list type="bullet">
-    ///   <item><c>"success-pr"</c> or unset → <c>pull_request_opened</c></item>
-    ///   <item><c>"no-change"</c> → <c>no_changes_needed</c></item>
-    ///   <item>starts with <c>"fail"</c> → <c>failed</c></item>
-    /// </list>
     ///
     /// Requires <see cref="AddAgentControllerOptions"/> to be called first
     /// (for <see cref="RuntimeOptions"/> binding).

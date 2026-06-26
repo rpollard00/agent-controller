@@ -23,13 +23,6 @@ public sealed class RuntimeOptions
     public string? PiExecutablePath { get; init; } = "pi";
 
     /// <summary>
-    /// Default materia loadout name to use for casts.
-    /// Written into the controller-owned materia config (see <see cref="MateriaConfigPath"/>)
-    /// as <c>activeLoadout</c>.
-    /// </summary>
-    public string? DefaultMateriaLoadout { get; init; }
-
-    /// <summary>
     /// Base URL of this controller's HTTP API, e.g. <c>"http://localhost:5103"</c>.
     /// Required for the <c>PiMateria</c> runtime: it constructs
     /// <c>{ControllerBaseUrl}/runs/{runId}/events</c> and exposes it to the pi
@@ -38,54 +31,4 @@ public sealed class RuntimeOptions
     /// No trailing slash.
     /// </summary>
     public string? ControllerBaseUrl { get; init; }
-
-    /// <summary>
-    /// Optional path to a pre-written pi-materia config file. When set, the
-    /// runtime passes it to pi via the <c>MATERIA_CONFIG</c> environment
-    /// variable verbatim and does not write its own. When unset, the runtime
-    /// writes a controller-owned config next to the run context that enables
-    /// the <c>agent-controller</c> eventing preset and selects
-    /// <see cref="DefaultMateriaLoadout"/>.
-    /// </summary>
-    public string? MateriaConfigPath { get; init; }
-
-    /// <summary>
-    /// Interval at which the runtime emits synthetic <c>runtime.heartbeat</c>
-    /// events while the pi process is alive. This is a safety net only —
-    /// pi-materia emits its own heartbeats via the webhook when eventing is
-    /// enabled. Must be positive. Default: 30 seconds.
-    /// </summary>
-    [Range(1, int.MaxValue)]
-    public int HeartbeatIntervalSeconds { get; init; } = 30;
-
-    /// <summary>
-    /// When <c>true</c>, disables the synthetic heartbeat safety net. pi-materia
-    /// is then solely responsible for keeping the run from going stale.
-    /// </summary>
-    public bool DisableSyntheticHeartbeat { get; init; }
-
-    /// <summary>
-    /// Maximum time to wait for the pi process to acknowledge the cast prompt
-    /// (the RPC <c>prompt</c> response). Must be positive. Default: 60 seconds.
-    /// </summary>
-    [Range(1, int.MaxValue)]
-    public int PromptAcceptanceTimeoutSeconds { get; init; } = 60;
-
-    /// <summary>
-    /// Grace period between requesting pi shutdown (RPC <c>abort</c>) and
-    /// force-killing the process tree. Must be positive. Default: 10 seconds.
-    /// </summary>
-    [Range(1, int.MaxValue)]
-    public int CancelGracePeriodSeconds { get; init; } = 10;
-
-    /// <summary>
-    /// Keepalive-stall detection threshold in seconds. When no runtime event
-    /// (stdout line, heartbeat, socket completion, etc.) is observed for this
-    /// duration, the run is transitioned to a retryable FAILED state.
-    /// The effective stall deadline is <c>max(KeepaliveStallSeconds,
-    /// HeartbeatIntervalSeconds × 3)</c> to self-scale with the configured
-    /// heartbeat interval. Must be positive. Default: 90 seconds.
-    /// </summary>
-    [Range(1, int.MaxValue)]
-    public int KeepaliveStallSeconds { get; init; } = 90;
 }

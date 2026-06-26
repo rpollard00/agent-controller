@@ -225,7 +225,6 @@ public class OptionsSmokeTests
             new Dictionary<string, string?>
             {
                 ["runtime:piExecutablePath"] = "/usr/local/bin/pi",
-                ["runtime:defaultMateriaLoadout"] = "autonomous-dev",
             }
         );
 
@@ -239,7 +238,6 @@ public class OptionsSmokeTests
 
         Assert.Equal("NoOp", options.Provider);
         Assert.Equal("/usr/local/bin/pi", options.PiExecutablePath);
-        Assert.Equal("autonomous-dev", options.DefaultMateriaLoadout);
     }
 
     [Fact]

@@ -224,8 +224,6 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
                     Provider = "PiMateria",
                     PiExecutablePath = _fakePiPath,
                     // ControllerBaseUrl intentionally unset
-                    PromptAcceptanceTimeoutSeconds = 2,
-                    CancelGracePeriodSeconds = 1,
                 }
             ),
             _provider.GetRequiredService<ILogger<PiMateriaRuntime>>()
@@ -529,10 +527,6 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
                     Provider = "PiMateria",
                     PiExecutablePath = harness.FakePiPath,
                     ControllerBaseUrl = harness.BaseUrl,
-                    MateriaConfigPath = customConfigPath,
-                    HeartbeatIntervalSeconds = 2,
-                    PromptAcceptanceTimeoutSeconds = 4,
-                    CancelGracePeriodSeconds = 3,
                 }
             ),
             _provider.GetRequiredService<ILogger<PiMateriaRuntime>>()
@@ -597,10 +591,6 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
                     Provider = "PiMateria",
                     PiExecutablePath = harness.FakePiPath,
                     ControllerBaseUrl = harness.BaseUrl,
-                    MateriaConfigPath = nonexistentConfigPath,
-                    HeartbeatIntervalSeconds = 2,
-                    PromptAcceptanceTimeoutSeconds = 4,
-                    CancelGracePeriodSeconds = 3,
                 }
             ),
             _provider.GetRequiredService<ILogger<PiMateriaRuntime>>()
@@ -1269,12 +1259,6 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
                     Provider = "PiMateria",
                     PiExecutablePath = harness.FakePiPath,
                     ControllerBaseUrl = harness.BaseUrl,
-                    DefaultMateriaLoadout = "Wedge",
-                    HeartbeatIntervalSeconds = 2,
-                    KeepaliveStallSeconds = 4,
-                    DisableSyntheticHeartbeat = true,
-                    PromptAcceptanceTimeoutSeconds = 4,
-                    CancelGracePeriodSeconds = 3,
                 }
             ),
             _provider.GetRequiredService<ILogger<PiMateriaRuntime>>()
@@ -1607,12 +1591,6 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
                     Provider = "PiMateria",
                     PiExecutablePath = harness.FakePiPath,
                     ControllerBaseUrl = harness.BaseUrl,
-                    DefaultMateriaLoadout = "Wedge",
-                    HeartbeatIntervalSeconds = 1,
-                    KeepaliveStallSeconds = 3,
-                    DisableSyntheticHeartbeat = true,
-                    PromptAcceptanceTimeoutSeconds = 4,
-                    CancelGracePeriodSeconds = 3,
                 }
             ),
             _provider.GetRequiredService<ILogger<PiMateriaRuntime>>()
@@ -1732,10 +1710,6 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
                     Provider = "PiMateria",
                     PiExecutablePath = harness.FakePiPath,
                     ControllerBaseUrl = harness.BaseUrl,
-                    DefaultMateriaLoadout = "Wedge",
-                    HeartbeatIntervalSeconds = 2,
-                    PromptAcceptanceTimeoutSeconds = 4,
-                    CancelGracePeriodSeconds = 3,
                 }
             ),
             _provider.GetRequiredService<ILogger<PiMateriaRuntime>>()

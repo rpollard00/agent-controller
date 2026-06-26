@@ -1,9 +1,7 @@
 using AgentController.Application;
 using AgentController.Domain;
-using AgentController.Infrastructure.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace AgentController.Infrastructure;
 
@@ -22,15 +20,7 @@ namespace AgentController.Infrastructure;
 /// Events are ingested through <see cref="IRunLifecycleService.IngestRuntimeEventAsync"/>
 /// (in-process, not HTTP), so this works without the API being reachable.
 ///
-/// The completion outcome is controlled by <see cref="RuntimeOptions"/>:
-/// <list type="bullet">
-///   <item><c>DefaultMateriaLoadout</c> = <c>"success-pr"</c> or unset:
-///       completes with outcome <c>pull_request_opened</c>.</item>
-///   <item><c>DefaultMateriaLoadout</c> starts with <c>"fail"</c>:
-///       completes with outcome <c>failed</c>.</item>
-///   <item><c>DefaultMateriaLoadout</c> = <c>"no-change"</c>:
-///       completes with outcome <c>no_changes_needed</c>.</item>
-/// </list>
+/// The mock always completes with outcome <c>pull_request_opened</c>.
 ///
 /// Registered as a singleton via
 /// <see cref="AgentControllerServiceCollectionExtensions.AddAgentControllerMockPiMateriaRuntime"/>.
@@ -44,7 +34,6 @@ namespace AgentController.Infrastructure;
 public sealed partial class MockPiMateriaRuntime : IAgentRuntime
 {
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly IOptionsMonitor<RuntimeOptions> _runtimeOptions;
     private readonly ILogger<MockPiMateriaRuntime> _logger;
 
     /// <summary>
@@ -55,11 +44,9 @@ public sealed partial class MockPiMateriaRuntime : IAgentRuntime
 
     public MockPiMateriaRuntime(
         IServiceScopeFactory scopeFactory,
-        IOptionsMonitor<RuntimeOptions> runtimeOptions,
         ILogger<MockPiMateriaRuntime> logger)
     {
         _scopeFactory = scopeFactory;
-        _runtimeOptions = runtimeOptions;
         _logger = logger;
     }
 
@@ -255,42 +242,12 @@ public sealed partial class MockPiMateriaRuntime : IAgentRuntime
     }
 
     /// <summary>
-    /// Resolve the completion outcome and related payload based on the
-    /// configured <see cref="RuntimeOptions.DefaultMateriaLoadout"/>.
+    /// Resolve the completion outcome and related payload.
+    /// The mock always completes with a successful pull request outcome.
     /// </summary>
-    private (string Outcome, string Message, Dictionary<string, object?> Payload)
+    private static (string Outcome, string Message, Dictionary<string, object?> Payload)
         ResolveCompletionOutcome(string runId)
     {
-        var loadout = _runtimeOptions.CurrentValue.DefaultMateriaLoadout ?? "success-pr";
-
-        if (loadout.StartsWith("fail", StringComparison.OrdinalIgnoreCase))
-        {
-            return (
-                CompletionOutcomes.Failed,
-                "Mock runtime failed due to configured failure loadout.",
-                new Dictionary<string, object?>
-                {
-                    ["outcome"] = CompletionOutcomes.Failed,
-                    ["summary"] = "Simulated failure from mock runtime.",
-                    ["reason"] = loadout,
-                }
-            );
-        }
-
-        if (loadout.Equals("no-change", StringComparison.OrdinalIgnoreCase))
-        {
-            return (
-                CompletionOutcomes.NoChangesNeeded,
-                "Mock runtime determined no changes are needed.",
-                new Dictionary<string, object?>
-                {
-                    ["outcome"] = CompletionOutcomes.NoChangesNeeded,
-                    ["summary"] = "Analysis complete: no code changes required.",
-                }
-            );
-        }
-
-        // Default: simulate a successful PR creation
         return (
             CompletionOutcomes.PullRequestOpened,
             "Mock runtime completed and opened a pull request.",
