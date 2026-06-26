@@ -409,8 +409,8 @@ public sealed partial class PollingWorker : BackgroundService
 
         if (ct.IsCancellationRequested) return;
 
-        // Lifecycle log: RPC dispatch to autonomous runtime starting
-        Log.RpcDispatchStarting(
+        // Lifecycle log: runtime dispatch to agent starting
+        Log.RuntimeDispatchStarting(
             _logger, run.RunId, candidate.Id, agentRuntime.GetType().Name);
 
         // ── 6. AgentStarting ───────────────────────────────────────
@@ -868,7 +868,7 @@ public sealed partial class PollingWorker : BackgroundService
         catch (Exception ex)
         {
             Log.RuntimeHandoffFailed(_logger, run.RunId, ex);
-            Log.RpcDispatchFailed(_logger, run.RunId, candidate.Id, ex.Message);
+            Log.RuntimeDispatchFailed(_logger, run.RunId, candidate.Id, ex.Message);
 
             // Runtime start failure is non-fatal for the poll cycle.
             // Record the failure so the run can be diagnosed, but don't
@@ -1562,14 +1562,14 @@ public sealed partial class PollingWorker : BackgroundService
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "[lifecycle] RPC dispatch to autonomous runtime starting — runId={RunId}, workItemId={WorkItemId}, runtimeType={RuntimeType}.")]
-        public static partial void RpcDispatchStarting(
+            Message = "[lifecycle] Runtime dispatch to agent starting — runId={RunId}, workItemId={WorkItemId}, runtimeType={RuntimeType}.")]
+        public static partial void RuntimeDispatchStarting(
             ILogger logger, string runId, string workItemId, string runtimeType);
 
         [LoggerMessage(
             Level = LogLevel.Error,
-            Message = "[lifecycle] RPC dispatch to autonomous runtime FAILED — runId={RunId}, workItemId={WorkItemId}, reason='{Reason}'.")]
-        public static partial void RpcDispatchFailed(
+            Message = "[lifecycle] Runtime dispatch FAILED — runId={RunId}, workItemId={WorkItemId}, reason='{Reason}'.")]
+        public static partial void RuntimeDispatchFailed(
             ILogger logger, string runId, string workItemId, string reason);
 
         // ── Run-level retry logging ─────────────────────────────────
