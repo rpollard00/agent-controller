@@ -284,6 +284,10 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
                     await HandleFailedAsync(run, evt, ct);
                     break;
 
+                case RuntimeEventTypes.FailedRetryable:
+                    await HandleFailedRetryableAsync(run, evt, ct);
+                    break;
+
                 case RuntimeEventTypes.NeedsHuman:
                     await HandleNeedsHumanAsync(run, evt, ct);
                     break;
@@ -794,6 +798,50 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         await _runStore.UpdateRuntimeFieldsAsync(run.RunId, update, ct);
     }
 
+    /// <summary>
+    /// Handle a <c>runtime.failed_retryable</c> event. This transitions the run
+    /// to Failed (same as runtime.failed) but also records the failure reason
+    /// so the controller's retry mechanism can classify it as retryable.
+    /// The actual retry decision is made by the PollingWorker or the caller
+    /// via <see cref="EvaluateRetryAsync"/>.
+    /// </summary>
+    private async Task HandleFailedRetryableAsync(
+        AgentRunHandle run,
+        RuntimeEvent evt,
+        CancellationToken ct)
+    {
+        var reason = GetPayloadString(evt.Payload, "reason")
+            ?? evt.Message;
+
+        await _runStore.UpdateStatusAsync(run.RunId, RunLifecycleState.Failed, ct);
+        await MaybeUpdateWorkItemStatus(run, RunLifecycleState.Failed, ct);
+
+        var update = new RuntimeFieldUpdate
+        {
+            RuntimeRunId = evt.RuntimeRunId ?? run.RuntimeRunId,
+            Error = evt.Message ?? reason,
+            ResultSummary = GetPayloadString(evt.Payload, "summary"),
+            LastHeartbeatAt = evt.OccurredAt,
+            FinishedAt = evt.OccurredAt,
+        };
+        await _runStore.UpdateRuntimeFieldsAsync(run.RunId, update, ct);
+
+        // Record the failure reason as a controller event for retry classification.
+        await AppendControllerEventAsync(
+            run.RunId,
+            ControllerEventTypes.RetryableFailure,
+            $"Run failed with retryable error (reason: {reason ?? "unknown"}). " +
+            "The controller will evaluate the retry threshold.",
+            new Dictionary<string, object?>
+            {
+                ["reason"] = reason,
+                ["runAttempt"] = run.RunAttempt,
+                ["retryable"] = true,
+            },
+            EventSeverity.Warning,
+            ct);
+    }
+
     private async Task HandleNeedsHumanAsync(
         AgentRunHandle run,
         RuntimeEvent evt,
@@ -875,6 +923,228 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         return value.ToString();
     }
 
+    // ── Run-level retry logic ──────────────────────────────────────
+
+    /// <inheritdoc />
+    public async Task<AgentRunHandle?> EvaluateRetryAsync(
+        string failedRunId,
+        string workerId,
+        int maxRunAttempts,
+        CancellationToken ct)
+    {
+        var failedRun = await _runStore.GetByIdAsync(failedRunId, ct);
+        if (failedRun is null)
+        {
+            throw new InvalidOperationException(
+                $"Cannot evaluate retry: run '{failedRunId}' not found.");
+        }
+
+        if (failedRun.Status != RunLifecycleState.Failed)
+        {
+            // Only Failed runs are eligible for retry evaluation.
+            // Other terminal states (Completed, Cancelled, CleanedUp) are not retried.
+            return null;
+        }
+
+        // Check if the failure is retryable by examining the error message
+        // and any retryable failure events in the event log.
+        var isRetryable = IsFailureRetryable(failedRun);
+        if (!isRetryable)
+        {
+            Log.NonRetryableFailure(_logger, failedRunId, failedRun.Error ?? "unknown");
+            return null;
+        }
+
+        // Find the latest run for this work item to determine the attempt count.
+        var latestRun = await _runStore.FindLatestRunByWorkItemAsync(
+            failedRun.WorkItemId!, ct);
+
+        var currentAttempt = latestRun?.RunAttempt ?? 1;
+
+        if (currentAttempt >= maxRunAttempts)
+        {
+            // Exhausted all retry attempts — escalate to NeedsHuman.
+            await EscalateToNeedsHumanAsync(
+                failedRun, currentAttempt, maxRunAttempts, ct);
+            return null;
+        }
+
+        // Create a retry run with incremented attempt counter.
+        var retryAttempt = currentAttempt + 1;
+        var retryRun = await _runStore.CreateAsync(
+            new CreateRunRequest
+            {
+                WorkItemId = failedRun.WorkItemId!,
+                WorkerId = workerId,
+                InitialStatus = RunLifecycleState.Claimed,
+                RunAttempt = retryAttempt,
+                PreviousRunId = failedRunId,
+            },
+            ct);
+
+        // Record the retry creation as a controller event.
+        await AppendControllerEventAsync(
+            retryRun.RunId,
+            ControllerEventTypes.RetryRunCreated,
+            $"Retry run created (attempt {retryAttempt}/{maxRunAttempts}) " +
+            $"for work item '{failedRun.WorkItemId}' after previous run '{failedRunId}' failed.",
+            new Dictionary<string, object?>
+            {
+                ["previousRunId"] = failedRunId,
+                ["previousRunStatus"] = failedRun.Status.ToString(),
+                ["previousRunError"] = failedRun.Error,
+                ["previousRunAttempt"] = currentAttempt,
+                ["retryAttempt"] = retryAttempt,
+                ["maxRunAttempts"] = maxRunAttempts,
+            },
+            ct);
+
+        // Also record on the failed run for traceability.
+        await AppendControllerEventAsync(
+            failedRunId,
+            ControllerEventTypes.RetryRunCreated,
+            $"Retry run '{retryRun.RunId}' created (attempt {retryAttempt}/{maxRunAttempts}).",
+            new Dictionary<string, object?>
+            {
+                ["retryRunId"] = retryRun.RunId,
+                ["retryAttempt"] = retryAttempt,
+            },
+            ct);
+
+        Log.RetryRunCreated(_logger, retryRun.RunId, failedRunId, retryAttempt, maxRunAttempts);
+
+        return retryRun;
+    }
+
+    /// <inheritdoc />
+    public async Task<AgentRunHandle?> RecoverStaleRunWithRetryAsync(
+        string staleRunId,
+        string workerId,
+        int maxRunAttempts,
+        CancellationToken ct)
+    {
+        var staleRun = await _runStore.GetByIdAsync(staleRunId, ct);
+        if (staleRun is null)
+        {
+            throw new InvalidOperationException(
+                $"Cannot recover stale run '{staleRunId}': run not found.");
+        }
+
+        if (IsTerminal(staleRun.Status))
+        {
+            throw new InvalidOperationException(
+                $"Cannot recover stale run '{staleRunId}': run is already in terminal state '{staleRun.Status}'.");
+        }
+
+        if (staleRun.Status != RunLifecycleState.AwaitingResult)
+        {
+            throw new InvalidOperationException(
+                $"Cannot recover stale run '{staleRunId}': run is in state '{staleRun.Status}', " +
+                "only runs in AwaitingResult can be recovered as stale.");
+        }
+
+        // StaleTimeout is a non-retryable failure — it goes straight to NeedsHuman.
+        // The existing StaleTimeout path continues to escalate directly to NeedsHuman (not retried).
+        await _runStore.UpdateStatusAsync(staleRunId, RunLifecycleState.NeedsHuman, ct);
+        await MaybeUpdateWorkItemStatus(staleRun, RunLifecycleState.NeedsHuman, ct);
+
+        await AppendControllerEventAsync(
+            staleRunId,
+            ControllerEventTypes.StaleRecovered,
+            $"Stale run recovered: no heartbeat or final event received within the timeout. " +
+            $"Transitioned from {RunLifecycleState.AwaitingResult} to {RunLifecycleState.NeedsHuman}. " +
+            $"Note: StaleTimeout is a non-retryable failure and does NOT trigger run-level retry.",
+            new Dictionary<string, object?>
+            {
+                ["previousState"] = RunLifecycleState.AwaitingResult.ToString(),
+                ["targetState"] = RunLifecycleState.NeedsHuman.ToString(),
+                ["lastHeartbeatAt"] = staleRun.LastHeartbeatAt?.ToString("O"),
+                ["startedAt"] = staleRun.StartedAt?.ToString("O"),
+                ["staleTimeoutIsNonRetryable"] = true,
+            },
+            EventSeverity.Warning,
+            ct);
+
+        return null;
+    }
+
+    /// <summary>
+    /// Escalate a work item to NeedsHuman after exhausting all retry attempts.
+    /// Records a summary of all failure reasons on the final failed run.
+    /// </summary>
+    private async Task EscalateToNeedsHumanAsync(
+        AgentRunHandle failedRun,
+        int currentAttempt,
+        int maxRunAttempts,
+        CancellationToken ct)
+    {
+        // Collect failure reasons from the retry chain.
+        var failureReasons = new List<string>();
+        failureReasons.Add($"Attempt {currentAttempt}: {failedRun.Error ?? "unknown"}");
+
+        // Walk the retry chain to collect all failure reasons.
+        var previousRunId = failedRun.PreviousRunId;
+        while (previousRunId is not null)
+        {
+            var previousRun = await _runStore.GetByIdAsync(previousRunId, ct);
+            if (previousRun is null)
+                break;
+
+            failureReasons.Insert(0, $"Attempt {previousRun.RunAttempt}: {previousRun.Error ?? "unknown"}");
+            previousRunId = previousRun.PreviousRunId;
+        }
+
+        var failureSummary = string.Join("; ", failureReasons);
+
+        // Transition the failed run to NeedsHuman (it's already Failed, but we need
+        // to escalate it). Since Failed is terminal, we record the escalation as an event
+        // rather than a state transition.
+        await AppendControllerEventAsync(
+            failedRun.RunId,
+            ControllerEventTypes.RetryExhausted,
+            $"Run escalated to NeedsHuman after {maxRunAttempts} failed attempts. " +
+            $"Failure summary: {failureSummary}",
+            new Dictionary<string, object?>
+            {
+                ["maxRunAttempts"] = maxRunAttempts,
+                ["failureReasons"] = failureReasons,
+                ["failureSummary"] = failureSummary,
+            },
+            EventSeverity.Error,
+            ct);
+
+        // Update the work item to NeedsHuman state.
+        if (!string.IsNullOrWhiteSpace(failedRun.WorkItemId))
+        {
+            await _workItemStore.UpdateStatusAsync(
+                failedRun.WorkItemId, "NeedsHuman", ct);
+        }
+
+        Log.RetryExhausted(_logger, failedRun.RunId, failedRun.WorkItemId, maxRunAttempts, failureReasons.Count);
+    }
+
+    /// <summary>
+    /// Determine if a failed run's error is classified as retryable.
+    /// Checks the Error field for known retryable failure reason strings.
+    /// </summary>
+    private static bool IsFailureRetryable(AgentRunHandle run)
+    {
+        var error = run.Error;
+        if (string.IsNullOrWhiteSpace(error))
+            return false;
+
+        // Check if the error message contains a known retryable reason.
+        foreach (var reason in RetryableFailureReasons.AllRetryableReasons)
+        {
+            if (error.Contains(reason, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     // ── Source-generated LoggerMessage partials ─────────────────────
 
     private static partial class Log
@@ -917,5 +1187,35 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             string runId,
             string eventId,
             double elapsedMilliseconds);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Retry run created — retryRunId={RetryRunId}, " +
+                      "previousRunId={PreviousRunId}, attempt={Attempt}/{MaxAttempts}")]
+        public static partial void RetryRunCreated(
+            ILogger logger,
+            string retryRunId,
+            string previousRunId,
+            int attempt,
+            int maxAttempts);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Non-retryable failure — runId={RunId}, error={Error}")]
+        public static partial void NonRetryableFailure(
+            ILogger logger,
+            string runId,
+            string error);
+
+        [LoggerMessage(
+            Level = LogLevel.Error,
+            Message = "Retry exhausted — runId={RunId}, workItemId={WorkItemId}, " +
+                      "maxAttempts={MaxAttempts}, failureCount={FailureCount}")]
+        public static partial void RetryExhausted(
+            ILogger logger,
+            string runId,
+            string? workItemId,
+            int maxAttempts,
+            int failureCount);
     }
 }

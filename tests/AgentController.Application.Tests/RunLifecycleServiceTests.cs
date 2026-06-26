@@ -1287,6 +1287,256 @@ public class RunLifecycleServiceTests
         Assert.Contains("agent-active", statusUpdates[0].Status.Tags!);
     }
 
+    // ── Run-level retry tests ──────────────────────────────────────
+
+    [Fact]
+    public async Task EvaluateRetry_RetryableFailure_CreatesRetryRun()
+    {
+        var stubWorkSource = new StubWorkSource();
+        var service = new RunLifecycleService(
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+
+        // Create a work item and run
+        var wi = await _workItemStore.CreateAsync(
+            new CreateWorkItemRequest { RepoKey = "repo", Title = "Retry Test" }, CancellationToken.None);
+        var run = await service.CreateRunForWorkItemAsync(wi.Id, "worker-1", CancellationToken.None);
+
+        // Advance to AwaitingResult then fail with a retryable error
+        await AdvanceToAsync(service, run.RunId, RunLifecycleState.AwaitingResult, CancellationToken.None);
+
+        // Simulate a keepalive-stall failure (retryable)
+        await _runStore.ForceUpdateStatusAsync(run.RunId, RunLifecycleState.Failed);
+        await _runStore.UpdateRuntimeFieldsAsync(run.RunId, new RuntimeFieldUpdate
+        {
+            Error = "Keepalive-stall detected: keepalive_stall — no runtime event for 120s",
+        }, CancellationToken.None);
+
+        // Evaluate retry with max 3 attempts
+        var retryRun = await service.EvaluateRetryAsync(run.RunId, "worker-1", 3, CancellationToken.None);
+
+        // Should create a retry run
+        Assert.NotNull(retryRun);
+        Assert.Equal(2, retryRun.RunAttempt);
+        Assert.Equal(run.RunId, retryRun.PreviousRunId);
+        Assert.Equal(wi.Id, retryRun.WorkItemId);
+        Assert.Equal(RunLifecycleState.Claimed, retryRun.Status);
+
+        // Verify lifecycle events
+        var events = await _eventStore.ListByRunIdAsync(retryRun.RunId, CancellationToken.None);
+        Assert.Contains(events, e => e.EventType == "controller.retry_run_created");
+    }
+
+    [Fact]
+    public async Task EvaluateRetry_NonRetryableFailure_ReturnsNull()
+    {
+        var stubWorkSource = new StubWorkSource();
+        var service = new RunLifecycleService(
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+
+        var wi = await _workItemStore.CreateAsync(
+            new CreateWorkItemRequest { RepoKey = "repo", Title = "Non-Retry Test" }, CancellationToken.None);
+        var run = await service.CreateRunForWorkItemAsync(wi.Id, "worker-1", CancellationToken.None);
+
+        // Fail with a non-retryable error (no known retryable reason in error message)
+        await _runStore.ForceUpdateStatusAsync(run.RunId, RunLifecycleState.Failed);
+        await _runStore.UpdateRuntimeFieldsAsync(run.RunId, new RuntimeFieldUpdate
+        {
+            Error = "Tests failed after implementation",
+        }, CancellationToken.None);
+
+        // Evaluate retry — should return null (non-retryable)
+        var retryRun = await service.EvaluateRetryAsync(run.RunId, "worker-1", 3, CancellationToken.None);
+        Assert.Null(retryRun);
+    }
+
+    [Fact]
+    public async Task EvaluateRetry_MaxAttemptsExceeded_EscalatesToNeedsHuman()
+    {
+        var stubWorkSource = new StubWorkSource();
+        var service = new RunLifecycleService(
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+
+        var wi = await _workItemStore.CreateAsync(
+            new CreateWorkItemRequest { RepoKey = "repo", Title = "Exhaust Test" }, CancellationToken.None);
+
+        // Create 3 failed runs (attempts 1, 2, 3)
+        var runs = new List<AgentRunHandle>();
+        for (int i = 1; i <= 3; i++)
+        {
+            var run = await service.CreateRunForWorkItemAsync(wi.Id, "worker-1", CancellationToken.None);
+            await _runStore.ForceUpdateStatusAsync(run.RunId, RunLifecycleState.Failed);
+            await _runStore.UpdateRuntimeFieldsAsync(run.RunId, new RuntimeFieldUpdate
+            {
+                Error = $"Attempt {i}: keepalive_stall failure",
+                RunAttempt = i,
+                PreviousRunId = i > 1 ? runs[^1].RunId : null,
+            }, CancellationToken.None);
+            runs.Add(run);
+        }
+
+        // Evaluate retry on the 3rd (last) attempt with max 3 — should escalate
+        var retryRun = await service.EvaluateRetryAsync(runs[^1].RunId, "worker-1", 3, CancellationToken.None);
+        Assert.Null(retryRun);
+
+        // Verify escalation event was recorded
+        var events = await _eventStore.ListByRunIdAsync(runs[^1].RunId, CancellationToken.None);
+        Assert.Contains(events, e => e.EventType == "controller.retry_exhausted");
+    }
+
+    [Fact]
+    public async Task EvaluateRetry_ProcessExitNonZero_IsRetryable()
+    {
+        var stubWorkSource = new StubWorkSource();
+        var service = new RunLifecycleService(
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+
+        var wi = await _workItemStore.CreateAsync(
+            new CreateWorkItemRequest { RepoKey = "repo", Title = "Process Exit Test" }, CancellationToken.None);
+        var run = await service.CreateRunForWorkItemAsync(wi.Id, "worker-1", CancellationToken.None);
+
+        // Simulate process_exit_nonzero failure (retryable)
+        await _runStore.ForceUpdateStatusAsync(run.RunId, RunLifecycleState.Failed);
+        await _runStore.UpdateRuntimeFieldsAsync(run.RunId, new RuntimeFieldUpdate
+        {
+            Error = "pi exited with code 137 without a final event. process_exit_nonzero",
+        }, CancellationToken.None);
+
+        var retryRun = await service.EvaluateRetryAsync(run.RunId, "worker-1", 3, CancellationToken.None);
+        Assert.NotNull(retryRun);
+        Assert.Equal(2, retryRun.RunAttempt);
+    }
+
+    [Fact]
+    public async Task RecoverStaleRunWithRetry_StaleTimeout_GoesToNeedsHuman()
+    {
+        // StaleTimeout is a non-retryable failure — goes straight to NeedsHuman.
+        var wi = await _workItemStore.CreateAsync(
+            new CreateWorkItemRequest { RepoKey = "repo", Title = "Stale Test" }, CancellationToken.None);
+        var run = await CreateRunAsync(advanceTo: RunLifecycleState.AwaitingResult);
+
+        // Recover stale run — should go to NeedsHuman, not retry
+        var retryRun = await _service.RecoverStaleRunWithRetryAsync(
+            run.RunId, "worker-1", 3, CancellationToken.None);
+
+        Assert.Null(retryRun);
+
+        var updated = await _runStore.GetByIdAsync(run.RunId, CancellationToken.None);
+        Assert.Equal(RunLifecycleState.NeedsHuman, updated!.Status);
+
+        // Verify stale_recovered event was recorded
+        var events = await _eventStore.ListByRunIdAsync(run.RunId, CancellationToken.None);
+        Assert.Contains(events, e => e.EventType == "controller.stale_recovered");
+    }
+
+    [Fact]
+    public async Task RecoverStaleRunWithRetry_RejectsTerminalRun()
+    {
+        var run = await CreateRunAsync();
+        await _runStore.ForceUpdateStatusAsync(run.RunId, RunLifecycleState.Failed);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => _service.RecoverStaleRunWithRetryAsync(run.RunId, "worker-1", 3, CancellationToken.None));
+
+        Assert.Contains("terminal state", ex.Message);
+    }
+
+    [Fact]
+    public async Task RecoverStaleRunWithRetry_RejectsNonAwaitingResultState()
+    {
+        var run = await CreateRunAsync(); // Claimed, not AwaitingResult
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => _service.RecoverStaleRunWithRetryAsync(run.RunId, "worker-1", 3, CancellationToken.None));
+
+        Assert.Contains("only runs in AwaitingResult", ex.Message);
+    }
+
+    [Fact]
+    public async Task IngestFailedRetryable_TransitionsToFailed()
+    {
+        var run = await CreateRunAsync(advanceTo: RunLifecycleState.AwaitingResult);
+        var now = DateTimeOffset.UtcNow;
+
+        var evt = new RuntimeEvent
+        {
+            EventId = "evt_fail_retryable_1",
+            RunId = run.RunId,
+            EventType = RuntimeEventTypes.FailedRetryable,
+            OccurredAt = now,
+            Severity = EventSeverity.Error,
+            Message = "Keepalive-stall detected: no runtime event for 120s",
+            Payload = new Dictionary<string, object?>
+            {
+                ["reason"] = "keepalive_stall",
+                ["summary"] = "Stall detected",
+                ["retryable"] = true,
+            },
+        };
+
+        await _service.IngestRuntimeEventAsync(evt, CancellationToken.None);
+
+        var updated = await _runStore.GetByIdAsync(run.RunId, CancellationToken.None);
+        Assert.Equal(RunLifecycleState.Failed, updated!.Status);
+        Assert.Contains("Keepalive-stall", updated.Error);
+        Assert.Equal(now, updated.FinishedAt);
+
+        // Verify retryable_failure event was recorded
+        var events = await _eventStore.ListByRunIdAsync(run.RunId, CancellationToken.None);
+        Assert.Contains(events, e => e.EventType == "controller.retryable_failure");
+    }
+
+    [Fact]
+    public async Task RetryChain_TracksPreviousRunId()
+    {
+        var stubWorkSource = new StubWorkSource();
+        var service = new RunLifecycleService(
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+
+        var wi = await _workItemStore.CreateAsync(
+            new CreateWorkItemRequest { RepoKey = "repo", Title = "Chain Test" }, CancellationToken.None);
+
+        // Create initial run (attempt 1)
+        var run1 = await service.CreateRunForWorkItemAsync(wi.Id, "worker-1", CancellationToken.None);
+        Assert.Equal(1, run1.RunAttempt);
+        Assert.Null(run1.PreviousRunId);
+
+        // Fail run 1 with retryable error
+        await _runStore.ForceUpdateStatusAsync(run1.RunId, RunLifecycleState.Failed);
+        await _runStore.UpdateRuntimeFieldsAsync(run1.RunId, new RuntimeFieldUpdate
+        {
+            Error = "keepalive_stall failure",
+        }, CancellationToken.None);
+
+        // Evaluate retry → creates run 2
+        var run2 = await service.EvaluateRetryAsync(run1.RunId, "worker-1", 3, CancellationToken.None);
+        Assert.NotNull(run2);
+        Assert.Equal(2, run2.RunAttempt);
+        Assert.Equal(run1.RunId, run2.PreviousRunId);
+
+        // Fail run 2 with retryable error
+        await _runStore.ForceUpdateStatusAsync(run2.RunId, RunLifecycleState.Failed);
+        await _runStore.UpdateRuntimeFieldsAsync(run2.RunId, new RuntimeFieldUpdate
+        {
+            Error = "process_exit_nonzero failure",
+        }, CancellationToken.None);
+
+        // Evaluate retry → creates run 3
+        var run3 = await service.EvaluateRetryAsync(run2.RunId, "worker-1", 3, CancellationToken.None);
+        Assert.NotNull(run3);
+        Assert.Equal(3, run3.RunAttempt);
+        Assert.Equal(run2.RunId, run3.PreviousRunId);
+
+        // Fail run 3 — should exhaust retries
+        await _runStore.ForceUpdateStatusAsync(run3.RunId, RunLifecycleState.Failed);
+        await _runStore.UpdateRuntimeFieldsAsync(run3.RunId, new RuntimeFieldUpdate
+        {
+            Error = "keepalive_stall failure",
+        }, CancellationToken.None);
+
+        var run4 = await service.EvaluateRetryAsync(run3.RunId, "worker-1", 3, CancellationToken.None);
+        Assert.Null(run4); // Exhausted
+    }
+
     // ── Helpers ────────────────────────────────────────────────────
 
     /// <summary>
@@ -1391,6 +1641,8 @@ public class RunLifecycleServiceTests
                 RunId = $"run_{Guid.NewGuid():N}",
                 WorkItemId = request.WorkItemId,
                 Status = request.InitialStatus,
+                RunAttempt = request.RunAttempt,
+                PreviousRunId = request.PreviousRunId,
                 StartedAt = request.InitialStatus > RunLifecycleState.Claimed ? DateTimeOffset.UtcNow : null,
                 CreatedAt = DateTimeOffset.UtcNow,
                 UpdatedAt = DateTimeOffset.UtcNow,
@@ -1437,6 +1689,8 @@ public class RunLifecycleServiceTests
                     FinishedAt = update.FinishedAt ?? run.FinishedAt,
                     LastHeartbeatAt = update.LastHeartbeatAt ?? run.LastHeartbeatAt,
                     Error = update.Error ?? run.Error,
+                    RunAttempt = update.RunAttempt ?? run.RunAttempt,
+                    PreviousRunId = update.PreviousRunId ?? run.PreviousRunId,
                     UpdatedAt = DateTimeOffset.UtcNow,
                 };
             }
@@ -1471,6 +1725,15 @@ public class RunLifecycleServiceTests
                 r.Status != RunLifecycleState.Failed &&
                 r.Status != RunLifecycleState.Cancelled &&
                 r.Status != RunLifecycleState.CleanedUp));
+        }
+
+        public Task<AgentRunHandle?> FindLatestRunByWorkItemAsync(string workItemId, CancellationToken ct)
+        {
+            var latest = _runs.Values
+                .Where(r => r.WorkItemId == workItemId)
+                .OrderByDescending(r => r.CreatedAt)
+                .FirstOrDefault();
+            return Task.FromResult<AgentRunHandle?>(latest);
         }
 
         /// <summary>

@@ -586,6 +586,18 @@ public class MockPiMateriaRuntimeTests : IAsyncLifetime
             }
         }
 
+        public Task<AgentRunHandle?> FindLatestRunByWorkItemAsync(string workItemId, CancellationToken ct)
+        {
+            lock (_lock)
+            {
+                var latest = _runs.Values
+                    .Where(r => r.WorkItemId == workItemId)
+                    .OrderByDescending(r => r.CreatedAt)
+                    .FirstOrDefault();
+                return Task.FromResult<AgentRunHandle?>(latest);
+            }
+        }
+
         private static bool IsTerminal(RunLifecycleState s) =>
             s is RunLifecycleState.Completed or RunLifecycleState.Failed
                 or RunLifecycleState.Cancelled or RunLifecycleState.CleanedUp;

@@ -33,6 +33,79 @@ public static class RuntimeEventTypes
 
     /// <summary>Runtime acknowledged cancellation.</summary>
     public const string Cancelled = "runtime.cancelled";
+
+    /// <summary>
+    /// Runtime failed with a retryable error (e.g. keepalive-stall, process crash).
+    /// The controller should evaluate the run-level retry threshold before
+    /// escalating to NeedsHuman.
+    /// </summary>
+    public const string FailedRetryable = "runtime.failed_retryable";
+}
+
+/// <summary>
+/// Well-known failure reason strings used to classify run failures as
+/// retryable or non-retryable for the run-level retry mechanism.
+/// </summary>
+public static class RetryableFailureReasons
+{
+    /// <summary>
+    /// Keepalive-stall: no runtime event observed within the stall deadline.
+    /// The run is considered orphaned and may succeed on retry.
+    /// </summary>
+    public const string KeepaliveStall = "keepalive_stall";
+
+    /// <summary>
+    /// Process exited with non-zero code without emitting a terminal event.
+    /// The runtime process crashed or was killed; retry may succeed.
+    /// </summary>
+    public const string ProcessExitNonZero = "process_exit_nonzero";
+
+    /// <summary>
+    /// Runtime process failed to start (e.g. executable not found).
+    /// Retry may succeed if the environment is transiently unavailable.
+    /// </summary>
+    public const string ProcessStartFailed = "process_start_failed";
+
+    /// <summary>
+    /// Environment unreachable during runtime execution.
+    /// Retry may succeed if the environment recovers.
+    /// </summary>
+    public const string EnvironmentUnreachable = "environment_unreachable";
+
+    /// <summary>
+    /// Returns the complete set of retryable failure reason strings.
+    /// Failures with a reason in this set are eligible for run-level retry.
+    /// </summary>
+    public static IReadOnlySet<string> AllRetryableReasons { get; } = new HashSet<string>
+    {
+        KeepaliveStall,
+        ProcessExitNonZero,
+        ProcessStartFailed,
+        EnvironmentUnreachable,
+    };
+
+    /// <summary>
+    /// Returns <c>true</c> if the failure is classified as retryable based on
+    /// the <paramref name="reason"/> string or the presence of <c>"retryable": true</c>
+    /// in the <paramref name="payload"/>.
+    /// </summary>
+    public static bool IsRetryable(string? reason, IReadOnlyDictionary<string, object?>? payload)
+    {
+        // Explicit retryable flag in payload takes precedence
+        if (payload?.TryGetValue("retryable", out var retryableValue) == true &&
+            retryableValue is bool isRetryable)
+        {
+            return isRetryable;
+        }
+
+        // Check against known retryable reasons
+        if (!string.IsNullOrWhiteSpace(reason))
+        {
+            return AllRetryableReasons.Contains(reason);
+        }
+
+        return false;
+    }
 }
 
 /// <summary>
@@ -112,4 +185,15 @@ public static class ControllerEventTypes
     /// <summary>Claim was released due to a pre-agent setup failure (e.g. clone failure).
     /// Agent tags stripped, work item reverted to eligible state.</summary>
     public const string ClaimReleased = "controller.claim_released";
+
+    /// <summary>Run failed with a retryable error. The controller will evaluate
+    /// the retry threshold before escalating to NeedsHuman.</summary>
+    public const string RetryableFailure = "controller.retryable_failure";
+
+    /// <summary>Retry run created for a work item after a previous run failed
+    /// with a retryable error.</summary>
+    public const string RetryRunCreated = "controller.retry_run_created";
+
+    /// <summary>Run escalated to NeedsHuman after exhausting all retry attempts.</summary>
+    public const string RetryExhausted = "controller.retry_exhausted";
 }

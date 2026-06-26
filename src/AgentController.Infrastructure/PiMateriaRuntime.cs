@@ -493,7 +493,7 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
                         castId,
                         completedSockets.Count
                     );
-                    await SynthesizeFailureAsync(
+                    await SynthesizeRetryableFailureAsync(
                         runId,
                         $"Keepalive-stall detected: no runtime event for {lastEventAge:F0}s " +
                         $"(stall deadline: {stallDeadlineSeconds}s, heartbeat interval: {heartbeatIntervalSeconds}s, " +
@@ -501,7 +501,7 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
                         "The run has been failed as retryable.",
                         new Dictionary<string, object?>
                         {
-                            ["reason"] = "keepalive_stall",
+                            ["reason"] = RetryableFailureReasons.KeepaliveStall,
                             ["lastEventAgeSeconds"] = lastEventAge,
                             ["stallDeadlineSeconds"] = stallDeadlineSeconds,
                             ["heartbeatIntervalSeconds"] = heartbeatIntervalSeconds,
@@ -621,23 +621,26 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
         }
         else
         {
+            // Process exited with non-zero code without a terminal event:
+            // this is a retryable failure (process crash, OOM kill, etc.).
             await TryIngestAsync(
                 runId,
                 new RuntimeEvent
                 {
                     EventId = $"pi-exit-failed-{runId}-{Guid.NewGuid():N}",
                     RunId = runId,
-                    EventType = RuntimeEventTypes.Failed,
+                    EventType = RuntimeEventTypes.FailedRetryable,
                     OccurredAt = DateTimeOffset.UtcNow,
                     Severity = EventSeverity.Error,
                     Message = $"pi exited with code {exitCode} without a final event.",
                     Payload = new Dictionary<string, object?>
                     {
-                        ["reason"] = "process_exit_nonzero",
+                        ["reason"] = RetryableFailureReasons.ProcessExitNonZero,
                         ["summary"] =
                             $"pi process exited with code {exitCode} without emitting a terminal runtime event.",
                         ["synthesized"] = true,
                         ["exitCode"] = exitCode,
+                        ["retryable"] = true,
                     },
                 },
                 CancellationToken.None
@@ -1458,13 +1461,11 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
         Log.SynthesizingFailure(_logger, runId, reason);
         var payload = new Dictionary<string, object?>
         {
-            ["reason"] = "runtime_launch_or_monitor_failure",
-            ["summary"] = reason,
             ["synthesized"] = true,
         };
-        foreach (var kvp in extraPayload)
+        foreach (var (key, value) in extraPayload)
         {
-            payload[kvp.Key] = kvp.Value;
+            payload[key] = value;
         }
         return TryIngestAsync(
             runId,
@@ -1473,6 +1474,44 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
                 EventId = $"pi-failed-{runId}-{Guid.NewGuid():N}",
                 RunId = runId,
                 EventType = RuntimeEventTypes.Failed,
+                OccurredAt = DateTimeOffset.UtcNow,
+                Severity = EventSeverity.Error,
+                Message = reason,
+                Payload = payload,
+            },
+            ct
+        );
+    }
+
+    /// <summary>
+    /// Synthesize a retryable failure event using <c>runtime.failed_retryable</c>.
+    /// This signals the controller to evaluate the run-level retry threshold
+    /// before escalating to NeedsHuman.
+    /// </summary>
+    private Task SynthesizeRetryableFailureAsync(
+        string runId,
+        string reason,
+        Dictionary<string, object?> extraPayload,
+        CancellationToken ct
+    )
+    {
+        Log.SynthesizingFailure(_logger, runId, reason);
+        var payload = new Dictionary<string, object?>
+        {
+            ["synthesized"] = true,
+            ["retryable"] = true,
+        };
+        foreach (var (key, value) in extraPayload)
+        {
+            payload[key] = value;
+        }
+        return TryIngestAsync(
+            runId,
+            new RuntimeEvent
+            {
+                EventId = $"pi-failed-retryable-{runId}-{Guid.NewGuid():N}",
+                RunId = runId,
+                EventType = RuntimeEventTypes.FailedRetryable,
                 OccurredAt = DateTimeOffset.UtcNow,
                 Severity = EventSeverity.Error,
                 Message = reason,

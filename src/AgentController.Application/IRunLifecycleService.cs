@@ -165,4 +165,56 @@ public interface IRunLifecycleService
     /// <see cref="RunLifecycleState.CleanedUp"/>.
     /// </summary>
     bool IsTerminal(RunLifecycleState state);
+
+    /// <summary>
+    /// Evaluate whether a failed run should be retried based on the run-level
+    /// retry threshold. If the failure is retryable and the attempt count is
+    /// below <c>MaxRunAttempts</c>, creates a new run for the same work item
+    /// with an incremented attempt counter. If the threshold is exceeded,
+    /// transitions the work item to NeedsHuman with a summary of failures.
+    /// </summary>
+    /// <param name="failedRunId">
+    /// Identifier of the run that failed.
+    /// </param>
+    /// <param name="workerId">
+    /// Identifier of the worker/controller instance creating the retry run.
+    /// </param>
+    /// <param name="maxRunAttempts">
+    /// Maximum number of run attempts before escalation.
+    /// </param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>
+    /// The new retry run handle if a retry was created, or null if the run
+    /// was escalated to NeedsHuman (threshold exceeded or non-retryable failure).
+    /// </returns>
+    Task<AgentRunHandle?> EvaluateRetryAsync(
+        string failedRunId,
+        string workerId,
+        int maxRunAttempts,
+        CancellationToken ct);
+
+    /// <summary>
+    /// Recover a stale run by either retrying (if retryable and under threshold)
+    /// or escalating to NeedsHuman (if non-retryable or threshold exceeded).
+    /// This replaces the old RecoverStaleRunAsync which always went to NeedsHuman.
+    /// </summary>
+    /// <param name="staleRunId">
+    /// Identifier of the stale run to recover.
+    /// </param>
+    /// <param name="workerId">
+    /// Identifier of the worker/controller instance creating the retry run.
+    /// </param>
+    /// <param name="maxRunAttempts">
+    /// Maximum number of run attempts before escalation.
+    /// </param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>
+    /// The new retry run handle if a retry was created, or null if the run
+    /// was escalated to NeedsHuman.
+    /// </returns>
+    Task<AgentRunHandle?> RecoverStaleRunWithRetryAsync(
+        string staleRunId,
+        string workerId,
+        int maxRunAttempts,
+        CancellationToken ct);
 }

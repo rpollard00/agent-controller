@@ -21,6 +21,13 @@ internal sealed class AgentRunEntityConfiguration : IEntityTypeConfiguration<Age
         builder.Property(x => x.WorkItemId)
             .HasMaxLength(128);
 
+        builder.Property(x => x.RunAttempt)
+            .IsRequired()
+            .HasDefaultValue(1);
+
+        builder.Property(x => x.PreviousRunId)
+            .HasMaxLength(128);
+
         builder.Property(x => x.WorkerId)
             .HasMaxLength(256);
 

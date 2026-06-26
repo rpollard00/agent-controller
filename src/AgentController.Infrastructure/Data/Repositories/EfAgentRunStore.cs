@@ -31,6 +31,8 @@ internal sealed class EfAgentRunStore : IAgentRunStore
             WorkerId = request.WorkerId,
             RuntimeType = request.RuntimeType,
             Status = (int)request.InitialStatus,
+            RunAttempt = request.RunAttempt,
+            PreviousRunId = request.PreviousRunId,
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -133,6 +135,16 @@ internal sealed class EfAgentRunStore : IAgentRunStore
             entity.Error = update.Error;
             hasChange = true;
         }
+        if (update.RunAttempt is not null)
+        {
+            entity.RunAttempt = update.RunAttempt.Value;
+            hasChange = true;
+        }
+        if (update.PreviousRunId is not null)
+        {
+            entity.PreviousRunId = update.PreviousRunId;
+            hasChange = true;
+        }
 
         if (hasChange)
         {
@@ -219,6 +231,8 @@ internal sealed class EfAgentRunStore : IAgentRunStore
             FinishedAt = entity.FinishedAt,
             LastHeartbeatAt = entity.LastHeartbeatAt,
             Error = entity.Error,
+            RunAttempt = entity.RunAttempt,
+            PreviousRunId = entity.PreviousRunId,
             CreatedAt = entity.CreatedAt,
             UpdatedAt = entity.UpdatedAt,
         };
@@ -234,6 +248,18 @@ internal sealed class EfAgentRunStore : IAgentRunStore
             RunLifecycleState.CleanedUp => true,
             _ => false,
         };
+    }
+
+    public async Task<AgentRunHandle?> FindLatestRunByWorkItemAsync(
+        string workItemId,
+        CancellationToken cancellationToken)
+    {
+        var entity = await _db.AgentRuns
+            .Where(e => e.WorkItemId == workItemId)
+            .OrderByDescending(e => e.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return entity is null ? null : MapToHandle(entity);
     }
 
     private static string GenerateId(string prefix)

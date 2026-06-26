@@ -1248,8 +1248,10 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         Assert.Equal(RunLifecycleState.Failed, run!.Status);
 
         // Verify the failure is a keepalive-stall with retryable=true.
+        // Keepalive-stall uses runtime.failed_retryable (not runtime.failed)
+        // so the controller can evaluate the run-level retry threshold.
         var events = await _eventStore.ListByRunIdAsync(runId, CancellationToken.None);
-        var failureEvents = events.Where(e => e.EventType == RuntimeEventTypes.Failed).ToList();
+        var failureEvents = events.Where(e => e.EventType == RuntimeEventTypes.FailedRetryable).ToList();
         Assert.NotEmpty(failureEvents);
         var failureEvent = failureEvents.First();
 
@@ -2470,6 +2472,18 @@ main()
             lock (_lock)
             {
                 return Task.FromResult(_runs.Values.Count(r => !IsTerminal(r.Status)));
+            }
+        }
+
+        public Task<AgentRunHandle?> FindLatestRunByWorkItemAsync(string workItemId, CancellationToken ct)
+        {
+            lock (_lock)
+            {
+                var latest = _runs.Values
+                    .Where(r => r.WorkItemId == workItemId)
+                    .OrderByDescending(r => r.CreatedAt)
+                    .FirstOrDefault();
+                return Task.FromResult<AgentRunHandle?>(latest);
             }
         }
 

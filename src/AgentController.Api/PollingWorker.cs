@@ -181,7 +181,13 @@ public sealed partial class PollingWorker : BackgroundService
         }
 
         // ── 3. Stale run recovery ────────────────────────────────────
+        // StaleTimeout is a non-retryable failure (goes straight to NeedsHuman).
         await RecoverStaleRunsAsync(lifecycle, options, ct);
+
+        // ── 4. Evaluate failed runs for retry ────────────────────────
+        // Check recently-failed runs for retryable errors (keepalive-stall,
+        // process-exit-without-terminal) and kick off fresh runs if under threshold.
+        await EvaluateFailedRunsForRetryAsync(lifecycle, runStore, options, ct);
     }
 
     /// <summary>
@@ -1220,7 +1226,8 @@ public sealed partial class PollingWorker : BackgroundService
 
     /// <summary>
     /// Find and recover runs that are stuck in <see cref="RunLifecycleState.AwaitingResult"/>
-    /// past the configured stale timeout.
+    /// past the configured stale timeout. StaleTimeout is a non-retryable failure
+    /// and goes straight to NeedsHuman (not retried).
     /// </summary>
     private async Task RecoverStaleRunsAsync(
         IRunLifecycleService lifecycle,
@@ -1237,11 +1244,28 @@ public sealed partial class PollingWorker : BackgroundService
 
             try
             {
-                await lifecycle.RecoverStaleRunAsync(staleRun.RunId, ct);
-                Log.StaleRunRecovered(
-                    _logger,
-                    staleRun.RunId,
-                    staleRun.LastHeartbeatAt);
+                // StaleTimeout is a non-retryable failure — goes straight to NeedsHuman.
+                // The RecoverStaleRunWithRetryAsync method handles the classification.
+                var retryRun = await lifecycle.RecoverStaleRunWithRetryAsync(
+                    staleRun.RunId, options.WorkerId, options.MaxRunAttempts, ct);
+
+                if (retryRun is not null)
+                {
+                    // A retry run was created — advance it through the lifecycle.
+                    Log.StaleRunRetried(
+                        _logger,
+                        retryRun.RunId,
+                        staleRun.RunId,
+                        retryRun.RunAttempt);
+                }
+                else
+                {
+                    // Escalated to NeedsHuman.
+                    Log.StaleRunRecovered(
+                        _logger,
+                        staleRun.RunId,
+                        staleRun.LastHeartbeatAt);
+                }
             }
             catch (Exception ex)
             {
@@ -1252,6 +1276,72 @@ public sealed partial class PollingWorker : BackgroundService
         if (staleRuns.Count > 0)
         {
             Log.StaleRecoverySummary(_logger, staleRuns.Count);
+        }
+    }
+
+    /// <summary>
+    /// Evaluate failed runs for retry eligibility. When a run fails with a
+    /// retryable error (keepalive-stall, process-exit-without-terminal), the
+    /// controller kicks off a fresh run for the same work item from scratch,
+    /// up to the configured MaxRunAttempts threshold.
+    /// </summary>
+    private async Task EvaluateFailedRunsForRetryAsync(
+        IRunLifecycleService lifecycle,
+        IAgentRunStore runStore,
+        AgentControllerOptions options,
+        CancellationToken ct)
+    {
+        // Find recently failed runs that haven't been evaluated for retry yet.
+        // We look for runs in Failed state that were updated within the last poll cycle.
+        var allRuns = await runStore.ListAsync(
+            new ListRunsQuery { Status = RunLifecycleState.Failed, MaxResults = 100 }, ct);
+
+        foreach (var failedRun in allRuns)
+        {
+            if (ct.IsCancellationRequested)
+                break;
+
+            // Check if this run has already been evaluated for retry.
+            // A run is considered evaluated if a retry run was created for it
+            // (i.e., another run exists with PreviousRunId == this run's ID)
+            // or if it has been escalated to NeedsHuman.
+            var retryRuns = await runStore.ListAsync(
+                new ListRunsQuery { MaxResults = 100 }, ct);
+            var hasRetryRun = retryRuns.Any(r => r.PreviousRunId == failedRun.RunId);
+            if (hasRetryRun)
+            {
+                // Already has a retry run — skip.
+                continue;
+            }
+
+            // Check if the failure is recent (within the last poll cycle).
+            // This prevents re-evaluating old failed runs on every poll.
+            var timeSinceFailure = DateTimeOffset.UtcNow - failedRun.UpdatedAt;
+            if (timeSinceFailure.TotalSeconds > options.PollIntervalSeconds * 2)
+            {
+                // Too old — this run was likely evaluated in a previous cycle.
+                continue;
+            }
+
+            try
+            {
+                var retryRun = await lifecycle.EvaluateRetryAsync(
+                    failedRun.RunId, options.WorkerId, options.MaxRunAttempts, ct);
+
+                if (retryRun is not null)
+                {
+                    Log.RetryRunScheduled(
+                        _logger,
+                        retryRun.RunId,
+                        failedRun.RunId,
+                        retryRun.RunAttempt,
+                        options.MaxRunAttempts);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.RetryEvaluationFailed(_logger, ex, failedRun.RunId);
+            }
         }
     }
 
@@ -1481,5 +1571,27 @@ public sealed partial class PollingWorker : BackgroundService
             Message = "[lifecycle] RPC dispatch to autonomous runtime FAILED — runId={RunId}, workItemId={WorkItemId}, reason='{Reason}'.")]
         public static partial void RpcDispatchFailed(
             ILogger logger, string runId, string workItemId, string reason);
+
+        // ── Run-level retry logging ─────────────────────────────────
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Stale run recovered with retry — retryRunId={RetryRunId}, " +
+                      "staleRunId={StaleRunId}, attempt={Attempt}")]
+        public static partial void StaleRunRetried(
+            ILogger logger, string retryRunId, string staleRunId, int attempt);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Retry run scheduled — retryRunId={RetryRunId}, " +
+                      "previousRunId={PreviousRunId}, attempt={Attempt}/{MaxAttempts}")]
+        public static partial void RetryRunScheduled(
+            ILogger logger, string retryRunId, string previousRunId, int attempt, int maxAttempts);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Failed to evaluate retry for run {RunId}.")]
+        public static partial void RetryEvaluationFailed(
+            ILogger logger, Exception ex, string runId);
     }
 }

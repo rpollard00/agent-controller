@@ -43,6 +43,18 @@ public sealed record AgentRunHandle
     /// <summary>Identifier of the work item this run is for.</summary>
     public string? WorkItemId { get; init; }
 
+    /// <summary>
+    /// Which run attempt this is for the work item (1-based).
+    /// Retries increment this counter; the initial run is attempt 1.
+    /// </summary>
+    public int RunAttempt { get; init; } = 1;
+
+    /// <summary>
+    /// Identifier of the previous run in the retry chain, if this run
+    /// was created as a retry of a failed run. Null for the initial run.
+    /// </summary>
+    public string? PreviousRunId { get; init; }
+
     /// <summary>Identifier of the environment provisioned for this run.</summary>
     public string? EnvironmentId { get; init; }
 
@@ -123,6 +135,18 @@ public sealed record CreateRunRequest
 
     /// <summary>Initial lifecycle state for the run. Defaults to <see cref="RunLifecycleState.Claimed"/>.</summary>
     public RunLifecycleState InitialStatus { get; init; } = RunLifecycleState.Claimed;
+
+    /// <summary>
+    /// Which run attempt this is (1-based). Defaults to 1 (initial run).
+    /// For retries, this should be incremented from the previous run's attempt.
+    /// </summary>
+    public int RunAttempt { get; init; } = 1;
+
+    /// <summary>
+    /// Identifier of the previous run in the retry chain, if this run
+    /// was created as a retry of a failed run. Null for the initial run.
+    /// </summary>
+    public string? PreviousRunId { get; init; }
 }
 
 /// <summary>
@@ -133,6 +157,12 @@ public sealed record RuntimeFieldUpdate
 {
     /// <summary>Runtime-assigned run identifier.</summary>
     public string? RuntimeRunId { get; init; }
+
+    /// <summary>Run attempt number (1-based). Set when a retry run is created.</summary>
+    public int? RunAttempt { get; init; }
+
+    /// <summary>Previous run in the retry chain. Set when a retry run is created.</summary>
+    public string? PreviousRunId { get; init; }
 
     /// <summary>Type of agent runtime.</summary>
     public string? RuntimeType { get; init; }

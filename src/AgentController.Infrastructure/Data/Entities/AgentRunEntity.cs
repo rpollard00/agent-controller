@@ -12,6 +12,12 @@ internal sealed class AgentRunEntity
     /// <summary>Identifier of the work item this run is for.</summary>
     public string? WorkItemId { get; set; }
 
+    /// <summary>Which run attempt this is for the work item (1-based).</summary>
+    public int RunAttempt { get; set; } = 1;
+
+    /// <summary>Previous run in the retry chain, if this is a retry run.</summary>
+    public string? PreviousRunId { get; set; }
+
     /// <summary>Identifier of the worker/controller instance that owns this run.</summary>
     public string? WorkerId { get; set; }
 

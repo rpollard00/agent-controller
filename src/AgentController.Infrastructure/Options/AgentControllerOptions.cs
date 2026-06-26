@@ -63,4 +63,14 @@ public sealed class AgentControllerOptions
     /// </summary>
     [Range(1, int.MaxValue)]
     public int StaleTimeoutSeconds { get; init; } = 1800;
+
+    /// <summary>
+    /// Maximum number of run attempts for a single work item before escalating
+    /// to NeedsHuman. When a run fails with a retryable error (keepalive-stall,
+    /// process-exit-without-terminal), the controller kicks off a fresh run for
+    /// the same ADO board story from scratch, up to this threshold.
+    /// Must be positive. Default: 3.
+    /// </summary>
+    [Range(1, int.MaxValue)]
+    public int MaxRunAttempts { get; init; } = 3;
 }

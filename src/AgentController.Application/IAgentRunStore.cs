@@ -76,4 +76,13 @@ public interface IAgentRunStore
     /// polling loop to enforce max concurrency.
     /// </summary>
     Task<int> CountActiveAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Find the most recent run (by CreatedAt) for a given work item.
+    /// Used by the retry mechanism to determine the current attempt number
+    /// and previous run ID when creating a retry run.
+    /// </summary>
+    Task<AgentRunHandle?> FindLatestRunByWorkItemAsync(
+        string workItemId,
+        CancellationToken cancellationToken);
 }
