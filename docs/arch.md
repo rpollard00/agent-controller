@@ -269,6 +269,38 @@ The controller should not force PR creation as the only successful outcome. The 
 
 The controller records and reports the result.
 
+## 3.10 Agent Runtime — Fire-and-Forget, No Process Supervision
+
+`PiMateriaRuntime` is deliberately **async + fire-and-forget with NO process supervision**.
+
+The production deployment target is ephemeral containers, agent hosts, and remote runners —
+not a local workstation. The controller must remain runtime-environment-agnostic and must
+**NOT** assume it can observe, signal, wait on, or kill the agent process.
+
+Orphan/stall detection is owned exclusively by **event-absence** plus the existing
+stale-timeout recovery path (`FindStaleAsync` / `RecoverStaleRunWithRetryAsync` using the
+configurable `StaleTimeoutSeconds`), never by process-liveness polling.
+
+This is a **PERMANENT architectural choice** (not a current limitation): even in production
+the controller will rely on eventing for lifecycle, so process supervision must never be
+added to `PiMateriaRuntime` regardless of future local-mode conveniences.
+
+### Stream Redirection Is Not Supervision
+
+The runtime redirects stdout/stderr to log files (`logs/pi.stdout.log`,
+`logs/pi.stderr.log`) as a **fire-and-forget consumer** for pi's inherited output pipe.
+This prevents the child process from blocking when the pipe buffer fills — it is not
+process tracking or supervision.
+
+- The controller **never reads** these files at runtime.
+- The controller **never uses** them for state transitions, routing, or lifecycle events.
+- They are a **filesystem-only diagnostic artifact** for post-mortem stall investigation.
+- The drain handlers are fire-and-forget background work on the framework's read threads;
+  they do not block `StartAsync` and the `Process` handle is not retained after launch.
+
+A future contributor should not re-add blocking, supervision, or process-liveness polling
+under the misconception that the drain code implies tracking. It does not.
+
 ---
 
 # 4. High-Level Architecture
@@ -1786,8 +1818,10 @@ the controller can recycle/restart jobs and update its own state.
 
 The controller injects only three environment variables:
 `CONTROLLER_RUN_ID`, `CONTROLLER_EVENT_URL`, and `CONTROLLER_CONTEXT_DIR`.
-There is no stdout/stderr capture, no heartbeat monitoring, no process exit
-synthesis, and no RPC cancellation. `CancelAsync` is a no-op.
+Stdout/stderr are redirected to log files as a fire-and-forget pipe consumer
+(§3.10) — this prevents pipe-buffer stalls and is NOT process supervision.
+There is no heartbeat monitoring, no process exit synthesis, and no RPC cancellation.
+`CancelAsync` is a no-op.
 
 ## 13b.1 Status of Dependencies
 
@@ -1898,7 +1932,8 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
    - WorkingDirectory: spec.RepoCheckout.LocalPath (the cloned repo)
    - UseShellExecute: false
    - CreateNoWindow: true
-   - No redirected streams (detached process)
+   - RedirectStandardOutput and RedirectStandardError: true (fire-and-forget
+     drain to `logs/pi.stdout.log` and `logs/pi.stderr.log` — see §3.10)
    - Environment variables:
        CONTROLLER_RUN_ID={spec.RunId}
        CONTROLLER_EVENT_URL={ControllerBaseUrl}/runs/{runId}/events
@@ -1932,7 +1967,9 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
 
 ### Dispose — Trivial
 
-No managed resources to dispose (no process tracking, no monitors).
+No managed resources to dispose (no process handle retention, no monitors).
+The stream-drain `StreamWriter` instances live for the process lifetime and
+are closed by the framework's `EndOfEvent` handler or GC'd safely.
 
 ## 13b.4 DI Registration
 
@@ -2031,8 +2068,8 @@ pi "/materia loadout Elena" "/materia cast {task}"
 - The loadout name is hardcoded as `"Elena"` (`DefaultCliLoadout` const).
 - `{task}` is the content of `context/work-item.md` (+ acceptance-criteria.md,
   comments.md when present).
-- The process is fully detached: no stdin/stdout/stderr redirection, no
-  monitoring, no cancellation.
+- The process is fully detached: stdout/stderr are redirected to log files
+  as a fire-and-forget pipe consumer (§3.10), no monitoring, no cancellation.
 
 ## 13b.6 Required Outputs (What pi-materia Reports Back)
 
@@ -2103,7 +2140,8 @@ When emitting `runtime.completed`, pi-materia sets `payload.outcome` to one of:
 │ Invocation (fire-and-forget):                                   │
 │   pi "/materia loadout Elena" "/materia cast {task}"            │
 │                                                                 │
-│ No stdout/stderr capture. No process tracking. No cancel.       │
+│ Stdout/stderr drained to log files (fire-and-forget, not supervision). │
+│ No process tracking. No cancel.                                    │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
@@ -2146,8 +2184,8 @@ File: `src/AgentController.Infrastructure/PiMateriaRuntime.cs`
 
 File: `tests/AgentController.Infrastructure.Tests/PiMateriaRuntimeTests.cs`
 
-- Test process start with correct `ProcessStartInfo` (detached, no redirected
-  streams, correct env vars).
+- Test process start with correct `ProcessStartInfo` (detached, stdout/stderr
+  redirected to log files, correct env vars).
 - Test launch failure (executable not found) → synthesized failure event.
 - Test `CancelAsync` is a no-op.
 - Test `Dispose` is trivial.
@@ -2177,9 +2215,9 @@ Verify the launcher semantics:
 |------|-----------------|
 | `StartAsync_LaunchesProcess_AndReturnsHandle` | Process starts with correct args, handle has RuntimeRunId |
 | `StartAsync_SetsEnvironmentVariables` | CONTROLLER_RUN_ID, CONTROLLER_EVENT_URL, CONTROLLER_CONTEXT_DIR set |
-| `StartAsync_DetachedProcess_NoRedirectedStreams` | UseShellExecute=false, no stdout/stderr redirection |
+| `StartAsync_DetachedProcess_StreamsRedirectedToLogs` | UseShellExecute=false, RedirectStandardOutput/Error=true, drained to log files |
 | `ExecutableNotFound_SynthesizesFailure` | Missing pi → runtime.failed event synthesized |
-| `CancelAsync_IsNoOp` | CancelAsync returns immediately, no process tracking |
+| `CancelAsync_IsNoOp` | CancelAsync returns immediately, no process handle to signal |
 | `Dispose_IsTrivial` | Dispose does nothing (no resources to clean up) |
 
 ### Integration Test
