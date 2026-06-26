@@ -11,9 +11,12 @@ using Microsoft.Extensions.Options;
 namespace AgentController.Infrastructure;
 
 /// <summary>
-/// Minimal <see cref="IAgentRuntime"/> that launches <c>pi</c> as a detached
-/// CLI process (fire-and-forget). The invocation is:
-/// <c>pi "/materia loadout Elena" "/materia cast {task}"</c>.
+/// Minimal <see cref="IAgentRuntime"/> that launches <c>pi</c> inside an
+/// ephemeral PTY-allocated shell (fire-and-forget). The invocation is:
+/// <c>script -qfc 'pi "/materia loadout Elena" "/materia cast {task}"' /dev/null</c>.
+///
+/// <para>The <c>script</c> wrapper (util-linux) allocates a pseudo-terminal so
+/// pi's TUI can initialize headlessly without deadlocking on missing TTY.</para>
 ///
 /// <para>The controller injects only three environment variables:</para>
 /// <list type="bullet">
@@ -26,6 +29,10 @@ namespace AgentController.Infrastructure;
 /// <para>After spawn the runtime returns immediately. All observability comes
 /// from the webhook-driven event ingestion path. On launch failure (executable
 /// not found, etc.) a single failure event is synthesized for the run.</para>
+///
+/// <para>Stdin is held open for the lifetime of the session so the ephemeral
+/// shell does not receive EOF and exit prematurely. The session lifecycle
+/// work item owns stdin closure.</para>
 ///
 /// <para><c>CancelAsync</c> is a no-op (detached process). <c>Dispose</c> is
 /// trivial (no managed resources to release).</para>
@@ -83,52 +90,73 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
         var repoPath = spec.RepoCheckout.LocalPath;
         var taskText = ReadCastTask(spec, contextDir);
 
-        // ── 3. Build process start info ───────────────────────────────
+        // ── 3. Build process start info (PTY-wrapped) ─────────────────
+        // pi is a TUI app that deadlocks without a TTY. Wrap in `script -qfc ... /dev/null`
+        // so a pseudo-terminal is allocated and the TUI initializes headlessly.
         var piExe = string.IsNullOrWhiteSpace(options.PiExecutablePath)
             ? "pi"
             : options.PiExecutablePath;
 
-        var psi = new ProcessStartInfo
-        {
-            FileName = piExe,
-            WorkingDirectory = Directory.Exists(repoPath) ? repoPath : contextDir,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            // Redirect streams so the inherited pipe is always consumed (prevents child
-            // from blocking on a full pipe buffer). Drained to log files, fire-and-forget.
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-
-        // CLI invocation: pi "/materia loadout Elena" "/materia cast {task}"
-        psi.ArgumentList.Add($"/materia loadout {DefaultCliLoadout}");
-        psi.ArgumentList.Add($"/materia cast {taskText}");
-
-        // Controller ↔ pi-materia handoff environment.
-        psi.Environment["CONTROLLER_RUN_ID"] = spec.RunId;
-        psi.Environment["CONTROLLER_EVENT_URL"] = eventUrl;
-        psi.Environment["CONTROLLER_CONTEXT_DIR"] = contextDir;
-
         // ── 4. Prepare log directory and file writers ─────────────────
-        var logsDir = Path.Combine(spec.EnvironmentHandle.RootPath, "logs");
-        Directory.CreateDirectory(logsDir);
-
-        var stdoutPath = Path.Combine(logsDir, "pi.stdout.log");
-        var stderrPath = Path.Combine(logsDir, "pi.stderr.log");
-
-        // Open file writers once per invocation. WriteThrough flushes on each write;
-        // FileShare.Read allows external readers. Writers are fire-and-forget — they
-        // live for the process lifetime and are GC'd when the process exits.
-        var stdoutWriter = new StreamWriter(
-            new FileStream(stdoutPath, FileMode.Create, FileAccess.Write, FileShare.Read,
-                bufferSize: 4096, FileOptions.WriteThrough));
-        var stderrWriter = new StreamWriter(
-            new FileStream(stderrPath, FileMode.Create, FileAccess.Write, FileShare.Read,
-                bufferSize: 4096, FileOptions.WriteThrough));
-
         // ── 5. Start process (fire and forget) ────────────────────────
         try
         {
+            // Validate the pi executable is resolvable before wrapping in script.
+            // An absolute path that doesn't exist is a config error — fail fast.
+            // A PATH-relative name that isn't found will also fail fast at launch.
+            if (Path.IsPathRooted(piExe) && !File.Exists(piExe))
+            {
+                throw new FileNotFoundException(
+                    $"Pi executable not found at configured path: {piExe}", piExe);
+            }
+
+            // Build the inner pi command string for the -c argument.
+            var piCommand = $"{piExe} \"/materia loadout {DefaultCliLoadout}\" \"/materia cast {taskText}\"";
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = "script",
+                WorkingDirectory = Directory.Exists(repoPath) ? repoPath : contextDir,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                // Redirect streams so the inherited pipe is always consumed (prevents child
+                // from blocking on a full pipe buffer). Drained to log files, fire-and-forget.
+                // These now capture PTY-normalized output from the script wrapper.
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                // Hold stdin open so the ephemeral shell does not receive EOF and exit.
+                // The session lifecycle work item owns stdin closure.
+                RedirectStandardInput = true,
+            };
+
+            // script -qfc '<pi command>' /dev/null
+            //   -q = quiet, -f = flush after each write, -c = command string
+            //   /dev/null = typescript file (we don't need the raw TTY dump)
+            psi.ArgumentList.Add("-qfc");
+            psi.ArgumentList.Add(piCommand);
+            psi.ArgumentList.Add("/dev/null");
+
+            // Controller ↔ pi-materia handoff environment.
+            psi.Environment["CONTROLLER_RUN_ID"] = spec.RunId;
+            psi.Environment["CONTROLLER_EVENT_URL"] = eventUrl;
+            psi.Environment["CONTROLLER_CONTEXT_DIR"] = contextDir;
+
+            var logsDir = Path.Combine(spec.EnvironmentHandle.RootPath, "logs");
+            Directory.CreateDirectory(logsDir);
+
+            var stdoutPath = Path.Combine(logsDir, "pi.stdout.log");
+            var stderrPath = Path.Combine(logsDir, "pi.stderr.log");
+
+            // Open file writers once per invocation. WriteThrough flushes on each write;
+            // FileShare.Read allows external readers. Writers are fire-and-forget — they
+            // live for the process lifetime and are GC'd when the process exits.
+            var stdoutWriter = new StreamWriter(
+                new FileStream(stdoutPath, FileMode.Create, FileAccess.Write, FileShare.Read,
+                    bufferSize: 4096, FileOptions.WriteThrough));
+            var stderrWriter = new StreamWriter(
+                new FileStream(stderrPath, FileMode.Create, FileAccess.Write, FileShare.Read,
+                    bufferSize: 4096, FileOptions.WriteThrough));
+
             var process = new Process { StartInfo = psi };
 
             // Wire up drain handlers — fire-and-forget background work on framework read threads.
@@ -146,6 +174,10 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
             process.Start();
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
+
+            // Do NOT close stdin — keep the ephemeral shell alive.
+            // The session lifecycle work item owns stdin closure.
+            // (StandardInput stream is left open intentionally.)
 
             var runtimeRunId = $"pi-{process.Id}";
             Log.RuntimeStarting(_logger, spec.RunId, runtimeRunId, piExe, repoPath);
