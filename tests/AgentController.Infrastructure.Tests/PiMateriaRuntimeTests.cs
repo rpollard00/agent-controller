@@ -774,10 +774,9 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
     [Fact]
     public async Task StartAsync_AllContractEventTypesRecognized_NoUnrecognizedWarnings()
     {
-        // Conformance test: emit ALL recognized stdout event types from the
-        // PiMateriaStdoutEventTypes contract. The runtime must handle every
-        // one without triggering unrecognized-type warnings or failing the run.
-        // This guards against contract drift between the emitter and parser.
+        // Conformance test: emit ALL recognized stdout event types.
+        // The runtime must handle every one without triggering unrecognized-type
+        // warnings or failing the run.
         WriteFakePiScript(_fakePiPath, FakePiVariant.AllRecognizedTypes);
 
         await using var harness = await NewHarnessAsync(_fakePiPath);
@@ -799,8 +798,8 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         Assert.Equal(RunLifecycleState.Completed, run!.Status);
 
         // Verify no unrecognized-type warnings in the events.
-        // This is the conformance assertion: every type in the contract
-        // (PiMateriaStdoutEventTypes) must be recognized by the parser.
+        // This is the conformance assertion: every emitted type must be
+        // recognized by the parser.
         var events = await _eventStore.ListByRunIdAsync(spec.RunId, CancellationToken.None);
         Assert.DoesNotContain(
             events,

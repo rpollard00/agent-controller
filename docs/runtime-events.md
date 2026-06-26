@@ -516,7 +516,6 @@ The `pullRequestUrl`, `branchName`, and `summary` fields in the `payload` of
 
 - [Architecture Document](./arch.md) — §10 for contract design background, §13 (Phase 1) for implementation plan.
 - [Development Guide](./development.md) — local setup, running tests, and migration workflow.
-- [Pi-Materia Stdout Eventing Contract](./pi-materia-eventing-contract.md) — the stdout JSONL event contract between pi-materia and `PiMateriaRuntime` (separate from this webhook contract).
 - `src/AgentController.Api/Models/RuntimeEventRequest.cs` — API request model.
 - `src/AgentController.Domain/Events.cs` — `RuntimeEvent` domain record.
 - `src/AgentController.Domain/EventTypes.cs` — `RuntimeEventTypes`, `CompletionOutcomes`, `ControllerEventTypes`.
