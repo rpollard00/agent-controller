@@ -61,9 +61,10 @@ The MVP should evolve the same design into a durable internal service using stro
 
 `IAgentRuntime` is defined. `NoOpAgentRuntime`, `MockPiMateriaRuntime`, and the real
 `PiMateriaRuntime` are registered. `MockPiMateriaRuntime` emits a deterministic
-sequence of runtime events in-process. `PiMateriaRuntime` launches `pi` as a
-detached CLI process via `pi "/materia loadout Elena" "/materia cast {task}"`
-and returns immediately (fire-and-forget). All observability comes from
+sequence of runtime events in-process. `PiMateriaRuntime` launches `pi` inside an
+ephemeral PTY-allocated shell via
+`pi "/materia loadout Elena" "/materia cast {task}"` and tracks the session
+until a terminal event. All observability comes from
 pi-materia POSTing `runtime.*` lifecycle events to the existing
 `POST /runs/{runId}/events` HTTP webhook endpoint (see §13b).
 
@@ -88,10 +89,10 @@ The local-first milestone (§13a) enables fully local controller runs without Az
 
 1. ~~**Real pi-materia process invocation**~~ — **Implemented and validated
    end-to-end:** `PiMateriaRuntime`
-   (`src/AgentController.Infrastructure/PiMateriaRuntime.cs`) launches `pi` as a
-   detached CLI process via
-   `pi "/materia loadout Elena" "/materia cast {task}"` (fire-and-forget).
-   The full controller-driven chain — real `PollingWorker` + real runtime +
+   (`src/AgentController.Infrastructure/PiMateriaRuntime.cs`) launches `pi` inside an
+   ephemeral PTY-allocated shell via
+   `pi "/materia loadout Elena" "/materia cast {task}"` and tracks the session
+   until a terminal event. The full controller-driven chain — real `PollingWorker` + real runtime +
    real `pi` + the real `POST /runs/{runId}/events` endpoint — is exercised by
    the Tier B harness at `dev/integration-test/`, which runs a complete Wedge
    cast through the real controller and asserts `runtime.completed`. Coverage
@@ -269,37 +270,55 @@ The controller should not force PR creation as the only successful outcome. The 
 
 The controller records and reports the result.
 
-## 3.10 Agent Runtime — Fire-and-Forget, No Process Supervision
+## 3.10 Agent Runtime — Ephemeral-Shell Session Lifecycle
 
-`PiMateriaRuntime` is deliberately **async + fire-and-forget with NO process supervision**.
+The runtime launches the agent inside an **ephemeral PTY-allocated shell** and tracks the
+session handle until a terminal event (Completed, Failed, Cancelled) or explicit cancellation.
 
-The production deployment target is ephemeral containers, agent hosts, and remote runners —
-not a local workstation. The controller must remain runtime-environment-agnostic and must
-**NOT** assume it can observe, signal, wait on, or kill the agent process.
+### Backend Implementations
 
-Orphan/stall detection is owned exclusively by **event-absence** plus the existing
-stale-timeout recovery path (`FindStaleAsync` / `RecoverStaleRunWithRetryAsync` using the
-configurable `StaleTimeoutSeconds`), never by process-liveness polling.
+| Backend | Mechanism | Implementation |
+|---------|-----------|----------------|
+| Local (prototype/MVP) | PTY via `script(1)` (util-linux) | `PiMateriaRuntime` |
+| Production (future) | CRI / host pool | A future `IAgentRuntime` sibling |
 
-This is a **PERMANENT architectural choice** (not a current limitation): even in production
-the controller will rely on eventing for lifecycle, so process supervision must never be
-added to `PiMateriaRuntime` regardless of future local-mode conveniences.
+The local backend uses `script -qfc '<pi args>' /dev/null` as a PTY wrapper so the pi
+TUI can initialize headlessly. The wrapper path and flags are configurable internal knobs
+(`RuntimeOptions.PtyWrapperPath`, `RuntimeOptions.PtyWrapperArgs`) — production swaps in a
+different `IAgentRuntime` sibling entirely, not a different shell under this one.
 
-### Stream Redirection Is Not Supervision
+### Session Registry
 
-The runtime redirects stdout/stderr to log files (`logs/pi.stdout.log`,
-`logs/pi.stderr.log`) as a **fire-and-forget consumer** for pi's inherited output pipe.
-This prevents the child process from blocking when the pipe buffer fills — it is not
-process tracking or supervision.
+A `ConcurrentDictionary<string runId, SessionHandle>` holds the `Process`, the stdin
+`StreamWriter`, and the stdout/stderr `FileStream` writers for each active run. The handle
+is registered in `StartAsync` and removed on terminal transition.
 
-- The controller **never reads** these files at runtime.
-- The controller **never uses** them for state transitions, routing, or lifecycle events.
-- They are a **filesystem-only diagnostic artifact** for post-mortem stall investigation.
-- The drain handlers are fire-and-forget background work on the framework's read threads;
-  they do not block `StartAsync` and the `Process` handle is not retained after launch.
+This is **lifecycle bookkeeping for resource cleanup only** — it is NOT liveness polling,
+NOT `WaitForExit`, and does NOT feed state transitions.
 
-A future contributor should not re-add blocking, supervision, or process-liveness polling
-under the misconception that the drain code implies tracking. It does not.
+### Terminal Cleanup Paths
+
+1. **CancelAsync** — looks up the handle, closes stdin (EOF), kills the process tree,
+   disposes writers, removes from registry.
+2. **Stale-run recovery** — `RecoverStaleRunWithRetryAsync` / `FindStaleAsync` requests
+   runtime cancellation via `IAgentRuntime.CancelAsync` to reclaim orphaned PTY sessions.
+3. **Terminal event ingestion** — best-effort dispose of the handle on Completed/Failed.
+
+### Permanent Principles
+
+- **State transitions are event-driven (webhook only).** The session registry never
+  feeds state machines or lifecycle decisions.
+- **No blocking `WaitForExit`.** The controller never waits on the process.
+- **No liveness polling.** Orphan/stall detection uses event-absence + stale-timeout
+  recovery (`FindStaleAsync` / `RecoverStaleRunWithRetryAsync`), never process inspection.
+- **Stdout/stderr drained to `logs/pi.*.log`.** This captures PTY-normalized output as a
+  diagnostic artifact. The controller never reads these files at runtime.
+
+### Diagnostics
+
+An empty `logs/pi.stderr.log` now signals a **PTY/launch failure** (e.g., `script(1)`
+not installed, TUI init crash) rather than a pipe-buffer stall. Verify the configured
+`PtyWrapperPath` resolves and the TUI can initialize under the pseudo-terminal.
 
 ---
 
@@ -1771,8 +1790,9 @@ all the settings needed for a local-only run.
 
 The local-only E2E path works with the mock runtime, and the real pi-materia
 invocation is now implemented and validated end-to-end. `PiMateriaRuntime`
-(see §13b) launches `pi` as a detached CLI process via
-`pi "/materia loadout Elena" "/materia cast {task}"` (fire-and-forget); the
+(see §13b) launches `pi` inside an ephemeral PTY-allocated shell via
+`pi "/materia loadout Elena" "/materia cast {task}"` and tracks the session
+until a terminal event; the
 full controller-driven chain — real `PollingWorker` + real runtime + real `pi`
 + the real `POST /runs/{runId}/events` endpoint — is exercised by the Tier B
 harness at `dev/integration-test/`. The standalone spike at
@@ -1800,28 +1820,30 @@ The controller and pi-materia interact through:
 3. **Runtime events (inbound webhook).** pi-materia POSTs `runtime.*` events
 to `POST /runs/{runId}/events` over HTTP. The minimal required events are
 `runtime.accepted`, `runtime.heartbeat`, `runtime.completed`, and
-`runtime.failed`. The controller treats the launch as fire-and-forget and
-relies entirely on the webhook for observability.
+`runtime.failed`. The controller tracks the session handle for resource
+lifecycle (stdin, writers, process tree) but relies entirely on the webhook
+for state transitions and observability.
 
 ---
 
-# 13b. Pi-Materia Process Adapter — Fire-and-Forget CLI Launcher
+# 13b. Pi-Materia Process Adapter — Ephemeral PTY Shell Launcher
 
 **Status:** Implemented. `PiMateriaRuntime`
-(`src/AgentController.Infrastructure/PiMateriaRuntime.cs`) launches `pi` as a
-detached CLI process via
-`pi "/materia loadout Elena" "/materia cast {task}"` and returns immediately
-(fire-and-forget). The controller does not drive the agent synchronously via
-RPC. All observability comes from pi-materia POSTing `runtime.*` events to the
-controller's `POST /runs/{runId}/events` webhook endpoint. If the webhook fails,
-the controller can recycle/restart jobs and update its own state.
+(`src/AgentController.Infrastructure/PiMateriaRuntime.cs`) launches `pi` inside an
+ephemeral PTY-allocated shell via
+`pi "/materia loadout Elena" "/materia cast {task}"` and tracks the session
+handle until a terminal event. The controller does not drive the agent
+synchronously via RPC. All observability comes from pi-materia POSTing
+`runtime.*` events to the controller's `POST /runs/{runId}/events` webhook
+endpoint. If the webhook fails, the controller can recycle/restart jobs and
+update its own state.
 
 The controller injects only three environment variables:
 `CONTROLLER_RUN_ID`, `CONTROLLER_EVENT_URL`, and `CONTROLLER_CONTEXT_DIR`.
-Stdout/stderr are redirected to log files as a fire-and-forget pipe consumer
-(§3.10) — this prevents pipe-buffer stalls and is NOT process supervision.
-There is no heartbeat monitoring, no process exit synthesis, and no RPC cancellation.
-`CancelAsync` is a no-op.
+Stdout/stderr are drained to `logs/pi.stdout.log` and `logs/pi.stderr.log`
+(§3.10) — this captures PTY-normalized output as a diagnostic artifact.
+There is no heartbeat monitoring, no `WaitForExit`, and no liveness polling.
+`CancelAsync` terminates the session by closing stdin and killing the process tree.
 
 ## 13b.1 Status of Dependencies
 
@@ -1847,9 +1869,9 @@ only difference is **what happens inside `StartAsync`**:
 
 | Aspect | MockPiMateriaRuntime | PiMateriaRuntime |
 |--------|---------------------|------------------|
-| Event source | In-process `Task` emitting fake events via `IRunLifecycleService` | Real `pi` detached process POSTing events to `POST /runs/{runId}/events` |
-| Process lifecycle | None — async task completes after emitting events | Detached — spawned and immediately released (no tracking) |
-| Cancellation | No-op | No-op (detached process) |
+| Event source | In-process `Task` emitting fake events via `IRunLifecycleService` | Real `pi` process (in PTY shell) POSTing events to `POST /runs/{runId}/events` |
+| Process lifecycle | None — async task completes after emitting events | Session tracked via `SessionHandle` until terminal event or cancellation |
+| Cancellation | No-op | Close stdin (EOF) + Kill process tree + dispose writers |
 | Heartbeats | One synthetic heartbeat per run | None — pi emits its own via webhook |
 | Run outcome | Configurable via `DefaultMateriaLoadout` | Determined entirely by pi's webhook events |
 
@@ -1886,19 +1908,22 @@ if (runtimeProvider.Equals("PiMateria", StringComparison.OrdinalIgnoreCase))
 namespace AgentController.Infrastructure;
 
 /// <summary>
-/// Minimal IAgentRuntime that launches pi as a detached CLI process
-/// (fire-and-forget). The invocation is:
+/// IAgentRuntime that launches pi inside an ephemeral PTY-allocated shell.
+/// The invocation is:
 /// pi "/materia loadout Elena" "/materia cast {task}".
 ///
 /// The controller injects only three environment variables:
 ///   CONTROLLER_RUN_ID, CONTROLLER_EVENT_URL, CONTROLLER_CONTEXT_DIR.
 ///
-/// After spawn the runtime returns immediately. All observability comes
-/// from the webhook-driven event ingestion path. On launch failure
+/// The session handle (Process, stdin writer, log writers) is registered
+/// in a ConcurrentDictionary and retained until a terminal event or
+/// explicit cancellation. All state transitions come from the
+/// webhook-driven event ingestion path. On launch failure
 /// (executable not found, etc.) a single failure event is synthesized.
 ///
-/// CancelAsync is a no-op (detached process). Dispose is trivial.
-/// Registered as a singleton via AddAgentControllerPiMateriaRuntime().
+/// CancelAsync closes stdin and kills the process tree. Dispose cleans
+/// up any remaining session handles. Registered as a singleton via
+/// AddAgentControllerPiMateriaRuntime().
 /// </summary>
 public sealed partial class PiMateriaRuntime : IAgentRuntime
 {
@@ -1932,15 +1957,16 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
    - WorkingDirectory: spec.RepoCheckout.LocalPath (the cloned repo)
    - UseShellExecute: false
    - CreateNoWindow: true
-   - RedirectStandardOutput and RedirectStandardError: true (fire-and-forget
-     drain to `logs/pi.stdout.log` and `logs/pi.stderr.log` — see §3.10)
+   - RedirectStandardOutput and RedirectStandardError: true (drain to
+     `logs/pi.stdout.log` and `logs/pi.stderr.log` — see §3.10)
    - Environment variables:
        CONTROLLER_RUN_ID={spec.RunId}
        CONTROLLER_EVENT_URL={ControllerBaseUrl}/runs/{runId}/events
        CONTROLLER_CONTEXT_DIR={contextDir}
 
-3. START process (fire and forget)
-   - Call Process.Start() inside a using block (process is detached).
+3. START process
+   - Call Process.Start(), register the SessionHandle (Process, stdin writer,
+     log writers) in the session registry.
    - If it throws, synthesize runtime.failed and return a degenerate handle.
    - Log the launch (runId, process Id, executable path).
 
@@ -1951,11 +1977,15 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
    - StartedAt = now
 ```
 
-### CancelAsync — No-Op
+### CancelAsync — Session Termination
 
 ```
-1. Log that cancel is a no-op for the detached process.
-2. Return immediately.
+1. Look up the SessionHandle by runId.
+2. Close stdin (write EOF) to signal the ephemeral shell.
+3. Kill the process tree (entireProcessTree: true).
+4. Dispose stdout/stderr FileStream writers.
+5. Remove from session registry.
+6. Return.
 ```
 
 ### GetStatusAsync — Delegate to Handle
@@ -1965,11 +1995,11 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
    (Status is driven entirely by webhook events, not process inspection.)
 ```
 
-### Dispose — Trivial
+### Dispose — Session Registry Cleanup
 
-No managed resources to dispose (no process handle retention, no monitors).
-The stream-drain `StreamWriter` instances live for the process lifetime and
-are closed by the framework's `EndOfEvent` handler or GC'd safely.
+Dispose any remaining session handles in the registry (close stdin, kill
+process tree, dispose writers, remove entries). This ensures no orphaned
+PTY sessions persist after the runtime is collected.
 
 ## 13b.4 DI Registration
 
@@ -1978,10 +2008,11 @@ are closed by the framework's `EndOfEvent` handler or GC'd safely.
 
 /// <summary>
 /// Registers the <see cref="PiMateriaRuntime"/> as a singleton
-/// <see cref="IAgentRuntime"/> that launches <c>pi</c> as a detached CLI process
-/// via <c>pi "/materia loadout Elena" "/materia cast {task}"</c>.
-/// The launched job reports important status back only via webhook;
-/// the controller treats the launch as fire-and-forget.
+/// <see cref="IAgentRuntime"/> that launches <c>pi</c> inside an ephemeral
+/// PTY-allocated shell via
+/// <c>pi "/materia loadout Elena" "/materia cast {task}"</c>.
+/// The launched job reports status back only via webhook; the controller
+/// tracks the session handle for resource lifecycle cleanup.
 ///
 /// Requires <see cref="AddAgentControllerOptions"/> to be called first
 /// (for <see cref="RuntimeOptions"/> and <see cref="AgentControllerOptions"/> binding).
@@ -2059,7 +2090,7 @@ Markdown rendered from `WorkCandidate.AcceptanceCriteria` dictionary.
 
 ### Process Invocation
 
-pi is launched as a detached CLI process with two arguments:
+pi is launched inside an ephemeral PTY-allocated shell with two arguments:
 
 ```bash
 pi "/materia loadout Elena" "/materia cast {task}"
@@ -2068,8 +2099,9 @@ pi "/materia loadout Elena" "/materia cast {task}"
 - The loadout name is hardcoded as `"Elena"` (`DefaultCliLoadout` const).
 - `{task}` is the content of `context/work-item.md` (+ acceptance-criteria.md,
   comments.md when present).
-- The process is fully detached: stdout/stderr are redirected to log files
-  as a fire-and-forget pipe consumer (§3.10), no monitoring, no cancellation.
+- The session is tracked via a SessionHandle: stdout/stderr are drained to
+  log files (§3.10), stdin is held open for the shell lifetime, and
+  CancelAsync terminates the session by closing stdin and killing the process tree.
 
 ## 13b.6 Required Outputs (What pi-materia Reports Back)
 
@@ -2137,11 +2169,11 @@ When emitting `runtime.completed`, pi-materia sets `payload.outcome` to one of:
 │   CONTROLLER_EVENT_URL   — HTTP webhook for runtime events      │
 │   CONTROLLER_CONTEXT_DIR — path to context files                │
 │                                                                 │
-│ Invocation (fire-and-forget):                                   │
+│ Invocation (session-tracked PTY shell):                          │
 │   pi "/materia loadout Elena" "/materia cast {task}"            │
 │                                                                 │
-│ Stdout/stderr drained to log files (fire-and-forget, not supervision). │
-│ No process tracking. No cancel.                                    │
+│ Stdout/stderr drained to logs/pi.*.log (diagnostic artifact).    │
+│ Session handle tracked for stdin lifecycle + cancel cleanup.      │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
@@ -2167,12 +2199,12 @@ When emitting `runtime.completed`, pi-materia sets `payload.outcome` to one of:
 
 File: `src/AgentController.Infrastructure/PiMateriaRuntime.cs`
 
-- Implement `StartAsync` with `Process.Start` (detached, fire-and-forget).
+- Implement `StartAsync` with `Process.Start` inside PTY wrapper; register SessionHandle.
 - Pass `CONTROLLER_EVENT_URL` env var pointing at the controller's own
   `POST /runs/{runId}/events` endpoint.
 - On launch failure, synthesize a `runtime.failed` event.
 - Implement `GetStatusAsync` (delegate to handle state).
-- Implement `CancelAsync` as a no-op.
+- Implement `CancelAsync` to close stdin and kill the process tree.
 - Implement `Dispose` as trivial.
 
 ### Step 2: DI registration
@@ -2187,7 +2219,7 @@ File: `tests/AgentController.Infrastructure.Tests/PiMateriaRuntimeTests.cs`
 - Test process start with correct `ProcessStartInfo` (detached, stdout/stderr
   redirected to log files, correct env vars).
 - Test launch failure (executable not found) → synthesized failure event.
-- Test `CancelAsync` is a no-op.
+- Test `CancelAsync` terminates the session (stdin close, process kill, registry removal).
 - Test `Dispose` is trivial.
 - Webhook path is covered by event-ingestion tests, not runtime tests.
 
@@ -2215,9 +2247,9 @@ Verify the launcher semantics:
 |------|-----------------|
 | `StartAsync_LaunchesProcess_AndReturnsHandle` | Process starts with correct args, handle has RuntimeRunId |
 | `StartAsync_SetsEnvironmentVariables` | CONTROLLER_RUN_ID, CONTROLLER_EVENT_URL, CONTROLLER_CONTEXT_DIR set |
-| `StartAsync_DetachedProcess_StreamsRedirectedToLogs` | UseShellExecute=false, RedirectStandardOutput/Error=true, drained to log files |
+| `StartAsync_PtyShell_StreamsRedirectedToLogs` | UseShellExecute=false, RedirectStandardOutput/Error=true, drained to log files |
 | `ExecutableNotFound_SynthesizesFailure` | Missing pi → runtime.failed event synthesized |
-| `CancelAsync_IsNoOp` | CancelAsync returns immediately, no process handle to signal |
+| `CancelAsync_TerminatesSession` | CancelAsync closes stdin, kills process tree, removes from registry |
 | `Dispose_IsTrivial` | Dispose does nothing (no resources to clean up) |
 
 ### Integration Test
@@ -2243,9 +2275,9 @@ event-ingestion tests (not runtime tests).
    A future policy engine can inspect diffs post-run.)
 
 4. **Concurrency of runs.** `PiMateriaRuntime` is a singleton but each
-   `StartAsync` call creates an independent detached process. The
-   `PollingWorker` already enforces `MaxConcurrentRuns`. No additional
-   concurrency control is needed in the runtime.
+   `StartAsync` call creates an independent PTY session tracked in the
+   session registry. The `PollingWorker` already enforces `MaxConcurrentRuns`.
+   No additional concurrency control is needed in the runtime.
 
 ---
 

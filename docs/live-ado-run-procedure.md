@@ -410,6 +410,17 @@ If you still see a stall:
 - Check for `[rpc]` logs — if you see no `[rpc]` logs, the RPC dispatch to `pi` never started (clone or environment provisioning failed).
 - Verify there are no interactive SSH prompts by running the clone manually: `GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new" git clone <url>`.
 
+### Run stalls with empty `logs/pi.stderr.log`
+
+The pi process is launched inside a PTY-allocated shell (via `script(1)`). An empty
+stderr log signals a PTY or launch failure rather than a pipe-buffer stall.
+
+- Verify `script(1)` is installed (`which script`; part of `util-linux` on most distros).
+- Verify the configured `PtyWrapperPath` resolves (default: `script`).
+- Check `logs/pi.stdout.log` for any TUI init output before the stall.
+- If `script` is missing, install it: `sudo apt install util-linux` (Debian/Ubuntu) or
+  `sudo dnf install util-linux` (Fedora/RHEL).
+
 ### Runtime events not received (PiMateria mode)
 
 - Verify `controllerBaseUrl` in runtime config matches the controller's actual URL.
