@@ -19,13 +19,18 @@ namespace AgentController.Infrastructure;
 /// <para>The <c>script</c> wrapper (util-linux) allocates a pseudo-terminal so
 /// pi's TUI can initialize headlessly without deadlocking on missing TTY.</para>
 ///
-/// <para>The controller injects only three environment variables:</para>
+/// <para>The controller injects the following environment variables:</para>
 /// <list type="bullet">
 ///   <item><c>CONTROLLER_RUN_ID</c> — the run identifier.</item>
 ///   <item><c>CONTROLLER_EVENT_URL</c> — the webhook URL for pi-materia to POST
 ///       <c>runtime.*</c> events back to the controller.</item>
 ///   <item><c>CONTROLLER_CONTEXT_DIR</c> — path to the run context directory.</item>
 /// </list>
+/// <para>Additionally, environment variables configured in
+/// <see cref="Options.RuntimeOptions.ForwardEnvironmentVariables"/> are forwarded from the
+/// controller's own process environment into the pi child. Default entries forward
+/// <c>AZURE_DEVOPS_PAT</c> to both <c>AZURE_DEVOPS_EXT_PAT</c> and <c>AZURE_DEVOPS_PAT</c>
+/// on the child. Entries whose source is unset or empty are silently skipped.</para>
 ///
 /// <para>After spawn the runtime returns immediately. All observability comes
 /// from the webhook-driven event ingestion path. On launch failure (executable
@@ -178,6 +183,19 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
             psi.Environment["CONTROLLER_RUN_ID"] = spec.RunId;
             psi.Environment["CONTROLLER_EVENT_URL"] = eventUrl;
             psi.Environment["CONTROLLER_CONTEXT_DIR"] = contextDir;
+
+            // Forward configured environment variables from the controller process
+            // into the pi child. Applies to both PTY-wrapper and direct-launch paths
+            // since this operates on the shared ProcessStartInfo before the branch.
+            // Entries with unset/empty source vars are silently skipped.
+            foreach (var kvp in options.ForwardEnvironmentVariables)
+            {
+                var sourceValue = Environment.GetEnvironmentVariable(kvp.Value);
+                if (!string.IsNullOrEmpty(sourceValue))
+                {
+                    psi.Environment[kvp.Key] = sourceValue;
+                }
+            }
 
             var logsDir = Path.Combine(spec.EnvironmentHandle.RootPath, "logs");
             Directory.CreateDirectory(logsDir);

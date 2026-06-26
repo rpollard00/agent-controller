@@ -121,22 +121,108 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         var fakePiPath = WriteCaptureScript(_tempRoot, "capture-pi-env.sh");
         var runId = await SeedRunAsync();
         var spec = await BuildSpecAsync(runId, "Env test");
-        var runtime = CreateRuntime(fakePiPath);
 
-        _ = await runtime.StartAsync(spec, CancellationToken.None);
+        // Set a test PAT so the forwarding logic populates the child env vars.
+        var originalPat = Environment.GetEnvironmentVariable("AZURE_DEVOPS_PAT");
+        Environment.SetEnvironmentVariable("AZURE_DEVOPS_PAT", "test-pat-for-injection");
+        try
+        {
+            var runtime = CreateRuntime(fakePiPath);
 
-        // Wait for the capture script to write its output.
-        await Task.Delay(500);
+            _ = await runtime.StartAsync(spec, CancellationToken.None);
 
-        var capturePath = Path.Combine(_tempRoot, "capture-env.txt");
-        Assert.True(File.Exists(capturePath), "Capture file should exist.");
+            // Wait for the capture script to write its output.
+            await Task.Delay(500);
 
-        var content = await File.ReadAllTextAsync(capturePath);
-        Assert.Contains($"CONTROLLER_RUN_ID={runId}", content);
-        Assert.Contains("CONTROLLER_EVENT_URL=http://127.0.0.1:", content);
-        Assert.Contains("CONTROLLER_CONTEXT_DIR=", content);
+            var capturePath = Path.Combine(_tempRoot, "capture-env.txt");
+            Assert.True(File.Exists(capturePath), "Capture file should exist.");
 
-        runtime.Dispose();
+            var content = await File.ReadAllTextAsync(capturePath);
+            Assert.Contains($"CONTROLLER_RUN_ID={runId}", content);
+            Assert.Contains("CONTROLLER_EVENT_URL=http://127.0.0.1:", content);
+            Assert.Contains("CONTROLLER_CONTEXT_DIR=", content);
+            // Forwarded PAT variables should be present.
+            Assert.Contains("AZURE_DEVOPS_EXT_PAT=test-pat-for-injection", content);
+            Assert.Contains("AZURE_DEVOPS_PAT=test-pat-for-injection", content);
+
+            runtime.Dispose();
+        }
+        finally
+        {
+            // Restore original value (null if it was unset).
+            Environment.SetEnvironmentVariable("AZURE_DEVOPS_PAT", originalPat);
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_ForwardsEnvironmentVariables_SkipsEmptySources()
+    {
+        var fakePiPath = WriteCaptureScript(_tempRoot, "capture-forward-env.sh");
+        var runId = await SeedRunAsync();
+        var spec = await BuildSpecAsync(runId, "Forward env test");
+
+        // Ensure AZURE_DEVOPS_PAT is NOT set in the controller process,
+        // so the forwarding logic should silently skip it.
+        var originalPat = Environment.GetEnvironmentVariable("AZURE_DEVOPS_PAT");
+        Environment.SetEnvironmentVariable("AZURE_DEVOPS_PAT", null);
+        try
+        {
+            var runtime = CreateRuntime(fakePiPath);
+
+            _ = await runtime.StartAsync(spec, CancellationToken.None);
+
+            await Task.Delay(500);
+
+            var capturePath = Path.Combine(_tempRoot, "capture-env.txt");
+            Assert.True(File.Exists(capturePath), "Capture file should exist.");
+
+            var content = await File.ReadAllTextAsync(capturePath);
+            // CONTROLLER_* vars should still be present.
+            Assert.Contains($"CONTROLLER_RUN_ID={runId}", content);
+            // Forwarded PAT vars should NOT be present (source was empty).
+            Assert.DoesNotContain("AZURE_DEVOPS_EXT_PAT=", content);
+            Assert.DoesNotContain("AZURE_DEVOPS_PAT=", content);
+
+            runtime.Dispose();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("AZURE_DEVOPS_PAT", originalPat);
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_ForwardsEnvironmentVariables_PopulatesChildWhenSourceSet()
+    {
+        var fakePiPath = WriteCaptureScript(_tempRoot, "capture-forward-populated.sh");
+        var runId = await SeedRunAsync();
+        var spec = await BuildSpecAsync(runId, "Forward populated test");
+
+        // Set AZURE_DEVOPS_PAT in the controller process — it should be forwarded.
+        var originalPat = Environment.GetEnvironmentVariable("AZURE_DEVOPS_PAT");
+        Environment.SetEnvironmentVariable("AZURE_DEVOPS_PAT", "secret-pat-value");
+        try
+        {
+            var runtime = CreateRuntime(fakePiPath);
+
+            _ = await runtime.StartAsync(spec, CancellationToken.None);
+
+            await Task.Delay(500);
+
+            var capturePath = Path.Combine(_tempRoot, "capture-env.txt");
+            Assert.True(File.Exists(capturePath), "Capture file should exist.");
+
+            var content = await File.ReadAllTextAsync(capturePath);
+            // Both target vars should be populated from the same source.
+            Assert.Contains("AZURE_DEVOPS_EXT_PAT=secret-pat-value", content);
+            Assert.Contains("AZURE_DEVOPS_PAT=secret-pat-value", content);
+
+            runtime.Dispose();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("AZURE_DEVOPS_PAT", originalPat);
+        }
     }
 
     [Fact]
