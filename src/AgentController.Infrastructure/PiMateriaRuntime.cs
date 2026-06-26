@@ -376,8 +376,12 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
     ///   <item><c>agent_end</c> on stdout — per-socket completion signal. In
     ///       multi-socket casts this fires once per socket and does NOT
     ///       terminate the cast. The runtime stays alive for subsequent sockets.
-    ///       Terminal detection comes from the <c>runtime.completed</c> webhook,
-    ///       keepalive-stall detector, or <c>cast_end</c> stdout signal.</item>
+    ///   </item>
+    ///   <item><c>cast_end</c> on stdout — whole-cast completion signal (terminal).
+    ///       Unlike <c>agent_end</c>, <c>cast_end</c> means all sockets in the cast
+    ///       have completed. The runtime treats this as a strong terminal signal
+    ///       and initiates process shutdown. Combined with the controller-confirmed
+    ///       <c>runtime.completed</c> webhook, this confirms cast completion.</item>
     ///   <item>Unrecognized stdout event types — under agent-controller eventing
     ///       this indicates contract drift between pi-materia and the controller.
     ///       Fails the run to prevent silent token-sinking stalls.</item>
@@ -402,6 +406,17 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
             if (await IsRunTerminalAsync(runId, ct))
             {
                 Log.WebhookDroveTerminal(_logger, runId);
+                await ShutdownProcessAsync(runId, active, ct);
+                return;
+            }
+
+            // cast_end received on stdout — all sockets in the cast have completed.
+            // This is a strong terminal signal that confirms whole-cast completion.
+            // Shut down the process; the process exit handler will synthesize a
+            // completion event if the webhook has not already confirmed it.
+            if (active.CastEndReceived)
+            {
+                Log.CastEndInitiatedShutdown(_logger, runId);
                 await ShutdownProcessAsync(runId, active, ct);
                 return;
             }
@@ -841,7 +856,10 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
     ///       any are found (the controller never sends <c>/materia continue</c>).
     ///       The full socket metadata is persisted as a lifecycle artifact for
     ///       diagnosability.</item>
-    ///   <item><c>cast_end</c> — pi-materia cast completion event (informational).</item>
+    ///   <item><c>cast_end</c> — pi-materia cast completion event (terminal signal).
+    ///       Unlike <c>agent_end</c> (per-socket), <c>cast_end</c> means all sockets
+    ///       have completed. The runtime initiates process shutdown on <c>cast_end</c>.
+    ///   </item>
     ///   <item><c>agent_end</c> — pi-materia agent socket completed its turn.
     ///       Per-socket completion signal — does NOT terminate the cast. In
     ///       multi-socket casts this fires once per socket.</item>
@@ -849,8 +867,7 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
     ///   <item><c>materia_end</c> — pi-materia materia socket completed (informational).</item>
     /// </list>
     /// Unrecognized types are tracked for fail-closed handling under agent-controller
-    /// eventing (contract drift defense). We do not derive runtime lifecycle events
-    /// from stdout — that is the webhook's responsibility.
+    /// eventing (contract drift defense).
     /// </summary>
     private async Task InterpretStdoutLine(
         string line,
@@ -1014,10 +1031,44 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
 
         if (type == AgentController.Domain.PiMateriaStdoutEventTypes.CastEnd)
         {
-            // pi-materia cast completion event (informational).
-            // The runtime does not derive lifecycle state from this; the webhook
-            // (runtime.completed) is authoritative.
-            Log.PiStdoutIntermediate(_logger, runId, type);
+            // pi-materia cast completion event — terminal signal.
+            // Unlike agent_end (per-socket), cast_end means all sockets in the
+            // cast have completed. The runtime treats this as a strong terminal
+            // signal that confirms whole-cast completion. Combined with the
+            // controller-confirmed runtime.completed webhook, this stops the
+            // runtime cleanly.
+            var castEndId = doc.RootElement.TryGetProperty("castId", out var castEndIdEl)
+                ? castEndIdEl.GetString()
+                : null;
+            Log.PiCastEndReceived(_logger, runId, castEndId ?? "(unknown)");
+
+            // Mark cast_end as received so the monitor loop can act on it.
+            if (active is not null)
+            {
+                active.CastEndReceived = true;
+            }
+
+            // Emit a runtime.status event recording the cast_end.
+            // This is informational — the monitor loop handles the shutdown.
+            await TryIngestAsync(
+                runId,
+                new RuntimeEvent
+                {
+                    EventId = $"pi-cast-end-{runId}-{Guid.NewGuid():N}",
+                    RunId = runId,
+                    EventType = RuntimeEventTypes.Status,
+                    OccurredAt = DateTimeOffset.UtcNow,
+                    Severity = EventSeverity.Info,
+                    Message = $"Cast completed (cast_end received){(!string.IsNullOrEmpty(castEndId) ? $", castId={castEndId}" : "")}",
+                    Payload = new Dictionary<string, object?>
+                    {
+                        ["castId"] = castEndId,
+                        ["completedSockets"] = active?.CompletedSockets.ToList(),
+                    },
+                },
+                CancellationToken.None
+            );
+
             return;
         }
 
@@ -1687,6 +1738,13 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
         /// </summary>
         public bool StallDetected { get; set; }
 
+        /// <summary>
+        /// Whether <c>cast_end</c> has been received on stdout for this run.
+        /// When true, the monitor loop treats the cast as complete and
+        /// initiates process shutdown.
+        /// </summary>
+        public bool CastEndReceived { get; set; }
+
         /// <summary>Refresh the last-event timestamp for the keepalive-stall detector.</summary>
         public void UpdateLastEventAt() => LastEventAt = DateTimeOffset.UtcNow;
 
@@ -2022,6 +2080,17 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
             Message = "[pi stdout] Socket '{SocketName}' completed for run '{RunId}' ({CompletedCount} socket(s) done).")]
         public static partial void PiSocketCompleted(
             ILogger logger, string runId, string socketName, int completedCount);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "[pi stdout] cast_end received for run '{RunId}' (castId={CastId}); whole-cast completion signal (terminal).")]
+        public static partial void PiCastEndReceived(
+            ILogger logger, string runId, string castId);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Run '{RunId}': cast_end received, initiating process shutdown (cast complete).")]
+        public static partial void CastEndInitiatedShutdown(ILogger logger, string runId);
 
         [LoggerMessage(
             Level = LogLevel.Warning,

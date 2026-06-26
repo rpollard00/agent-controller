@@ -138,12 +138,26 @@ public class PiMateriaStdoutEventContractTests
     }
 
     [Fact]
-    public void TerminalTypes_IsEmpty()
+    public void TerminalTypes_ContainsCastEnd()
     {
-        // agent_end is per-socket and non-terminal in multi-socket casts.
-        // Terminal detection comes from runtime.completed webhook, keepalive-stall,
-        // and/or cast_end stdout signal.
-        Assert.Empty(PiMateriaStdoutEventTypes.TerminalTypes);
+        // cast_end is the whole-cast terminal signal — unlike agent_end which
+        // is per-socket and non-terminal. The runtime treats cast_end as a strong
+        // terminal signal that confirms whole-cast completion.
+        Assert.Contains(
+            PiMateriaStdoutEventTypes.CastEnd,
+            PiMateriaStdoutEventTypes.TerminalTypes
+        );
+    }
+
+    [Fact]
+    public void TerminalTypes_DoesNotContainAgentEnd()
+    {
+        // agent_end is per-socket and non-terminal — it fires once per socket
+        // in multi-socket casts, so the runtime must stay alive for subsequent sockets.
+        Assert.DoesNotContain(
+            PiMateriaStdoutEventTypes.AgentEnd,
+            PiMateriaStdoutEventTypes.TerminalTypes
+        );
     }
 
     [Fact]
@@ -153,6 +167,16 @@ public class PiMateriaStdoutEventContractTests
         // in multi-socket casts, so the runtime must stay alive for subsequent sockets.
         Assert.Contains(
             PiMateriaStdoutEventTypes.AgentEnd,
+            PiMateriaStdoutEventTypes.IntermediateTypes
+        );
+    }
+
+    [Fact]
+    public void IntermediateTypes_DoesNotContainCastEnd()
+    {
+        // cast_end is terminal, not intermediate — it signals whole-cast completion.
+        Assert.DoesNotContain(
+            PiMateriaStdoutEventTypes.CastEnd,
             PiMateriaStdoutEventTypes.IntermediateTypes
         );
     }
@@ -199,6 +223,16 @@ public class PiMateriaStdoutEventContractTests
         Assert.NotNull(entry);
         Assert.False(entry.IsTerminal);
         Assert.Equal("agent", entry.Category);
+    }
+
+    [Fact]
+    public void GetEntry_CastEndIsTerminal()
+    {
+        // cast_end is the whole-cast terminal signal — unlike agent_end.
+        var entry = PiMateriaStdoutEventContract.GetEntry(PiMateriaStdoutEventTypes.CastEnd);
+        Assert.NotNull(entry);
+        Assert.True(entry.IsTerminal);
+        Assert.Equal("cast", entry.Category);
     }
 
     [Fact]

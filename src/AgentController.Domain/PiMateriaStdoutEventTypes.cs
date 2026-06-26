@@ -57,11 +57,17 @@ public static class PiMateriaStdoutEventTypes
 
     /// <summary>
     /// pi-materia cast completion event. Emitted when all sockets in the
-    /// pipeline have completed and the cast is done.
+    /// pipeline have completed and the cast is done. Unlike <c>agent_end</c>
+    /// (per-socket), <c>cast_end</c> means the full socket graph has reached
+    /// completion.
     /// </summary>
     /// <remarks>
-    /// Intermediate — informational. The runtime does not derive lifecycle
-    /// state from this; the webhook (<c>runtime.completed</c>) is authoritative.
+    /// Terminal — the runtime treats <c>cast_end</c> as a strong terminal
+    /// signal that confirms whole-cast completion. Combined with the
+    /// controller-confirmed <c>runtime.completed</c> webhook, this confirms
+    /// cast completion and stops the runtime cleanly. If the webhook is
+    /// delayed, the runtime synthesizes a completion event after process
+    /// exit following <c>cast_end</c>.
     /// </remarks>
     public const string CastEnd = "cast_end";
 
@@ -187,15 +193,13 @@ public static class PiMateriaStdoutEventTypes
     /// </summary>
     /// <remarks>
     /// Under agent-controller eventing, the webhook (<c>runtime.completed</c>)
-    /// is the authoritative terminal signal. Stdout terminal types are used to
-    /// prevent stalls when the webhook is delayed. Currently this set is empty;
-    /// <c>agent_end</c> is per-socket and non-terminal (see <see cref="AgentEnd"/>).
+    /// is the authoritative terminal signal. Stdout terminal types like
+    /// <c>cast_end</c> are used to prevent stalls when the webhook is delayed.
+    /// <c>agent_end</c> remains per-socket and non-terminal (see <see cref="AgentEnd"/>).
     /// </remarks>
     public static IReadOnlySet<string> TerminalTypes { get; } = new HashSet<string>
     {
-        // agent_end is per-socket and non-terminal in multi-socket casts.
-        // Terminal detection comes from runtime.completed webhook, keepalive-stall,
-        // and/or cast_end stdout signal.
+        CastEnd,
     };
 
     /// <summary>
@@ -205,13 +209,13 @@ public static class PiMateriaStdoutEventTypes
     /// <remarks>
     /// <c>agent_end</c> is intermediate because it fires per-socket in multi-socket
     /// casts; the runtime must stay alive for subsequent sockets to complete.
+    /// <c>cast_end</c> is NOT intermediate — it is terminal (see <see cref="CastEnd"/>).
     /// </remarks>
     public static IReadOnlySet<string> IntermediateTypes { get; } = new HashSet<string>
     {
         Response,
         ExtensionError,
         CastStart,
-        CastEnd,
         AgentEnd,
         MateriaStart,
         MateriaEnd,
@@ -336,8 +340,8 @@ public static class PiMateriaStdoutEventContract
         new StdoutEventSchemaEntry(
             Type: PiMateriaStdoutEventTypes.CastEnd,
             Category: "cast",
-            IsTerminal: false,
-            Description: "pi-materia cast completion event. Emitted when all sockets in the pipeline have completed.",
+            IsTerminal: true,
+            Description: "pi-materia cast completion event. Emitted when all sockets in the pipeline have completed. Terminal signal — confirms whole-cast completion.",
             Fields: new[]
             {
                 new StdoutEventField("type", "string", true, "Always 'cast_end'"),

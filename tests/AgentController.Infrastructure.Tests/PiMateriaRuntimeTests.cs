@@ -1383,6 +1383,100 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         runtime.Dispose();
     }
 
+    // ── cast_end: terminal signal for whole-cast completion ──────────
+
+    [Fact]
+    public async Task StartAsync_CastEndTerminal_RunCompletes()
+    {
+        // cast_end is the whole-cast terminal signal. The runtime should
+        // shut down the process on cast_end, and the process exit handler
+        // should synthesize a completion event from exit code 0.
+        WriteFakePiScript(_fakePiPath, FakePiVariant.CastEndTerminal);
+
+        await using var harness = await NewHarnessAsync(_fakePiPath);
+        var spec = await BuildSpecAsync(harness, "cast_end terminal test");
+
+        var runtime = harness.Runtime!;
+        _ = await runtime.StartAsync(spec, CancellationToken.None);
+
+        // The runtime should reach a terminal state (Completed from exit code 0
+        // synthesis, since no webhook was posted).
+        await WaitForStateAsync(
+            spec.RunId,
+            s => s == RunLifecycleState.Completed || s == RunLifecycleState.Failed,
+            TimeSpan.FromSeconds(15)
+        );
+
+        var run = await _runStore.GetByIdAsync(spec.RunId, CancellationToken.None);
+        Assert.NotNull(run);
+        // Exit code 0 → no_changes_needed → Completed.
+        Assert.Equal(RunLifecycleState.Completed, run!.Status);
+
+        // Verify the cast_end status event was emitted.
+        var events = await _eventStore.ListByRunIdAsync(spec.RunId, CancellationToken.None);
+        var castEndEvents = events.Where(e =>
+            e.EventType == RuntimeEventTypes.Status &&
+            e.Message != null &&
+            e.Message.Contains("Cast completed", StringComparison.OrdinalIgnoreCase)
+        ).ToList();
+        Assert.NotEmpty(castEndEvents);
+    }
+
+    [Fact]
+    public async Task StartAsync_MultiSocketAgentEndThenCastEnd_AllSocketsComplete()
+    {
+        // Multi-socket cast: agent_end for each socket (non-terminal), then
+        // cast_end (terminal). The runtime must NOT shut down on any agent_end,
+        // but MUST shut down on cast_end. All 3 sockets should be tracked as
+        // completed.
+        WriteFakePiScript(_fakePiPath, FakePiVariant.MultiSocketAgentEndThenCastEnd);
+
+        await using var harness = await NewHarnessAsync(_fakePiPath);
+        var spec = await BuildSpecAsync(harness, "Multi-socket agent_end + cast_end");
+
+        var runtime = harness.Runtime!;
+        _ = await runtime.StartAsync(spec, CancellationToken.None);
+
+        // The runtime should reach a terminal state.
+        await WaitForStateAsync(
+            spec.RunId,
+            s => s == RunLifecycleState.Completed || s == RunLifecycleState.Failed,
+            TimeSpan.FromSeconds(15)
+        );
+
+        var run = await _runStore.GetByIdAsync(spec.RunId, CancellationToken.None);
+        Assert.NotNull(run);
+        // Exit code 0 → no_changes_needed → Completed.
+        Assert.Equal(RunLifecycleState.Completed, run!.Status);
+
+        // Verify 3 socket completion events (one per agent_end).
+        // The message format is "Socket Socket-N completed".
+        var events = await _eventStore.ListByRunIdAsync(spec.RunId, CancellationToken.None);
+        var socketCompletedEvents = events.Where(e =>
+            e.EventType == RuntimeEventTypes.Status &&
+            e.Message != null &&
+            e.Message.StartsWith("Socket ", StringComparison.Ordinal) &&
+            e.Message.Contains("completed", StringComparison.OrdinalIgnoreCase)
+        ).ToList();
+        Assert.Equal(3, socketCompletedEvents.Count);
+
+        // Verify the cast_end status event was emitted.
+        var castEndEvents = events.Where(e =>
+            e.EventType == RuntimeEventTypes.Status &&
+            e.Message != null &&
+            e.Message.Contains("Cast completed", StringComparison.OrdinalIgnoreCase)
+        ).ToList();
+        Assert.NotEmpty(castEndEvents);
+
+        // Verify no keepalive-stall failure (the runtime stayed alive across all sockets).
+        Assert.DoesNotContain(
+            events,
+            e => e.EventType == RuntimeEventTypes.Failed &&
+                 e.Message != null &&
+                 e.Message.Contains("Keepalive-stall", StringComparison.OrdinalIgnoreCase)
+        );
+    }
+
     // ── Harness / fixture helpers ────────────────────────────────────
 
     /// <summary>
@@ -1754,6 +1848,8 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         BiggsLoadoutSocket3Divergence,
         KeepaliveStall,
         TelemetryEventsIgnored,
+        CastEndTerminal,
+        MultiSocketAgentEndThenCastEnd,
     }
 
     /// <summary>
@@ -1787,6 +1883,8 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
             FakePiVariant.BiggsLoadoutSocket3Divergence => FakePiScripts.BiggsLoadoutSocket3Divergence,
             FakePiVariant.KeepaliveStall => FakePiScripts.KeepaliveStall,
             FakePiVariant.TelemetryEventsIgnored => FakePiScripts.TelemetryEventsIgnored,
+            FakePiVariant.CastEndTerminal => FakePiScripts.CastEndTerminal,
+            FakePiVariant.MultiSocketAgentEndThenCastEnd => FakePiScripts.MultiSocketAgentEndThenCastEnd,
             _ => FakePiScripts.HappyPr,
         };
 
@@ -2416,6 +2514,100 @@ def main():
             post_event({'eventId': 'fp-completed', 'eventType': 'runtime.completed', 'occurredAt': '2026-06-23T00:00:01Z', 'severity': 'info', 'message': 'done', 'payload': {'outcome': 'no_changes_needed', 'summary': 'telemetry ignored, lifecycle routed'}})
             # Stay alive until the controller shuts us down.
             continue
+        if msg.get('type') == 'abort':
+            return
+
+main()
+""";
+
+        /// <summary>
+        /// Emits cast_start with a single agent socket, then agent_end, then cast_end.
+        /// No webhook events are posted — cast_end is the terminal signal that triggers
+        /// process shutdown, and the process exit handler synthesizes a completion event
+        /// from exit code 0.
+        /// </summary>
+        public const string CastEndTerminal =
+            Header
+            + """
+def main():
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return
+        try:
+            msg = json.loads(line)
+        except Exception:
+            continue
+        if msg.get('type') == 'prompt':
+            send_response({'type': 'response', 'command': 'prompt', 'success': True})
+            # cast_start with agent-controller preset.
+            send_response({
+                'type': 'cast_start',
+                'castId': 'cast-end-terminal',
+                'eventing': {'preset': 'agent-controller'},
+                'sockets': [
+                    {'socketName': 'Socket-4', 'type': 'agent', 'materiaName': 'Builda', 'multiTurn': False}
+                ]
+            })
+            # agent_end — per-socket, non-terminal. Runtime stays alive.
+            send_response({'type': 'agent_end', 'socketName': 'Socket-4', 'messages': []})
+            # cast_end — whole-cast terminal signal. Runtime should shut down.
+            send_response({'type': 'cast_end', 'castId': 'cast-end-terminal'})
+            # Exit cleanly — the process exit handler synthesizes a terminal event from exit code 0.
+            time.sleep(0.1)
+            return
+        if msg.get('type') == 'abort':
+            return
+
+main()
+""";
+
+        /// <summary>
+        /// Multi-socket cast: emits cast_start with 3 agent sockets, then agent_end
+        /// for each socket (non-terminal), then cast_end (terminal). No webhook events
+        /// are posted — cast_end triggers process shutdown, and the process exit handler
+        /// synthesizes a completion event from exit code 0.
+        ///
+        /// This tests the agent_end-stays-non-terminal / cast_end-is-terminal pairing:
+        /// the runtime must NOT shut down on any of the agent_end events, but MUST
+        /// shut down on cast_end.
+        /// </summary>
+        public const string MultiSocketAgentEndThenCastEnd =
+            Header
+            + """
+def main():
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return
+        try:
+            msg = json.loads(line)
+        except Exception:
+            continue
+        if msg.get('type') == 'prompt':
+            send_response({'type': 'response', 'command': 'prompt', 'success': True})
+            # cast_start with 3 agent sockets (Plani → Builda → Evala).
+            send_response({
+                'type': 'cast_start',
+                'castId': 'multi-socket-cast-end',
+                'eventing': {'preset': 'agent-controller'},
+                'sockets': [
+                    {'socketName': 'Socket-3', 'type': 'agent', 'materiaName': 'Interactive-Plani', 'multiTurn': False},
+                    {'socketName': 'Socket-4', 'type': 'agent', 'materiaName': 'Builda', 'multiTurn': False},
+                    {'socketName': 'Socket-5', 'type': 'agent', 'materiaName': 'Auto-Evala', 'multiTurn': False}
+                ]
+            })
+            # agent_end for Socket-3 (Interactive-Plani) — per-socket, non-terminal.
+            send_response({'type': 'agent_end', 'socketName': 'Socket-3', 'messages': []})
+            # agent_end for Socket-4 (Builda) — per-socket, non-terminal.
+            send_response({'type': 'agent_end', 'socketName': 'Socket-4', 'messages': []})
+            # agent_end for Socket-5 (Auto-Evala) — per-socket, non-terminal.
+            send_response({'type': 'agent_end', 'socketName': 'Socket-5', 'messages': []})
+            # cast_end — whole-cast terminal signal. Runtime should shut down.
+            send_response({'type': 'cast_end', 'castId': 'multi-socket-cast-end'})
+            # Exit cleanly — the process exit handler synthesizes a terminal event from exit code 0.
+            time.sleep(0.1)
+            return
         if msg.get('type') == 'abort':
             return
 
