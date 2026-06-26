@@ -62,9 +62,10 @@ The MVP should evolve the same design into a durable internal service using stro
 `IAgentRuntime` is defined. `NoOpAgentRuntime`, `MockPiMateriaRuntime`, and the real
 `PiMateriaRuntime` are registered. `MockPiMateriaRuntime` emits a deterministic
 sequence of runtime events in-process. `PiMateriaRuntime` launches `pi` as a
-child process in RPC mode, drives a pi-materia cast via the `/materia cast`
-RPC command, and relies on the existing `POST /runs/{runId}/events` HTTP
-endpoint for `runtime.*` lifecycle events (see §13b).
+detached CLI process via `pi "/materia loadout Elena" "/materia cast {task}"`
+and returns immediately (fire-and-forget). All observability comes from
+pi-materia POSTing `runtime.*` lifecycle events to the existing
+`POST /runs/{runId}/events` HTTP webhook endpoint (see §13b).
 
 ### Phase 6: Result Reporting — mock only
 
@@ -87,16 +88,17 @@ The local-first milestone (§13a) enables fully local controller runs without Az
 
 1. ~~**Real pi-materia process invocation**~~ — **Implemented and validated
    end-to-end:** `PiMateriaRuntime`
-   (`src/AgentController.Infrastructure/PiMateriaRuntime.cs`) launches `pi` in RPC
-   mode and drives a `/materia cast`. The full controller-driven chain — real
-   `PollingWorker` + real runtime + real `pi` + the real
-   `POST /runs/{runId}/events` endpoint — is exercised by the Tier B harness at
-   `dev/integration-test/`, which runs a complete Wedge cast through the real
-   controller and asserts `runtime.completed`. Coverage is layered: a
-   deterministic fake-`pi` test (`PiMateriaRuntimeTests`, `dotnet test`) covers
-   the runtime with no LLM; the standalone spike (`dev/integration-spike/`)
-   validates real pi against a stand-in listener; Tier B validates the whole
-   pipeline through the real controller.
+   (`src/AgentController.Infrastructure/PiMateriaRuntime.cs`) launches `pi` as a
+   detached CLI process via
+   `pi "/materia loadout Elena" "/materia cast {task}"` (fire-and-forget).
+   The full controller-driven chain — real `PollingWorker` + real runtime +
+   real `pi` + the real `POST /runs/{runId}/events` endpoint — is exercised by
+   the Tier B harness at `dev/integration-test/`, which runs a complete Wedge
+   cast through the real controller and asserts `runtime.completed`. Coverage
+   is layered: a deterministic fake-`pi` test (`PiMateriaRuntimeTests`,
+   `dotnet test`) covers the runtime with no LLM; the standalone spike
+   (`dev/integration-spike/`) validates real pi against a stand-in listener;
+   Tier B validates the whole pipeline through the real controller.
 
 2. ~~Environment/source-control no-ops in PollingWorker~~ — **Fixed:** The `PollingWorker` now invokes `IEnvironmentProvider.CreateAsync` at `EnvironmentProvisioning`, `ISourceControlProvider.CloneAsync` at `RepositoryCloning`, writes context files at `ContextInjected`, and passes the full environment/repo context to `IAgentRuntime.StartAsync` at `AgentStarting`.
 
@@ -1737,12 +1739,14 @@ all the settings needed for a local-only run.
 
 The local-only E2E path works with the mock runtime, and the real pi-materia
 invocation is now implemented and validated end-to-end. `PiMateriaRuntime`
-(see §13b) launches `pi` in RPC mode and drives a `/materia cast`; the full
-controller-driven chain — real `PollingWorker` + real runtime + real `pi` + the
-real `POST /runs/{runId}/events` endpoint — is exercised by the Tier B harness
-at `dev/integration-test/`. The standalone spike at `dev/integration-spike/`
-validates real pi against a stand-in listener, and the deterministic fake-`pi`
-test `PiMateriaRuntimeTests` covers the runtime with no LLM.
+(see §13b) launches `pi` as a detached CLI process via
+`pi "/materia loadout Elena" "/materia cast {task}"` (fire-and-forget); the
+full controller-driven chain — real `PollingWorker` + real runtime + real `pi`
++ the real `POST /runs/{runId}/events` endpoint — is exercised by the Tier B
+harness at `dev/integration-test/`. The standalone spike at
+`dev/integration-spike/` validates real pi against a stand-in listener, and the
+deterministic fake-`pi` test `PiMateriaRuntimeTests` covers the runtime with no
+LLM.
 
 ### Runtime Contract (Recap)
 
@@ -1756,43 +1760,34 @@ The controller and pi-materia interact through:
    - `acceptance-criteria.md` — acceptance criteria
    - `repository.json` — repository profile metadata
 
-2. **Runtime events (inbound).** Sent by pi-materia to `POST /runs/{runId}/events`
-over HTTP. The minimal required events are `runtime.accepted`,
-`runtime.status`, `runtime.heartbeat`, `runtime.completed`, and
-`runtime.failed`. pi-materia enables delivery via its `agent-controller`
-eventing preset (see §13b.5).
+2. **Environment variables.** Injected at process launch:
+   - `CONTROLLER_RUN_ID` — run identifier for event correlation
+   - `CONTROLLER_EVENT_URL` — webhook URL for pi-materia to POST events
+   - `CONTROLLER_CONTEXT_DIR` — path to the context file directory
 
-3. **Process lifecycle.** The controller starts `pi --mode rpc --no-session` as a
-child process, sends the cast as an RPC `prompt` command, captures stdout/stderr
-into log files, monitors process exit, and handles cancellation via RPC `abort`
-followed by SIGKILL after a grace period.
-
-4. **Webhook events.** pi-materia POSTs runtime events to the controller's
-`POST /runs/{runId}/events` endpoint. The controller receives these through the
-existing HTTP endpoint. If pi exits without sending a final event, the controller
-synthesizes a completion or failure event based on exit code.
+3. **Runtime events (inbound webhook).** pi-materia POSTs `runtime.*` events
+to `POST /runs/{runId}/events` over HTTP. The minimal required events are
+`runtime.accepted`, `runtime.heartbeat`, `runtime.completed`, and
+`runtime.failed`. The controller treats the launch as fire-and-forget and
+relies entirely on the webhook for observability.
 
 ---
 
-# 13b. Pi-Materia Process Adapter — Implementation-Ready Design
+# 13b. Pi-Materia Process Adapter — Fire-and-Forget CLI Launcher
 
 **Status:** Implemented. `PiMateriaRuntime`
 (`src/AgentController.Infrastructure/PiMateriaRuntime.cs`) launches `pi` as a
-child process in **RPC mode** and drives a pi-materia cast via the
-`/materia cast` RPC command. pi-materia reports `runtime.*` events over HTTP to
-the existing `POST /runs/{runId}/events` endpoint; the adapter manages process
-lifecycle, cancellation, a synthetic-heartbeat safety net, and synthesizes a
-final event if `pi` exits without sending one. It is covered by a deterministic
-fake-`pi` integration test (`tests/AgentController.Infrastructure.Tests/PiMateriaRuntimeTests.cs`)
-and validated against a real cast by the spike at `dev/integration-spike/`.
+detached CLI process via
+`pi "/materia loadout Elena" "/materia cast {task}"` and returns immediately
+(fire-and-forget). The controller does not drive the agent synchronously via
+RPC. All observability comes from pi-materia POSTing `runtime.*` events to the
+controller's `POST /runs/{runId}/events` webhook endpoint. If the webhook fails,
+the controller can recycle/restart jobs and update its own state.
 
-> **Note on the invocation model.** An earlier draft of this section assumed a
-> `pi --loadout {loadout} --context {dir}` CLI. That flag combination does not
-> exist. The verified model is RPC mode: `pi --mode rpc --no-session` is spawned
-> as a subprocess, and the cast is started by sending the RPC `prompt` command
-> `/materia cast {task}`. RPC stdout carries the prompt response and diagnostic
-events; the runtime lifecycle channel (`runtime.accepted` … `runtime.completed`)
-is the HTTP webhook, **not** stdout.
+The controller injects only three environment variables:
+`CONTROLLER_RUN_ID`, `CONTROLLER_EVENT_URL`, and `CONTROLLER_CONTEXT_DIR`.
+There is no stdout/stderr capture, no heartbeat monitoring, no process exit
+synthesis, and no RPC cancellation. `CancelAsync` is a no-op.
 
 ## 13b.1 Status of Dependencies
 
@@ -1801,7 +1796,7 @@ All dependencies needed for the pi-materia adapter exist today:
 | Dependency | Location | Status |
 |-----------|----------|--------|
 | `IAgentRuntime` interface | `AgentController.Application/IAgentRuntime.cs` | ✓ Defined |
-| `RuntimeOptions` (provider, piExecutablePath, defaultMateriaLoadout) | `AgentController.Infrastructure/Options/RuntimeOptions.cs` | ✓ Bound |
+| `RuntimeOptions` (provider, piExecutablePath, controllerBaseUrl) | `AgentController.Infrastructure/Options/RuntimeOptions.cs` | ✓ Bound |
 | `IRunLifecycleService` | `AgentController.Application/IRunLifecycleService.cs` | ✓ Scoped |
 | `POST /runs/{runId}/events` | `AgentController.Api/Program.cs` | ✓ Accepts runtime events over HTTP |
 | `IEnvironmentProvider` | `AgentController.Application/IEnvironmentProvider.cs` | ✓ LocalWorkspace impl |
@@ -1818,11 +1813,11 @@ only difference is **what happens inside `StartAsync`**:
 
 | Aspect | MockPiMateriaRuntime | PiMateriaRuntime |
 |--------|---------------------|------------------|
-| Event source | In-process `Task` emitting fake events via `IRunLifecycleService` | Real `pi` child process POSTing events to `POST /runs/{runId}/events` |
-| Process lifecycle | None — async task completes after emitting events | Tracked `System.Diagnostics.Process` |
-| Cancellation | No-op | SIGTERM → grace period → SIGKILL |
-| Heartbeats | One synthetic heartbeat per run | pi emits its own via webhook; synthetic timer as safety net |
-| Run outcome | Configurable via `DefaultMateriaLoadout` | Determined by pi's webhook events; synthesized from exit code if no final event |
+| Event source | In-process `Task` emitting fake events via `IRunLifecycleService` | Real `pi` detached process POSTing events to `POST /runs/{runId}/events` |
+| Process lifecycle | None — async task completes after emitting events | Detached — spawned and immediately released (no tracking) |
+| Cancellation | No-op | No-op (detached process) |
+| Heartbeats | One synthetic heartbeat per run | None — pi emits its own via webhook |
+| Run outcome | Configurable via `DefaultMateriaLoadout` | Determined entirely by pi's webhook events |
 
 **Provider selection** is config-driven. In `appsettings.json`:
 
@@ -1833,7 +1828,7 @@ only difference is **what happens inside `StartAsync`**:
     // Switch to "PiMateria" for real pi process invocation.
     "provider": "PiMateria",
     "piExecutablePath": "pi",
-    "defaultMateriaLoadout": "autonomous-dev"
+    "controllerBaseUrl": "http://localhost:5103"
   }
 }
 ```
@@ -1857,46 +1852,32 @@ if (runtimeProvider.Equals("PiMateria", StringComparison.OrdinalIgnoreCase))
 namespace AgentController.Infrastructure;
 
 /// <summary>
-/// Real IAgentRuntime that launches pi as a child process and monitors its
-/// lifecycle. pi-materia reports runtime events via HTTP webhook to the
-/// controller's POST /runs/{runId}/events endpoint.
+/// Minimal IAgentRuntime that launches pi as a detached CLI process
+/// (fire-and-forget). The invocation is:
+/// pi "/materia loadout Elena" "/materia cast {task}".
 ///
-/// The adapter is responsible for:
-/// - Starting the pi process with the correct environment and working directory.
-/// - Tracking active processes for status queries and cancellation.
-/// - Sending SIGTERM/SIGKILL on cancel.
-/// - Synthesizing a final event if pi exits without sending one via webhook.
+/// The controller injects only three environment variables:
+///   CONTROLLER_RUN_ID, CONTROLLER_EVENT_URL, CONTROLLER_CONTEXT_DIR.
 ///
+/// After spawn the runtime returns immediately. All observability comes
+/// from the webhook-driven event ingestion path. On launch failure
+/// (executable not found, etc.) a single failure event is synthesized.
+///
+/// CancelAsync is a no-op (detached process). Dispose is trivial.
 /// Registered as a singleton via AddAgentControllerPiMateriaRuntime().
-/// Uses IServiceScopeFactory to resolve scoped services for synthesized events.
 /// </summary>
-public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
+public sealed partial class PiMateriaRuntime : IAgentRuntime
 {
+    private const string DefaultCliLoadout = "Elena";
+
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IOptionsMonitor<RuntimeOptions> _runtimeOptions;
-    private readonly IOptionsMonitor<AgentControllerOptions> _controllerOptions;
     private readonly ILogger<PiMateriaRuntime> _logger;
-
-    // Track active processes by runId for status queries and cancellation.
-    private readonly ConcurrentDictionary<string, ActiveProcess> _activeProcesses = new();
-
-    // Grace period between SIGTERM and SIGKILL (configurable).
-    private static readonly TimeSpan DefaultCancelGracePeriod = TimeSpan.FromSeconds(10);
-
-    public PiMateriaRuntime(
-        IServiceScopeFactory scopeFactory,
-        IOptionsMonitor<RuntimeOptions> runtimeOptions,
-        IOptionsMonitor<AgentControllerOptions> controllerOptions,
-        ILogger<PiMateriaRuntime> logger);
 
     public Task<AgentRunHandle> StartAsync(AgentRunSpec spec, CancellationToken ct);
     public Task<AgentRuntimeStatus> GetStatusAsync(AgentRunHandle handle, CancellationToken ct);
     public Task CancelAsync(AgentRunHandle handle, CancellationToken ct);
     public void Dispose();
-
-    private sealed record ActiveProcess(
-        System.Diagnostics.Process Process,
-        CancellationTokenSource Cts);
 }
 ```
 
@@ -1906,112 +1887,52 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
 1. VALIDATE prerequisites
    - Resolve RuntimeOptions.PiExecutablePath (fallback: "pi").
    - Require RuntimeOptions.ControllerBaseUrl; if unset, synthesize a
-     runtime.failed and return (the controller cannot receive webhook events
-     without a base URL).
+     runtime.failed and return a degenerate handle.
    - Resolve context dir from spec.EnvironmentHandle.RootPath + "/context".
+   - Read the cast task text from context/work-item.md (+ acceptance-criteria.md,
+     comments.md when present).
 
 2. BUILD process start info
    - FileName: resolved pi executable path
-   - Arguments: --mode rpc --no-session
+   - Arguments: ["/materia loadout Elena", "/materia cast {task}"]
    - WorkingDirectory: spec.RepoCheckout.LocalPath (the cloned repo)
-   - RedirectStandardInput: true   (send RPC commands)
-   - RedirectStandardOutput: true  (read RPC responses / diagnostics)
-   - RedirectStandardError: true   (for logging only)
    - UseShellExecute: false
    - CreateNoWindow: true
+   - No redirected streams (detached process)
    - Environment variables:
        CONTROLLER_RUN_ID={spec.RunId}
        CONTROLLER_EVENT_URL={ControllerBaseUrl}/runs/{runId}/events
        CONTROLLER_CONTEXT_DIR={contextDir}
 
-4. START process + wire RPC
-   - Call Process.Start(). If it throws, synthesize runtime.failed and return a
-     degenerate handle (so the run still reaches a terminal state).
-   - Store (process, cts, prompt-acceptance TCS) in _activeProcesses by runId.
-   - Begin async stdout reader (parses the RPC `prompt` response to signal
-     acceptance; surfaces `extension_error` lines; does NOT derive runtime
-     lifecycle events from stdout — that is the webhook's job).
-   - Begin async stderr reader (logs to ILogger, fire-and-forget).
-   - Begin the background MonitorAsync (send the cast, wait for terminal/exit).
+3. START process (fire and forget)
+   - Call Process.Start() inside a using block (process is detached).
+   - If it throws, synthesize runtime.failed and return a degenerate handle.
+   - Log the launch (runId, process Id, executable path).
 
-5. DRIVE the cast (background MonitorAsync)
-   - Send the RPC prompt: `{ "type": "prompt",
-     "message": "/materia cast {task}" }` where {task} is the title line read
-     from the controller-written context/work-item.md.
-   - Await the `prompt` response (success) within PromptAcceptanceTimeoutSeconds.
-   - Poll the run store: when the webhook drives the run to a terminal state,
-     shut pi down (RPC `abort` → grace → kill tree). When pi exits first, see
-     process-exit monitoring below.
-
-6. RETURN handle (immediately, before the cast completes)
+4. RETURN handle immediately
    - RunId = spec.RunId
-   - RuntimeRunId = $"pi-{process.Id}"
+   - RuntimeRunId = $"pi-{spec.RunId}"
    - Status = RunLifecycleState.AgentRunning
    - StartedAt = now
 ```
 
-### Process Exit Monitoring
+### CancelAsync — No-Op
 
 ```
-IF the pi process exits while the run is still non-terminal (no final webhook event):
-    → exit 0 → synthesize runtime.completed (outcome: no_changes_needed,
-        message: "pi exited cleanly without a final event")
-    → exit ≠ 0 → synthesize runtime.failed
-        (message: "pi exited with code {code} without a final event")
-    → Ingest the synthesized event through IRunLifecycleService.IngestRuntimeEventAsync
-IF the run is already terminal → pi sent its final event before exiting
-    (the normal path); log at Debug and do not synthesize.
-
-REMOVE from _activeProcesses
+1. Log that cancel is a no-op for the detached process.
+2. Return immediately.
 ```
 
-### CancelAsync — Graceful Shutdown
+### GetStatusAsync — Delegate to Handle
 
 ```
-1. LOOKUP ActiveProcess by handle.RunId. If not found, return (no-op).
-2. TRIGGER the CancellationTokenSource for that process.
-3. SEND SIGTERM:
-     process.Kill(entireProcessTree: true)  // .NET 5+ on Unix sends SIGTERM
-     On Windows: GenerateConsoleCtrlEvent or CloseMainWindow first
-4. WAIT for process exit with grace period (default 10s):
-     await process.WaitForExitAsync(token with timeout)
-5. IF still running after grace period:
-     process.Kill() again (this sends SIGKILL on Unix)
-6. INGEST runtime.cancelled event through IRunLifecycleService.IngestRuntimeEventAsync.
-7. REMOVE from _activeProcesses.
+1. Return AgentRuntimeStatus from the handle's persisted state.
+   (Status is driven entirely by webhook events, not process inspection.)
 ```
 
-### GetStatusAsync
+### Dispose — Trivial
 
-```
-1. LOOKUP ActiveProcess by handle.RunId.
-2. IF process exists and is running → return AgentRuntimeStatus with current state.
-3. IF process existed but exited → return status with exit code info.
-4. IF no tracked process → return status from the handle (may be stale).
-```
-
-### Synthetic Heartbeat Timer (Safety Net)
-
-If pi-materia does not natively emit `runtime.heartbeat` events via webhook,
-`PiMateriaRuntime` should emit a synthetic heartbeat every 30 seconds while the
-process is running. This prevents the controller's stale-run recovery from
-timing out the run.
-
-This is a safety net — pi-materia is expected to emit its own heartbeats via
-webhook. The synthetic timer exists only in case pi fails to do so.
-
-```
-START background timer (interval: 30s)
-WHILE process is running:
-    Emit runtime.heartbeat event with:
-        eventId = $"pi-hb-{runId}-{tick}"
-        phase = "process-running"
-        pid = process.Id
-    → Ingest through IRunLifecycleService.IngestRuntimeEventAsync
-```
-
-If a synthetic heartbeat is rejected because pi already sent its own event that
-advanced the run past AwaitingResult, log at Debug and stop the timer.
+No managed resources to dispose (no process tracking, no monitors).
 
 ## 13b.4 DI Registration
 
@@ -2020,12 +1941,15 @@ advanced the run past AwaitingResult, log at Debug and stop the timer.
 
 /// <summary>
 /// Registers the <see cref="PiMateriaRuntime"/> as a singleton
-/// <see cref="IAgentRuntime"/> that launches pi as a child process.
-/// pi-materia reports events via HTTP webhook to the controller's
-/// POST /runs/{runId}/events endpoint.
+/// <see cref="IAgentRuntime"/> that launches <c>pi</c> as a detached CLI process
+/// via <c>pi "/materia loadout Elena" "/materia cast {task}"</c>.
+/// The launched job reports important status back only via webhook;
+/// the controller treats the launch as fire-and-forget.
 ///
 /// Requires <see cref="AddAgentControllerOptions"/> to be called first
 /// (for <see cref="RuntimeOptions"/> and <see cref="AgentControllerOptions"/> binding).
+/// Requires <see cref="RuntimeOptions.ControllerBaseUrl"/> to be configured so the
+/// runtime can hand pi-materia the webhook URL.
 ///
 /// Callers should register this <em>after</em>
 /// <see cref="AddAgentControllerNoOpProviders"/> so the last-registered
@@ -2064,39 +1988,17 @@ Written by `PollingWorker.InjectContextAsync` into `{runRoot}/{runId}/context/`.
 ```
 
 > **Note:** The `InjectContextAsync` method in `PollingWorker.cs` is the canonical
-> source of truth for this format. The `PiMateriaRuntime` reads this file and passes
-> relevant fields to pi via CLI args and environment variables.
+> source of truth for this format. The `PiMateriaRuntime` passes relevant fields
+> to pi via environment variables.
 
 #### work-item.md
 
-Markdown rendered from `WorkCandidate` fields:
-
-```markdown
-# Add retry handling for transient failures
-
-**ID:** 42
-**Priority:** 1
-**Tags:** agent-ready, backend
-
-The service currently fails immediately on 5xx responses from downstream
-services. We need a retry middleware that retries with exponential backoff.
-```
+Markdown rendered from `WorkCandidate` fields. The title line becomes the
+`/materia cast` prompt. Acceptance criteria and comments are appended when present.
 
 #### acceptance-criteria.md
 
-Markdown rendered from `WorkCandidate.AcceptanceCriteria` dictionary:
-
-```markdown
-## Acceptance Criteria
-
-- **Given** a service call receives a 503 response
-- **When** the retry middleware is configured
-- **Then** the call is retried up to 3 times with exponential backoff
-
-- **Given** all retries are exhausted
-- **When** the downstream service still returns 5xx
-- **Then** the original error is propagated to the caller
-```
+Markdown rendered from `WorkCandidate.AcceptanceCriteria` dictionary.
 
 #### repository.json
 
@@ -2115,33 +2017,26 @@ Markdown rendered from `WorkCandidate.AcceptanceCriteria` dictionary:
 | Variable | Value | Purpose |
 |----------|-------|---------|
 | `CONTROLLER_RUN_ID` | `run_a1b2c3d4` | Run identifier for event correlation |
-| `CONTROLLER_EVENT_URL` | `http://localhost:5103/runs/run_a1b2c3d4/events` | HTTP webhook endpoint for runtime events (primary channel) |
+| `CONTROLLER_EVENT_URL` | `http://localhost:5103/runs/run_a1b2c3d4/events` | HTTP webhook endpoint for runtime events (primary and only channel) |
 | `CONTROLLER_CONTEXT_DIR` | `/home/user/.agent-work-controller/runs/run_a1b2c3d4/context` | Path to context file directory |
 
-### Process Invocation & Cast Command
+### Process Invocation
 
-pi is launched in **RPC mode**, not via a one-shot CLI flag:
+pi is launched as a detached CLI process with two arguments:
 
 ```bash
-pi --mode rpc --no-session
+pi "/materia loadout Elena" "/materia cast {task}"
 ```
 
-The cast is then started by writing one JSON-RPC command to the process stdin
-(the `message` body is the work item title read from `context/work-item.md`):
-
-```json
-{"id": "cast-run_a1b2c3d4", "type": "prompt", "message": "/materia cast <task>"}
-```
-
-- `--mode rpc` enables pi's JSON-RPC-over-stdio protocol (see pi's `docs/rpc.md`).
-- `--no-session` avoids persisting the run as a named session.
-- RPC stdout returns `{"type":"response","command":"prompt","success":true}`
-  once the cast is accepted; subsequent `runtime.*` lifecycle events arrive over
-  the HTTP webhook, **not** stdout.
+- The loadout name is hardcoded as `"Elena"` (`DefaultCliLoadout` const).
+- `{task}` is the content of `context/work-item.md` (+ acceptance-criteria.md,
+  comments.md when present).
+- The process is fully detached: no stdin/stdout/stderr redirection, no
+  monitoring, no cancellation.
 
 ## 13b.6 Required Outputs (What pi-materia Reports Back)
 
-### HTTP Webhook (Primary Channel)
+### HTTP Webhook (Primary and Only Channel)
 
 pi-materia POSTs `RuntimeEvent` JSON to `CONTROLLER_EVENT_URL` for every event:
 
@@ -2162,8 +2057,8 @@ pi-materia is responsible for:
 - Sending `runtime.accepted` first, then optional intermediate events,
   then exactly one of `runtime.completed` or `runtime.failed` as the final event.
 
-The controller does not need to parse stdout or any other pi output for events.
-stderr from the pi process is captured by `PiMateriaRuntime` for logging only.
+The controller does not parse stdout, stderr, or any other pi output for events.
+All observability is webhook-driven.
 
 ### Event Ordering Requirements
 
@@ -2186,19 +2081,11 @@ When emitting `runtime.completed`, pi-materia sets `payload.outcome` to one of:
 | `needs_human` | `NeedsHuman` | `summary`, `reason` |
 | `failed` | `Failed` | `summary`, `reason` |
 
-If pi exits without sending a final `runtime.completed` or `runtime.failed`
-event via webhook, `PiMateriaRuntime` checks the controller's run state:
-- If the run is still in `AwaitingResult`, synthesize based on exit code:
-  - exit 0 → `runtime.completed` (outcome: `no_changes_needed`)
-  - exit ≠ 0 → `runtime.failed`
-- If the run is already in a terminal state, pi sent its final event before
-  exiting — no synthesis needed (normal path).
-
 ## 13b.7 Handoff Contract Summary
 
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
-│ CONTROLLER → PI-MATERIA (one-time, before process start)        │
+│ CONTROLLER → PI-MATERIA (one-time, at process launch)           │
 ├─────────────────────────────────────────────────────────────────┤
 │ Context files in {runRoot}/{runId}/context/:                    │
 │   controller-run.json   — run metadata (runId, repo path, etc)  │
@@ -2213,13 +2100,14 @@ event via webhook, `PiMateriaRuntime` checks the controller's run state:
 │   CONTROLLER_EVENT_URL   — HTTP webhook for runtime events      │
 │   CONTROLLER_CONTEXT_DIR — path to context files                │
 │                                                                 │
-│ Invocation: pi --mode rpc --no-session                          │
-│ Cast command (stdin JSON-RPC):                                  │
-│   {"type":"prompt","message":"/materia cast {task}"}            │
+│ Invocation (fire-and-forget):                                   │
+│   pi "/materia loadout Elena" "/materia cast {task}"            │
+│                                                                 │
+│ No stdout/stderr capture. No process tracking. No cancel.       │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
-│ PI-MATERIA → CONTROLLER (during process lifetime)               │
+│ PI-MATERIA → CONTROLLER (webhook only)                          │
 ├─────────────────────────────────────────────────────────────────┤
 │ HTTP POST to CONTROLLER_EVENT_URL (primary and only channel)    │
 │   RuntimeEvent JSON envelope as request body                    │
@@ -2228,11 +2116,10 @@ event via webhook, `PiMateriaRuntime` checks the controller's run state:
 │   runtime.completed or runtime.failed should be last            │
 │   Standard REST semantics (200/400/409/422 responses)           │
 │                                                                 │
-│ Process exit (controller-side synthesis):                       │
-│   Pi exits + run in AwaitingResult → synthesize from exit code  │
-│     exit 0  → runtime.completed (no_changes_needed)             │
-│     exit ≠0 → runtime.failed                                    │
-│   Pi exits + run already terminal → no synthesis (normal path)  │
+│ If webhook delivery fails, the controller's stale-run detection │
+│ (based on LastHeartbeatAt) can trigger recovery actions:        │
+│   - Mark run as needs_human                                     │
+│   - Recycle/restart the job (future)                            │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -2242,42 +2129,31 @@ event via webhook, `PiMateriaRuntime` checks the controller's run state:
 
 File: `src/AgentController.Infrastructure/PiMateriaRuntime.cs`
 
-- Implement `StartAsync` with `Process.Start`.
+- Implement `StartAsync` with `Process.Start` (detached, fire-and-forget).
 - Pass `CONTROLLER_EVENT_URL` env var pointing at the controller's own
   `POST /runs/{runId}/events` endpoint.
-- Implement process exit monitoring with synthesized events (check run state
-  before synthesizing — only synthesize if still in `AwaitingResult`).
-- Implement `GetStatusAsync`.
-- Implement `CancelAsync` with graceful shutdown (SIGTERM → grace → SIGKILL).
-- Implement `IDisposable` to clean up tracked processes.
-- Capture stderr for logging (stdout is not redirected — pi uses HTTP webhook).
+- On launch failure, synthesize a `runtime.failed` event.
+- Implement `GetStatusAsync` (delegate to handle state).
+- Implement `CancelAsync` as a no-op.
+- Implement `Dispose` as trivial.
 
 ### Step 2: DI registration
 
 - Add `AddAgentControllerPiMateriaRuntime()` extension method.
 - Add `"PiMateria"` case to `Program.cs` provider switch.
 
-### Step 3: Synthetic heartbeat timer (safety net)
-
-- Add a per-process timer that emits `runtime.heartbeat` every 30s while
-  the pi process is alive. This keeps the controller from marking the run
-  as stale if pi fails to emit its own heartbeats via webhook.
-- Stop the timer if a synthetic heartbeat is rejected (run advanced past
-  `AwaitingResult` by pi's own webhook events).
-
-### Step 4: Integration test
+### Step 3: Integration test
 
 File: `tests/AgentController.Infrastructure.Tests/PiMateriaRuntimeTests.cs`
 
-- Test process start with a dummy script that POSTs events to a test HTTP server.
-- Test process exit without final event → synthesized completion.
-- Test process exit with error code → synthesized failure.
-- Test process exit after final event already received → no synthesis (normal).
-- Test cancellation → process killed.
-- Test pi executable not found → clear error message.
-- Test stderr capture → logged but not parsed as events.
+- Test process start with correct `ProcessStartInfo` (detached, no redirected
+  streams, correct env vars).
+- Test launch failure (executable not found) → synthesized failure event.
+- Test `CancelAsync` is a no-op.
+- Test `Dispose` is trivial.
+- Webhook path is covered by event-ingestion tests, not runtime tests.
 
-### Step 5: Example config
+### Step 4: Example config
 
 Update `appsettings.example.json` with a `"PiMateria"` config section:
 
@@ -2286,7 +2162,7 @@ Update `appsettings.example.json` with a `"PiMateria"` config section:
   "runtime": {
     "provider": "PiMateria",
     "piExecutablePath": "pi",
-    "defaultMateriaLoadout": "autonomous-dev"
+    "controllerBaseUrl": "http://localhost:5103"
   }
 }
 ```
@@ -2295,54 +2171,23 @@ Update `appsettings.example.json` with a `"PiMateria"` config section:
 
 ### Unit Tests (PiMateriaRuntimeTests)
 
-Use a shell script or small executable as a fake `pi`. The script POSTs events
-to the `CONTROLLER_EVENT_URL` environment variable:
+Verify the launcher semantics:
 
-```bash
-#!/bin/bash
-# test_fixture_pi.sh — behaves like pi-materia for testing
-EVENT_URL="$CONTROLLER_EVENT_URL"
-
-curl -s -X POST "$EVENT_URL" \
-  -H "Content-Type: application/json" \
-  -d '{"eventId":"t1","eventType":"runtime.accepted"}'
-sleep 0.1
-curl -s -X POST "$EVENT_URL" \
-  -H "Content-Type: application/json" \
-  -d '{"eventId":"t2","eventType":"runtime.status","message":"working"}'
-sleep 0.1
-curl -s -X POST "$EVENT_URL" \
-  -H "Content-Type: application/json" \
-  -d '{"eventId":"t3","eventType":"runtime.completed","payload":{"outcome":"pull_request_opened","summary":"done","branchName":"agent/test","pullRequestUrl":"https://example.com/pr/1"}}'
-```
-
-Tests:
 | Test | What it verifies |
 |------|-----------------|
-| `StartAsync_LaunchesProcess_AndReturnsHandle` | Process starts, handle has RuntimeRunId |
-| `WebhookEvents_AreReceived_ByController` | Fixture POSTs → controller lifecycle transitions |
-| `ProcessExit_WithoutFinalEvent_SynthesizesCompletion` | Exit 0, no final event → no_changes_needed |
-| `ProcessExit_WithErrorCode_SynthesizesFailure` | Exit 1, no final event → runtime.failed |
-| `ProcessExit_AfterFinalEvent_NoSynthesis` | Exit 0, final event already received → no duplicate |
-| `CancelAsync_KillsProcess` | Cancel → process exits within grace period |
-| `CancelAsync_ForceKillsAfterGracePeriod` | Process ignoring SIGTERM → SIGKILL |
-| `ExecutableNotFound_ThrowsClearError` | Missing pi → InvalidOperationException with message |
-| `Stderr_Captured_ForLogging` | stderr output → logged, not parsed as events |
-| `Dispose_CleansUpActiveProcesses` | Dispose kills all tracked processes |
+| `StartAsync_LaunchesProcess_AndReturnsHandle` | Process starts with correct args, handle has RuntimeRunId |
+| `StartAsync_SetsEnvironmentVariables` | CONTROLLER_RUN_ID, CONTROLLER_EVENT_URL, CONTROLLER_CONTEXT_DIR set |
+| `StartAsync_DetachedProcess_NoRedirectedStreams` | UseShellExecute=false, no stdout/stderr redirection |
+| `ExecutableNotFound_SynthesizesFailure` | Missing pi → runtime.failed event synthesized |
+| `CancelAsync_IsNoOp` | CancelAsync returns immediately, no process tracking |
+| `Dispose_IsTrivial` | Dispose does nothing (no resources to clean up) |
 
-### Integration Test (PiMateriaRuntimeTests + dev/integration-spike)
-
-A deterministic fake-`pi` integration test exists at
-`tests/AgentController.Infrastructure.Tests/PiMateriaRuntimeTests.cs`. It spawns a
-Python script that masquerades as `pi`, POSTs canned `runtime.*` events to a real
-HTTP listener wired to the lifecycle service, and asserts the full round trip
-(webhook drives run to `PrOpened`; crash path synthesizes failure; cancel kills
-the process). No LLM is involved.
+### Integration Test
 
 A real-cast spike at `dev/integration-spike/` runs an actual `/materia cast`
-(Wedge loadout) against a throwaway repo and confirms the `agent-controller`
-webhook contract end-to-end. A `"PiMateria"` variant of `LocalEndToEndSmokeTests`
-(driving the full poll cycle through the real runtime) remains future work.
+against a throwaway repo and confirms the `agent-controller` webhook contract
+end-to-end. The webhook event ingestion path is covered by dedicated
+event-ingestion tests (not runtime tests).
 
 ## 13b.10 Open Design Questions
 
@@ -2351,29 +2196,18 @@ webhook contract end-to-end. A `"PiMateria"` variant of `LocalEndToEndSmokeTests
    item title read from `context/work-item.md`; structured JSON can be added
    later by extending the context file set.)
 
-2. **Heartbeat frequency.** How many `runtime.heartbeat` events per minute?
-   (Resolved: pi-materia emits its own heartbeats via webhook when eventing is
-   enabled — confirmed by the spike. The controller's synthetic timer at 1 per
-   30 seconds (`RuntimeOptions.HeartbeatIntervalSeconds`) is a safety net only,
-   and can be disabled via `DisableSyntheticHeartbeat`.)
+2. **Auto-restart on crash.** Should the controller restart pi if the webhook
+   shows no activity after a timeout? (Currently: stale-run detection marks runs
+   as `needs_human`. Auto-restart is a future concern.)
 
-3. **Auto-restart on crash.** Should the controller restart pi if it exits without
-   a final event? (No. Synthesize a terminal event from the exit code and let the
-   operator decide. Auto-restart is a future concern.)
-
-4. **allowedPaths enforcement.** What happens if pi modifies files outside
+3. **allowedPaths enforcement.** What happens if pi modifies files outside
    `allowedPaths`? (The controller does not enforce this — it's advisory.
    A future policy engine can inspect diffs post-run.)
 
-5. ~~**pi CLI contract stability.** What flags does pi-materia accept?~~
-   **Resolved:** pi has no `--loadout`/`--context` flags. The verified invocation
-   is `pi --mode rpc --no-session` + the RPC `prompt` command
-   `/materia cast {task}`.
-
-6. **Concurrency of runs.** `PiMateriaRuntime` is a singleton but tracks multiple
-   concurrent processes in `_activeProcesses`. The `PollingWorker` already enforces
-   `MaxConcurrentRuns` — each `StartAsync` call creates an independent process.
-   No additional concurrency control is needed in the runtime.
+4. **Concurrency of runs.** `PiMateriaRuntime` is a singleton but each
+   `StartAsync` call creates an independent detached process. The
+   `PollingWorker` already enforces `MaxConcurrentRuns`. No additional
+   concurrency control is needed in the runtime.
 
 ---
 
