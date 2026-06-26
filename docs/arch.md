@@ -1792,9 +1792,7 @@ and validated against a real cast by the spike at `dev/integration-spike/`.
 > as a subprocess, and the cast is started by sending the RPC `prompt` command
 > `/materia cast {task}`. RPC stdout carries the prompt response and diagnostic
 events; the runtime lifecycle channel (`runtime.accepted` … `runtime.completed`)
-is the HTTP webhook, **not** stdout. Eventing is enabled without mutating the
-> cloned repository by pointing pi at a controller-owned config via the
-> `MATERIA_CONFIG` environment variable.
+is the HTTP webhook, **not** stdout.
 
 ## 13b.1 Status of Dependencies
 
@@ -1912,23 +1910,7 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
      without a base URL).
    - Resolve context dir from spec.EnvironmentHandle.RootPath + "/context".
 
-2. WRITE a controller-owned pi-materia config next to the run context
-   (unless RuntimeOptions.MateriaConfigPath is set). The config enables the
-   `agent-controller` eventing preset and selects DefaultMateriaLoadout:
-
-       {
-         "activeLoadout": "<DefaultMateriaLoadout>",
-         "eventing": {
-           "enabled": true,
-           "presets": ["agent-controller"],
-           "heartbeatIntervalMs": 30000
-         }
-       }
-
-   The controller passes this to pi via the MATERIA_CONFIG environment
-   variable, so eventing is enabled WITHOUT mutating the cloned repository.
-
-3. BUILD process start info
+2. BUILD process start info
    - FileName: resolved pi executable path
    - Arguments: --mode rpc --no-session
    - WorkingDirectory: spec.RepoCheckout.LocalPath (the cloned repo)
@@ -1941,7 +1923,6 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
        CONTROLLER_RUN_ID={spec.RunId}
        CONTROLLER_EVENT_URL={ControllerBaseUrl}/runs/{runId}/events
        CONTROLLER_CONTEXT_DIR={contextDir}
-       MATERIA_CONFIG={path to controller-owned config above}
 
 4. START process + wire RPC
    - Call Process.Start(). If it throws, synthesize runtime.failed and return a
@@ -2136,7 +2117,6 @@ Markdown rendered from `WorkCandidate.AcceptanceCriteria` dictionary:
 | `CONTROLLER_RUN_ID` | `run_a1b2c3d4` | Run identifier for event correlation |
 | `CONTROLLER_EVENT_URL` | `http://localhost:5103/runs/run_a1b2c3d4/events` | HTTP webhook endpoint for runtime events (primary channel) |
 | `CONTROLLER_CONTEXT_DIR` | `/home/user/.agent-work-controller/runs/run_a1b2c3d4/context` | Path to context file directory |
-| `MATERIA_CONFIG` | `/home/user/.agent-work-controller/runs/run_a1b2c3d4/context/materia-controller.json` | Controller-owned pi-materia config (enables the `agent-controller` eventing preset + selects the loadout) |
 
 ### Process Invocation & Cast Command
 
@@ -2155,9 +2135,6 @@ The cast is then started by writing one JSON-RPC command to the process stdin
 
 - `--mode rpc` enables pi's JSON-RPC-over-stdio protocol (see pi's `docs/rpc.md`).
 - `--no-session` avoids persisting the run as a named session.
-- The loadout is NOT a CLI flag. It is selected by the controller-owned config
-  passed via `MATERIA_CONFIG` (`activeLoadout`), so the cloned repo is not
-  mutated.
 - RPC stdout returns `{"type":"response","command":"prompt","success":true}`
   once the cast is accepted; subsequent `runtime.*` lifecycle events arrive over
   the HTTP webhook, **not** stdout.
@@ -2235,8 +2212,6 @@ event via webhook, `PiMateriaRuntime` checks the controller's run state:
 │   CONTROLLER_RUN_ID      — controller run identifier            │
 │   CONTROLLER_EVENT_URL   — HTTP webhook for runtime events      │
 │   CONTROLLER_CONTEXT_DIR — path to context files                │
-│   MATERIA_CONFIG         — controller-owned config (eventing +  │
-│                            activeLoadout; no repo mutation)     │
 │                                                                 │
 │ Invocation: pi --mode rpc --no-session                          │
 │ Cast command (stdin JSON-RPC):                                  │
@@ -2393,8 +2368,7 @@ webhook contract end-to-end. A `"PiMateria"` variant of `LocalEndToEndSmokeTests
 5. ~~**pi CLI contract stability.** What flags does pi-materia accept?~~
    **Resolved:** pi has no `--loadout`/`--context` flags. The verified invocation
    is `pi --mode rpc --no-session` + the RPC `prompt` command
-   `/materia cast {task}`; the loadout is selected via the `MATERIA_CONFIG`
-   environment variable.
+   `/materia cast {task}`.
 
 6. **Concurrency of runs.** `PiMateriaRuntime` is a singleton but tracks multiple
    concurrent processes in `_activeProcesses`. The `PollingWorker` already enforces

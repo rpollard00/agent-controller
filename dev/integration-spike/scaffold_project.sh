@@ -4,28 +4,20 @@
 # Creates a tiny, real, autonomous-codable project (a python module + test) that
 # Wedge can actually plan/build/eval/maintain against.
 #
-# By default it also writes a project `.pi/pi-materia.json` enabling the
-# `agent-controller` eventing preset (used by the standalone spike). For the
-# controller-driven Tier B test, pass --no-materia-config: the controller's
-# PiMateriaRuntime injects eventing itself via the MATERIA_CONFIG env var, so the
-# cloned repo must stay clean.
-#
 # Re-runnable: pass --force to wipe and recreate an existing directory.
 set -euo pipefail
 
 usage() {
-  echo "usage: scaffold_project.sh <project-dir> [--force] [--no-materia-config]" >&2
+  echo "usage: scaffold_project.sh <project-dir> [--force]" >&2
   exit 2
 }
 
 DIR=""
 FORCE=0
-WRITE_MATERIA=1
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --force) FORCE=1; shift ;;
-    --no-materia-config) WRITE_MATERIA=0; shift ;;
     -h|--help) usage ;;
     *)
       if [[ -z "$DIR" ]]; then
@@ -87,30 +79,10 @@ __pycache__/
 .pi/pi-materia/
 GI
 
-# Optional project-level pi-materia config (the standalone spike uses this; the
-# controller-driven Tier B test omits it via --no-materia-config because the
-# controller's PiMateriaRuntime injects eventing via MATERIA_CONFIG).
-if [[ "$WRITE_MATERIA" == "1" ]]; then
-  cat > .pi/pi-materia.json <<'JSON'
-{
-  "activeLoadout": "Wedge",
-  "eventing": {
-    "enabled": true,
-    "presets": ["agent-controller"],
-    "heartbeatIntervalMs": 30000
-  }
-}
-JSON
-fi
-
 git init -q -b main
 git config user.email "spike@example.com"
 git config user.name "spike"
 git add -A
 git commit -q -m "Initial widget project"
 
-if [[ "$WRITE_MATERIA" == "1" ]]; then
-  echo "[scaffold] ready at $DIR (loadout: Wedge, eventing: agent-controller preset in-repo)"
-else
-  echo "[scaffold] ready at $DIR (clean repo; controller will inject materia config via MATERIA_CONFIG)"
-fi
+echo "[scaffold] ready at $DIR"

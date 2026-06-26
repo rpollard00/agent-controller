@@ -45,9 +45,7 @@ Optional environment overrides:
 ## What it does
 
 1. `dotnet build` the solution.
-2. Scaffolds a **clean** widget repo (no `.pi/pi-materia.json` — the controller
-   injects eventing itself via `MATERIA_CONFIG`, so this proves the repo is not
-   mutated).
+2. Scaffolds a **clean** widget repo.
 3. Writes controller config as environment variables (layered on the committed
    `appsettings.json` defaults) — no committed test config file.
 4. Runs migrations (`AgentController.Migrations`).
