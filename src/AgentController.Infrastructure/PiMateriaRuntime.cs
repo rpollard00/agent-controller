@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using AgentController.Application;
@@ -12,7 +13,7 @@ namespace AgentController.Infrastructure;
 
 /// <summary>
 /// Minimal <see cref="IAgentRuntime"/> that launches <c>pi</c> inside an
-/// ephemeral PTY-allocated shell (fire-and-forget). The invocation is:
+/// ephemeral PTY-allocated shell. The invocation is:
 /// <c>script -qfc 'pi "/materia loadout Elena" "/materia cast {task}"' /dev/null</c>.
 ///
 /// <para>The <c>script</c> wrapper (util-linux) allocates a pseudo-terminal so
@@ -30,12 +31,16 @@ namespace AgentController.Infrastructure;
 /// from the webhook-driven event ingestion path. On launch failure (executable
 /// not found, etc.) a single failure event is synthesized for the run.</para>
 ///
-/// <para>Stdin is held open for the lifetime of the session so the ephemeral
-/// shell does not receive EOF and exit prematurely. The session lifecycle
-/// work item owns stdin closure.</para>
+/// <para>The runtime tracks each launched session in a local registry keyed by
+/// run ID. This is purely for resource lifecycle management — stdin closure,
+/// process termination on cancel, and writer disposal. It is NOT liveness
+/// polling, NOT WaitForExit, and does NOT feed state transitions (state
+/// still flows only from webhook events).</para>
 ///
-/// <para><c>CancelAsync</c> is a no-op (detached process). <c>Dispose</c> is
-/// trivial (no managed resources to release).</para>
+/// <para><c>CancelAsync</c> looks up the session handle, closes stdin (EOF),
+/// kills the process tree, disposes writers, and removes the entry from the
+/// registry. <c>Dispose</c> performs best-effort cleanup of all remaining
+/// sessions.</para>
 ///
 /// <para>Registered as a singleton via
 /// <see cref="AgentControllerServiceCollectionExtensions.AddAgentControllerPiMateriaRuntime"/>.</para>
@@ -47,6 +52,10 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IOptionsMonitor<RuntimeOptions> _runtimeOptions;
     private readonly ILogger<PiMateriaRuntime> _logger;
+
+    // Session registry: keyed by run ID, holds process + I/O resources for
+    // lifecycle cleanup only (cancel, dispose). Not used for state transitions.
+    private readonly ConcurrentDictionary<string, SessionHandle> _sessions = new();
 
     public PiMateriaRuntime(
         IServiceScopeFactory scopeFactory,
@@ -182,8 +191,16 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
             var runtimeRunId = $"pi-{process.Id}";
             Log.RuntimeStarting(_logger, spec.RunId, runtimeRunId, piExe, repoPath);
 
-            // Detach: do NOT retain the Process handle, do NOT WaitForExit.
-            // The drain handlers run on the framework's internal read threads.
+            // Register the session handle for lifecycle cleanup (cancel, dispose).
+            // This is resource bookkeeping only — NOT liveness polling or state transitions.
+            var sessionHandle = new SessionHandle
+            {
+                Process = process,
+                StdinWriter = process.StandardInput,
+                StdoutWriter = stdoutWriter,
+                StderrWriter = stderrWriter,
+            };
+            _sessions[spec.RunId] = sessionHandle;
         }
         catch (Exception ex)
         {
@@ -226,18 +243,70 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
     /// <inheritdoc />
     public Task CancelAsync(AgentRunHandle handle, CancellationToken cancellationToken)
     {
-        // Detached process — no RPC cancel available.
-        // The process will complete on its own or be reclaimed by the OS.
-        Log.RuntimeCancelled(_logger, handle.RunId);
+        // Look up the session handle and clean up resources.
+        if (_sessions.TryRemove(handle.RunId, out var session))
+        {
+            DisposeSessionHandle(session);
+            Log.RuntimeCancelled(_logger, handle.RunId);
+        }
+        else
+        {
+            // No session registered (e.g. launch failed, or already cancelled).
+            Log.RuntimeCancelledNoSession(_logger, handle.RunId);
+        }
         return Task.CompletedTask;
     }
 
     /// <inheritdoc />
-    [System.Diagnostics.CodeAnalysis.SuppressMessage(
-        "CodeQuality", "CA1822:Member does not access instance data", Justification = "Interface contract.")]
     public void Dispose()
     {
-        // No managed resources to dispose (no process tracking, no monitors).
+        // Best-effort cleanup of all remaining active sessions.
+        foreach (var kvp in _sessions)
+        {
+            try
+            {
+                DisposeSessionHandle(kvp.Value);
+            }
+            catch
+            {
+                // Swallow — dispose is best-effort.
+            }
+        }
+        _sessions.Clear();
+    }
+
+    /// <summary>
+    /// Disposes all resources in a session handle: closes stdin, kills the
+    /// process tree, and disposes the stdout/stderr writers.
+    /// </summary>
+    private static void DisposeSessionHandle(SessionHandle handle)
+    {
+        // Close stdin to signal EOF to the ephemeral shell.
+        try
+        {
+            handle.StdinWriter?.Close();
+        }
+        catch
+        {
+            // Swallow — process may have already exited.
+        }
+
+        // Kill the process tree.
+        try
+        {
+            if (!handle.Process.HasExited)
+            {
+                handle.Process.Kill(entireProcessTree: true);
+            }
+        }
+        catch
+        {
+            // Swallow — process may have already exited.
+        }
+
+        // Dispose the log writers.
+        try { handle.StdoutWriter?.Dispose(); } catch { /* best-effort */ }
+        try { handle.StderrWriter?.Dispose(); } catch { /* best-effort */ }
     }
 
     // ── Task reading helper ─────────────────────────────────────────
@@ -355,6 +424,20 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
             StartedAt = DateTimeOffset.UtcNow,
         };
 
+    // ── Session handle ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Holds the resources for a single ephemeral-shell session.
+    /// Used for lifecycle cleanup only (cancel, dispose) — NOT for state transitions.
+    /// </summary>
+    private sealed class SessionHandle
+    {
+        public Process Process { get; init; } = null!;
+        public StreamWriter StdinWriter { get; init; } = null!;
+        public StreamWriter StdoutWriter { get; init; } = null!;
+        public StreamWriter StderrWriter { get; init; } = null!;
+    }
+
     // ── Logger source-generated methods ─────────────────────────────
 
     private static partial class Log
@@ -384,9 +467,15 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Runtime cancelled for run '{RunId}' (no-op: detached process)."
+            Message = "Runtime cancelled for run '{RunId}' — session handle cleaned up."
         )]
         public static partial void RuntimeCancelled(ILogger logger, string runId);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Runtime cancelled for run '{RunId}' but no session handle found (launch may have failed)."
+        )]
+        public static partial void RuntimeCancelledNoSession(ILogger logger, string runId);
 
         [LoggerMessage(
             Level = LogLevel.Error,

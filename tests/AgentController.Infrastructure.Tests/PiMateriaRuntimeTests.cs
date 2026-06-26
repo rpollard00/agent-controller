@@ -274,10 +274,10 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         runtime.Dispose();
     }
 
-    // ── CancelAsync is a no-op ──────────────────────────────────────
+    // ── CancelAsync: no registered session ───────────────────────────
 
     [Fact]
-    public async Task CancelAsync_IsNoOp_ReturnsImmediately()
+    public async Task CancelAsync_NoRegisteredSession_ReturnsImmediately()
     {
         var runtime = new PiMateriaRuntime(
             _scopeFactory,
@@ -300,15 +300,74 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
             StartedAt = DateTimeOffset.UtcNow,
         };
 
-        // CancelAsync should return immediately without error.
+        // CancelAsync should return immediately without error even when no session exists.
         var sw = System.Diagnostics.Stopwatch.StartNew();
         await runtime.CancelAsync(handle, CancellationToken.None);
         sw.Stop();
 
         // Should be nearly instant (no process to kill).
         Assert.True(sw.ElapsedMilliseconds < 100,
-            $"CancelAsync should be a no-op but took {sw.ElapsedMilliseconds}ms");
+            $"CancelAsync should return quickly but took {sw.ElapsedMilliseconds}ms");
 
+        runtime.Dispose();
+    }
+
+    // ── CancelAsync: session handle cleanup ─────────────────────────
+
+    [Fact]
+    public async Task CancelAsync_RemovesAndDisposesSessionHandle()
+    {
+        var fakePiPath = WriteCaptureScript(_tempRoot, "capture-cancel.sh");
+        var runId = await SeedRunAsync();
+        var spec = await BuildSpecAsync(runId, "Cancel test");
+        var runtime = CreateRuntime(fakePiPath);
+
+        var handle = await runtime.StartAsync(spec, CancellationToken.None);
+        Assert.Equal(spec.RunId, handle.RunId);
+
+        // Verify the session was registered via reflection on the private _sessions field.
+        var sessionsField = typeof(PiMateriaRuntime)
+            .GetField("_sessions", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(sessionsField);
+        var sessionsObj = sessionsField!.GetValue(runtime)!;
+
+        // Use the dictionary's Count property (works regardless of value type).
+        var countProp = sessionsObj.GetType().GetProperty("Count")!;
+        var countBefore = (int)countProp.GetValue(sessionsObj)!;
+        Assert.Equal(1, countBefore); // Session should be registered after StartAsync.
+
+        // Cancel the run.
+        await runtime.CancelAsync(handle, CancellationToken.None);
+
+        // Verify the session was removed from the registry.
+        var countAfter = (int)countProp.GetValue(sessionsObj)!;
+        Assert.Equal(0, countAfter); // Session should be removed after CancelAsync.
+
+        runtime.Dispose();
+    }
+
+    // ── Dispose cleans remaining sessions ───────────────────────────
+
+    [Fact]
+    public void Dispose_CleansRemainingSessions()
+    {
+        var runtime = new PiMateriaRuntime(
+            _scopeFactory,
+            new StaticOptionsMonitor<RuntimeOptions>(
+                new RuntimeOptions
+                {
+                    Provider = "PiMateria",
+                    PiExecutablePath = "pi",
+                    ControllerBaseUrl = "http://127.0.0.1:9999",
+                }
+            ),
+            _provider.GetRequiredService<ILogger<PiMateriaRuntime>>()
+        );
+
+        // Dispose should not throw even with no sessions.
+        runtime.Dispose();
+
+        // Dispose again — should be idempotent.
         runtime.Dispose();
     }
 
