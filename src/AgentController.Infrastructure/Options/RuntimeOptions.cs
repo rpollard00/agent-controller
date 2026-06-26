@@ -31,4 +31,21 @@ public sealed class RuntimeOptions
     /// No trailing slash.
     /// </summary>
     public string? ControllerBaseUrl { get; init; }
+
+    /// <summary>
+    /// Path to the PTY wrapper executable for launching the agent process.
+    /// When set, the agent is launched inside this wrapper (e.g. <c>script</c> on Linux)
+    /// so the agent's TUI can initialize headlessly via a pseudo-terminal.
+    /// When null/empty/whitespace, the agent is launched directly without a wrapper
+    /// (preserves behavior for non-Linux dev / future CRI sibling runtimes).
+    /// Defaults to <c>"script"</c> (util-linux).
+    /// </summary>
+    public string? PtyWrapperPath { get; init; } = "script";
+
+    /// <summary>
+    /// Arguments to pass to the PTY wrapper before the agent command.
+    /// Defaults to <c>"-qfc"</c> on Linux (quiet, flush, command-string mode).
+    /// When <see cref="PtyWrapperPath"/> is unset this property is ignored.
+    /// </summary>
+    public string? PtyWrapperArgs { get; init; } = "-qfc";
 }

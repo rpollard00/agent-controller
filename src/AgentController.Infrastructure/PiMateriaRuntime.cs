@@ -99,12 +99,22 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
         var repoPath = spec.RepoCheckout.LocalPath;
         var taskText = ReadCastTask(spec, contextDir);
 
-        // ── 3. Build process start info (PTY-wrapped) ─────────────────
-        // pi is a TUI app that deadlocks without a TTY. Wrap in `script -qfc ... /dev/null`
-        // so a pseudo-terminal is allocated and the TUI initializes headlessly.
+        // ── 3. Build process start info (optionally PTY-wrapped) ──────
+        // pi is a TUI app that deadlocks without a TTY. When a PTY wrapper is
+        // configured, wrap the invocation so a pseudo-terminal is allocated and
+        // the TUI initializes headlessly. When no wrapper is configured, launch
+        // pi directly (non-Linux dev / future CRI sibling runtimes).
         var piExe = string.IsNullOrWhiteSpace(options.PiExecutablePath)
             ? "pi"
             : options.PiExecutablePath;
+
+        var useWrapper = !string.IsNullOrWhiteSpace(options.PtyWrapperPath);
+        var wrapperPath = useWrapper
+            ? options.PtyWrapperPath!.Trim()
+            : null;
+        var wrapperArgs = useWrapper && !string.IsNullOrWhiteSpace(options.PtyWrapperArgs)
+            ? options.PtyWrapperArgs!.Trim()
+            : null;
 
         // ── 4. Prepare log directory and file writers ─────────────────
         // ── 5. Start process (fire and forget) ────────────────────────
@@ -119,18 +129,14 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
                     $"Pi executable not found at configured path: {piExe}", piExe);
             }
 
-            // Build the inner pi command string for the -c argument.
-            var piCommand = $"{piExe} \"/materia loadout {DefaultCliLoadout}\" \"/materia cast {taskText}\"";
-
             var psi = new ProcessStartInfo
             {
-                FileName = "script",
                 WorkingDirectory = Directory.Exists(repoPath) ? repoPath : contextDir,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 // Redirect streams so the inherited pipe is always consumed (prevents child
                 // from blocking on a full pipe buffer). Drained to log files, fire-and-forget.
-                // These now capture PTY-normalized output from the script wrapper.
+                // With a PTY wrapper these capture PTY-normalized output.
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 // Hold stdin open so the ephemeral shell does not receive EOF and exit.
@@ -138,12 +144,35 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
                 RedirectStandardInput = true,
             };
 
-            // script -qfc '<pi command>' /dev/null
-            //   -q = quiet, -f = flush after each write, -c = command string
-            //   /dev/null = typescript file (we don't need the raw TTY dump)
-            psi.ArgumentList.Add("-qfc");
-            psi.ArgumentList.Add(piCommand);
-            psi.ArgumentList.Add("/dev/null");
+            if (useWrapper && wrapperPath != null)
+            {
+                // PTY wrapper mode: script -qfc '<pi command>' /dev/null
+                //   -q = quiet, -f = flush after each write, -c = command string
+                //   /dev/null = typescript file (we don't need the raw TTY dump)
+                psi.FileName = wrapperPath;
+
+                // Parse wrapper args and add them before the inner command.
+                var argTokens = wrapperArgs?.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                if (argTokens != null)
+                {
+                    foreach (var token in argTokens)
+                    {
+                        psi.ArgumentList.Add(token);
+                    }
+                }
+
+                // Build the inner pi command string for the -c argument.
+                var piCommand = $"{piExe} \"/materia loadout {DefaultCliLoadout}\" \"/materia cast {taskText}\"";
+                psi.ArgumentList.Add(piCommand);
+                psi.ArgumentList.Add("/dev/null");
+            }
+            else
+            {
+                // No wrapper — launch pi directly.
+                psi.FileName = piExe;
+                psi.ArgumentList.Add("/materia loadout " + DefaultCliLoadout);
+                psi.ArgumentList.Add("/materia cast " + taskText);
+            }
 
             // Controller ↔ pi-materia handoff environment.
             psi.Environment["CONTROLLER_RUN_ID"] = spec.RunId;

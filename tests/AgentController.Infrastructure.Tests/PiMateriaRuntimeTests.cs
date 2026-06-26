@@ -393,6 +393,101 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         runtime.Dispose();
     }
 
+    // ── PTY wrapper configuration ───────────────────────────────────
+
+    [Fact]
+    public async Task StartAsync_PtyWrapperConfigured_HonorsWrapperPathAndArgs()
+    {
+        // Write a wrapper script that captures its arguments and exits.
+        var wrapperPath = Path.Combine(_tempRoot, "fake-wrapper.sh");
+        var wrapperCapturePath = Path.Combine(_tempRoot, "wrapper-capture.txt");
+        var wrapperScript = $"#!/usr/bin/env bash" +
+            $"\necho \"WRAPPER_ARGS: $@\" > '{wrapperCapturePath}'" +
+            "\nexit 0\n";
+        File.WriteAllText(wrapperPath, wrapperScript);
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("chmod", ["+x", wrapperPath])
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            })?.WaitForExit(2000);
+        }
+        catch { /* best-effort */ }
+
+        var runId = await SeedRunAsync();
+        var spec = await BuildSpecAsync(runId, "Wrapper test");
+
+        var runtime = new PiMateriaRuntime(
+            _scopeFactory,
+            new StaticOptionsMonitor<RuntimeOptions>(
+                new RuntimeOptions
+                {
+                    Provider = "PiMateria",
+                    PiExecutablePath = "pi",
+                    ControllerBaseUrl = "http://127.0.0.1:9999",
+                    PtyWrapperPath = wrapperPath,
+                    PtyWrapperArgs = "-qfc",
+                }
+            ),
+            _provider.GetRequiredService<ILogger<PiMateriaRuntime>>()
+        );
+
+        var handle = await runtime.StartAsync(spec, CancellationToken.None);
+        Assert.Equal(spec.RunId, handle.RunId);
+
+        // Wait for the wrapper script to execute.
+        await Task.Delay(1000);
+
+        // Verify the wrapper captured its arguments (includes -qfc and the inner pi command).
+        Assert.True(File.Exists(wrapperCapturePath), "Wrapper capture file should exist.");
+        var wrapperContent = await File.ReadAllTextAsync(wrapperCapturePath);
+        Assert.Contains("-qfc", wrapperContent);
+        Assert.Contains("/materia loadout Elena", wrapperContent);
+        Assert.Contains("/materia cast", wrapperContent);
+
+        runtime.Dispose();
+    }
+
+    [Fact]
+    public async Task StartAsync_PtyWrapperEmpty_LaunchesPiDirectly()
+    {
+        // When PtyWrapperPath is null/empty/whitespace, pi should be launched directly
+        // without a wrapper.
+        var fakePiPath = WriteCaptureScript(_tempRoot, "capture-direct-pi.sh");
+        var runId = await SeedRunAsync();
+        var spec = await BuildSpecAsync(runId, "Direct test");
+
+        var runtime = new PiMateriaRuntime(
+            _scopeFactory,
+            new StaticOptionsMonitor<RuntimeOptions>(
+                new RuntimeOptions
+                {
+                    Provider = "PiMateria",
+                    PiExecutablePath = fakePiPath,
+                    ControllerBaseUrl = "http://127.0.0.1:9999",
+                    PtyWrapperPath = string.Empty, // No wrapper
+                }
+            ),
+            _provider.GetRequiredService<ILogger<PiMateriaRuntime>>()
+        );
+
+        var handle = await runtime.StartAsync(spec, CancellationToken.None);
+        Assert.Equal(spec.RunId, handle.RunId);
+
+        await Task.Delay(500);
+
+        var capturePath = Path.Combine(_tempRoot, "capture.txt");
+        Assert.True(File.Exists(capturePath), "Capture file should exist.");
+
+        var content = await File.ReadAllTextAsync(capturePath);
+        // When launched directly, the script receives pi's args directly (not wrapped).
+        Assert.Contains("/materia loadout Elena", content);
+        Assert.Contains("/materia cast", content);
+
+        runtime.Dispose();
+    }
+
     // ── Default executable falls back to "pi" ───────────────────────
 
     [Fact]
