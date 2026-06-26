@@ -129,7 +129,8 @@ public interface IRunLifecycleService
         CancellationToken ct);
 
     /// <summary>
-    /// Find runs stuck in <see cref="RunLifecycleState.AwaitingResult"/> past the
+    /// Find runs stuck in <see cref="RunLifecycleState.AwaitingResult"/>
+    /// or <see cref="RunLifecycleState.AgentRunning"/> past the
     /// specified <paramref name="staleTimeout"/>. These runs have not received a
     /// heartbeat or final event within the timeout window.
     /// </summary>

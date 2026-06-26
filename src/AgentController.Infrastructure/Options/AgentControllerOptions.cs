@@ -58,6 +58,7 @@ public sealed class AgentControllerOptions
 
     /// <summary>
     /// Maximum time a run can be in <see cref="Domain.RunLifecycleState.AwaitingResult"/>
+    /// or <see cref="Domain.RunLifecycleState.AgentRunning"/>
     /// without a heartbeat or final event before being considered stale and recovered.
     /// Must be positive. Default: 30 minutes.
     /// </summary>

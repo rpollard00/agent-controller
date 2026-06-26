@@ -61,6 +61,7 @@ public interface IAgentRunStore
 
     /// <summary>
     /// Find runs that are in <see cref="RunLifecycleState.AwaitingResult"/>
+    /// or <see cref="RunLifecycleState.AgentRunning"/>
     /// and whose <c>LastHeartbeatAt</c> (or <c>StartedAt</c> if no heartbeat
     /// was ever received) is older than <c>NOW - staleTimeout</c>.
     /// These are candidates for stale-run recovery.

@@ -976,14 +976,14 @@ public class RunLifecycleServiceTests
     }
 
     [Fact]
-    public async Task RecoverStaleRun_RejectsNonAwaitingResultState()
+    public async Task RecoverStaleRun_RejectsNonRecoverableState()
     {
-        var run = await CreateRunAsync(); // Claimed, not AwaitingResult
+        var run = await CreateRunAsync(); // Claimed, not AwaitingResult or AgentRunning
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => _service.RecoverStaleRunAsync(run.RunId, CancellationToken.None));
 
-        Assert.Contains("only runs in AwaitingResult", ex.Message);
+        Assert.Contains("only runs in AwaitingResult or AgentRunning", ex.Message);
     }
 
     [Fact]
@@ -996,6 +996,47 @@ public class RunLifecycleServiceTests
             () => _service.RecoverStaleRunAsync(run.RunId, CancellationToken.None));
 
         Assert.Contains("terminal state", ex.Message);
+    }
+
+    [Fact]
+    public async Task RecoverStaleRun_AcceptsAgentRunningState()
+    {
+        // A pi-materia run that dies before emitting runtime.accepted
+        // stays in AgentRunning forever — stale recovery must handle it.
+        var run = await CreateRunAsync(advanceTo: RunLifecycleState.AgentRunning);
+
+        await _service.RecoverStaleRunAsync(run.RunId, CancellationToken.None);
+
+        var updated = await _runStore.GetByIdAsync(run.RunId, CancellationToken.None);
+        Assert.Equal(RunLifecycleState.NeedsHuman, updated!.Status);
+
+        // Verify stale_recovered event documents AgentRunning as previous state
+        var events = await _eventStore.ListByRunIdAsync(run.RunId, CancellationToken.None);
+        var staleEvent = events.FirstOrDefault(e => e.EventType == "controller.stale_recovered");
+        Assert.NotNull(staleEvent);
+        Assert.Equal(EventSeverity.Warning, staleEvent.Severity);
+        Assert.Contains("AgentRunning", staleEvent.Message);
+    }
+
+    [Fact]
+    public async Task RecoverStaleRunWithRetry_AcceptsAgentRunningState()
+    {
+        // StaleTimeout for AgentRunning goes straight to NeedsHuman (non-retryable).
+        var run = await CreateRunAsync(advanceTo: RunLifecycleState.AgentRunning);
+
+        var retryRun = await _service.RecoverStaleRunWithRetryAsync(
+            run.RunId, "worker-1", 3, CancellationToken.None);
+
+        Assert.Null(retryRun);
+
+        var updated = await _runStore.GetByIdAsync(run.RunId, CancellationToken.None);
+        Assert.Equal(RunLifecycleState.NeedsHuman, updated!.Status);
+
+        // Verify stale_recovered event was recorded with AgentRunning as previous state
+        var events = await _eventStore.ListByRunIdAsync(run.RunId, CancellationToken.None);
+        var staleEvent = events.FirstOrDefault(e => e.EventType == "controller.stale_recovered");
+        Assert.NotNull(staleEvent);
+        Assert.Contains("AgentRunning", staleEvent.Message);
     }
 
     // ── Lifecycle projection — activeState / completedState ────────
@@ -1441,14 +1482,14 @@ public class RunLifecycleServiceTests
     }
 
     [Fact]
-    public async Task RecoverStaleRunWithRetry_RejectsNonAwaitingResultState()
+    public async Task RecoverStaleRunWithRetry_RejectsNonRecoverableState()
     {
-        var run = await CreateRunAsync(); // Claimed, not AwaitingResult
+        var run = await CreateRunAsync(); // Claimed, not AwaitingResult or AgentRunning
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => _service.RecoverStaleRunWithRetryAsync(run.RunId, "worker-1", 3, CancellationToken.None));
 
-        Assert.Contains("only runs in AwaitingResult", ex.Message);
+        Assert.Contains("only runs in AwaitingResult or AgentRunning", ex.Message);
     }
 
     [Fact]
@@ -1711,7 +1752,8 @@ public class RunLifecycleServiceTests
         {
             var cutoff = DateTimeOffset.UtcNow - staleTimeout;
             var results = _runs.Values
-                .Where(r => r.Status == RunLifecycleState.AwaitingResult)
+                .Where(r => r.Status == RunLifecycleState.AwaitingResult
+                         || r.Status == RunLifecycleState.AgentRunning)
                 .Where(r => (r.LastHeartbeatAt == null && r.StartedAt < cutoff) || (r.LastHeartbeatAt < cutoff))
                 .OrderBy(r => r.LastHeartbeatAt ?? r.StartedAt)
                 .ToList();

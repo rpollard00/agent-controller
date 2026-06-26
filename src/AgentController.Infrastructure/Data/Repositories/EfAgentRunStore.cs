@@ -186,11 +186,12 @@ internal sealed class EfAgentRunStore : IAgentRunStore
     {
         var cutoff = DateTimeOffset.UtcNow - staleTimeout;
 
-        // Find runs in AwaitingResult whose last heartbeat (or started time) is older than cutoff.
-        // Client evaluation is used because EF Core SQLite 9.x cannot translate
-        // DateTimeOffset? comparisons or DateTimeOffset ORDER BY clauses.
+        // Find runs in AwaitingResult or AgentRunning whose last heartbeat (or started time)
+        // is older than cutoff. Client evaluation is used because EF Core SQLite 9.x cannot
+        // translate DateTimeOffset? comparisons or DateTimeOffset ORDER BY clauses.
         var entities = await _db.AgentRuns
-            .Where(e => e.Status == (int)RunLifecycleState.AwaitingResult)
+            .Where(e => e.Status == (int)RunLifecycleState.AwaitingResult
+                     || e.Status == (int)RunLifecycleState.AgentRunning)
             .ToListAsync(cancellationToken);
 
         var stale = entities

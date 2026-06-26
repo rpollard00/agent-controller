@@ -405,11 +405,12 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
                 $"Cannot recover stale run '{runId}': run is already in terminal state '{run.Status}'.");
         }
 
-        if (run.Status != RunLifecycleState.AwaitingResult)
+        if (run.Status != RunLifecycleState.AwaitingResult
+            && run.Status != RunLifecycleState.AgentRunning)
         {
             throw new InvalidOperationException(
                 $"Cannot recover stale run '{runId}': run is in state '{run.Status}', " +
-                "only runs in AwaitingResult can be recovered as stale.");
+                "only runs in AwaitingResult or AgentRunning can be recovered as stale.");
         }
 
         await _runStore.UpdateStatusAsync(runId, RunLifecycleState.NeedsHuman, ct);
@@ -419,10 +420,10 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             runId,
             ControllerEventTypes.StaleRecovered,
             $"Stale run recovered: no heartbeat or final event received within the timeout. " +
-            $"Transitioned from {RunLifecycleState.AwaitingResult} to {RunLifecycleState.NeedsHuman}.",
+            $"Transitioned from {run.Status} to {RunLifecycleState.NeedsHuman}.",
             new Dictionary<string, object?>
             {
-                ["previousState"] = RunLifecycleState.AwaitingResult.ToString(),
+                ["previousState"] = run.Status.ToString(),
                 ["targetState"] = RunLifecycleState.NeedsHuman.ToString(),
                 ["lastHeartbeatAt"] = run.LastHeartbeatAt?.ToString("O"),
                 ["startedAt"] = run.StartedAt?.ToString("O"),
@@ -1036,11 +1037,12 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
                 $"Cannot recover stale run '{staleRunId}': run is already in terminal state '{staleRun.Status}'.");
         }
 
-        if (staleRun.Status != RunLifecycleState.AwaitingResult)
+        if (staleRun.Status != RunLifecycleState.AwaitingResult
+            && staleRun.Status != RunLifecycleState.AgentRunning)
         {
             throw new InvalidOperationException(
                 $"Cannot recover stale run '{staleRunId}': run is in state '{staleRun.Status}', " +
-                "only runs in AwaitingResult can be recovered as stale.");
+                "only runs in AwaitingResult or AgentRunning can be recovered as stale.");
         }
 
         // StaleTimeout is a non-retryable failure — it goes straight to NeedsHuman.
@@ -1052,11 +1054,11 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             staleRunId,
             ControllerEventTypes.StaleRecovered,
             $"Stale run recovered: no heartbeat or final event received within the timeout. " +
-            $"Transitioned from {RunLifecycleState.AwaitingResult} to {RunLifecycleState.NeedsHuman}. " +
+            $"Transitioned from {staleRun.Status} to {RunLifecycleState.NeedsHuman}. " +
             $"Note: StaleTimeout is a non-retryable failure and does NOT trigger run-level retry.",
             new Dictionary<string, object?>
             {
-                ["previousState"] = RunLifecycleState.AwaitingResult.ToString(),
+                ["previousState"] = staleRun.Status.ToString(),
                 ["targetState"] = RunLifecycleState.NeedsHuman.ToString(),
                 ["lastHeartbeatAt"] = staleRun.LastHeartbeatAt?.ToString("O"),
                 ["startedAt"] = staleRun.StartedAt?.ToString("O"),

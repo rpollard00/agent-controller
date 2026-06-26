@@ -25,8 +25,8 @@ namespace AgentController.Api;
 /// runtime is registered, the worker records lifecycle events and stops at
 /// <see cref="RunLifecycleState.AwaitingResult"/> as before.
 ///
-/// Also detects and recovers stale runs stuck in AwaitingResult past the
-/// configured <see cref="AgentControllerOptions.StaleTimeoutSeconds"/>.
+/// Also detects and recovers stale runs stuck in AwaitingResult or AgentRunning
+/// past the configured <see cref="AgentControllerOptions.StaleTimeoutSeconds"/>.
 ///
 /// Seam: kept in the same host as the API for the prototype; a future split can
 /// move this into a separate deployable without changing the domain or application contracts.
@@ -1226,8 +1226,8 @@ public sealed partial class PollingWorker : BackgroundService
 
     /// <summary>
     /// Find and recover runs that are stuck in <see cref="RunLifecycleState.AwaitingResult"/>
-    /// past the configured stale timeout. StaleTimeout is a non-retryable failure
-    /// and goes straight to NeedsHuman (not retried).
+    /// or <see cref="RunLifecycleState.AgentRunning"/> past the configured stale timeout.
+    /// StaleTimeout is a non-retryable failure and goes straight to NeedsHuman (not retried).
     /// </summary>
     private async Task RecoverStaleRunsAsync(
         IRunLifecycleService lifecycle,
