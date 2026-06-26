@@ -1816,6 +1816,10 @@ The controller and pi-materia interact through:
    - `CONTROLLER_RUN_ID` — run identifier for event correlation
    - `CONTROLLER_EVENT_URL` — webhook URL for pi-materia to POST events
    - `CONTROLLER_CONTEXT_DIR` — path to the context file directory
+   - `AZURE_DEVOPS_EXT_PAT` — forwarded from controller's `AZURE_DEVOPS_PAT`
+     (silent skip if source unset)
+   - `AZURE_DEVOPS_PAT` — forwarded from controller's `AZURE_DEVOPS_PAT`
+     (silent skip if source unset)
 
 3. **Runtime events (inbound webhook).** pi-materia POSTs `runtime.*` events
 to `POST /runs/{runId}/events` over HTTP. The minimal required events are
@@ -1838,8 +1842,13 @@ synchronously via RPC. All observability comes from pi-materia POSTing
 endpoint. If the webhook fails, the controller can recycle/restart jobs and
 update its own state.
 
-The controller injects only three environment variables:
+The controller injects three controller-owned environment variables:
 `CONTROLLER_RUN_ID`, `CONTROLLER_EVENT_URL`, and `CONTROLLER_CONTEXT_DIR`.
+Additionally, environment variables configured in
+`RuntimeOptions.ForwardEnvironmentVariables` are forwarded from the controller's
+own process environment into the pi child (default: `AZURE_DEVOPS_PAT` →
+`AZURE_DEVOPS_EXT_PAT` and `AZURE_DEVOPS_PAT`). Entries whose source is unset
+or empty are silently skipped.
 Stdout/stderr are drained to `logs/pi.stdout.log` and `logs/pi.stderr.log`
 (§3.10) — this captures PTY-normalized output as a diagnostic artifact.
 There is no heartbeat monitoring, no `WaitForExit`, and no liveness polling.
@@ -1963,6 +1972,10 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
        CONTROLLER_RUN_ID={spec.RunId}
        CONTROLLER_EVENT_URL={ControllerBaseUrl}/runs/{runId}/events
        CONTROLLER_CONTEXT_DIR={contextDir}
+       AZURE_DEVOPS_EXT_PAT=(from AZURE_DEVOPS_PAT, silent skip if unset)
+       AZURE_DEVOPS_PAT=(from AZURE_DEVOPS_PAT, silent skip if unset)
+     The forwarded variables are read from
+     RuntimeOptions.ForwardEnvironmentVariables (target→source map).
 
 3. START process
    - Call Process.Start(), register the SessionHandle (Process, stdin writer,
@@ -2087,6 +2100,10 @@ Markdown rendered from `WorkCandidate.AcceptanceCriteria` dictionary.
 | `CONTROLLER_RUN_ID` | `run_a1b2c3d4` | Run identifier for event correlation |
 | `CONTROLLER_EVENT_URL` | `http://localhost:5103/runs/run_a1b2c3d4/events` | HTTP webhook endpoint for runtime events (primary and only channel) |
 | `CONTROLLER_CONTEXT_DIR` | `/home/user/.agent-work-controller/runs/run_a1b2c3d4/context` | Path to context file directory |
+| `AZURE_DEVOPS_EXT_PAT` | (from `AZURE_DEVOPS_PAT`) | Azure DevOps PAT forwarded for `az` extension / CLI auth. Silently skipped if source is unset or empty. |
+| `AZURE_DEVOPS_PAT` | (from `AZURE_DEVOPS_PAT`) | Azure DevOps PAT forwarded for any pi tooling that reads it directly by this name. Silently skipped if source is unset or empty. |
+
+The forwarded variables are configured via `RuntimeOptions.ForwardEnvironmentVariables` — a target→source map that reads from the controller's own process environment and injects into the pi child. Entries whose source is unset or empty are silently skipped (no exception). The default map forwards `AZURE_DEVOPS_PAT` to both `AZURE_DEVOPS_EXT_PAT` and `AZURE_DEVOPS_PAT` on the child.
 
 ### Process Invocation
 
@@ -2168,6 +2185,12 @@ When emitting `runtime.completed`, pi-materia sets `payload.outcome` to one of:
 │   CONTROLLER_RUN_ID      — controller run identifier            │
 │   CONTROLLER_EVENT_URL   — HTTP webhook for runtime events      │
 │   CONTROLLER_CONTEXT_DIR — path to context files                │
+│   AZURE_DEVOPS_EXT_PAT   — forwarded from controller's          │
+│                            AZURE_DEVOPS_PAT (silent skip        │
+│                            if source unset)                     │
+│   AZURE_DEVOPS_PAT       — forwarded from controller's          │
+│                            AZURE_DEVOPS_PAT (silent skip        │
+│                            if source unset)                     │
 │                                                                 │
 │ Invocation (session-tracked PTY shell):                          │
 │   pi "/materia loadout Elena" "/materia cast {task}"            │

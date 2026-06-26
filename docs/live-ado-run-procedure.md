@@ -433,6 +433,37 @@ stderr log signals a PTY or launch failure rather than a pipe-buffer stall.
 - Runs in `AwaitingResult` without a heartbeat for `staleTimeoutSeconds` (default: 1800s) are marked `NeedsHuman` with `agent-needs-human` tag.
 - To retry: remove `agent-needs-human` tag, set state back to an eligible state, and re-add `agent-ready`.
 
+### `AZURE_DEVOPS_PAT` or `AZURE_DEVOPS_EXT_PAT` not found in pi child
+
+The pi process runs inside an ephemeral PTY shell and does not inherit the full
+parent environment by default. The controller forwards specific environment
+variables via the `ForwardEnvironmentVariables` configuration map
+(`RuntimeOptions.ForwardEnvironmentVariables`). By default this forwards
+`AZURE_DEVOPS_PAT` from the controller's own process environment to both
+`AZURE_DEVOPS_EXT_PAT` (used by the Azure DevOps CLI / `az` extension) and
+`AZURE_DEVOPS_PAT` on the pi child. Entries whose source is unset or empty are
+silently skipped — the variable is simply not injected.
+
+To resolve:
+
+1. **Ensure `AZURE_DEVOPS_PAT` is exported in the controller's launch environment.**
+   If running via `dotnet run`, set it in the same shell:
+   ```bash
+   export AZURE_DEVOPS_PAT=your_pat_here
+   dotnet run --project src/AgentController.Api
+   ```
+   If running under systemd, add it to the unit's `[Service]` section:
+   ```ini
+   [Service]
+   Environment=AZURE_DEVOPS_PAT=your_pat_here
+   ```
+2. **Verify the forward map is correct.** The default map is sufficient for most
+   setups. To override, add `forwardEnvironmentVariables` under `runtime` in
+   `appsettings` (see `appsettings.example.json` for the config key shape).
+3. **Check `logs/pi.stderr.log`** for authentication errors from the pi child.
+   If the PAT was not forwarded, pi's Azure DevOps tooling will fail with
+   credential errors rather than completing the cast.
+
 ## 9. Stopping the Controller
 
 Press `Ctrl+C` to stop. The controller handles graceful shutdown:
