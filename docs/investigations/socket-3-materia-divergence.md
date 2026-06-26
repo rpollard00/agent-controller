@@ -1,103 +1,84 @@
-# Investigation: Socket-3 Auto-Plana → Interactive-Plani Materia Resolution Divergence
+# Investigation: Orphaned pi-materia Run (run_88bfd100311a48c9accdb88626b9b3e1)
 
 ## Summary
 
-The "Biggs" loadout (user copy of `default:full-auto`) has Socket-3 bound to `Interactive-Plani` (multiTurn=true) instead of a single-turn planner like `Auto-Plan`. This causes autonomous agent-controller runs to stall because the controller never sends `/materia continue`.
+The pi-materia loadout died after completing two full work-item iterations (Socket-4 visits 1-3) and partway through a third, leaving the agent-controller run orphaned in `AgentRunning` state. The run never emitted `runtime.accepted` or any webhook events because eventing was disabled in the agent_router config. Even if events had fired, stale-run recovery was structurally blind to runs stuck in `AgentRunning` — it only covers `AwaitingResult`.
 
-## Evidence Trail
+**Cast:** `2026-06-26T17-17-28-071Z`
+**Run:** `run_88bfd100311a48c9accdb88626b9b3e1`
+**Loadout:** Biggs (`user:rude-copy:15d29129-5e29-4bb2-8562-0356fc3ebc2f`)
+**Agent:** Elena / Auto-Plana (via `Interactive-Plani` on Socket-3)
 
-### 1. Project Config (`.pi/pi-materia.json`)
+## Execution Timeline
 
-```json
-{
-  "activeLoadoutId": "user:rude-copy:15d29129-5e29-4bb2-8562-0356fc3ebc2f",
-  "activeLoadout": "Biggs"
-}
-```
+The cast executed the following socket sequence (from `events.jsonl`):
 
-The project selects the "Biggs" loadout.
+| Order | Socket | Materia | Work Item | Outcome |
+|-------|--------|---------|-----------|---------|
+| 1 | Socket-1 | Ignore-Artifacts | — | Completed |
+| 2 | Socket-2 | Blackbelt-Bootstrap | — | Completed |
+| 3 | Socket-3 | Interactive-Plani | — | Completed (planning phase) |
+| 4 | Socket-8 | Commit-Sigil | — | Completed (sigil check) |
+| 5 | Socket-4 (v1) | Builda | WI-1: feat(api): add request-level observability | Completed |
+| 6 | Socket-5 (v1) | Auto-Evala | WI-1 | Completed (satisfied) |
+| 7 | Socket-6 (v1) | Blackbelt-Maintain | WI-1 | Completed (jj checkpoint) |
+| 8 | Socket-4 (v2) | Builda | WI-2: fix(api): log field-validation rejections | Completed |
+| 9 | Socket-5 (v2) | Auto-Evala | WI-2 | Completed (satisfied) |
+| 10 | Socket-6 (v2) | Blackbelt-Maintain | WI-2 | Completed (jj checkpoint) |
+| 11 | Socket-4 (v3) | Builda | WI-3: fix(runtime): extend stale-run recovery | Completed |
+| 12 | Socket-5 (v3) | Auto-Evala | WI-3 | Completed (satisfied) |
+| 13 | Socket-6 (v3) | Blackbelt-Maintain | WI-3 | Completed (jj checkpoint) |
+| 14 | Socket-4 (v4) | Builda | WI-4: chore(docs): correct stale socket-3 investigation | **DIED — awaiting_agent_response** |
 
-### 2. Config Source Chain
+The last event in `events.jsonl` is an `async_prompt_dispatch_attempt` for Socket-4 visit 4. There is no `socket_end`, no `cast_end`, and no `runtime.*` events anywhere in the log.
 
-From `config.resolved.json`:
+## Root Causes
 
-```
-/home/reese/.pi/agent/git/github.com/rpollard00/pi-materia/config/default.json
-  < /home/reese/.config/pi/pi-materia/materia.json
-  < /home/reese/projects/agent_router/.pi/pi-materia.json
-```
+### 1. Eventing disabled in agent_router config (`eventing.enabled=false`)
 
-Three layers: default shipped config → user global config → project-local config.
+The agent_router configuration has `eventing.enabled=false` with empty presets. This means pi-materia never fires webhook callbacks to the agent-controller at `/runs/{runId}/events`. Without these events:
 
-### 3. Loadout Comparison (all from `config.resolved.json`)
+- No `runtime.accepted` is emitted, so the run never transitions from `AgentRunning` to `AwaitingResult`
+- No `runtime.completed` or `runtime.failed` is emitted, so the controller has no signal that the loadout finished (or died)
+- The run stays in `AgentRunning` indefinitely — there is no code path to detect the orphan
 
-| Loadout | Source | Origin | Socket-3 Materia | multiTurn |
-|---------|--------|--------|------------------|-----------|
-| Full-Auto | `default` | — | `Auto-Plan` | false |
-| **Biggs** | `user` | `default:full-auto` | **`Interactive-Plani`** | **true** |
-| Reno | `user` | `default:full-auto` | `Auto-Plan` | false |
+**Evidence:** `events.jsonl` contains 152 events, all `advancement_lifecycle` or `socket_start` types. Zero `runtime.*` events. Zero webhook-related events.
 
-**Biggs** is the outlier — it's a user copy of Full-Auto but Socket-3 was changed from `Auto-Plan` (single-turn) to `Interactive-Plani` (multi-turn).
+### 2. Stale-run recovery excludes `AgentRunning` state
 
-### 4. Cast Runtime Events (`events.jsonl`)
+`FindStaleAsync` (EfAgentRunStore.cs:183) and `RecoverStaleRunWithRetryAsync` (RunLifecycleService.cs:1021) only handle runs in `AwaitingResult`. A fire-and-forget pi-materia run that dies before emitting `runtime.accepted` never advances past `AgentRunning`, so stale recovery is structurally blind to it.
 
-From cast `2026-06-25T15-44-35-220Z`:
+This is the structural blind spot: even if the polling worker runs on schedule, it finds zero stale runs because the orphaned run is in `AgentRunning`, not `AwaitingResult`.
 
-```json
-{"type":"cast_start","data":{"pipeline":{"sockets":{"Socket-3":{"materia":"Interactive-Plani","empty":false}}},"loadout":"Biggs"}}
-{"type":"socket_start","data":{"socket":"Socket-3","materia":"Interactive-Plani","materiaLabel":"Interactive-Plani","visit":1}}
-{"type":"materia_model_settings","data":{"socket":"Socket-3","materia":"Interactive-Plani","materiaModel":{"model":"glm-5.2","provider":"zai","thinking":"high"}}}
-```
+### 3. Socket-3 LLM hang / process termination
 
-At cast start, pi-materia resolved Socket-3 to `Interactive-Plani` — exactly matching the Biggs loadout config. The resolution itself is **correct**; the loadout is **misconfigured**.
+The pi-materia process died while Socket-4 (Builda) was awaiting an agent response for WI-4. The exact cause of the process death is not fully determined from the event log — it could be an LLM timeout, OOM, or signal termination. What is clear is that no graceful shutdown occurred (no `cast_end`, no error event).
 
-### 5. Cast Manifest (`manifest.json`)
+## Why the Old Investigation Was Wrong
 
-```json
-{"phase":"Socket-3","socket":"Socket-3","materia":"Interactive-Plani","materiaModel":{"model":"glm-5.2","provider":"zai","thinking":"high"}}
-```
+The previous version of this document described a "Biggs/Interactive-Plani multiTurn stall" where the controller never sent `/materia continue`. That was based on an earlier cast (`2026-06-25T15-44-35-220Z`) and an incomplete analysis. The actual issue for this run is different:
 
-Confirms `Interactive-Plani` was the materia that executed.
+- The `Interactive-Plani` on Socket-3 **did** complete successfully (it produced the plan and advanced to Socket-8)
+- The run executed 3 full work-item loops and was partway through a 4th before dying
+- The orphan was caused by eventing being off + stale recovery not covering `AgentRunning`, not by a multiTurn stall
 
-## Root Cause
+## Remediation (Implemented)
 
-**The "Biggs" loadout's Socket-3 was manually changed from `Auto-Plan` to `Interactive-Plani` at some point after the loadout was created as a copy of `default:full-auto`.**
+The following code changes address the root causes:
 
-The `user:rude-copy:15d29129-5e29-4bb2-8562-0356fc3ebc2f` ID indicates the loadout was created via a "rude copy" mechanism (a user-initiated copy of the default loadout). At copy time or during subsequent refinement, Socket-3's materia binding was changed.
+1. **feat(api): add request-level observability for event ingestion** — Information-level logging for every POST to `/runs/{runId}/events` so webhook activity (or lack thereof) is visible at default log levels. Also logs the resolved `ControllerBaseUrl` and constructed event URL at run start.
 
-The `config.resolved.json` shows that `Interactive-Plani` is defined in the `materia` section with `"multiTurn": true`. This is the interactive planning materia that requires human `/materia continue` input to finalize its plan — it can never complete under autonomous agent-controller eventing.
+2. **fix(api): log field-validation rejections at Information** — Promotes field-validation rejections in `IngestRuntimeEventCommandHandler` from Debug to Information, so malformed webhook events are observable without Debug logging.
 
-### Why the divergence happened
+3. **fix(runtime): extend stale-run recovery to `AgentRunning` state** — `FindStaleAsync` now queries both `AwaitingResult` and `AgentRunning` runs. `RecoverStaleRunWithRetryAsync` accepts `AgentRunning` runs with a configurable cutoff threshold (based on `StartedAt`), synthesizing a failure → `NeedsHuman` transition instead of orphaning.
 
-1. **Loadout copy**: Biggs was created as a copy of Full-Auto (`originDefaultId: "default:full-auto"`)
-2. **Materia name remapping**: The copy process (or subsequent manual edit) changed materia names to use the `-a` suffixed variants (e.g., `Build` → `Builda`, `Auto-Eval` → `Auto-Evala`, `Narrate` → `Narrata`). These are custom materia definitions with different model configurations.
-3. **Socket-3 exception**: While most sockets got remapped to `-a` variants (which are single-turn), Socket-3 was bound to `Interactive-Plani` — the `-i` suffixed interactive variant with `multiTurn: true`
-4. **No validation**: Neither the loadout copy mechanism nor the pi-materia runtime validated that a multiTurn materia on a planning socket would be incompatible with autonomous execution
-
-### The `-a` / `-i` suffix pattern
-
-The resolved config reveals a naming convention for custom materia variants:
-
-| Base Materia | `-a` variant (single-turn) | `-i` variant (multi-turn) |
-|---|---|---|
-| `Auto-Plan` | `Auto-Plana` | — |
-| `Interactive-Plan` | — | `Interactive-Plani` |
-| `Build` | `Builda` | `Buildi` |
-| `Auto-Eval` | `Auto-Evala` | `Auto-Evali` |
-| `Narrate` | `Narrata` | `Narrati` |
-
-The Biggs loadout correctly uses `-a` variants for Build, Eval, and Narrate sockets. But Socket-3 (planning) was bound to `Interactive-Plani` (`-i` variant, multiTurn) instead of `Auto-Plana` (`-a` variant, single-turn).
-
-## Resolution Steps
-
-1. **Immediate fix**: Change Biggs Socket-3 materia from `Interactive-Plani` to `Auto-Plana` (or `Auto-Plan`)
-2. **Defense-in-depth**: The agent-controller's multiTurn fail-fast guard (implemented in a related work item) prevents token-sinking by detecting multiTurn agent sockets at cast_start and aborting the run
-3. **Prevention**: Add validation in the loadout copy/refinement UI to warn when a multiTurn materia is bound to a socket that will be used in autonomous mode
+4. **Config fix (user-owned)**: Enable eventing in agent_router config by setting `eventing.enabled=true` and configuring the `agent-controller` preset. The runId wiring is already correct (resolved via `CONTROLLER_RUN_ID` env / `CONTROLLER_CONTEXT_DIR/controller-run.json` / explicit param).
 
 ## Artifacts Examined
 
-- `.pi/pi-materia.json` — project-level active loadout selection
-- `.pi/pi-materia/2026-06-25T15-44-35-220Z/config.resolved.json` — full resolved config with all loadouts and materia definitions
-- `.pi/pi-materia/2026-06-25T15-44-35-220Z/events.jsonl` — runtime event log showing cast_start with Socket-3 → Interactive-Plani
-- `.pi/pi-materia/2026-06-25T15-44-35-220Z/manifest.json` — cast manifest confirming Interactive-Plani execution
-- `.pi/pi-materia/2026-06-24T20-48-08-314Z/manifest.json` — earlier cast also showing Socket-3 → Interactive-Plani (confirming the issue predates the E2E run)
+- `.pi/pi-materia/2026-06-26T17-17-28-071Z/events.jsonl` — 152 runtime events, zero `runtime.*` events, last entry is `async_prompt_dispatch_attempt` for Socket-4 visit 4
+- `.pi/pi-materia/2026-06-26T17-17-28-071Z/manifest.json` — Cast manifest showing Biggs loadout, Interactive-Plani on Socket-3, Elena/Auto-Plana agent
+- `.pi/pi-materia/2026-06-26T17-17-28-071Z/config.resolved.json` — Full resolved config with all loadouts and materia definitions
+- `src/AgentController.Infrastructure/Data/Repositories/EfAgentRunStore.cs` — `FindStaleAsync` (line 183)
+- `src/AgentController.Application/Services/RunLifecycleService.cs` — `RecoverStaleRunWithRetryAsync` (line 1021)
+- `src/AgentController.Api/PollingWorker.cs` — `RecoverStaleRunsAsync` polling worker (line 1232)
