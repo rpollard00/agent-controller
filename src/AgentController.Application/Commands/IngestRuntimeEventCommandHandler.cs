@@ -32,7 +32,7 @@ public sealed partial class IngestRuntimeEventCommandHandler(
         if (string.IsNullOrWhiteSpace(command.EventType))
         {
             Log.UnprocessableValidation(
-                _logger, command.RouteRunId, command.EventId, "eventType missing");
+                _logger, command.EventType, command.RouteRunId, command.EventId, "eventType missing");
             return new IngestRuntimeEventResult(
                 IngestRuntimeEventStatus.Unprocessable,
                 "Request body is missing required field 'eventType'.",
@@ -44,7 +44,7 @@ public sealed partial class IngestRuntimeEventCommandHandler(
         if (string.IsNullOrWhiteSpace(command.EventId))
         {
             Log.UnprocessableValidation(
-                _logger, command.RouteRunId, command.EventId, "eventId missing");
+                _logger, command.EventType, command.RouteRunId, command.EventId, "eventId missing");
             return new IngestRuntimeEventResult(
                 IngestRuntimeEventStatus.Unprocessable,
                 "Request body is missing required field 'eventId'.",
@@ -57,7 +57,7 @@ public sealed partial class IngestRuntimeEventCommandHandler(
             && !command.BodyRunId.Equals(command.RouteRunId, StringComparison.Ordinal))
         {
             Log.UnprocessableValidation(
-                _logger, command.RouteRunId, command.EventId,
+                _logger, command.EventType, command.RouteRunId, command.EventId,
                 "runId mismatch");
             return new IngestRuntimeEventResult(
                 IngestRuntimeEventStatus.Unprocessable,
@@ -71,7 +71,7 @@ public sealed partial class IngestRuntimeEventCommandHandler(
         if (command.Severity.HasValue && !Enum.IsDefined(command.Severity.Value))
         {
             Log.UnprocessableValidation(
-                _logger, command.RouteRunId, command.EventId,
+                _logger, command.EventType, command.RouteRunId, command.EventId,
                 "unsupported severity");
             return new IngestRuntimeEventResult(
                 IngestRuntimeEventStatus.Unprocessable,
@@ -86,7 +86,7 @@ public sealed partial class IngestRuntimeEventCommandHandler(
             && command.OccurredAt.Value > DateTimeOffset.UtcNow.AddMinutes(5))
         {
             Log.UnprocessableValidation(
-                _logger, command.RouteRunId, command.EventId, "occurredAt too far in future");
+                _logger, command.EventType, command.RouteRunId, command.EventId, "occurredAt too far in future");
             return new IngestRuntimeEventResult(
                 IngestRuntimeEventStatus.Unprocessable,
                 $"Field 'occurredAt' is too far in the future. " +
@@ -267,10 +267,10 @@ public sealed partial class IngestRuntimeEventCommandHandler(
             ILogger logger, string eventType, string runId, string eventId, string status);
 
         [LoggerMessage(
-            Level = LogLevel.Debug,
-            Message = "Runtime event validation failed — runId={RunId}, eventId={EventId}, " +
-                      "reason={Reason}")]
+            Level = LogLevel.Information,
+            Message = "Runtime event validation failed — eventType={EventType}, runId={RunId}, " +
+                      "eventId={EventId}, reason={Reason}")]
         public static partial void UnprocessableValidation(
-            ILogger logger, string runId, string? eventId, string reason);
+            ILogger logger, string? eventType, string runId, string? eventId, string reason);
     }
 }
