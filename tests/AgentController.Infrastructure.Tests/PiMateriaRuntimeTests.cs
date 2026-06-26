@@ -1477,6 +1477,205 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         );
     }
 
+    // ── E2E integration: multi-socket pipeline reaches runtime.completed ──
+    //
+    // Acceptance test for the loop working end-to-end. Mirrors the failing
+    // board-item log: multiple agent_end events (one per socket), interleaved
+    // runtime.status socket-completion events, telemetry-only pi-core events
+    // (ignored per the ignore-list), and a final cast_end + runtime.completed
+    // webhook.
+
+    [Fact]
+    public async Task StartAsync_MultiSocketPipelineE2E_ReachesRuntimeCompletedWithoutMidFlightAbort()
+    {
+        // Simulate the event sequence from the failed E2E log:
+        // 1. cast_start with 3 agent sockets (Plani → Builda → Evala)
+        // 2. Telemetry events (extension_ui_request, session_info_changed, etc.)
+        // 3. agent_end for Socket-3 (Interactive-Plani) — non-terminal
+        // 4. More telemetry events
+        // 5. agent_end for Socket-4 (Builda) — non-terminal
+        // 6. agent_end for Socket-5 (Auto-Evala) — non-terminal
+        // 7. cast_end — whole-cast terminal signal
+        // 8. runtime.completed webhook — controller-confirmed terminal
+        WriteFakePiScript(_fakePiPath, FakePiVariant.MultiSocketPipelineE2E);
+
+        await using var harness = await NewHarnessAsync(_fakePiPath);
+        var spec = await BuildSpecAsync(harness, "Multi-socket pipeline E2E");
+
+        var runtime = harness.Runtime!;
+        _ = await runtime.StartAsync(spec, CancellationToken.None);
+
+        // The run should reach Completed (from the runtime.completed webhook).
+        await WaitForStateAsync(
+            spec.RunId,
+            s => s == RunLifecycleState.Completed,
+            TimeSpan.FromSeconds(15)
+        );
+
+        var run = await _runStore.GetByIdAsync(spec.RunId, CancellationToken.None);
+        Assert.NotNull(run);
+        Assert.Equal(RunLifecycleState.Completed, run!.Status);
+
+        var events = await _eventStore.ListByRunIdAsync(spec.RunId, CancellationToken.None);
+
+        // ASSERTION: the run does NOT transition to terminal on the first agent_end.
+        // This is the key regression assertion — the original E2E aborted mid-flight
+        // because the first agent_end was misread as overall completion, orphaning
+        // downstream sockets in an AwaitingResult state.
+        Assert.Contains(events, e => e.EventType == RuntimeEventTypes.Completed);
+
+        // ASSERTION: every socket completes (3 agent_end events → 3 socket completion status events).
+        var socketCompletedEvents = events.Where(e =>
+            e.EventType == RuntimeEventTypes.Status &&
+            e.Message != null &&
+            e.Message.StartsWith("Socket ", StringComparison.Ordinal) &&
+            e.Message.Contains("completed", StringComparison.OrdinalIgnoreCase)
+        ).ToList();
+        Assert.Equal(3, socketCompletedEvents.Count);
+
+        // Verify each expected socket appears in a completion event.
+        var socketMessages = socketCompletedEvents.Select(e => e.Message!).ToList();
+        Assert.Contains(socketMessages, m => m.Contains("Socket-3", StringComparison.Ordinal));
+        Assert.Contains(socketMessages, m => m.Contains("Socket-4", StringComparison.Ordinal));
+        Assert.Contains(socketMessages, m => m.Contains("Socket-5", StringComparison.Ordinal));
+
+        // ASSERTION: cast_end status event was emitted (whole-cast completion).
+        var castEndEvents = events.Where(e =>
+            e.EventType == RuntimeEventTypes.Status &&
+            e.Message != null &&
+            e.Message.Contains("Cast completed", StringComparison.OrdinalIgnoreCase)
+        ).ToList();
+        Assert.NotEmpty(castEndEvents);
+
+        // ASSERTION: runtime.completed webhook drove the run to terminal.
+        var completedEvents = events.Where(e => e.EventType == RuntimeEventTypes.Completed).ToList();
+        Assert.NotEmpty(completedEvents);
+
+        // ASSERTION: keepalive-stall is NOT triggered during healthy progression.
+        Assert.DoesNotContain(
+            events,
+            e => e.EventType == RuntimeEventTypes.FailedRetryable &&
+                 e.Message != null &&
+                 e.Message.Contains("Keepalive-stall", StringComparison.OrdinalIgnoreCase)
+        );
+
+        // ASSERTION: no unrecognized-type warnings (telemetry events were silently ignored).
+        Assert.DoesNotContain(
+            events,
+            e => e.Message != null && e.Message.Contains("unrecognized", StringComparison.OrdinalIgnoreCase)
+        );
+    }
+
+    // ── Regression: orphaned AwaitingResult → keepalive-stall → retryable failure ──
+    //
+    // Simulates a socket graph that never emits cast_end (e.g. pi-materia dies
+    // mid-cast, environment unreachable, process crash). The keepalive-stall
+    // detector should fire and fail the run with a retryable error.
+
+    [Fact]
+    public async Task StartAsync_OrphanedAwaitingResult_KeepaliveStallFiresWithRetryableFailure()
+    {
+        // The fake pi accepts the prompt, emits cast_start with 3 agent sockets,
+        // emits agent_end for the first socket, then goes completely silent
+        // (no more stdout events, no cast_end, no webhook events).
+        // This simulates an orphaned AwaitingResult where the socket graph
+        // never emits cast_end.
+        WriteFakePiScript(_fakePiPath, FakePiVariant.OrphanedAwaitingResult);
+
+        var harness = await NewHarnessAsync(_fakePiPath);
+
+        var runId = await SeedRunAsync();
+        var envDir = Path.Combine(_tempRoot, runId);
+        var contextDir = Path.Combine(envDir, "context");
+        var repoDir = Path.Combine(envDir, "repo");
+        Directory.CreateDirectory(contextDir);
+        Directory.CreateDirectory(repoDir);
+        await File.WriteAllTextAsync(
+            Path.Combine(contextDir, "work-item.md"),
+            "# Orphaned AwaitingResult regression\n\nSome acceptance criteria.\n"
+        );
+
+        // Use a very short stall threshold for the test:
+        // HeartbeatIntervalSeconds=1, KeepaliveStallSeconds=3.
+        // Effective deadline = max(3, 1×3) = 3 seconds.
+        // Disable synthetic heartbeat so the stall detector can fire.
+        var runtime = new PiMateriaRuntime(
+            _scopeFactory,
+            new StaticOptionsMonitor<RuntimeOptions>(
+                new RuntimeOptions
+                {
+                    Provider = "PiMateria",
+                    PiExecutablePath = harness.FakePiPath,
+                    ControllerBaseUrl = harness.BaseUrl,
+                    DefaultMateriaLoadout = "Wedge",
+                    HeartbeatIntervalSeconds = 1,
+                    KeepaliveStallSeconds = 3,
+                    DisableSyntheticHeartbeat = true,
+                    PromptAcceptanceTimeoutSeconds = 4,
+                    CancelGracePeriodSeconds = 3,
+                }
+            ),
+            _provider.GetRequiredService<ILogger<PiMateriaRuntime>>()
+        );
+
+        var spec = new AgentRunSpec
+        {
+            RunId = runId,
+            WorkRef = new ExternalWorkRef { Source = "LocalFile", ExternalId = "test-orphaned" },
+            EnvironmentHandle = new EnvironmentHandle { RootPath = envDir },
+            RepoCheckout = new RepositoryCheckout { LocalPath = repoDir, RepoKey = "widget" },
+        };
+
+        _ = await runtime.StartAsync(spec, CancellationToken.None);
+
+        // The stall detector should fire within the effective deadline (3s) plus margin.
+        await WaitForStateAsync(
+            runId,
+            s => s == RunLifecycleState.Failed,
+            TimeSpan.FromSeconds(15)
+        );
+
+        var run = await _runStore.GetByIdAsync(runId, CancellationToken.None);
+        Assert.NotNull(run);
+        Assert.Equal(RunLifecycleState.Failed, run!.Status);
+
+        var events = await _eventStore.ListByRunIdAsync(runId, CancellationToken.None);
+
+        // ASSERTION: the failure is a keepalive-stall with retryable=true.
+        var failureEvents = events.Where(e => e.EventType == RuntimeEventTypes.FailedRetryable).ToList();
+        Assert.NotEmpty(failureEvents);
+        var failureEvent = failureEvents.First();
+
+        Assert.True(
+            failureEvent.Message != null && failureEvent.Message.Contains("Keepalive-stall", StringComparison.OrdinalIgnoreCase),
+            $"Expected failure message to mention 'Keepalive-stall'. Got: {failureEvent.Message}"
+        );
+
+        Assert.NotNull(failureEvent.Payload);
+        Assert.True(
+            failureEvent.Payload!.TryGetValue("reason", out var reason) &&
+            reason?.ToString() == "keepalive_stall",
+            $"Expected payload reason='keepalive_stall'. Got: {string.Join(", ", failureEvent.Payload!.Select(kv => kv.Key + "=" + kv.Value))}"
+        );
+        Assert.True(
+            failureEvent.Payload!.TryGetValue("retryable", out var retryable) &&
+            retryable is true,
+            $"Expected payload retryable=true. Got: {string.Join(", ", failureEvent.Payload!.Select(kv => kv.Key + "=" + kv.Value))}"
+        );
+
+        // ASSERTION: the first socket's agent_end was processed (socket completion status event exists).
+        var socketCompletedEvents = events.Where(e =>
+            e.EventType == RuntimeEventTypes.Status &&
+            e.Message != null &&
+            e.Message.Contains("Socket", StringComparison.Ordinal) &&
+            e.Message.Contains("completed", StringComparison.OrdinalIgnoreCase)
+        ).ToList();
+        Assert.NotEmpty(socketCompletedEvents);
+
+        runtime.Dispose();
+        await harness.DisposeAsync();
+    }
+
     // ── Harness / fixture helpers ────────────────────────────────────
 
     /// <summary>
@@ -1850,6 +2049,8 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         TelemetryEventsIgnored,
         CastEndTerminal,
         MultiSocketAgentEndThenCastEnd,
+        MultiSocketPipelineE2E,
+        OrphanedAwaitingResult,
     }
 
     /// <summary>
@@ -1885,6 +2086,8 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
             FakePiVariant.TelemetryEventsIgnored => FakePiScripts.TelemetryEventsIgnored,
             FakePiVariant.CastEndTerminal => FakePiScripts.CastEndTerminal,
             FakePiVariant.MultiSocketAgentEndThenCastEnd => FakePiScripts.MultiSocketAgentEndThenCastEnd,
+            FakePiVariant.MultiSocketPipelineE2E => FakePiScripts.MultiSocketPipelineE2E,
+            FakePiVariant.OrphanedAwaitingResult => FakePiScripts.OrphanedAwaitingResult,
             _ => FakePiScripts.HappyPr,
         };
 
@@ -2607,6 +2810,118 @@ def main():
             send_response({'type': 'cast_end', 'castId': 'multi-socket-cast-end'})
             # Exit cleanly — the process exit handler synthesizes a terminal event from exit code 0.
             time.sleep(0.1)
+            return
+        if msg.get('type') == 'abort':
+            return
+
+main()
+""";
+
+        /// <summary>
+        /// E2E integration test: simulates the full multi-socket pipeline from the
+        /// failed board-item log. Emits cast_start with 3 agent sockets, interleaved
+        /// telemetry events (extension_ui_request, session_info_changed, etc.),
+        /// agent_end for each socket (non-terminal), cast_end (terminal), and a
+        /// runtime.completed webhook.
+        ///
+        /// This is the acceptance test proving the loop works end-to-end:
+        /// the runtime does NOT abort on the first agent_end, all sockets complete,
+        /// and cast_end + runtime.completed webhook mark the run terminal.
+        /// </summary>
+        public const string MultiSocketPipelineE2E =
+            Header
+            + """
+def main():
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return
+        try:
+            msg = json.loads(line)
+        except Exception:
+            continue
+        if msg.get('type') == 'prompt':
+            send_response({'type': 'response', 'command': 'prompt', 'success': True})
+            # cast_start with 3 agent sockets (Plani → Builda → Evala).
+            send_response({
+                'type': 'cast_start',
+                'castId': 'e2e-multi-socket-pipeline',
+                'eventing': {'preset': 'agent-controller'},
+                'sockets': [
+                    {'socketName': 'Socket-3', 'type': 'agent', 'materiaName': 'Interactive-Plani', 'multiTurn': False},
+                    {'socketName': 'Socket-4', 'type': 'agent', 'materiaName': 'Builda', 'multiTurn': False},
+                    {'socketName': 'Socket-5', 'type': 'agent', 'materiaName': 'Auto-Evala', 'multiTurn': False}
+                ]
+            })
+            # Telemetry events (should be silently ignored by the ignore-list).
+            send_response({'type': 'extension_ui_request', 'id': 'e2e-1', 'method': 'setWidget', 'widgetKey': 'materia', 'widgetLines': ['test'], 'widgetPlacement': 'belowEditor'})
+            send_response({'type': 'session_info_changed', 'name': 'e2e-session'})
+            send_response({'type': 'turn_start'})
+            # agent_end for Socket-3 (Interactive-Plani) — per-socket, non-terminal.
+            # The original E2E aborted mid-flight here because agent_end was misread as terminal.
+            send_response({'type': 'agent_end', 'socketName': 'Socket-3', 'messages': []})
+            # More telemetry between sockets.
+            send_response({'type': 'turn_end', 'message': {'role': 'assistant'}})
+            send_response({'type': 'tool_execution_start', 'toolCallId': 'e2e-tool-1', 'toolName': 'read', 'args': {'path': '.'}})
+            send_response({'type': 'tool_execution_end', 'toolCallId': 'e2e-tool-1', 'toolName': 'read', 'result': {'content': []}, 'isError': False})
+            # agent_end for Socket-4 (Builda) — per-socket, non-terminal.
+            send_response({'type': 'agent_end', 'socketName': 'Socket-4', 'messages': []})
+            # agent_end for Socket-5 (Auto-Evala) — per-socket, non-terminal.
+            send_response({'type': 'agent_end', 'socketName': 'Socket-5', 'messages': []})
+            # cast_end — whole-cast terminal signal. Runtime should shut down.
+            send_response({'type': 'cast_end', 'castId': 'e2e-multi-socket-pipeline'})
+            # Post runtime.completed webhook — controller-confirmed terminal.
+            time.sleep(0.05)
+            post_event({'eventId': 'e2e-completed', 'eventType': 'runtime.completed', 'occurredAt': '2026-06-25T00:00:01Z', 'severity': 'info', 'message': 'done', 'payload': {'outcome': 'no_changes_needed', 'summary': 'multi-socket pipeline E2E'}})
+            # Stay alive until the controller shuts us down.
+            continue
+        if msg.get('type') == 'abort':
+            return
+
+main()
+""";
+
+        /// <summary>
+        /// Regression variant: simulates an orphaned AwaitingResult where the
+        /// socket graph never emits cast_end. Emits cast_start with 3 agent sockets,
+        /// agent_end for the first socket, then goes completely silent.
+        /// The keepalive-stall detector should fire and fail the run with a
+        /// retryable error.
+        /// </summary>
+        public const string OrphanedAwaitingResult =
+            Header
+            + """
+def main():
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return
+        try:
+            msg = json.loads(line)
+        except Exception:
+            continue
+        if msg.get('type') == 'prompt':
+            send_response({'type': 'response', 'command': 'prompt', 'success': True})
+            # cast_start with 3 agent sockets.
+            send_response({
+                'type': 'cast_start',
+                'castId': 'orphaned-awaiting-result',
+                'eventing': {'preset': 'agent-controller'},
+                'sockets': [
+                    {'socketName': 'Socket-3', 'type': 'agent', 'materiaName': 'Interactive-Plani', 'multiTurn': False},
+                    {'socketName': 'Socket-4', 'type': 'agent', 'materiaName': 'Builda', 'multiTurn': False},
+                    {'socketName': 'Socket-5', 'type': 'agent', 'materiaName': 'Auto-Evala', 'multiTurn': False}
+                ]
+            })
+            # agent_end for Socket-3 — the first socket completes.
+            send_response({'type': 'agent_end', 'socketName': 'Socket-3', 'messages': []})
+            # Then go completely silent — no more stdout events, no cast_end,
+            # no webhook events. This simulates an orphaned AwaitingResult.
+            diag('orphaned-test: going silent after first agent_end...')
+            for _ in range(600):
+                if not sys.stdin.readline():
+                    break
+                time.sleep(0.1)
             return
         if msg.get('type') == 'abort':
             return
