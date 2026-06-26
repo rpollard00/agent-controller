@@ -117,6 +117,70 @@ public static class PiMateriaStdoutEventTypes
         MateriaEnd,
     };
 
+    // ── Telemetry-only pi-core event types (ignore list) ────────────
+    //
+    // These are pi-core internal telemetry events that carry no cast-lifecycle
+    // meaning. The runtime parser silently ignores them instead of treating them
+    // as contract drift. They are NOT part of the recognized lifecycle contract.
+    //
+    // To add a new telemetry type: add a const below and include it in
+    // TelemetryIgnoreList. Log at debug severity only. Do NOT add to
+    // AllRecognizedTypes or the lifecycle schema.
+
+    /// <summary>pi-core UI extension request (setWidget, notify, setStatus, etc.).</summary>
+    public const string TelemetryExtensionUiRequest = "extension_ui_request";
+
+    /// <summary>pi-core session info changed (session name update, etc.).</summary>
+    public const string TelemetrySessionInfoChanged = "session_info_changed";
+
+    /// <summary>pi-core message lifecycle: message start (telemetry for message framing).</summary>
+    public const string TelemetryMessageStart = "message_start";
+
+    /// <summary>pi-core message lifecycle: message end (telemetry for message framing).</summary>
+    public const string TelemetryMessageEnd = "message_end";
+
+    /// <summary>pi-core message update (thinking_delta, content_delta, etc.).</summary>
+    public const string TelemetryMessageUpdate = "message_update";
+
+    /// <summary>pi-core agent lifecycle: agent start (telemetry for agent turn tracking).</summary>
+    public const string TelemetryAgentStart = "agent_start";
+
+    /// <summary>pi-core turn lifecycle: turn start (telemetry for turn tracking).</summary>
+    public const string TelemetryTurnStart = "turn_start";
+
+    /// <summary>pi-core turn lifecycle: turn end (telemetry for turn tracking).</summary>
+    public const string TelemetryTurnEnd = "turn_end";
+
+    /// <summary>pi-core tool execution: tool call start (telemetry for tool invocation tracking).</summary>
+    public const string TelemetryToolExecutionStart = "tool_execution_start";
+
+    /// <summary>pi-core tool execution: tool call end (telemetry for tool result tracking).</summary>
+    public const string TelemetryToolExecutionEnd = "tool_execution_end";
+
+    /// <summary>
+    /// Returns the curated set of telemetry-only pi-core event types that the
+    /// runtime parser should silently ignore. These are NOT lifecycle events;
+    /// they are internal pi-core telemetry with no cast-lifecycle meaning.
+    /// </summary>
+    /// <remarks>
+    /// The ignore list must NOT contain any real lifecycle event types
+    /// (cast_start, cast_end, agent_end, materia_start, materia_end, response,
+    /// extension_error). Conformance tests assert this invariant.
+    /// </remarks>
+    public static IReadOnlySet<string> TelemetryIgnoreList { get; } = new HashSet<string>
+    {
+        TelemetryExtensionUiRequest,
+        TelemetrySessionInfoChanged,
+        TelemetryMessageStart,
+        TelemetryMessageEnd,
+        TelemetryMessageUpdate,
+        TelemetryAgentStart,
+        TelemetryTurnStart,
+        TelemetryTurnEnd,
+        TelemetryToolExecutionStart,
+        TelemetryToolExecutionEnd,
+    };
+
     /// <summary>
     /// Returns the set of terminal event types that signal the agent's work
     /// is complete and the runtime should initiate shutdown.

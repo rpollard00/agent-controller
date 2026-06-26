@@ -1001,6 +1001,61 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         );
     }
 
+    // ── Telemetry ignore list: telemetry types dropped, lifecycle types routed ──
+
+    [Fact]
+    public async Task StartAsync_TelemetryEventsIgnored_LifecycleEventsStillRoute()
+    {
+        // Emit all known telemetry-only pi-core event types plus real lifecycle
+        // events. The telemetry types should be silently ignored (no unrecognized
+        // warnings or run failures) and the lifecycle events should route correctly.
+        WriteFakePiScript(_fakePiPath, FakePiVariant.TelemetryEventsIgnored);
+
+        await using var harness = await NewHarnessAsync(_fakePiPath);
+        var spec = await BuildSpecAsync(harness, "Telemetry ignore list test");
+
+        var runtime = harness.Runtime!;
+        _ = await runtime.StartAsync(spec, CancellationToken.None);
+
+        // The runtime should recognize all lifecycle types and reach Completed.
+        await WaitForStateAsync(
+            spec.RunId,
+            s => s == RunLifecycleState.Completed || s == RunLifecycleState.Failed,
+            TimeSpan.FromSeconds(15)
+        );
+
+        var run = await _runStore.GetByIdAsync(spec.RunId, CancellationToken.None);
+        Assert.NotNull(run);
+        // The run should reach Completed (from the webhook), not Failed.
+        // If telemetry types were treated as unrecognized, the run would fail.
+        Assert.Equal(RunLifecycleState.Completed, run!.Status);
+
+        // Verify no unrecognized-type warnings in the events.
+        // Telemetry types must be silently ignored, not treated as contract drift.
+        var events = await _eventStore.ListByRunIdAsync(spec.RunId, CancellationToken.None);
+        Assert.DoesNotContain(
+            events,
+            e => e.Message != null && e.Message.Contains("unrecognized", StringComparison.OrdinalIgnoreCase)
+        );
+
+        // Verify the cast_start artifact was still ingested (lifecycle events route correctly).
+        var castStartEvents = events.Where(e =>
+            e.EventType == RuntimeEventTypes.Status &&
+            e.Message != null &&
+            e.Message.Contains("Cast started", StringComparison.OrdinalIgnoreCase)
+        ).ToList();
+        Assert.NotEmpty(castStartEvents);
+
+        // Verify the agent_end socket-completion status event was emitted.
+        var socketCompletedEvents = events.Where(e =>
+            e.EventType == RuntimeEventTypes.Status &&
+            e.Message != null &&
+            e.Message.Contains("Socket", StringComparison.OrdinalIgnoreCase) &&
+            e.Message.Contains("completed", StringComparison.OrdinalIgnoreCase)
+        ).ToList();
+        Assert.NotEmpty(socketCompletedEvents);
+    }
+
     // ── Regression: full-context cast task construction ──────────────
     //
     // Guards the fix for the E2E symptom where the agent self-terminated
@@ -1698,6 +1753,7 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         MultiSocketAgentEnd,
         BiggsLoadoutSocket3Divergence,
         KeepaliveStall,
+        TelemetryEventsIgnored,
     }
 
     /// <summary>
@@ -1730,6 +1786,7 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
             FakePiVariant.MultiSocketAgentEnd => FakePiScripts.MultiSocketAgentEnd,
             FakePiVariant.BiggsLoadoutSocket3Divergence => FakePiScripts.BiggsLoadoutSocket3Divergence,
             FakePiVariant.KeepaliveStall => FakePiScripts.KeepaliveStall,
+            FakePiVariant.TelemetryEventsIgnored => FakePiScripts.TelemetryEventsIgnored,
             _ => FakePiScripts.HappyPr,
         };
 
@@ -2309,6 +2366,56 @@ def main():
                     break
                 time.sleep(0.1)
             return
+        if msg.get('type') == 'abort':
+            return
+
+main()
+""";
+
+        /// <summary>
+        /// Emits all known telemetry-only pi-core event types followed by
+        /// lifecycle events (cast_start, agent_end, etc.), then posts a
+        /// runtime.completed webhook. The telemetry types should be silently
+        /// ignored (no unrecognized-type warnings) and the lifecycle events
+        /// should route correctly. The run should complete successfully.
+        /// </summary>
+        public const string TelemetryEventsIgnored =
+            Header
+            + """
+def main():
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return
+        try:
+            msg = json.loads(line)
+        except Exception:
+            continue
+        if msg.get('type') == 'prompt':
+            send_response({'type': 'response', 'command': 'prompt', 'success': True})
+            # Emit all telemetry-only pi-core event types from the ignore list.
+            # These should be silently ignored — no unrecognized-type warnings.
+            send_response({'type': 'extension_ui_request', 'id': 'test-1', 'method': 'setWidget', 'widgetKey': 'materia', 'widgetLines': ['test'], 'widgetPlacement': 'belowEditor'})
+            send_response({'type': 'session_info_changed', 'name': 'test-session'})
+            send_response({'type': 'message_start', 'message': {'role': 'custom', 'customType': 'pi-materia'}})
+            send_response({'type': 'message_end', 'message': {'role': 'assistant'}})
+            send_response({'type': 'message_update', 'assistantMessageEvent': {'type': 'thinking_delta'}})
+            send_response({'type': 'agent_start'})
+            send_response({'type': 'turn_start'})
+            send_response({'type': 'turn_end', 'message': {'role': 'assistant'}})
+            send_response({'type': 'tool_execution_start', 'toolCallId': 'test-tool-1', 'toolName': 'ls', 'args': {'path': '.'}})
+            send_response({'type': 'tool_execution_end', 'toolCallId': 'test-tool-1', 'toolName': 'ls', 'result': {'content': []}, 'isError': False})
+            # Now emit real lifecycle events that MUST still route correctly.
+            send_response({'type': 'cast_start', 'castId': 'telemetry-ignore-test', 'eventing': {'preset': 'agent-controller'}, 'sockets': [{'socketName': 'Socket-4', 'type': 'agent', 'materiaName': 'Builda', 'multiTurn': False}]})
+            send_response({'type': 'materia_start', 'materiaName': 'Builda', 'socketName': 'Socket-4'})
+            send_response({'type': 'materia_end', 'materiaName': 'Builda', 'socketName': 'Socket-4'})
+            send_response({'type': 'agent_end', 'socketName': 'Socket-4', 'messages': []})
+            send_response({'type': 'cast_end', 'castId': 'telemetry-ignore-test'})
+            # Post a completed webhook so the run reaches a terminal state.
+            time.sleep(0.05)
+            post_event({'eventId': 'fp-completed', 'eventType': 'runtime.completed', 'occurredAt': '2026-06-23T00:00:01Z', 'severity': 'info', 'message': 'done', 'payload': {'outcome': 'no_changes_needed', 'summary': 'telemetry ignored, lifecycle routed'}})
+            # Stay alive until the controller shuts us down.
+            continue
         if msg.get('type') == 'abort':
             return
 

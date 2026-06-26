@@ -286,4 +286,70 @@ public class PiMateriaStdoutEventContractTests
         Assert.True(materiaNameField.Required);
         Assert.Equal("string", materiaNameField.Type);
     }
+
+    // ── Telemetry ignore list ────────────────────────────────────────
+
+    [Fact]
+    public void TelemetryIgnoreList_ContainsExpectedTelemetryTypes()
+    {
+        // Every known telemetry-only type must be in the ignore list.
+        var expectedTelemetryTypes = new[]
+        {
+            PiMateriaStdoutEventTypes.TelemetryExtensionUiRequest,
+            PiMateriaStdoutEventTypes.TelemetrySessionInfoChanged,
+            PiMateriaStdoutEventTypes.TelemetryMessageStart,
+            PiMateriaStdoutEventTypes.TelemetryMessageEnd,
+            PiMateriaStdoutEventTypes.TelemetryMessageUpdate,
+            PiMateriaStdoutEventTypes.TelemetryAgentStart,
+            PiMateriaStdoutEventTypes.TelemetryTurnStart,
+            PiMateriaStdoutEventTypes.TelemetryTurnEnd,
+            PiMateriaStdoutEventTypes.TelemetryToolExecutionStart,
+            PiMateriaStdoutEventTypes.TelemetryToolExecutionEnd,
+        };
+
+        foreach (var type in expectedTelemetryTypes)
+        {
+            Assert.True(
+                PiMateriaStdoutEventTypes.TelemetryIgnoreList.Contains(type),
+                $"Telemetry type '{type}' is not in TelemetryIgnoreList"
+            );
+        }
+    }
+
+    [Fact]
+    public void TelemetryIgnoreList_DoesNotContainLifecycleEvents()
+    {
+        // The ignore list must NOT swallow real lifecycle events.
+        var lifecycleTypes = PiMateriaStdoutEventTypes.AllRecognizedTypes.ToList();
+        var ignoreList = PiMateriaStdoutEventTypes.TelemetryIgnoreList.ToList();
+
+        var overlap = lifecycleTypes.Intersect(ignoreList).ToList();
+        Assert.True(
+            overlap.Count == 0,
+            $"TelemetryIgnoreList contains lifecycle event types: {string.Join(", ", overlap)}"
+        );
+    }
+
+    [Fact]
+    public void TelemetryIgnoreList_CountMatchesConstantCount()
+    {
+        // The ignore list should have exactly 10 entries — one for each telemetry constant.
+        Assert.Equal(10, PiMateriaStdoutEventTypes.TelemetryIgnoreList.Count);
+    }
+
+    [Fact]
+    public void TelemetryConstants_HaveExpectedStringValues()
+    {
+        // Assert the actual string values match what pi-core emits.
+        Assert.Equal("extension_ui_request", PiMateriaStdoutEventTypes.TelemetryExtensionUiRequest);
+        Assert.Equal("session_info_changed", PiMateriaStdoutEventTypes.TelemetrySessionInfoChanged);
+        Assert.Equal("message_start", PiMateriaStdoutEventTypes.TelemetryMessageStart);
+        Assert.Equal("message_end", PiMateriaStdoutEventTypes.TelemetryMessageEnd);
+        Assert.Equal("message_update", PiMateriaStdoutEventTypes.TelemetryMessageUpdate);
+        Assert.Equal("agent_start", PiMateriaStdoutEventTypes.TelemetryAgentStart);
+        Assert.Equal("turn_start", PiMateriaStdoutEventTypes.TelemetryTurnStart);
+        Assert.Equal("turn_end", PiMateriaStdoutEventTypes.TelemetryTurnEnd);
+        Assert.Equal("tool_execution_start", PiMateriaStdoutEventTypes.TelemetryToolExecutionStart);
+        Assert.Equal("tool_execution_end", PiMateriaStdoutEventTypes.TelemetryToolExecutionEnd);
+    }
 }

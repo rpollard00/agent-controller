@@ -1043,6 +1043,17 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
             return;
         }
 
+        // Telemetry-only pi-core event types: silently ignore.
+        // These are internal pi-core telemetry events that carry no cast-lifecycle
+        // meaning. They are NOT contract drift — they are expected noise from
+        // pi-core's internal eventing. Log at debug severity only.
+        // See PiMateriaStdoutEventTypes.TelemetryIgnoreList for the curated set.
+        if (AgentController.Domain.PiMateriaStdoutEventTypes.TelemetryIgnoreList.Contains(type))
+        {
+            Log.PiStdoutIgnoredTelemetry(_logger, runId, type);
+            return;
+        }
+
         // Enrich the unrecognized-type warning with cast id and resolved materia
         // name so future contract drift is immediately traceable.
         var castId = active?.CastId ?? "(unknown)";
@@ -1964,6 +1975,16 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime, IDisposable
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "[pi stderr] ({RunId}) {Line}")]
         public static partial void PiStderr(ILogger logger, string runId, string line);
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "[pi stdout] ({RunId}) ignoring telemetry-only type='{Type}'"
+        )]
+        public static partial void PiStdoutIgnoredTelemetry(
+            ILogger logger,
+            string runId,
+            string type
+        );
 
         [LoggerMessage(
             Level = LogLevel.Warning,
