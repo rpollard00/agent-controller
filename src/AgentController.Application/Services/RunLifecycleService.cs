@@ -112,9 +112,11 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             },
             ct);
 
-        // Project the initial Claimed state to the work item and external work source.
-        // This ensures ActiveState is set and agent-active tag is added on claim.
-        await MaybeUpdateWorkItemStatus(run, RunLifecycleState.Claimed, ct);
+        // Project claim tags (agent-active) to the external work source.
+        // Board state (ActiveState) is NOT set here — it is gated on
+        // runtime.accepted in HandleAcceptedAsync so the board only goes
+        // Active once pi-materia confirms a successful agent start.
+        await MaybeProjectToWorkSource(run, RunLifecycleState.Claimed, ct);
 
         return run;
     }
@@ -494,7 +496,8 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         var status = targetState switch
         {
             // Active states map to the configured activeState.
-            RunLifecycleState.Claimed => options.ActiveState,
+            // Note: Claimed does NOT project board state here — that is gated
+            // on runtime.accepted in HandleAcceptedAsync.
             RunLifecycleState.EnvironmentProvisioning => options.ActiveState,
             RunLifecycleState.AgentRunning => options.ActiveState,
             RunLifecycleState.AwaitingResult => options.ActiveState,
@@ -604,11 +607,13 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
 
         return targetState switch
         {
-            // ── Claim: move to active state, add claim tag ─────────
+            // ── Claim: add claim tag only, NO board state change ────
+            // Board state (ActiveState) is gated on runtime.accepted in
+            // HandleAcceptedAsync so the board only goes Active once
+            // pi-materia confirms a successful agent start.
             RunLifecycleState.Claimed => (
                 new ExternalWorkStatus
                 {
-                    Status = activeState,
                     Tags = ["agent-active"],
                 },
                 "Agent controller claimed this work item and started processing."),
@@ -720,6 +725,12 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             StartedAt = run.StartedAt ?? evt.OccurredAt,
         };
         await _runStore.UpdateRuntimeFieldsAsync(run.RunId, update, ct);
+
+        // runtime.accepted is the gate for System.State=Active.
+        // Now that pi-materia confirmed a successful agent start, project
+        // the board to ActiveState. This is idempotent — if TransitionAsync
+        // already reached AgentRunning it will re-project the same value.
+        await MaybeUpdateWorkItemStatus(run, RunLifecycleState.AgentRunning, ct);
     }
 
     private async Task HandleHeartbeatAsync(

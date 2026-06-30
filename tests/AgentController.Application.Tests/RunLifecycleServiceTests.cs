@@ -1067,10 +1067,11 @@ public class RunLifecycleServiceTests
         var run = await service.CreateRunForWorkItemAsync(
             "wi_proj_active", "worker-1", CancellationToken.None);
 
-        // The Claimed transition should project ActiveState ("Active")
+        // Claimed projects tags (agent-active) but NOT board state.
+        // Board state (ActiveState) is gated on runtime.accepted.
         var statusUpdates = stubWorkSource.StatusUpdates;
         Assert.Single(statusUpdates);
-        Assert.Equal("Active", statusUpdates[0].Status.Status);
+        Assert.Null(statusUpdates[0].Status.Status);
         Assert.Contains("agent-active", statusUpdates[0].Status.Tags!);
     }
 
@@ -1101,9 +1102,12 @@ public class RunLifecycleServiceTests
         // Advance through states to AgentRunning
         await AdvanceToAsync(service, run.RunId, RunLifecycleState.AgentRunning, CancellationToken.None);
 
-        // Should have status updates for Claimed and AgentRunning, both using ActiveState
+        // Claimed projects tags only (no status). AgentRunning and AwaitingResult
+        // project ActiveState. HandleAcceptedAsync is not called in this test
+        // (no runtime event ingestion), so only TransitionAsync paths fire.
         var statusUpdates = stubWorkSource.StatusUpdates;
-        Assert.All(statusUpdates, su => Assert.Equal("Active", su.Status.Status));
+        Assert.All(statusUpdates.Where(su => su.Status.Status is not null),
+            su => Assert.Equal("Active", su.Status.Status));
     }
 
     [Fact]
@@ -1286,8 +1290,9 @@ public class RunLifecycleServiceTests
             .Where(su => su.Status.Status == "Active")
             .ToList();
 
-        // Claimed, AgentRunning, and AwaitingResult all project ActiveState
-        Assert.Equal(3, activeStateUpdates.Count);
+        // AgentRunning and AwaitingResult project ActiveState.
+        // Claimed no longer projects ActiveState — that is gated on runtime.accepted.
+        Assert.Equal(2, activeStateUpdates.Count);
     }
 
     [Fact]
