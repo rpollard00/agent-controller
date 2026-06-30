@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+using AgentController.Domain;
 using AgentController.Infrastructure.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -235,10 +238,101 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
         if (filteredSignals.Count == 0)
         {
             Log.NoSignalsAfterFilter(_logger);
+            Log.PollCycleCompleted(_logger);
+            return;
         }
 
-        // TODO: soak-window logic and ReworkCycle materialization
-        // in subsequent work items.
+        // ── Step 7: Soak-window logic ────────────────────────────
+        // Per ReworkSignal compute FeedbackBundleId as a stable hash of
+        // sorted surviving thread ids. Track bundle state in SQLite via
+        // ReworkFeedback rows so soak correctness survives restarts.
+        var reworkFeedbackStore = scope.ServiceProvider.GetRequiredService<Application.IReworkFeedbackStore>();
+
+        // Group signals by PullRequestId (one PR -> one bundle).
+        var signalsByPr = filteredSignals
+            .GroupBy(s => s.PullRequestId)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        // Fetch existing Watching rows for these PRs.
+        var watchingRows = await reworkFeedbackStore.GetWatchingAsync(ct);
+        var watchingByPr = watchingRows
+            .GroupBy(r => r.PullRequestId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        var now = DateTimeOffset.UtcNow;
+        var soakThreshold = TimeSpan.FromMinutes(options.SoakMinutes);
+
+        foreach (var (pullRequestId, signal) in signalsByPr)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var bundleId = ComputeFeedbackBundleId(signal.Threads);
+            var existingRows = watchingByPr.TryGetValue(pullRequestId, out var rows) ? rows : null;
+            var currentRow = existingRows?.FirstOrDefault();
+
+            if (currentRow is not null && currentRow.FeedbackBundleId == bundleId)
+            {
+                // Bundle unchanged — bump LastQualifyingCommentAt.
+                var updated = await reworkFeedbackStore.UpsertAsync(
+                    signal.OriginatingRunId,
+                    signal.PullRequestId,
+                    bundleId,
+                    signal.Threads.Count,
+                    signal.FirstQualifyingCommentAt,
+                    signal.LastQualifyingCommentAt,
+                    ReworkFeedbackStatus.Watching,
+                    ct);
+
+                Log.BundleUnchangedBumpedLastComment(_logger, pullRequestId, bundleId);
+            }
+            else if (currentRow is not null)
+            {
+                // Bundle changed — supersede prior, start fresh Watching.
+                await reworkFeedbackStore.MarkSupersededAsync(currentRow.Id, ct);
+
+                await reworkFeedbackStore.UpsertAsync(
+                    signal.OriginatingRunId,
+                    signal.PullRequestId,
+                    bundleId,
+                    signal.Threads.Count,
+                    signal.FirstQualifyingCommentAt,
+                    signal.LastQualifyingCommentAt,
+                    ReworkFeedbackStatus.Watching,
+                    ct);
+
+                Log.BundleChangedSuperseded(_logger, pullRequestId, currentRow.FeedbackBundleId, bundleId);
+            }
+            else
+            {
+                // First time seeing this PR — create Watching row.
+                await reworkFeedbackStore.UpsertAsync(
+                    signal.OriginatingRunId,
+                    signal.PullRequestId,
+                    bundleId,
+                    signal.Threads.Count,
+                    signal.FirstQualifyingCommentAt,
+                    signal.LastQualifyingCommentAt,
+                    ReworkFeedbackStatus.Watching,
+                    ct);
+
+                Log.NewWatchingRow(_logger, pullRequestId, bundleId);
+            }
+        }
+
+        // ── Step 8: Check all Watching rows for soak threshold ───
+        // Re-fetch after mutations above so we see the latest state.
+        var refreshedWatching = await reworkFeedbackStore.GetWatchingAsync(ct);
+
+        foreach (var row in refreshedWatching)
+        {
+            var timeSinceLastComment = now - row.LastQualifyingCommentAt;
+
+            if (timeSinceLastComment >= soakThreshold)
+            {
+                await reworkFeedbackStore.MarkSoakedAsync(row.Id, ct);
+                Log.FeedbackSoaked(_logger, row.PullRequestId, row.FeedbackBundleId, row.ThreadCount);
+            }
+        }
 
         Log.PollCycleCompleted(_logger);
     }
@@ -318,6 +412,22 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             or Domain.RunLifecycleState.Failed
             or Domain.RunLifecycleState.Cancelled
             or Domain.RunLifecycleState.CleanedUp;
+    }
+
+    /// <summary>
+    /// Compute a stable FeedbackBundleId as a SHA-256 hash of sorted thread ids.
+    /// Sorting ensures the hash is deterministic regardless of thread ordering
+    /// from the feedback source.
+    /// </summary>
+    private static string ComputeFeedbackBundleId(IReadOnlyList<ReviewThread> threads)
+    {
+        var sortedIds = threads
+            .OrderBy(t => t.ThreadId, StringComparer.Ordinal)
+            .Select(t => t.ThreadId)
+            .Aggregate((a, b) => a + "|" + b);
+
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(sortedIds));
+        return Convert.ToHexStringLower(hash);
     }
 
     /// <summary>
@@ -417,5 +527,29 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             Level = LogLevel.Debug,
             Message = "No rework signals survived the filter pipeline.")]
         public static partial void NoSignalsAfterFilter(ILogger logger);
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "PR {PullRequestId}: bundle unchanged, bumped LastQualifyingCommentAt [bundle={BundleId}].")]
+        public static partial void BundleUnchangedBumpedLastComment(
+            ILogger logger, string pullRequestId, string bundleId);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "PR {PullRequestId}: bundle changed, superseded old bundle [{OldBundleId}] with new [{NewBundleId}].")]
+        public static partial void BundleChangedSuperseded(
+            ILogger logger, string pullRequestId, string oldBundleId, string newBundleId);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "PR {PullRequestId}: new feedback bundle, started Watching [{BundleId}].")]
+        public static partial void NewWatchingRow(
+            ILogger logger, string pullRequestId, string bundleId);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "PR {PullRequestId}: feedback soaked [{BundleId}] — {ThreadCount} thread(s) eligible for materialization.")]
+        public static partial void FeedbackSoaked(
+            ILogger logger, string pullRequestId, string bundleId, int threadCount);
     }
 }
