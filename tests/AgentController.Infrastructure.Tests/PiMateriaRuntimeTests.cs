@@ -1072,6 +1072,26 @@ sys.exit(0)
             }
         }
 
+        public Task<IReadOnlyList<AgentRunHandle>> FindRunsForFeedbackAsync(CancellationToken ct)
+        {
+            lock (_lock)
+            {
+                var eligibleStatuses = new[]
+                {
+                    RunLifecycleState.PrOpened,
+                    RunLifecycleState.BranchPushed,
+                    RunLifecycleState.Completed,
+                };
+                var results = _runs.Values
+                    .Where(r => eligibleStatuses.Contains(r.Status))
+                    .Where(r => r.PullRequestUrl is not null)
+                    .GroupBy(r => r.PullRequestUrl!)
+                    .Select(g => g.OrderByDescending(r => r.CreatedAt).First())
+                    .ToList();
+                return Task.FromResult<IReadOnlyList<AgentRunHandle>>(results);
+            }
+        }
+
         private static bool IsTerminal(RunLifecycleState s) =>
             s
                 is RunLifecycleState.Completed

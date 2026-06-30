@@ -269,6 +269,33 @@ internal sealed class EfAgentRunStore : IAgentRunStore
         return entity is null ? null : MapToHandle(entity);
     }
 
+    public async Task<IReadOnlyList<AgentRunHandle>> FindRunsForFeedbackAsync(
+        CancellationToken cancellationToken)
+    {
+        // Eligible states: PrOpened, BranchPushed, Completed.
+        // These are the states where a PR exists and the run has not failed/cancelled.
+        var eligibleStatuses = new[]
+        {
+            (int)RunLifecycleState.PrOpened,
+            (int)RunLifecycleState.BranchPushed,
+            (int)RunLifecycleState.Completed,
+        };
+
+        var entities = await _db.AgentRuns
+            .Where(e => eligibleStatuses.Contains(e.Status))
+            .Where(e => e.PullRequestUrl != null)
+            .ToListAsync(cancellationToken);
+
+        // De-duplicate by PullRequestUrl — keep the most recent run per PR.
+        // Multiple runs for the same work item may share the same PR URL.
+        var byUrl = entities
+            .GroupBy(e => e.PullRequestUrl!)
+            .Select(g => g.OrderByDescending(e => e.CreatedAt).First())
+            .ToList();
+
+        return byUrl.Select(MapToHandle).ToList();
+    }
+
     private static string GenerateId(string prefix)
     {
         return $"{prefix}_{Guid.NewGuid():N}";

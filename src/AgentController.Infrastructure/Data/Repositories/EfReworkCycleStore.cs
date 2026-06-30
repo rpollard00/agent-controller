@@ -86,6 +86,16 @@ internal sealed class EfReworkCycleStore : IReworkCycleStore
         await _db.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<ReworkCycle>> ListConsumedAsync(
+        CancellationToken cancellationToken)
+    {
+        var entities = await _db.ReworkCycles
+            .Where(e => e.Status == (int)ReworkCycleStatus.Consumed)
+            .ToListAsync(cancellationToken);
+
+        return entities.Select(MapToDomain).ToList();
+    }
+
     private static ReworkCycle MapToDomain(ReworkCycleEntity entity)
     {
         return new ReworkCycle

@@ -86,4 +86,16 @@ public interface IAgentRunStore
     Task<AgentRunHandle?> FindLatestRunByWorkItemAsync(
         string workItemId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Find runs eligible for feedback polling.
+    /// Returns runs in {PrOpened, BranchPushed, Completed} with a non-null
+    /// PullRequestUrl. Excludes Failed, NeedsHuman, and Cancelled states
+    /// (which are not in the eligible set).
+    ///
+    /// The caller is responsible for further excluding runs whose work items
+    /// already have a Consumed ReworkCycle with a non-terminal NewRunId.
+    /// </summary>
+    Task<IReadOnlyList<AgentRunHandle>> FindRunsForFeedbackAsync(
+        CancellationToken cancellationToken);
 }

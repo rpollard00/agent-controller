@@ -109,15 +109,202 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
 
         Log.PollCycleStarted(_logger, options.PollIntervalSeconds);
 
-        // ── Concurrency gate ─────────────────────────────────────
-        // The feedback worker has its own concurrency budget independent of
-        // the discovery worker's MaxConcurrentRuns. This prevents feedback
-        // polling from competing with run execution for concurrency slots.
-        //
-        // TODO: implement PR scan query, filter pipeline, soak-window logic,
-        // and ReworkCycle materialization in subsequent work items.
+        var runStore = scope.ServiceProvider.GetRequiredService<Application.IAgentRunStore>();
+        var reworkCycleStore = scope.ServiceProvider.GetRequiredService<Application.IReworkCycleStore>();
+        var feedbackSource = scope.ServiceProvider.GetRequiredService<Application.IFeedbackSource>();
+
+        // ── Step 1: Query eligible runs ───────────────────────────
+        // Runs in {PrOpened, BranchPushed, Completed} with non-null PullRequestUrl.
+        var candidateRuns = await runStore.FindRunsForFeedbackAsync(ct);
+
+        if (candidateRuns.Count == 0)
+        {
+            Log.NoEligibleRuns(_logger);
+            Log.PollCycleCompleted(_logger);
+            return;
+        }
+
+        Log.FoundEligibleRuns(_logger, candidateRuns.Count);
+
+        // ── Step 2: Determine work items with active rework ───────
+        // A work item is "blocked" if it has a Consumed ReworkCycle whose
+        // NewRunId is non-terminal (not Completed/Failed/Cancelled/CleanedUp).
+        var consumedCycles = await reworkCycleStore.ListConsumedAsync(ct);
+
+        var newRunIds = consumedCycles
+            .Where(c => c.NewRunId is not null)
+            .Select(c => c.NewRunId!)
+            .Distinct()
+            .ToList();
+
+        HashSet<string>? blockedWorkItemIds = null;
+
+        if (newRunIds.Count > 0)
+        {
+            // Fetch the status of each new run to check terminal state.
+            var nonTerminalNewRunIds = new HashSet<string>();
+
+            foreach (var newRunId in newRunIds)
+            {
+                var newRun = await runStore.GetByIdAsync(newRunId, ct);
+                if (newRun is not null && !IsTerminalState(newRun.Status))
+                {
+                    nonTerminalNewRunIds.Add(newRunId);
+                }
+            }
+
+            // Map non-terminal new run IDs back to their work item IDs.
+            if (nonTerminalNewRunIds.Count > 0)
+            {
+                blockedWorkItemIds = new HashSet<string>(
+                    consumedCycles
+                        .Where(c => c.NewRunId is not null && nonTerminalNewRunIds.Contains(c.NewRunId!))
+                        .Select(c => c.WorkItemId));
+
+                Log.WorkItemsWithActiveRework(_logger, blockedWorkItemIds.Count);
+            }
+        }
+
+        // ── Step 3: Filter candidate runs ─────────────────────────
+        // Exclude runs whose work items have active rework in progress.
+        var eligibleRuns = blockedWorkItemIds is not null
+            ? candidateRuns.Where(r => r.WorkItemId is not null && !blockedWorkItemIds.Contains(r.WorkItemId!)).ToList()
+            : candidateRuns.ToList();
+
+        if (eligibleRuns.Count == 0)
+        {
+            Log.AllRunsBlockedByActiveRework(_logger);
+            Log.PollCycleCompleted(_logger);
+            return;
+        }
+
+        // ── Step 4: Build PrUnderTest[] ───────────────────────────
+        var prsUnderTest = new List<Application.PrUnderTest>();
+
+        foreach (var run in eligibleRuns)
+        {
+            var pullRequestId = ExtractPullRequestId(run.PullRequestUrl);
+            if (pullRequestId is null)
+            {
+                Log.SkippingRunBadPrUrl(_logger, run.RunId, run.PullRequestUrl ?? "(null)");
+                continue;
+            }
+
+            var repoKey = ExtractRepoKey(run.PullRequestUrl) ?? string.Empty;
+
+            prsUnderTest.Add(new Application.PrUnderTest
+            {
+                OriginatingRunId = run.RunId,
+                WorkItemId = run.WorkItemId ?? string.Empty,
+                RepoKey = repoKey,
+                PullRequestUrl = run.PullRequestUrl ?? string.Empty,
+                PullRequestId = pullRequestId,
+                BranchName = run.BranchName ?? string.Empty,
+            });
+        }
+
+        if (prsUnderTest.Count == 0)
+        {
+            Log.NoValidPrUrls(_logger, eligibleRuns.Count);
+            Log.PollCycleCompleted(_logger);
+            return;
+        }
+
+        Log.PrUnderTestBuilt(_logger, prsUnderTest.Count);
+
+        // ── Step 5: Poll feedback source ──────────────────────────
+        var query = new Application.FeedbackQuery
+        {
+            OpenPrs = prsUnderTest,
+            AllowedReviewers = new HashSet<string>(options.AllowedReviewers),
+            ReworkMarkerTag = options.ReworkMarkerTag,
+        };
+
+        var signals = await feedbackSource.PollAsync(query, ct);
+
+        Log.SignalsReceived(_logger, signals.Count);
+
+        // TODO: filter pipeline, soak-window logic, and ReworkCycle
+        // materialization in subsequent work items.
 
         Log.PollCycleCompleted(_logger);
+    }
+
+    /// <summary>
+    /// Extract the pull request integer ID from an Azure DevOps PR URL.
+    /// Supported formats:
+    ///   https://dev.azure.com/{org}/{project}/_git/{repo}/pullrequest/{id}
+    ///   https://{org}.visualstudio.com/{project}/_git/{repo}/pullrequest/{id}
+    /// Returns null if the URL cannot be parsed.
+    /// </summary>
+    private static string? ExtractPullRequestId(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return null;
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            return null;
+
+        var segments = uri.Segments;
+
+        // Find the "pullrequest/" segment; the next segment is the ID.
+        for (int i = 0; i < segments.Length; i++)
+        {
+            if (segments[i].Equals("pullrequest/", StringComparison.Ordinal)
+                && i + 1 < segments.Length)
+            {
+                return segments[i + 1].TrimEnd('/');
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Extract a repo key ("{project}/{repository}") from an Azure DevOps PR URL.
+    /// Returns null if the URL cannot be parsed.
+    /// </summary>
+    private static string? ExtractRepoKey(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return null;
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            return null;
+
+        var segments = uri.Segments;
+
+        // Find the "_git/" segment; project is before it, repo is after it.
+        for (int i = 0; i < segments.Length; i++)
+        {
+            if (segments[i].Equals("_git/", StringComparison.Ordinal)
+                && i > 0 && i + 1 < segments.Length)
+            {
+                var project = segments[i - 1].TrimEnd('/');
+                var repository = segments[i + 1].TrimEnd('/');
+
+                if (!string.IsNullOrWhiteSpace(project) && !string.IsNullOrWhiteSpace(repository))
+                {
+                    return $"{project}/{repository}";
+                }
+
+                break;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Check whether a run lifecycle state is terminal.
+    /// Terminal states: Completed, Failed, Cancelled, CleanedUp.
+    /// </summary>
+    private static bool IsTerminalState(Domain.RunLifecycleState status)
+    {
+        return status is Domain.RunLifecycleState.Completed
+            or Domain.RunLifecycleState.Failed
+            or Domain.RunLifecycleState.Cancelled
+            or Domain.RunLifecycleState.CleanedUp;
     }
 
     /// <summary>
@@ -166,5 +353,45 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             Level = LogLevel.Debug,
             Message = "Feedback poll cycle completed.")]
         public static partial void PollCycleCompleted(ILogger logger);
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "No eligible runs found for feedback polling.")]
+        public static partial void NoEligibleRuns(ILogger logger);
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "Found {Count} eligible run(s) for feedback polling.")]
+        public static partial void FoundEligibleRuns(ILogger logger, int count);
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "{Count} work item(s) have active rework in progress (non-terminal new runs).")]
+        public static partial void WorkItemsWithActiveRework(ILogger logger, int count);
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "All eligible runs blocked by active rework on their work items.")]
+        public static partial void AllRunsBlockedByActiveRework(ILogger logger);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Skipping run {RunId}: could not extract PR ID from URL '{PullRequestUrl}'.")]
+        public static partial void SkippingRunBadPrUrl(ILogger logger, string runId, string pullRequestUrl);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "No valid PR URLs among {Count} eligible run(s) — cannot build PrUnderTest list.")]
+        public static partial void NoValidPrUrls(ILogger logger, int count);
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "Built PrUnderTest list with {Count} PR(s).")]
+        public static partial void PrUnderTestBuilt(ILogger logger, int count);
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "Feedback source returned {Count} rework signal(s).")]
+        public static partial void SignalsReceived(ILogger logger, int count);
     }
 }

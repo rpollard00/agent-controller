@@ -42,4 +42,12 @@ public interface IReworkCycleStore
         string id,
         string newRunId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// List all Consumed rework cycles.
+    /// Used by the feedback worker to determine which work items already
+    /// have an active rework in progress (non-terminal NewRunId).
+    /// </summary>
+    Task<IReadOnlyList<ReworkCycle>> ListConsumedAsync(
+        CancellationToken cancellationToken);
 }

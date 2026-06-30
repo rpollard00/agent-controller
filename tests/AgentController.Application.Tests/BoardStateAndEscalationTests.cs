@@ -700,6 +700,23 @@ public class BoardStateAndEscalationTests
             return Task.FromResult<AgentRunHandle?>(latest);
         }
 
+        public Task<IReadOnlyList<AgentRunHandle>> FindRunsForFeedbackAsync(CancellationToken ct)
+        {
+            var eligibleStatuses = new[]
+            {
+                RunLifecycleState.PrOpened,
+                RunLifecycleState.BranchPushed,
+                RunLifecycleState.Completed,
+            };
+            var results = _runs.Values
+                .Where(r => eligibleStatuses.Contains(r.Status))
+                .Where(r => r.PullRequestUrl is not null)
+                .GroupBy(r => r.PullRequestUrl!)
+                .Select(g => g.OrderByDescending(r => r.CreatedAt).First())
+                .ToList();
+            return Task.FromResult<IReadOnlyList<AgentRunHandle>>(results);
+        }
+
         public Task ForceUpdateStatusAsync(string runId, RunLifecycleState status)
         {
             if (_runs.TryGetValue(runId, out var run))
