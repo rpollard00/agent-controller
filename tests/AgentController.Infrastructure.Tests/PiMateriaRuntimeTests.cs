@@ -1231,6 +1231,11 @@ sys.exit(0)
             ReleaseClaimRequest request,
             CancellationToken ct
         ) => Task.CompletedTask;
+
+        public Task<ReworkReactivateResult> ReactivateForReworkAsync(
+            ReworkReactivateRequest request,
+            CancellationToken ct
+        ) => Task.FromResult(new ReworkReactivateResult { Success = true });
     }
 
     private sealed class StaticOptionsMonitor<TOptions> : IOptionsMonitor<TOptions>

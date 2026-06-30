@@ -253,6 +253,44 @@ public sealed record CreateWorkItemRequest
 }
 
 /// <summary>
+/// Request to reactivate a work item for a new rework cycle.
+/// Carries the work item reference and rework cycle metadata needed
+/// to project the reactivation back to the external work source.
+/// </summary>
+public sealed record ReworkReactivateRequest
+{
+    /// <summary>Controller-assigned identifier of the work item to reactivate.</summary>
+    public string WorkItemId { get; init; } = string.Empty;
+
+    /// <summary>External reference for source-level mutations (PATCHes).</summary>
+    public ExternalWorkRef WorkRef { get; init; } = new ExternalWorkRef();
+
+    /// <summary>Which rework cycle this is (1-based).</summary>
+    public int CycleNumber { get; init; }
+
+    /// <summary>Number of review threads bundled in this rework cycle.</summary>
+    public int ThreadCount { get; init; }
+
+    /// <summary>URL of the pull request the feedback originated from.</summary>
+    public string PullRequestUrl { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Result of attempting to reactivate a work item for rework.
+/// </summary>
+public sealed record ReworkReactivateResult
+{
+    /// <summary>Whether the reactivation succeeded.</summary>
+    public bool Success { get; init; }
+
+    /// <summary>
+    /// Human-readable reason for failure (populated on failure).
+    /// May include diagnostic codes such as [rework_state_transition_blocked].
+    /// </summary>
+    public string? FailureReason { get; init; }
+}
+
+/// <summary>
 /// Query parameters for listing work items from the persistence store.
 /// All fields are optional; implementations apply the provided filters.
 /// </summary>

@@ -2003,6 +2003,12 @@ public class RunLifecycleServiceTests
         {
             return Task.CompletedTask;
         }
+
+        public Task<ReworkReactivateResult> ReactivateForReworkAsync(
+            ReworkReactivateRequest request, CancellationToken cancellationToken)
+        {
+            return Task.FromResult(new ReworkReactivateResult { Success = true });
+        }
     }
 
     /// <summary>

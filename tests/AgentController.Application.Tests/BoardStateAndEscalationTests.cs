@@ -898,6 +898,11 @@ public class BoardStateAndEscalationTests
         {
             return Task.CompletedTask;
         }
+
+        public Task<ReworkReactivateResult> ReactivateForReworkAsync(ReworkReactivateRequest request, CancellationToken ct)
+        {
+            return Task.FromResult(new ReworkReactivateResult { Success = true });
+        }
     }
 
     /// <summary>
@@ -933,6 +938,11 @@ public class BoardStateAndEscalationTests
         public Task ReleaseClaimAsync(ReleaseClaimRequest request, CancellationToken ct)
         {
             return Task.CompletedTask;
+        }
+
+        public Task<ReworkReactivateResult> ReactivateForReworkAsync(ReworkReactivateRequest request, CancellationToken ct)
+        {
+            return Task.FromResult(new ReworkReactivateResult { Success = true });
         }
     }
 

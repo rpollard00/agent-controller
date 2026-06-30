@@ -596,5 +596,11 @@ public class MockPiMateriaRuntimeTests : IAsyncLifetime
         {
             return Task.CompletedTask;
         }
+
+        public Task<ReworkReactivateResult> ReactivateForReworkAsync(
+            ReworkReactivateRequest request, CancellationToken ct)
+        {
+            return Task.FromResult(new ReworkReactivateResult { Success = true });
+        }
     }
 }

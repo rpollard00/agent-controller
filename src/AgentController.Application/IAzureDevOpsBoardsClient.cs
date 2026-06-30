@@ -32,7 +32,8 @@ public interface IAzureDevOpsBoardsClient
     /// <summary>
     /// Update the external status, tags, or state of a work item.
     /// </summary>
-    Task UpdateWorkItemStatusAsync(
+    /// <returns>True if the update succeeded, false on failure (e.g. invalid state transition).</returns>
+    Task<bool> UpdateWorkItemStatusAsync(
         ExternalWorkRef workRef,
         ExternalWorkStatus status,
         CancellationToken cancellationToken);

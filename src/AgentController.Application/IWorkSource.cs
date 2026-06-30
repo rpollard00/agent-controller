@@ -69,4 +69,17 @@ public interface IWorkSource
         ReleaseClaimRequest request,
         CancellationToken cancellationToken
     );
+
+    /// <summary>
+    /// Reactivate a work item for a new rework cycle.
+    /// Sets the item state to the first configured eligible state (e.g. Resolved→New),
+    /// ensures the agent-ready tag is present, removes agent lifecycle exclusion tags
+    /// (agent-active, agent-failed, agent-needs-human), and posts a rework-start comment.
+    /// All operations are idempotent PATCHes.
+    /// Surfaces [rework_state_transition_blocked] if the board blocks the state change.
+    /// </summary>
+    Task<ReworkReactivateResult> ReactivateForReworkAsync(
+        ReworkReactivateRequest request,
+        CancellationToken cancellationToken
+    );
 }

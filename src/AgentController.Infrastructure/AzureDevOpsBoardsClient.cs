@@ -375,14 +375,14 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         }
     }
 
-    public async Task UpdateWorkItemStatusAsync(
+    public async Task<bool> UpdateWorkItemStatusAsync(
         ExternalWorkRef workRef,
         ExternalWorkStatus status,
         CancellationToken cancellationToken)
     {
         var project = _options.Project;
         if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(workRef.ExternalId))
-            return;
+            return true;
 
         // Build the PATCH body for work item update
         var patchOps = new List<object>();
@@ -456,7 +456,7 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         }
 
         if (patchOps.Count == 0)
-            return;
+            return true;
 
         var body = JsonSerializer.Serialize(patchOps, JsonOptions);
         var content = new StringContent(body, Encoding.UTF8, "application/json-patch+json");
@@ -482,10 +482,15 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         if (response.StatusCode == System.Net.HttpStatusCode.PreconditionFailed)
         {
             // Best-effort status projection: concurrent modification is not fatal.
-            return;
+            return true;
         }
 
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            return false;
+        }
+
+        return true;
     }
 
     public async Task AddCommentAsync(

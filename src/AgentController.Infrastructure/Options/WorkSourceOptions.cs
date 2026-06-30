@@ -55,6 +55,9 @@ public sealed class WorkSourceOptions : IWorkSourceOptions
     /// <summary>Tag added when a run requires human input.</summary>
     public const string DefaultExcludedTagAgentNeedsHuman = "agent-needs-human";
 
+    /// <summary>Tag added when a work item is prepared for agent pickup via rework.</summary>
+    public const string DefaultTagAgentReady = "agent-ready";
+
     /// <summary>
     /// Work item states that are eligible for autonomous pickup.
     /// </summary>

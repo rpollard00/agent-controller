@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using AgentController.Application;
@@ -151,6 +152,57 @@ internal sealed partial class LocalFileWorkSource : IWorkSource, IDisposable
         // Local file source has no external system to release claims on.
         // The local persistence store handles lease expiry automatically.
         return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    public async Task<ReworkReactivateResult> ReactivateForReworkAsync(
+        ReworkReactivateRequest request,
+        CancellationToken cancellationToken)
+    {
+        await EnsureInitializedAsync(cancellationToken);
+
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var store = scope.ServiceProvider.GetRequiredService<IWorkItemStore>();
+
+        // Fetch current work item from the local store.
+        var candidate = await store.GetByIdAsync(request.WorkItemId, cancellationToken);
+        if (candidate is null)
+        {
+            return new ReworkReactivateResult
+            {
+                Success = false,
+                FailureReason = $"Work item '{request.WorkItemId}' not found in local store.",
+            };
+        }
+
+        // Determine target state: first eligible state.
+        var options = _workSourceOptions.CurrentValue;
+        var eligibleStates = options.EligibleStates;
+        if (eligibleStates is { Count: > 0 })
+        {
+            await store.UpdateStatusAsync(request.WorkItemId, eligibleStates[0], cancellationToken);
+        }
+
+        // Ensure agent-ready; remove agent lifecycle exclusion tags.
+        var tags = candidate.Tags
+            .Where(t => t != WorkSourceOptions.DefaultExcludedTagAgentActive &&
+                        t != WorkSourceOptions.DefaultExcludedTagAgentFailed &&
+                        t != WorkSourceOptions.DefaultExcludedTagAgentNeedsHuman)
+            .ToList();
+
+        if (!tags.Contains(WorkSourceOptions.DefaultTagAgentReady))
+        {
+            tags.Add(WorkSourceOptions.DefaultTagAgentReady);
+        }
+
+        // Upsert with updated tags (idempotent against local state).
+        await store.UpsertAsync(candidate with
+        {
+            Tags = tags,
+        }, cancellationToken);
+
+        // Comment is a no-op for local file source (no external system).
+        return new ReworkReactivateResult { Success = true };
     }
 
     /// <summary>

@@ -67,4 +67,16 @@ public sealed class NoOpWorkSource : IWorkSource
     {
         return Task.CompletedTask;
     }
+
+    public Task<ReworkReactivateResult> ReactivateForReworkAsync(
+        ReworkReactivateRequest request,
+        CancellationToken cancellationToken
+    )
+    {
+        return Task.FromResult(new ReworkReactivateResult
+        {
+            Success = false,
+            FailureReason = "No-op work source: reactivation is not supported.",
+        });
+    }
 }

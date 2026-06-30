@@ -162,4 +162,76 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
 
         await client.ReleaseClaimWorkItemAsync(request, cancellationToken);
     }
+
+    public async Task<ReworkReactivateResult> ReactivateForReworkAsync(
+        ReworkReactivateRequest request,
+        CancellationToken cancellationToken)
+    {
+        var options = _options.CurrentValue;
+        if (string.IsNullOrWhiteSpace(options.Project))
+        {
+            return new ReworkReactivateResult
+            {
+                Success = false,
+                FailureReason = "Azure DevOps project is not configured in workSource:project.",
+            };
+        }
+
+        // Determine target state: first eligible state.
+        var eligibleStates = options.EligibleStates;
+        if (eligibleStates is null || eligibleStates.Count == 0)
+        {
+            return new ReworkReactivateResult
+            {
+                Success = false,
+                FailureReason = "No eligible states configured; cannot determine target state for reactivation.",
+            };
+        }
+
+        var targetState = eligibleStates[0];
+
+        var workRef = request.WorkRef;
+
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var client = scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClient>();
+
+        // (1) Transition state to first eligible state (e.g. Resolved → New).
+        //     Surface [rework_state_transition_blocked] if the board rejects it.
+        var stateOk = await client.UpdateWorkItemStatusAsync(
+            workRef,
+            new ExternalWorkStatus { Status = targetState },
+            cancellationToken);
+
+        if (!stateOk)
+        {
+            return new ReworkReactivateResult
+            {
+                Success = false,
+                FailureReason = $"[rework_state_transition_blocked] Cannot transition work item to '{targetState}'. " +
+                                "The board process model may not allow this state change.",
+            };
+        }
+
+        // (2) Ensure agent-ready tag; remove agent lifecycle exclusion tags.
+        await client.UpdateWorkItemStatusAsync(
+            workRef,
+            new ExternalWorkStatus
+            {
+                Tags = [WorkSourceOptions.DefaultTagAgentReady],
+                RemovedTags =
+                [
+                    WorkSourceOptions.DefaultExcludedTagAgentActive,
+                    WorkSourceOptions.DefaultExcludedTagAgentFailed,
+                    WorkSourceOptions.DefaultExcludedTagAgentNeedsHuman,
+                ],
+            },
+            cancellationToken);
+
+        // (3) Post rework-start comment.
+        var comment = $"Rework cycle {request.CycleNumber} started: " +
+                      $"{request.ThreadCount} review threads bundled from PR {request.PullRequestUrl}.";
+        await client.AddCommentAsync(workRef, comment, cancellationToken);
+
+        return new ReworkReactivateResult { Success = true };
+    }
 }

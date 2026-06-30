@@ -455,7 +455,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         public Task<ClaimResult> TryClaimWorkItemAsync(ExternalWorkRef workRef, ClaimRequest request, CancellationToken cancellationToken) =>
             throw new NotImplementedException();
 
-        public Task UpdateWorkItemStatusAsync(ExternalWorkRef workRef, ExternalWorkStatus status, CancellationToken cancellationToken) =>
+        public Task<bool> UpdateWorkItemStatusAsync(ExternalWorkRef workRef, ExternalWorkStatus status, CancellationToken cancellationToken) =>
             throw new NotImplementedException();
 
         public Task AddCommentAsync(ExternalWorkRef workRef, string comment, CancellationToken cancellationToken) =>
