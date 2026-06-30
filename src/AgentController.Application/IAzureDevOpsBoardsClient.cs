@@ -85,6 +85,28 @@ public interface IAzureDevOpsBoardsClient
     Task ReleaseClaimWorkItemAsync(
         ReleaseClaimRequest request,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Enumerate the valid <c>System.State</c> values for a given project
+    /// and work item type by querying the Azure DevOps Process API.
+    ///
+    /// This is used by startup validation to ensure the configured
+    /// <c>ActiveState</c>, <c>CompletedState</c>, and <c>EligibleStates</c>
+    /// are all valid states for the target WIT/project.
+    /// </summary>
+    /// <param name="project">The Azure DevOps project name.</param>
+    /// <param name="workItemType">
+    /// The work item type (e.g. "User Story", "Task", "Bug").
+    /// </param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>
+    /// A list of valid state names (e.g. ["New", "Active", "Resolved", "Closed"]).
+    /// Returns an empty list on failure rather than throwing.
+    /// </returns>
+    Task<IReadOnlyList<string>> GetValidStatesAsync(
+        string project,
+        string workItemType,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>

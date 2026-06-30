@@ -983,6 +983,163 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         }
     }
 
+    public async Task<IReadOnlyList<string>> GetValidStatesAsync(
+        string project,
+        string workItemType,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(workItemType))
+        {
+            return Array.Empty<string>();
+        }
+
+        try
+        {
+            // (1) Find the process for the project by querying project details.
+            //     The project response includes a "processId" GUID.
+            var projectResponse = await _http.GetAsync(
+                $"_apis/projects/{Uri.EscapeDataString(project)}?api-version=7.1&includeProcessSettings=true",
+                cancellationToken);
+
+            if (!projectResponse.IsSuccessStatusCode)
+            {
+                return Array.Empty<string>();
+            }
+
+            var projectJson = await projectResponse.Content.ReadAsStringAsync(cancellationToken);
+            using var projectDoc = JsonDocument.Parse(projectJson);
+
+            // Extract processId from the project response.
+            var processId = projectDoc.RootElement
+                .TryGetProperty("processSettings", out var processSettings)
+                && processSettings.TryGetProperty("processId", out var processIdEl)
+                && processIdEl.ValueKind == JsonValueKind.String
+                    ? processIdEl.GetString()
+                    : null;
+
+            if (string.IsNullOrWhiteSpace(processId))
+            {
+                // Fallback: try top-level processId (some API versions place it there).
+                processId = projectDoc.RootElement
+                    .TryGetProperty("processId", out var topProcessIdEl)
+                    && topProcessIdEl.ValueKind == JsonValueKind.String
+                        ? topProcessIdEl.GetString()
+                        : null;
+            }
+
+            if (string.IsNullOrWhiteSpace(processId))
+            {
+                // Cannot determine process — enumerate processes and find the one for this project.
+                var processesResponse = await _http.GetAsync(
+                    "_apis/work/processes?api-version=7.1-preview.3",
+                    cancellationToken);
+
+                if (!processesResponse.IsSuccessStatusCode)
+                {
+                    return Array.Empty<string>();
+                }
+
+                var processesJson = await processesResponse.Content.ReadAsStringAsync(cancellationToken);
+                using var processesDoc = JsonDocument.Parse(processesJson);
+
+                // Find the process associated with this project.
+                if (processesDoc.RootElement.TryGetProperty("value", out var processesArray)
+                    && processesArray.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var process in processesArray.EnumerateArray())
+                    {
+                        if (process.TryGetProperty("id", out var pidEl)
+                            && pidEl.ValueKind == JsonValueKind.String)
+                        {
+                            var pid = pidEl.GetString();
+                            // Check if this process has the project.
+                            if (process.TryGetProperty("defaultTemplate", out var templateEl)
+                                && templateEl.ValueKind == JsonValueKind.Object
+                                && templateEl.TryGetProperty("projectPools", out var poolsEl)
+                                && poolsEl.ValueKind == JsonValueKind.Array)
+                            {
+                                foreach (var pool in poolsEl.EnumerateArray())
+                                {
+                                    if (pool.TryGetProperty("name", out var poolNameEl)
+                                        && poolNameEl.ValueKind == JsonValueKind.String
+                                        && poolNameEl.GetString()!.Equals(project, StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        processId = pid;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (!string.IsNullOrWhiteSpace(processId))
+                                break;
+                        }
+                    }
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(processId))
+            {
+                return Array.Empty<string>();
+            }
+
+            // (2) Get the work item type definition to find System.State allowed values.
+            var witResponse = await _http.GetAsync(
+                $"_apis/work/processes/{Uri.EscapeDataString(processId)}/workItemTypes/{Uri.EscapeDataString(workItemType)}?api-version=7.1-preview.3&fields=System.State",
+                cancellationToken);
+
+            if (!witResponse.IsSuccessStatusCode)
+            {
+                return Array.Empty<string>();
+            }
+
+            var witJson = await witResponse.Content.ReadAsStringAsync(cancellationToken);
+            using var witDoc = JsonDocument.Parse(witJson);
+
+            // Navigate to fields -> System.State -> name -> allowedValues
+            var allowedValues = new List<string>();
+
+            if (witDoc.RootElement.TryGetProperty("fields", out var fields)
+                && fields.ValueKind == JsonValueKind.Object
+                && fields.TryGetProperty("System.State", out var stateField)
+                && stateField.ValueKind == JsonValueKind.Object
+                && stateField.TryGetProperty("name", out var nameField)
+                && nameField.ValueKind == JsonValueKind.Object
+                && nameField.TryGetProperty("allowedValues", out var allowedValuesEl)
+                && allowedValuesEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var value in allowedValuesEl.EnumerateArray())
+                {
+                    if (value.ValueKind == JsonValueKind.String)
+                    {
+                        var state = value.GetString();
+                        if (!string.IsNullOrWhiteSpace(state))
+                        {
+                            allowedValues.Add(state);
+                        }
+                    }
+                }
+            }
+
+            return allowedValues;
+        }
+        catch (OperationCanceledException)
+        {
+            return Array.Empty<string>();
+        }
+        catch (HttpRequestException)
+        {
+            return Array.Empty<string>();
+        }
+        catch (JsonException)
+        {
+            return Array.Empty<string>();
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+
     /// <summary>
     /// Fetches Git repositories for a project. Returns an empty list on failure
     /// rather than throwing — the caller is responsible for error handling.

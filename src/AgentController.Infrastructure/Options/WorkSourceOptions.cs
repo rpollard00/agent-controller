@@ -71,6 +71,18 @@ public sealed class WorkSourceOptions : IWorkSourceOptions
     public string? CompletedState { get; init; }
 
     /// <summary>
+    /// Azure DevOps work item type used for state validation and queries
+    /// (e.g. "User Story", "Task", "Bug").
+    /// Defaults to "User Story" if not configured.
+    /// Used by startup validation to enumerate valid System.State values
+    /// for the configured project/WIT.
+    /// </summary>
+    public string WorkItemType { get; init; } = DefaultWorkItemType;
+
+    /// <summary>Default work item type when not explicitly configured.</summary>
+    public const string DefaultWorkItemType = "User Story";
+
+    /// <summary>
     /// Maximum number of discussion comments to fetch from the work source
     /// and include in the agent runtime context. This bounds comment depth
     /// to keep context manageable. Default: 50.
