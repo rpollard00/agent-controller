@@ -476,6 +476,16 @@ public sealed partial class PollingWorker : BackgroundService
 
         await InjectContextAsync(
             run, candidate, envHandle, checkout, lifecycle, comments, reworkContext, ct);
+
+        // Mark the pending ReworkCycle as Consumed after successful context injection.
+        // This closes the audit chain and prevents re-injection of the same bundle on retry.
+        if (pendingCycle is not null)
+        {
+            await reworkCycleStore.MarkConsumedAsync(pendingCycle.Id, run.RunId, ct);
+            Log.ReworkCycleConsumed(
+                _logger, run.RunId, pendingCycle.Id, pendingCycle.CycleNumber);
+        }
+
         await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.ContextInjected,
             "Context injected into run workspace.", RunLifecycleState.ContextInjected, ct);
 
@@ -1980,6 +1990,12 @@ public sealed partial class PollingWorker : BackgroundService
         public static partial void ReworkCycleFound(
             ILogger logger, string runId, string workItemId,
             string cycleId, int cycleNumber, int threadCount);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "[rework] ReworkCycle consumed — runId={RunId}, cycleId={CycleId}, cycleNumber={CycleNumber}")] 
+        public static partial void ReworkCycleConsumed(
+            ILogger logger, string runId, string cycleId, int cycleNumber);
 
         [LoggerMessage(
             Level = LogLevel.Information,
