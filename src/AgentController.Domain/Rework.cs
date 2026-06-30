@@ -81,6 +81,24 @@ public sealed record ReviewThread
 }
 
 /// <summary>
+/// Status of a persisted rework cycle row in the store.
+/// Tracks the lifecycle from materialization to consumption by the happy path.
+/// </summary>
+public enum ReworkCycleStatus
+{
+    /// <summary>
+    /// Cycle has been materialized from soaked feedback and is awaiting
+    /// consumption by the polling worker.
+    /// </summary>
+    Pending = 0,
+
+    /// <summary>
+    /// Cycle was consumed by the happy path (context injected into a new run).
+    /// </summary>
+    Consumed,
+}
+
+/// <summary>
 /// Consumable payload threaded through the happy path when the agent
 /// is asked to address review feedback on an existing PR.
 /// Carries the prior run context and the bundled review threads
@@ -105,4 +123,57 @@ public sealed record ReworkContext
 
     /// <summary>Bundled review threads that triggered this rework cycle.</summary>
     public IReadOnlyList<ReviewThread> FeedbackBundle { get; init; } = [];
+}
+
+/// <summary>
+/// Persisted rework cycle linking soaked feedback to a new agent run.
+/// Materialized by the feedback worker from a Soaked ReworkFeedback row
+/// and consumed by the polling worker at claim time.
+/// </summary>
+public sealed record ReworkCycle
+{
+    /// <summary>Controller-assigned identifier.</summary>
+    public string Id { get; init; } = string.Empty;
+
+    /// <summary>Identifier of the work item this cycle is for.</summary>
+    public string WorkItemId { get; init; } = string.Empty;
+
+    /// <summary>Which rework cycle this is for the work item (1-based).</summary>
+    public int CycleNumber { get; init; }
+
+    /// <summary>Controller-assigned run identifier of the prior run.</summary>
+    public string PriorRunId { get; init; } = string.Empty;
+
+    /// <summary>Branch name the prior run pushed to.</summary>
+    public string BranchName { get; init; } = string.Empty;
+
+    /// <summary>URL of the pull request from the prior run.</summary>
+    public string PullRequestUrl { get; init; } = string.Empty;
+
+    /// <summary>Commit SHA the prior run based its work on.</summary>
+    public string BaseCommitSha { get; init; } = string.Empty;
+
+    /// <summary>Bundled review threads serialized as JSON.</summary>
+    public string FeedbackBundleJson { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Stable hash of the feedback bundle contents. Unique index on this
+    /// column is the hard idempotency guard against double-materialization.
+    /// </summary>
+    public string FeedbackBundleId { get; init; } = string.Empty;
+
+    /// <summary>Current lifecycle status of the cycle.</summary>
+    public ReworkCycleStatus Status { get; init; } = ReworkCycleStatus.Pending;
+
+    /// <summary>When the cycle record was first persisted.</summary>
+    public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
+
+    /// <summary>When the cycle was consumed by the happy path (null if still pending).</summary>
+    public DateTimeOffset? ConsumedAt { get; init; }
+
+    /// <summary>
+    /// Controller-assigned run identifier of the new run that consumed this cycle
+    /// (null if still pending).
+    /// </summary>
+    public string? NewRunId { get; init; }
 }

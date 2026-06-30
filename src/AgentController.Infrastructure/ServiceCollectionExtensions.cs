@@ -136,7 +136,7 @@ public static class AgentControllerServiceCollectionExtensions
     /// Registers EF Core-backed repository implementations for all application-layer
     /// persistence contracts (<see cref="IWorkItemStore"/>, <see cref="IAgentRunStore"/>,
     /// <see cref="ILifecycleEventStore"/>, <see cref="IEnvironmentStore"/>,
-    /// <see cref="IRepositoryStore"/>).
+    /// <see cref="IRepositoryStore"/>, <see cref="IReworkCycleStore"/>).
     ///
     /// Repositories are registered as scoped so each request or worker poll cycle
     /// gets a fresh unit-of-work backed by the same <see cref="AgentControllerDbContext"/>.
@@ -152,6 +152,7 @@ public static class AgentControllerServiceCollectionExtensions
         services.AddScoped<ILifecycleEventStore, EfLifecycleEventStore>();
         services.AddScoped<IEnvironmentStore, EfEnvironmentStore>();
         services.AddScoped<IRepositoryStore, EfRepositoryStore>();
+        services.AddScoped<IReworkCycleStore, EfReworkCycleStore>();
 
         return services;
     }
