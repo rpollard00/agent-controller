@@ -579,11 +579,37 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
                 await _workSource.AddCommentAsync(workRef, comment, ct);
             }
         }
-        catch
+        catch (Exception ex)
         {
             // Best-effort projection: external work source failures are not
             // fatal to the controller's internal state transition. The next
             // poll cycle may retry through QueryWorkItemsAsync.
+            // However, we log the failure and record a lifecycle event so it is observable.
+            Log.WorkSourceProjectionFailed(
+                _logger, ex,
+                run.RunId, run.WorkItemId ?? string.Empty,
+                workItem.ExternalId, workItem.Source, targetState);
+
+            await _eventStore.AppendAsync(
+                new LifecycleEvent
+                {
+                    RunId = run.RunId,
+                    EventType = ControllerEventTypes.WorkSourceProjectionFailed,
+                    Severity = EventSeverity.Warning,
+                    Message = $"Work-source projection failed for run {run.RunId} " +
+                              $"(workItemId={run.WorkItemId}, externalId={workItem.ExternalId}, " +
+                              $"source={workItem.Source}, targetState={targetState}): {ex.Message}",
+                    Payload = new Dictionary<string, object?>
+                    {
+                        ["runId"] = run.RunId,
+                        ["workItemId"] = run.WorkItemId,
+                        ["externalId"] = workItem.ExternalId,
+                        ["source"] = workItem.Source,
+                        ["targetState"] = targetState.ToString(),
+                        ["error"] = ex.Message,
+                    },
+                },
+                ct);
         }
     }
 
@@ -1234,5 +1260,18 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             string? workItemId,
             int maxAttempts,
             int failureCount);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Work-source projection failed — runId={RunId}, workItemId={WorkItemId}, " +
+                      "externalId={ExternalId}, source={Source}, targetState={TargetState}")]
+        public static partial void WorkSourceProjectionFailed(
+            ILogger logger,
+            Exception ex,
+            string runId,
+            string workItemId,
+            string? externalId,
+            string? source,
+            RunLifecycleState targetState);
     }
 }

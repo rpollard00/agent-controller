@@ -210,4 +210,8 @@ public static class ControllerEventTypes
 
     /// <summary>Run escalated to NeedsHuman after exhausting all retry attempts.</summary>
     public const string RetryExhausted = "controller.retry_exhausted";
+
+    /// <summary>Work-source projection failed (best-effort). The controller internal
+    /// state transition succeeded but the external work source could not be updated.</summary>
+    public const string WorkSourceProjectionFailed = "controller.work_source_projection_failed";
 }
