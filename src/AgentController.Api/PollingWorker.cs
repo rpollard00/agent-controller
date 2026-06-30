@@ -4,6 +4,7 @@ using AgentController.Domain;
 using AgentController.Infrastructure.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using System.Diagnostics;
 using System.Text.Json;
 
 namespace AgentController.Api;
@@ -776,11 +777,32 @@ public sealed partial class PollingWorker : BackgroundService
                     "Ensure a matching key exists in the 'repositories' configuration section.");
             }
 
+            // Override default branch when rework context specifies the prior PR branch.
+            var effectiveBranch = reworkContext?.BranchName ?? defaultBranch;
+
+            // Guard: if we are overriding the branch for rework, verify it exists on origin.
+            // Fail loud with [rework_branch_missing] — no silent fallback to main.
+            if (reworkContext?.BranchName is not null && reworkContext.BranchName != defaultBranch)
+            {
+                var (exitCode, stdErr) = await CheckBranchExistsOnRemoteAsync(cloneUrl, reworkContext.BranchName, ct);
+                if (exitCode != 0)
+                {
+                    var errorDetail = stdErr.Length > 0
+                        ? $"\n{stdErr.Trim()}"
+                        : string.Empty;
+                    throw new InvalidOperationException(
+                        $"[rework_branch_missing] Branch '{reworkContext.BranchName}' does not exist on remote " +
+                        $"for repository '{repoKey}'. Cannot proceed with rework clone.{errorDetail}");
+                }
+
+                Log.ReworkBranchVerified(_logger, run.RunId, reworkContext.BranchName);
+            }
+
             var spec = new RepositorySpec
             {
                 RepoKey = repoKey,
                 CloneUrl = cloneUrl,
-                DefaultBranch = defaultBranch,
+                DefaultBranch = effectiveBranch,
                 Transport = transport,
                 Profile = repoProfile,
             };
@@ -799,6 +821,68 @@ public sealed partial class PollingWorker : BackgroundService
             await FailRunAsync(run, runStore, lifecycle,
                 $"[repository_clone_failed] Repository clone failed: {ex.Message}", ct);
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Probe the remote repository with <c>git ls-remote</c> to verify a branch exists.
+    /// Used as a preflight guard before cloning onto a rework branch override.
+    /// Returns (exitCode, stderr) — exitCode 0 means the branch was found.
+    /// </summary>
+    private static async Task<(int ExitCode, string StdErr)> CheckBranchExistsOnRemoteAsync(
+        string cloneUrl,
+        string branchName,
+        CancellationToken cancellationToken)
+    {
+        // Expand ~ for local paths (git ls-remote won't expand shell globs).
+        if (cloneUrl.StartsWith("~/", StringComparison.Ordinal))
+        {
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            cloneUrl = Path.Combine(home, cloneUrl[2..]);
+        }
+
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "git",
+                WorkingDirectory = Path.GetTempPath(),
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            },
+        };
+
+        process.StartInfo.ArgumentList.Add("ls-remote");
+        process.StartInfo.ArgumentList.Add("--exit-code");
+        process.StartInfo.ArgumentList.Add("--heads");
+        process.StartInfo.ArgumentList.Add(cloneUrl);
+        process.StartInfo.ArgumentList.Add($"refs/heads/{branchName}");
+
+        // Harden against interactive prompts (mirrors LocalGitSourceControlProvider).
+        process.StartInfo.EnvironmentVariables["GIT_TERMINAL_PROMPT"] = "0";
+        process.StartInfo.EnvironmentVariables["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes -o StrictHostKeyChecking=no";
+
+        process.Start();
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(30));
+
+        try
+        {
+            await process.WaitForExitAsync(cts.Token);
+            var stdErr = await process.StandardError.ReadToEndAsync(CancellationToken.None);
+            return (process.ExitCode, stdErr ?? string.Empty);
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
+            return (-1, $"git ls-remote timed out after 30s.");
+        }
+        catch (Exception ex)
+        {
+            return (-1, ex.Message);
         }
     }
 
@@ -1724,10 +1808,16 @@ public sealed partial class PollingWorker : BackgroundService
         [LoggerMessage(
             Level = LogLevel.Information,
             Message = "[rework] Pending ReworkCycle found — runId={RunId}, workItemId={WorkItemId}, " +
-                      "cycleId={CycleId}, cycleNumber={CycleNumber}, threadCount={ThreadCount}")]
+                      "cycleId={CycleId}, cycleNumber={CycleNumber}, threadCount={ThreadCount}")] 
         public static partial void ReworkCycleFound(
             ILogger logger, string runId, string workItemId,
             string cycleId, int cycleNumber, int threadCount);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "[rework] Branch '{BranchName}' verified on remote for run {RunId}.")] 
+        public static partial void ReworkBranchVerified(
+            ILogger logger, string runId, string branchName);
 
         [LoggerMessage(
             Level = LogLevel.Information,
