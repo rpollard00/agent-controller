@@ -93,6 +93,11 @@ else if (runtimeProvider.Equals("PiMateria", StringComparison.OrdinalIgnoreCase)
 // separate deployable without changing the domain or application contracts.
 builder.Services.AddHostedService<PollingWorker>();
 
+// Register the feedback polling worker (disabled by default via feedback.enabled).
+// Separate from PollingWorker with its own poll interval and concurrency budget.
+// Drives PR review comments into ReworkCycle rows for rework execution.
+builder.Services.AddHostedService<FeedbackPollingWorker>();
+
 var app = builder.Build();
 
 app.MapHealthEndpoints();

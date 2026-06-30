@@ -100,6 +100,12 @@ public static class AgentControllerServiceCollectionExtensions
             .AddOptions<LocalFeedbackOptions>()
             .Bind(configuration.GetSection(LocalFeedbackOptions.SectionName));
 
+        services
+            .AddOptions<FeedbackOptions>()
+            .Bind(configuration.GetSection(FeedbackOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
         return services;
     }
 
