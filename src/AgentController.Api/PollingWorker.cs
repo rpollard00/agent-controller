@@ -5,6 +5,7 @@ using AgentController.Infrastructure.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using System.Diagnostics;
+using System.Linq;
 using System.Text.Json;
 
 namespace AgentController.Api;
@@ -937,23 +938,16 @@ public sealed partial class PollingWorker : BackgroundService
                     Path.Combine(contextDir, "comments.md"), commentsMd, ct);
             }
 
+            // ── rework-context.md ──────────────────────────────────
+            if (reworkContext is not null)
+            {
+                var reworkMd = BuildReworkContextMarkdown(reworkContext);
+                await File.WriteAllTextAsync(
+                    Path.Combine(contextDir, "rework-context.md"), reworkMd, ct);
+            }
+
             // ── controller-run.json ────────────────────────────────
-            var runJson = JsonSerializer.Serialize(
-                new
-                {
-                    runId = run.RunId,
-                    workItemId = candidate.Id,
-                    externalId = candidate.ExternalId,
-                    externalUrl = candidate.ExternalUrl,
-                    source = candidate.Source,
-                    repoKey = candidate.RepoKey,
-                    repoPath = checkout.LocalPath,
-                    branch = checkout.Branch,
-                    commitSha = checkout.CommitSha,
-                    clonedAt = checkout.ClonedAt,
-                    startedAt = run.StartedAt,
-                },
-                JsonWriteOptions);
+            var runJson = BuildControllerRunJson(run, candidate, checkout, reworkContext);
             await File.WriteAllTextAsync(
                 Path.Combine(contextDir, "controller-run.json"), runJson, ct);
 
@@ -1393,6 +1387,180 @@ public sealed partial class PollingWorker : BackgroundService
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Build a Markdown representation of the rework context for the context directory.
+    /// Schema: preamble instructing the agent to continue an existing PR, prior run metadata,
+    /// then review threads sorted by file:line with full reply chains.
+    /// </summary>
+    private static string BuildReworkContextMarkdown(ReworkContext rework)
+    {
+        var sb = new System.Text.StringBuilder();
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+
+        // ── Preamble ───────────────────────────────────────────────
+        sb.AppendLine("# Rework Context");
+        sb.AppendLine();
+        sb.AppendLine("**You are continuing an EXISTING PR. Do not open a new one.**");
+        sb.AppendLine("Address the review feedback below, then push your changes to the existing branch.");
+        sb.AppendLine();
+
+        // ── Prior run metadata ─────────────────────────────────────
+        sb.AppendLine("## Prior Run");
+        sb.AppendLine();
+        sb.Append("- **Cycle:** ");
+        sb.AppendLine(rework.CycleNumber.ToString(inv));
+        sb.Append("- **Prior Run ID:** ");
+        sb.AppendLine(rework.PriorRunId);
+        sb.Append("- **Branch:** ");
+        sb.AppendLine(rework.BranchName);
+        sb.Append("- **Pull Request:** ");
+        sb.AppendLine(rework.PullRequestUrl);
+        sb.Append("- **Base Commit:** ");
+        sb.AppendLine(rework.BaseCommitSha);
+        sb.AppendLine();
+
+        // ── Review threads sorted by file:line ─────────────────────
+        sb.AppendLine("## Review Threads");
+        sb.AppendLine();
+
+        var sorted = rework.FeedbackBundle
+            .OrderBy(t => t.FilePath ?? string.Empty)
+            .ThenBy(t => t.StartLine)
+            .ToList();
+
+        for (int i = 0; i < sorted.Count; i++)
+        {
+            var thread = sorted[i];
+
+            // Thread header with location
+            var locationParts = new System.Collections.Generic.List<string>();
+            if (!string.IsNullOrWhiteSpace(thread.FilePath))
+            {
+                locationParts.Add(thread.FilePath);
+            }
+            if (thread.StartLine.HasValue)
+            {
+                locationParts.Add(thread.StartLine.Value.ToString(inv));
+            }
+            if (locationParts.Count > 0)
+            {
+                sb.Append("### Thread ");
+                sb.Append((i + 1).ToString(inv));
+                sb.Append(" \u2014 ");
+                sb.Append('`');
+                sb.Append(string.Join(":", locationParts));
+                sb.Append('`');
+                sb.AppendLine();
+            }
+            else
+            {
+                sb.Append("### Thread ");
+                sb.Append((i + 1).ToString(inv));
+                sb.AppendLine(" \u2014 PR-level");
+            }
+            sb.AppendLine();
+
+            // Thread metadata
+            sb.Append("- **Author:** ");
+            sb.AppendLine(thread.Author);
+            sb.Append("- **Status:** ");
+            sb.AppendLine(thread.Status.ToString());
+            sb.Append("- **Created:** ");
+            sb.AppendLine(thread.CreatedAt.ToString("yyyy-MM-dd HH:mm", inv));
+            if (!thread.IsFileLevel && thread.StartLine.HasValue && thread.EndLine.HasValue)
+            {
+                sb.Append("- **Range:** ");
+                sb.Append(thread.StartLine.Value.ToString(inv));
+                sb.Append('-');
+                sb.AppendLine(thread.EndLine.Value.ToString(inv));
+            }
+            sb.AppendLine();
+
+            // Full reply chain
+            foreach (var comment in thread.Comments)
+            {
+                var replyPrefix = comment.IsReply ? "> " : "";
+                sb.Append(replyPrefix);
+                sb.Append("**");
+                sb.Append(comment.Author);
+                sb.Append("** (");
+                sb.Append(comment.CreatedAt.ToString("yyyy-MM-dd HH:mm", inv));
+                sb.AppendLine("):");
+                sb.AppendLine();
+                sb.Append(replyPrefix);
+                sb.AppendLine(comment.Body);
+                sb.AppendLine();
+            }
+
+            // Separator between threads (except after the last one)
+            if (i < sorted.Count - 1)
+            {
+                sb.AppendLine("---");
+                sb.AppendLine();
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Build the controller-run.json payload, optionally including a rework block
+    /// when a <see cref="ReworkContext"/> is present.
+    /// </summary>
+    private static string BuildControllerRunJson(
+        AgentRunHandle run,
+        WorkCandidate candidate,
+        RepositoryCheckout checkout,
+        ReworkContext? rework)
+    {
+        var reworkBlock = rework is not null
+            ? new
+            {
+                cycleNumber = rework.CycleNumber,
+                priorRunId = rework.PriorRunId,
+                branchName = rework.BranchName,
+                pullRequestUrl = rework.PullRequestUrl,
+                baseCommitSha = rework.BaseCommitSha,
+                feedbackBundle = rework.FeedbackBundle.Select(t => new
+                {
+                    threadId = t.ThreadId,
+                    author = t.Author,
+                    createdAt = t.CreatedAt,
+                    status = t.Status,
+                    filePath = t.FilePath,
+                    startLine = t.StartLine,
+                    endLine = t.EndLine,
+                    isFileLevel = t.IsFileLevel,
+                    comments = t.Comments.Select(c => new
+                    {
+                        author = c.Author,
+                        body = c.Body,
+                        createdAt = c.CreatedAt,
+                        isReply = c.IsReply,
+                    }).ToArray(),
+                }).ToArray(),
+            }
+            : null;
+
+        return JsonSerializer.Serialize(
+            new
+            {
+                runId = run.RunId,
+                workItemId = candidate.Id,
+                externalId = candidate.ExternalId,
+                externalUrl = candidate.ExternalUrl,
+                source = candidate.Source,
+                repoKey = candidate.RepoKey,
+                repoPath = checkout.LocalPath,
+                branch = checkout.Branch,
+                commitSha = checkout.CommitSha,
+                clonedAt = checkout.ClonedAt,
+                startedAt = run.StartedAt,
+                rework = reworkBlock,
+            },
+            JsonWriteOptions);
     }
 
     /// <summary>
