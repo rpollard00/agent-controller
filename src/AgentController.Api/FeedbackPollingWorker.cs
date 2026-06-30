@@ -112,6 +112,7 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
         var runStore = scope.ServiceProvider.GetRequiredService<Application.IAgentRunStore>();
         var reworkCycleStore = scope.ServiceProvider.GetRequiredService<Application.IReworkCycleStore>();
         var feedbackSource = scope.ServiceProvider.GetRequiredService<Application.IFeedbackSource>();
+        var filterPipeline = scope.ServiceProvider.GetRequiredService<Application.ReviewFeedbackFilterPipeline>();
 
         // ── Step 1: Query eligible runs ───────────────────────────
         // Runs in {PrOpened, BranchPushed, Completed} with non-null PullRequestUrl.
@@ -224,8 +225,20 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
 
         Log.SignalsReceived(_logger, signals.Count);
 
-        // TODO: filter pipeline, soak-window logic, and ReworkCycle
-        // materialization in subsequent work items.
+        // ── Step 6: Apply filter pipeline ────────────────────────
+        // 5-step load-bearing filter: marker gate, allowlist fail-closed,
+        // thread-status, thread-author, comment-content.
+        var filteredSignals = await filterPipeline.FilterAsync(query, signals, ct);
+
+        Log.SignalsAfterFilter(_logger, filteredSignals.Count, signals.Count);
+
+        if (filteredSignals.Count == 0)
+        {
+            Log.NoSignalsAfterFilter(_logger);
+        }
+
+        // TODO: soak-window logic and ReworkCycle materialization
+        // in subsequent work items.
 
         Log.PollCycleCompleted(_logger);
     }
@@ -393,5 +406,16 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             Level = LogLevel.Debug,
             Message = "Feedback source returned {Count} rework signal(s).")]
         public static partial void SignalsReceived(ILogger logger, int count);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Filter pipeline: {FilteredCount} signal(s) survived (of {OriginalCount} raw signal(s)).")]
+        public static partial void SignalsAfterFilter(
+            ILogger logger, int filteredCount, int originalCount);
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "No rework signals survived the filter pipeline.")]
+        public static partial void NoSignalsAfterFilter(ILogger logger);
     }
 }

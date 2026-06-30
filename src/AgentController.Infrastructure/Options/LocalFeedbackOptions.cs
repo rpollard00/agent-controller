@@ -39,6 +39,12 @@ public sealed class LocalFeedbackSignalDefinition
     /// Review threads to return for this PR.
     /// </summary>
     public IReadOnlyList<LocalFeedbackThreadDefinition> Threads { get; init; } = [];
+
+    /// <summary>
+    /// PR labels to return for this PR (used by the marker gate in the filter pipeline).
+    /// When absent, the PR is treated as having no labels (marker gate fails-closed).
+    /// </summary>
+    public IReadOnlyList<LocalFeedbackLabelDefinition> Labels { get; init; } = [];
 }
 
 /// <summary>
@@ -90,4 +96,18 @@ public sealed class LocalFeedbackCommentDefinition
 
     /// <summary>True if this comment is a reply to another comment in the thread.</summary>
     public bool IsReply { get; init; }
+}
+
+/// <summary>
+/// A PR label definition for the <c>Local</c> feedback source.
+/// Used by the marker gate in the filter pipeline to simulate
+/// PR labels with their creators.
+/// </summary>
+public sealed class LocalFeedbackLabelDefinition
+{
+    /// <summary>Label name (e.g. "agent-rework-requested").</summary>
+    public string Name { get; init; } = string.Empty;
+
+    /// <summary>Canonical creator identifier (uniqueName / email).</summary>
+    public string CreatedBy { get; init; } = string.Empty;
 }

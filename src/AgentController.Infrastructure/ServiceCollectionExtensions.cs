@@ -405,6 +405,9 @@ public static class AgentControllerServiceCollectionExtensions
     /// <see cref="Application.ReworkSignal"/> instances from the
     /// <c>localFeedback</c> configuration section.
     ///
+    /// Also registers <see cref="LocalPrLabelSource"/> as the
+    /// <see cref="IPrLabelSource"/> for marker-gate label lookups.
+    ///
     /// Mirrors <see cref="AddAgentControllerLocalFileWorkSource"/>: definitions
     /// are validated and cached on first use, then returned for any
     /// <see cref="Application.PrUnderTest"/> whose <c>PullRequestId</c> matches
@@ -417,6 +420,71 @@ public static class AgentControllerServiceCollectionExtensions
         this IServiceCollection services)
     {
         services.AddSingleton<IFeedbackSource, LocalFeedbackSource>();
+        services.AddSingleton<IPrLabelSource, LocalPrLabelSource>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers the Azure DevOps Repos implementations for the feedback pipeline:
+    /// <see cref="AzureDevOpsReposFeedbackSource"/> as <see cref="IFeedbackSource"/>
+    /// and <see cref="AzureDevOpsReposPrLabelSource"/> as <see cref="IPrLabelSource"/>.
+    ///
+    /// Both use the same HttpClient and AzureDevOpsBoardsOptions wiring as the
+    /// Azure DevOps Boards work source.
+    ///
+    /// Requires <see cref="AddAgentControllerOptions"/> to be called first
+    /// (for <see cref="AzureDevOpsBoardsOptions"/> and <see cref="WorkSourceOptions"/>).
+    /// </summary>
+    public static IServiceCollection AddAgentControllerAzureDevOpsReposFeedbackSource(
+        this IServiceCollection services)
+    {
+        // Register the feedback source (thread fetcher) as scoped.
+        services.AddScoped<IFeedbackSource>(sp =>
+        {
+            var boardsOptions = sp.GetRequiredService<IOptions<AzureDevOpsBoardsOptions>>().Value;
+            var workSourceOptions = sp.GetRequiredService<IOptions<WorkSourceOptions>>().Value;
+
+            boardsOptions.BaseUrl = workSourceOptions.OrganizationUrl;
+            boardsOptions.Project = workSourceOptions.Project;
+
+            var http = new HttpClient();
+            return new AzureDevOpsReposFeedbackSource(http, boardsOptions);
+        });
+
+        // Register the PR label source (marker gate) as scoped.
+        services.AddScoped<IPrLabelSource>(sp =>
+        {
+            var boardsOptions = sp.GetRequiredService<IOptions<AzureDevOpsBoardsOptions>>().Value;
+            var workSourceOptions = sp.GetRequiredService<IOptions<WorkSourceOptions>>().Value;
+
+            boardsOptions.BaseUrl = workSourceOptions.OrganizationUrl;
+            boardsOptions.Project = workSourceOptions.Project;
+
+            var http = new HttpClient();
+            return new AzureDevOpsReposPrLabelSource(http, boardsOptions);
+        });
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers the <see cref="ReviewFeedbackFilterPipeline"/> as a singleton
+    /// service that applies the 5-step load-bearing filter pipeline to raw
+    /// rework signals.
+    ///
+    /// Also registers a no-op <see cref="IPrLabelSource"/> as the default.
+    /// Provider-specific registrations (<see cref="AddAgentControllerLocalFeedbackSource"/>,
+    /// <see cref="AddAgentControllerAzureDevOpsReposFeedbackSource"/>)
+    /// override this with real implementations.
+    /// </summary>
+    public static IServiceCollection AddAgentControllerFeedbackFilterPipeline(
+        this IServiceCollection services)
+    {
+        // No-op label source: marker gate fails-closed for all PRs.
+        // Provider-specific registrations override this.
+        services.AddSingleton<IPrLabelSource, NoOpPrLabelSource>();
+        services.AddSingleton<ReviewFeedbackFilterPipeline>();
 
         return services;
     }
