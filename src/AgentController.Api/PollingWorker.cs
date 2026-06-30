@@ -128,6 +128,7 @@ public sealed partial class PollingWorker : BackgroundService
         var sourceControlProvider = scope.ServiceProvider.GetRequiredService<ISourceControlProvider>();
         var environmentStore = scope.ServiceProvider.GetRequiredService<IEnvironmentStore>();
         var repositoryStore = scope.ServiceProvider.GetRequiredService<IRepositoryStore>();
+        var reworkCycleStore = scope.ServiceProvider.GetRequiredService<IReworkCycleStore>();
         var repoConfig = scope.ServiceProvider.GetRequiredService<IOptions<Dictionary<string, RepositoryProfileOptions>>>();
         var options = _options.CurrentValue;
 
@@ -168,6 +169,7 @@ public sealed partial class PollingWorker : BackgroundService
                         sourceControlProvider,
                         environmentStore,
                         repositoryStore,
+                        reworkCycleStore,
                         repoConfig.Value,
                         options,
                         ct);
@@ -246,6 +248,7 @@ public sealed partial class PollingWorker : BackgroundService
         ISourceControlProvider sourceControlProvider,
         IEnvironmentStore environmentStore,
         IRepositoryStore repositoryStore,
+        IReworkCycleStore reworkCycleStore,
         IReadOnlyDictionary<string, RepositoryProfileOptions> repoConfig,
         AgentControllerOptions options,
         CancellationToken ct)
@@ -338,6 +341,37 @@ public sealed partial class PollingWorker : BackgroundService
             ct);
 
         Log.RunCreated(_logger, run.RunId, candidate.Id);
+
+        // ── Claim-time ReworkCycle lookup ──────────────────────────
+        // Single seam: after the run is created, check for a Pending
+        // ReworkCycle materialized by the feedback worker. If present,
+        // build a ReworkContext to thread through the happy path.
+        // If null, the happy path is completely untouched.
+        ReworkContext? reworkContext = null;
+        var pendingCycle = await reworkCycleStore.GetPendingForWorkItemAsync(
+            candidate.Id, ct);
+
+        if (pendingCycle is not null)
+        {
+            var feedbackBundle = JsonSerializer.Deserialize<IReadOnlyList<ReviewThread>>(
+                pendingCycle.FeedbackBundleJson,
+                JsonReadOptions);
+
+            reworkContext = new ReworkContext
+            {
+                CycleNumber = pendingCycle.CycleNumber,
+                PriorRunId = pendingCycle.PriorRunId,
+                BranchName = pendingCycle.BranchName,
+                PullRequestUrl = pendingCycle.PullRequestUrl,
+                BaseCommitSha = pendingCycle.BaseCommitSha,
+                FeedbackBundle = feedbackBundle ?? Array.Empty<ReviewThread>(),
+            };
+
+            Log.ReworkCycleFound(
+                _logger, run.RunId, candidate.Id,
+                pendingCycle.Id, pendingCycle.CycleNumber,
+                reworkContext.FeedbackBundle.Count);
+        }
 
         // ── Advance through controller-owned lifecycle states ──────
         // Each state transition invokes the appropriate provider and
@@ -767,6 +801,12 @@ public sealed partial class PollingWorker : BackgroundService
     }
 
     private static readonly JsonSerializerOptions JsonWriteOptions = new() { WriteIndented = true };
+
+    private static readonly JsonSerializerOptions JsonReadOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowReadingFromString,
+    };
 
     /// <summary>
     /// Write context files into the environment's context/ directory so the
@@ -1676,6 +1716,14 @@ public sealed partial class PollingWorker : BackgroundService
             Level = LogLevel.Information,
             Message = "Created agent run {RunId} for work item {WorkItemId}.")]
         public static partial void RunCreated(ILogger logger, string runId, string workItemId);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "[rework] Pending ReworkCycle found — runId={RunId}, workItemId={WorkItemId}, " +
+                      "cycleId={CycleId}, cycleNumber={CycleNumber}, threadCount={ThreadCount}")]
+        public static partial void ReworkCycleFound(
+            ILogger logger, string runId, string workItemId,
+            string cycleId, int cycleNumber, int threadCount);
 
         [LoggerMessage(
             Level = LogLevel.Information,
