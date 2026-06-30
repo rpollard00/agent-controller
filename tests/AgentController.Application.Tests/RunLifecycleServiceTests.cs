@@ -159,7 +159,7 @@ public class RunLifecycleServiceTests
             Source = "AzureDevOpsBoards",
             Title = "Add retry logic",
             Description = "Implement retry handling for transient failures",
-            Status = "Approved",
+            Status = "New",
             Priority = 2,
             RepoKey = "backend",
             Tags = new[] { "agent-ready", "repo:backend" },

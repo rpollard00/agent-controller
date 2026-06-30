@@ -103,7 +103,6 @@ public class OptionsSmokeTests
                 ["workSource:eligibleTags:1"] = "autonomous",
                 ["workSource:excludedTags:0"] = "agent-blocked",
                 ["workSource:eligibleStates:0"] = "New",
-                ["workSource:eligibleStates:1"] = "Approved",
             }
         );
 
@@ -125,7 +124,7 @@ public class OptionsSmokeTests
         Assert.Contains("agent-failed", options.ExcludedTags);
         Assert.Contains("agent-needs-human", options.ExcludedTags);
         Assert.Contains("agent-blocked", options.ExcludedTags);
-        Assert.Equal(2, options.EligibleStates.Count);
+        Assert.Single(options.EligibleStates);
         Assert.Contains("New", options.EligibleStates);
     }
 

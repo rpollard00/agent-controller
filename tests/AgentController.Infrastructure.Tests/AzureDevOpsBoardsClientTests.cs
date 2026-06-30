@@ -102,7 +102,7 @@ public class AzureDevOpsBoardsClientTests
                   areaPath: @"TestProject\TeamA", iterationPath: @"TestProject\Sprint 1",
                   workItemType: "Bug"),
                  (id: 99, rev: 1, title: "Add retry logic", description: null,
-                  state: "Approved", tags: "agent-ready; backend",
+                  state: "New", tags: "agent-ready; backend",
                   assignedToDisplay: null, priority: 2,
                   areaPath: @"TestProject", iterationPath: @"TestProject\Sprint 2",
                   workItemType: "User Story")))
@@ -142,7 +142,7 @@ public class AzureDevOpsBoardsClientTests
         Assert.Equal(string.Empty, wi2.RepoKey); // No repo: tag
         Assert.Equal("Add retry logic", wi2.Title);
         Assert.Null(wi2.Description);
-        Assert.Equal("Approved", wi2.Status);
+        Assert.Equal("New", wi2.Status);
         Assert.Equal(2, wi2.Priority);
         Assert.Null(wi2.AssignedTo);
         Assert.NotNull(wi2.SourceMetadata);
