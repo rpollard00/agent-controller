@@ -110,6 +110,11 @@ internal sealed class EfAgentRunStore : IAgentRunStore
             entity.PullRequestUrl = update.PullRequestUrl;
             hasChange = true;
         }
+        if (update.CommitSha is not null)
+        {
+            entity.CommitSha = update.CommitSha;
+            hasChange = true;
+        }
         if (update.ResultSummary is not null)
         {
             entity.ResultSummary = update.ResultSummary;
@@ -227,6 +232,7 @@ internal sealed class EfAgentRunStore : IAgentRunStore
             Status = (RunLifecycleState)entity.Status,
             BranchName = entity.BranchName,
             PullRequestUrl = entity.PullRequestUrl,
+            CommitSha = entity.CommitSha,
             ResultSummary = entity.ResultSummary,
             StartedAt = entity.StartedAt,
             FinishedAt = entity.FinishedAt,

@@ -408,6 +408,23 @@ public sealed partial class PollingWorker : BackgroundService
             $"Repository cloned and ready at '{checkout.LocalPath}'.",
             RunLifecycleState.RepositoryReady, ct);
 
+        // Persist the HEAD commit SHA from the clone so ReworkCycle.BaseCommitSha
+        // can be sourced from the prior run later.
+        if (!string.IsNullOrWhiteSpace(checkout.CommitSha))
+        {
+            try
+            {
+                await runStore.UpdateRuntimeFieldsAsync(
+                    run.RunId,
+                    new RuntimeFieldUpdate { CommitSha = checkout.CommitSha },
+                    ct);
+            }
+            catch
+            {
+                // Best-effort — the SHA is also captured in controller-run.json.
+            }
+        }
+
         Log.WorkspaceReady(
             _logger, run.RunId, envHandle.RootPath, checkout.LocalPath);
 
@@ -1520,6 +1537,23 @@ public sealed partial class PollingWorker : BackgroundService
         await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.RepositoryReady,
             $"Repository cloned and ready at '{checkout.LocalPath}'.",
             RunLifecycleState.RepositoryReady, ct);
+
+        // Persist the HEAD commit SHA from the clone so ReworkCycle.BaseCommitSha
+        // can be sourced from the prior run later.
+        if (!string.IsNullOrWhiteSpace(checkout.CommitSha))
+        {
+            try
+            {
+                await runStore.UpdateRuntimeFieldsAsync(
+                    run.RunId,
+                    new RuntimeFieldUpdate { CommitSha = checkout.CommitSha },
+                    ct);
+            }
+            catch
+            {
+                // Best-effort — the SHA is also captured in controller-run.json.
+            }
+        }
 
         Log.WorkspaceReady(_logger, run.RunId, envHandle.RootPath, checkout.LocalPath);
 

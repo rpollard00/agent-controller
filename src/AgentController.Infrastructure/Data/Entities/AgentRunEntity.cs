@@ -39,6 +39,9 @@ internal sealed class AgentRunEntity
     /// <summary>Pull request URL if the runtime opened one.</summary>
     public string? PullRequestUrl { get; set; }
 
+    /// <summary>HEAD commit SHA at the time of the run.</summary>
+    public string? CommitSha { get; set; }
+
     /// <summary>Human-readable summary of the run result.</summary>
     public string? ResultSummary { get; set; }
 

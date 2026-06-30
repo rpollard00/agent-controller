@@ -49,6 +49,9 @@ internal sealed class AgentRunEntityConfiguration : IEntityTypeConfiguration<Age
         builder.Property(x => x.PullRequestUrl)
             .HasMaxLength(2048);
 
+        builder.Property(x => x.CommitSha)
+            .HasMaxLength(4096);
+
         builder.Property(x => x.ResultSummary);
 
         builder.Property(x => x.Error);

@@ -73,6 +73,9 @@ public sealed record AgentRunHandle
     /// <summary>Pull request URL if the runtime opened one.</summary>
     public string? PullRequestUrl { get; init; }
 
+    /// <summary>HEAD commit SHA at the time of the run (from clone or runtime payload).</summary>
+    public string? CommitSha { get; init; }
+
     /// <summary>Human-readable summary of the run result.</summary>
     public string? ResultSummary { get; init; }
 
@@ -175,6 +178,9 @@ public sealed record RuntimeFieldUpdate
 
     /// <summary>Pull request URL.</summary>
     public string? PullRequestUrl { get; init; }
+
+    /// <summary>HEAD commit SHA (from clone or runtime payload).</summary>
+    public string? CommitSha { get; init; }
 
     /// <summary>Human-readable result summary.</summary>
     public string? ResultSummary { get; init; }
