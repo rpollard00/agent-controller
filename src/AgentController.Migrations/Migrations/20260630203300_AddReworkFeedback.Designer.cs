@@ -3,6 +3,7 @@ using System;
 using AgentController.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace AgentController.Migrations.Migrations
 {
     [DbContext(typeof(AgentControllerDbContext))]
-    partial class AgentControllerDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260630203300_AddReworkFeedback")]
+    partial class AddReworkFeedback
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.9");
@@ -310,63 +313,6 @@ namespace AgentController.Migrations.Migrations
                         .HasDatabaseName("IX_ReworkCycles_WorkItemId_Status");
 
                     b.ToTable("ReworkCycles", (string)null);
-                });
-
-            modelBuilder.Entity("AgentController.Infrastructure.Data.Entities.ReworkFeedbackEntity", b =>
-                {
-                    b.Property<string>("Id")
-                        .HasMaxLength(128)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("FeedbackBundleId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTimeOffset>("FirstQualifyingCommentAt")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTimeOffset>("LastQualifyingCommentAt")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("OriginatingRunId")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("PullRequestId")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("Status")
-                        .IsRequired()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("ThreadCount")
-                        .IsRequired()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("PullRequestId", "FeedbackBundleId")
-                        .IsUnique()
-                        .HasDatabaseName("IX_ReworkFeedback_PullRequestId_FeedbackBundleId");
-
-                    b.HasIndex("Status")
-                        .HasDatabaseName("IX_ReworkFeedback_Status");
-
-                    b.ToTable("ReworkFeedback", (string)null);
                 });
 
             modelBuilder.Entity("AgentController.Infrastructure.Data.Entities.WorkItemEntity", b =>

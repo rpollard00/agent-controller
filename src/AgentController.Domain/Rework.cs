@@ -126,6 +126,75 @@ public sealed record ReworkContext
 }
 
 /// <summary>
+/// Status of a persisted rework feedback soak-state row.
+/// Tracks the debounce lifecycle from first qualifying comment
+/// through soak window to readiness for materialization.
+/// </summary>
+public enum ReworkFeedbackStatus
+{
+    /// <summary>
+    /// Feedback bundle is being watched for additional comments.
+    /// Soak timer is active; row becomes Soaked after soakMinutes
+    /// of inactivity.
+    /// </summary>
+    Watching = 0,
+
+    /// <summary>
+    /// Soak window has elapsed with no new qualifying comments.
+    /// Row is eligible for materialization into a Pending ReworkCycle.
+    /// </summary>
+    Soaked,
+
+    /// <summary>
+    /// A newer feedback bundle superseded this one (bundle hash changed).
+    /// This row is stale and will not be materialized.
+    /// </summary>
+    Superseded,
+}
+
+/// <summary>
+/// Persisted soak-state record for debounce logic.
+/// Lives in SQLite so soak correctness survives worker restarts
+/// rather than relying on in-memory state.
+/// </summary>
+public sealed record ReworkFeedback
+{
+    /// <summary>Controller-assigned identifier.</summary>
+    public string Id { get; init; } = string.Empty;
+
+    /// <summary>Controller-assigned run identifier of the run that produced the PR.</summary>
+    public string OriginatingRunId { get; init; } = string.Empty;
+
+    /// <summary>Pull request identifier (from the source system).</summary>
+    public string PullRequestId { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Stable hash of the feedback bundle contents.
+    /// Unique index on (PullRequestId, FeedbackBundleId) prevents
+    /// duplicate soak rows for the same bundle.
+    /// </summary>
+    public string FeedbackBundleId { get; init; } = string.Empty;
+
+    /// <summary>Timestamp of the first qualifying comment for this bundle.</summary>
+    public DateTimeOffset FirstQualifyingCommentAt { get; init; }
+
+    /// <summary>Timestamp of the last qualifying comment for this bundle.</summary>
+    public DateTimeOffset LastQualifyingCommentAt { get; init; }
+
+    /// <summary>Number of review threads in the current bundle.</summary>
+    public int ThreadCount { get; init; }
+
+    /// <summary>Current soak-state lifecycle status.</summary>
+    public ReworkFeedbackStatus Status { get; init; } = ReworkFeedbackStatus.Watching;
+
+    /// <summary>When the soak row was first persisted.</summary>
+    public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
+
+    /// <summary>When the soak row was last updated (bumped on new comments or status change).</summary>
+    public DateTimeOffset UpdatedAt { get; init; } = DateTimeOffset.UtcNow;
+}
+
+/// <summary>
 /// Persisted rework cycle linking soaked feedback to a new agent run.
 /// Materialized by the feedback worker from a Soaked ReworkFeedback row
 /// and consumed by the polling worker at claim time.

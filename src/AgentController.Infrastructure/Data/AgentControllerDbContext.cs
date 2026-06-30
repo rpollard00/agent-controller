@@ -32,6 +32,7 @@ internal sealed class AgentControllerDbContext : DbContext
     public DbSet<LifecycleEventEntity> LifecycleEvents => Set<LifecycleEventEntity>();
     public DbSet<RepositoryEntity> Repositories => Set<RepositoryEntity>();
     public DbSet<ReworkCycleEntity> ReworkCycles => Set<ReworkCycleEntity>();
+    public DbSet<ReworkFeedbackEntity> ReworkFeedback => Set<ReworkFeedbackEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -41,5 +42,6 @@ internal sealed class AgentControllerDbContext : DbContext
         modelBuilder.ApplyConfiguration(new LifecycleEventEntityConfiguration());
         modelBuilder.ApplyConfiguration(new RepositoryEntityConfiguration());
         modelBuilder.ApplyConfiguration(new ReworkCycleEntityConfiguration());
+        modelBuilder.ApplyConfiguration(new ReworkFeedbackEntityConfiguration());
     }
 }
