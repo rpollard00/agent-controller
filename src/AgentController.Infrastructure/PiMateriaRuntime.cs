@@ -371,6 +371,19 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
             {
                 var parts = new List<string>();
 
+                // Rework context (if present) is prepended before the work-item body
+                // so the agent sees the rework instructions first.
+                var reworkPath = Path.Combine(contextDir, "rework-context.md");
+                if (File.Exists(reworkPath))
+                {
+                    var reworkContent = File.ReadAllText(reworkPath).TrimEnd('\r', '\n');
+                    if (!string.IsNullOrEmpty(reworkContent))
+                    {
+                        parts.Add("## Rework Context");
+                        parts.Add(reworkContent);
+                    }
+                }
+
                 var workItemContent = File.ReadAllText(workItemPath).TrimEnd('\r', '\n');
                 if (!string.IsNullOrEmpty(workItemContent))
                 {
