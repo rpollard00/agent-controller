@@ -1,8 +1,6 @@
-using System.Diagnostics.CodeAnalysis;
-using System.Net.Http.Headers;
-using System.Text;
-using System.Text.Json;
+using AgentController.Application;
 using AgentController.Infrastructure.Options;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -13,9 +11,9 @@ namespace AgentController.Infrastructure;
 /// Validates configured ADO board states against the actual valid states
 /// for the configured project and work item type at host startup.
 /// 
-/// Queries ADO to enumerate the valid System.State values, then throws
-/// during startup if ActiveState, CompletedState, or any EligibleStates
-/// value is not a valid state for that WIT/project.
+/// Uses <see cref="IAzureDevOpsBoardsClient.GetValidStatesAsync"/> to enumerate
+/// the valid System.State values, then throws during startup if ActiveState,
+/// CompletedState, or any EligibleStates value is not a valid state for that WIT/project.
 /// 
 /// This validation only runs when the work source provider is "AzureDevOpsBoards".
 /// It is skipped when the <c>AGENT_CONTROLLER_SKIP_ADO_STATE_VALIDATION</c>
@@ -25,15 +23,18 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
 {
     private readonly IOptions<WorkSourceOptions> _workSourceOptions;
     private readonly IOptions<AzureDevOpsBoardsOptions> _boardsOptions;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<AzureDevOpsBoardStateStartupValidator> _logger;
 
     public AzureDevOpsBoardStateStartupValidator(
         IOptions<WorkSourceOptions> workSourceOptions,
         IOptions<AzureDevOpsBoardsOptions> boardsOptions,
+        IServiceScopeFactory scopeFactory,
         ILogger<AzureDevOpsBoardStateStartupValidator> logger)
     {
         _workSourceOptions = workSourceOptions;
         _boardsOptions = boardsOptions;
+        _scopeFactory = scopeFactory;
         _logger = logger;
     }
 
@@ -57,7 +58,7 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
             return;
         }
 
-        // Resolve PAT
+        // Resolve PAT — skip if not available (PAT validation is handled elsewhere).
         string? pat;
         try
         {
@@ -65,8 +66,6 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
         }
         catch (InvalidOperationException ex)
         {
-            // PAT resolution failure is already caught by AzureDevOpsBoardsValidator.
-            // Skip state validation if we can't authenticate.
             SkipValidationPatFailed(_logger, ex);
             return;
         }
@@ -77,10 +76,9 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
             return;
         }
 
-        var orgUrl = workSource.OrganizationUrl;
         var project = workSource.Project;
 
-        if (string.IsNullOrWhiteSpace(orgUrl) || string.IsNullOrWhiteSpace(project))
+        if (string.IsNullOrWhiteSpace(workSource.OrganizationUrl) || string.IsNullOrWhiteSpace(project))
         {
             SkipValidationMissingConfig(_logger);
             return;
@@ -92,8 +90,9 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
 
         ValidateStarting(_logger, project!, workItemType);
 
-        // Query ADO for valid states
-        var validStates = await FetchValidStatesAsync(orgUrl!, project!, workItemType, pat, cancellationToken);
+        // Query ADO for valid states via the scoped IAzureDevOpsBoardsClient.
+        // The client is registered with the correct base URL and PAT from options.
+        var validStates = await FetchValidStatesViaClientAsync(project!, workItemType, cancellationToken);
 
         if (validStates.Count == 0)
         {
@@ -154,201 +153,24 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
 #pragma warning restore CA1873
     }
 
+    /// <summary>
+    /// Fetches valid states by resolving the scoped <see cref="IAzureDevOpsBoardsClient"/>
+    /// through <see cref="IServiceScopeFactory"/>.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> FetchValidStatesViaClientAsync(
+        string project,
+        string workItemType,
+        CancellationToken cancellationToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var client = scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClient>();
+        return await client.GetValidStatesAsync(project, workItemType, cancellationToken);
+    }
+
     public Task StopAsync(CancellationToken cancellationToken)
     {
         // Nothing to clean up on stop.
         return Task.CompletedTask;
-    }
-
-    // ─── Fetch valid states from ADO ─────────────────────────────
-
-    /// <summary>
-    /// Fetches valid System.State values from ADO by querying the Process API.
-    /// </summary>
-    private static async Task<IReadOnlyList<string>> FetchValidStatesAsync(
-        [NotNull] string organizationUrl,
-        [NotNull] string project,
-        string workItemType,
-        string personalAccessToken,
-        CancellationToken cancellationToken)
-    {
-        using var http = new HttpClient();
-        http.BaseAddress = new Uri(organizationUrl.TrimEnd('/') + "/");
-
-        var authBytes = Encoding.ASCII.GetBytes($":{personalAccessToken}");
-        http.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
-
-        try
-        {
-            // (1) Get project details to find the process ID.
-            var projectResponse = await http.GetAsync(
-                $"_apis/projects/{Uri.EscapeDataString(project)}?api-version=7.1&includeProcessSettings=true",
-                cancellationToken);
-
-            if (!projectResponse.IsSuccessStatusCode)
-            {
-                return Array.Empty<string>();
-            }
-
-            var projectJson = await projectResponse.Content.ReadAsStringAsync(cancellationToken);
-            using var projectDoc = JsonDocument.Parse(projectJson);
-
-            var processId = ExtractProcessId(projectDoc.RootElement);
-
-            if (string.IsNullOrWhiteSpace(processId))
-            {
-                // Fallback: enumerate processes and find the one for this project.
-                processId = await FindProcessIdForProjectAsync(http, project, cancellationToken);
-            }
-
-            if (string.IsNullOrWhiteSpace(processId))
-            {
-                return Array.Empty<string>();
-            }
-
-            // (2) Get the work item type definition with System.State field.
-            var witResponse = await http.GetAsync(
-                $"_apis/work/processes/{Uri.EscapeDataString(processId)}/workItemTypes/{Uri.EscapeDataString(workItemType)}?api-version=7.1-preview.3&fields=System.State",
-                cancellationToken);
-
-            if (!witResponse.IsSuccessStatusCode)
-            {
-                return Array.Empty<string>();
-            }
-
-            var witJson = await witResponse.Content.ReadAsStringAsync(cancellationToken);
-            using var witDoc = JsonDocument.Parse(witJson);
-
-            return ExtractAllowedStates(witDoc.RootElement);
-        }
-        catch (OperationCanceledException)
-        {
-            return Array.Empty<string>();
-        }
-        catch (HttpRequestException)
-        {
-            return Array.Empty<string>();
-        }
-        catch (JsonException)
-        {
-            return Array.Empty<string>();
-        }
-        catch
-        {
-            return Array.Empty<string>();
-        }
-    }
-
-    /// <summary>
-    /// Extracts the process ID from a project API response.
-    /// Tries processSettings.processId first, then top-level processId.
-    /// </summary>
-    private static string? ExtractProcessId(JsonElement projectElement)
-    {
-        // Try processSettings.processId (most common location).
-        if (projectElement.TryGetProperty("processSettings", out var processSettings)
-            && processSettings.TryGetProperty("processId", out var processIdEl)
-            && processIdEl.ValueKind == JsonValueKind.String)
-        {
-            return processIdEl.GetString();
-        }
-
-        // Fallback: top-level processId.
-        if (projectElement.TryGetProperty("processId", out var topProcessIdEl)
-            && topProcessIdEl.ValueKind == JsonValueKind.String)
-        {
-            return topProcessIdEl.GetString();
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// Enumerates processes and finds the one associated with the given project.
-    /// </summary>
-    private static async Task<string?> FindProcessIdForProjectAsync(
-        HttpClient http,
-        string project,
-        CancellationToken cancellationToken)
-    {
-        var processesResponse = await http.GetAsync(
-            "_apis/work/processes?api-version=7.1-preview.3",
-            cancellationToken);
-
-        if (!processesResponse.IsSuccessStatusCode)
-        {
-            return null;
-        }
-
-        var processesJson = await processesResponse.Content.ReadAsStringAsync(cancellationToken);
-        using var processesDoc = JsonDocument.Parse(processesJson);
-
-        if (processesDoc.RootElement.TryGetProperty("value", out var processesArray)
-            && processesArray.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var process in processesArray.EnumerateArray())
-            {
-                if (!process.TryGetProperty("id", out var pidEl)
-                    || pidEl.ValueKind != JsonValueKind.String)
-                {
-                    continue;
-                }
-
-                var pid = pidEl.GetString();
-
-                // Check if this process has the project in its default template pools.
-                if (process.TryGetProperty("defaultTemplate", out var templateEl)
-                    && templateEl.ValueKind == JsonValueKind.Object
-                    && templateEl.TryGetProperty("projectPools", out var poolsEl)
-                    && poolsEl.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var pool in poolsEl.EnumerateArray())
-                    {
-                        if (pool.TryGetProperty("name", out var poolNameEl)
-                            && poolNameEl.ValueKind == JsonValueKind.String
-                            && poolNameEl.GetString()!.Equals(project, StringComparison.OrdinalIgnoreCase))
-                        {
-                            return pid;
-                        }
-                    }
-                }
-            }
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// Extracts allowed values for System.State from a work item type definition response.
-    /// </summary>
-    private static List<string> ExtractAllowedStates(JsonElement witElement)
-    {
-        var allowedValues = new List<string>();
-
-        if (witElement.TryGetProperty("fields", out var fields)
-            && fields.ValueKind == JsonValueKind.Object
-            && fields.TryGetProperty("System.State", out var stateField)
-            && stateField.ValueKind == JsonValueKind.Object
-            && stateField.TryGetProperty("name", out var nameField)
-            && nameField.ValueKind == JsonValueKind.Object
-            && nameField.TryGetProperty("allowedValues", out var allowedValuesEl)
-            && allowedValuesEl.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var value in allowedValuesEl.EnumerateArray())
-            {
-                if (value.ValueKind == JsonValueKind.String)
-                {
-                    var state = value.GetString();
-                    if (!string.IsNullOrWhiteSpace(state))
-                    {
-                        allowedValues.Add(state);
-                    }
-                }
-            }
-        }
-
-        return allowedValues;
     }
 
     // ─── LoggerMessage definitions ───────────────────────────────
