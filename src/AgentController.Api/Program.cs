@@ -94,33 +94,16 @@ else if (runtimeProvider.Equals("PiMateria", StringComparison.OrdinalIgnoreCase)
 builder.Services.AddHostedService<PollingWorker>();
 
 // ── Feedback pipeline wiring ──────────────────────────────────
-// Register the feedback source provider based on feedback:provider config.
-// The filter pipeline is always registered (it is a no-op when no source is wired).
-var feedbackProvider = builder.Configuration.GetValue<string>("feedback:provider") ?? "None";
+// Consolidated extension: selects IFeedbackSource provider via feedback:provider,
+// registers the filter pipeline, and the feedback stores are already wired by
+// AddAgentControllerRepositories (IReworkCycleStore, IReworkFeedbackStore).
+builder.Services.AddAgentControllerFeedback(builder.Configuration);
 
-switch (feedbackProvider)
-{
-    case "AzureDevOpsRepos":
-        builder.Services.AddAgentControllerAzureDevOpsReposFeedbackSource();
-        break;
-    case "Local":
-        builder.Services.AddAgentControllerLocalFeedbackSource();
-        break;
-    case "None":
-    default:
-        // No feedback source — the worker will see no signals.
-        // The no-op IPrLabelSource is registered by AddAgentControllerFeedbackFilterPipeline.
-        break;
-}
-
-// Register the filter pipeline (always available; requires IPrLabelSource from above).
-builder.Services.AddAgentControllerFeedbackFilterPipeline();
-// ── End feedback pipeline wiring ──────────────────────────────
-
-// Register the feedback polling worker (disabled by default via feedback.enabled).
-// Separate from PollingWorker with its own poll interval and concurrency budget.
-// Drives PR review comments into ReworkCycle rows for rework execution.
+// FeedbackPollingWorker lives in the Api project; register it here after
+// the Infrastructure extension has wired the source and pipeline.
+// The worker checks FeedbackOptions.Enabled at runtime.
 builder.Services.AddHostedService<FeedbackPollingWorker>();
+// ── End feedback pipeline wiring ──────────────────────────────
 
 var app = builder.Build();
 

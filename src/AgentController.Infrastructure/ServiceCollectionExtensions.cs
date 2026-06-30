@@ -490,6 +490,73 @@ public static class AgentControllerServiceCollectionExtensions
     }
 
     /// <summary>
+    /// Registers the complete feedback polling pipeline: provider-selected
+    /// <see cref="IFeedbackSource"/> and <see cref="IPrLabelSource"/>, the
+    /// <see cref="ReviewFeedbackFilterPipeline"/>, and the
+    /// <see cref="AgentController.Api.FeedbackPollingWorker"/> hosted service.
+    ///
+    /// Provider selection is driven by <c>feedback:provider</c> configuration:
+    /// <list type="bullet">
+    ///   <item><description><c>AzureDevOpsRepos</c> — registers <see cref="AzureDevOpsReposFeedbackSource"/> and <see cref="AzureDevOpsReposPrLabelSource"/>.</description></item>
+    ///   <item><description><c>Local</c> — registers <see cref="LocalFeedbackSource"/> and <see cref="LocalPrLabelSource"/>.</description></item>
+    ///   <item><description><c>None</c> (default) — registers a no-op <see cref="IFeedbackSource"/>; the worker is still registered but returns no signals.</description></item>
+    /// </list>
+    ///
+    /// This is a convenience wrapper that replaces the inline feedback wiring in
+    /// <c>Program.cs</c>. It consolidates:
+    /// <list type="number">
+    ///   <item>Feedback source provider selection and registration.</item>
+    ///   <item>Filter pipeline registration (always, regardless of provider).</item>
+    ///   <item>FeedbackPollingWorker hosted service registration.</item>
+    /// </list>
+    ///
+    /// Requires <see cref="AddAgentControllerOptions"/> to be called first
+    /// (for <see cref="FeedbackOptions"/> and <see cref="AzureDevOpsBoardsOptions"/> binding).
+    /// Requires <see cref="AddAgentControllerRepositories"/> to be called first
+    /// (for <see cref="IReworkCycleStore"/> and <see cref="IReworkFeedbackStore"/>).
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="configuration">
+    /// Configuration used to read <c>feedback:provider</c> and
+    /// <c>workSource</c>/<c>azureDevOpsBoards</c> sections for Azure DevOps wiring.
+    /// </param>
+    public static IServiceCollection AddAgentControllerFeedback(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        var feedbackProvider = configuration.GetValue<string>(
+            $"{FeedbackOptions.SectionName}:provider") ?? "None";
+
+        // ── Provider selection ────────────────────────────────────
+        switch (feedbackProvider)
+        {
+            case "AzureDevOpsRepos":
+                AddAgentControllerAzureDevOpsReposFeedbackSource(services);
+                break;
+
+            case "Local":
+                AddAgentControllerLocalFeedbackSource(services);
+                break;
+
+            case "None":
+            default:
+                // No-op feedback source: PollAsync returns empty.
+                // The no-op IPrLabelSource is registered by the filter pipeline below.
+                services.AddSingleton<IFeedbackSource, NoOpFeedbackSource>();
+                break;
+        }
+
+        // ── Filter pipeline (always registered) ───────────────────
+        AddAgentControllerFeedbackFilterPipeline(services);
+
+        // Note: FeedbackPollingWorker is registered in Program.cs via
+        // AddHostedService<FeedbackPollingWorker>() because the worker
+        // lives in the Api project and Infrastructure cannot reference it.
+
+        return services;
+    }
+
+    /// <summary>
     /// Validates each repository profile in the configuration dictionary.
     /// Ensures every profile has a non-empty <c>cloneUrl</c> so that
     /// misconfigured profiles fail fast at startup instead of silently no-op'ing
