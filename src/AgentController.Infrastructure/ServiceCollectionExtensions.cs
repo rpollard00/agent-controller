@@ -96,6 +96,10 @@ public static class AgentControllerServiceCollectionExtensions
             .AddOptions<LocalWorkOptions>()
             .Bind(configuration.GetSection(LocalWorkOptions.SectionName));
 
+        services
+            .AddOptions<LocalFeedbackOptions>()
+            .Bind(configuration.GetSection(LocalFeedbackOptions.SectionName));
+
         return services;
     }
 
@@ -385,6 +389,28 @@ public static class AgentControllerServiceCollectionExtensions
         // the actual valid System.State values for the configured project/WIT.
         // Throws during startup if any configured state is invalid.
         services.AddHostedService<AzureDevOpsBoardStateStartupValidator>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers the <see cref="LocalFeedbackSource"/> as a singleton
+    /// <see cref="IFeedbackSource"/> that returns deterministic
+    /// <see cref="Application.ReworkSignal"/> instances from the
+    /// <c>localFeedback</c> configuration section.
+    ///
+    /// Mirrors <see cref="AddAgentControllerLocalFileWorkSource"/>: definitions
+    /// are validated and cached on first use, then returned for any
+    /// <see cref="Application.PrUnderTest"/> whose <c>PullRequestId</c> matches
+    /// a configured signal.
+    ///
+    /// Requires <see cref="AddAgentControllerOptions"/> to be called first
+    /// (for <see cref="LocalFeedbackOptions"/> binding).
+    /// </summary>
+    public static IServiceCollection AddAgentControllerLocalFeedbackSource(
+        this IServiceCollection services)
+    {
+        services.AddSingleton<IFeedbackSource, LocalFeedbackSource>();
 
         return services;
     }
