@@ -73,6 +73,9 @@ public sealed class RuntimeOptions
     public IDictionary<string, string> ForwardEnvironmentVariables { get; init; } = new Dictionary<string, string>
     {
         ["AZURE_DEVOPS_EXT_PAT"] = "AZURE_DEVOPS_PAT",
-        ["AZURE_DEVOPS_PAT"] = "AZURE_DEVOPS_PAT"
+        ["AZURE_DEVOPS_PAT"] = "AZURE_DEVOPS_PAT",
+        ["PI_MATERIA_EVENTING"] = "true",
+        ["Pi_MATERIA_EVENTING_HEARTBEAT_MS"] = "30000",
+        ["PI_MATERIA_EVENTING_PRESETS"] = "agent-controller"
     };
 }

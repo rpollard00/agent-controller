@@ -1807,8 +1807,7 @@ The controller and pi-materia interact through:
 1. **Input (context files).** Written by the environment provider into
 `{runRoot}/{runId}/context/`:
    - `controller-run.json` — run metadata (runId, workItemId, repo path, branch)
-   - `work-item.md` — markdown work item description (its title becomes the
-     `/materia cast` prompt)
+   - `work-item.md` — markdown work item description (its title becomes the `/materia cast` prompt)
    - `acceptance-criteria.md` — acceptance criteria
    - `repository.json` — repository profile metadata
 
