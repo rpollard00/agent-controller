@@ -80,10 +80,12 @@ internal sealed class EfReworkFeedbackStore : IReworkFeedbackStore
     {
         var entities = await _db.ReworkFeedback
             .Where(e => e.Status == (int)ReworkFeedbackStatus.Watching)
-            .OrderBy(e => e.LastQualifyingCommentAt)
             .ToListAsync(cancellationToken);
 
-        return entities.Select(MapToDomain).ToList();
+        return entities
+            .OrderBy(e => e.LastQualifyingCommentAt)
+            .Select(MapToDomain)
+            .ToList();
     }
 
     public async Task<ReworkFeedback?> MarkSoakedAsync(
@@ -133,10 +135,12 @@ internal sealed class EfReworkFeedbackStore : IReworkFeedbackStore
     {
         var entities = await _db.ReworkFeedback
             .Where(e => e.Status == (int)ReworkFeedbackStatus.Soaked)
-            .OrderBy(e => e.UpdatedAt)
             .ToListAsync(cancellationToken);
 
-        return entities.Select(MapToDomain).ToList();
+        return entities
+            .OrderBy(e => e.UpdatedAt)
+            .Select(MapToDomain)
+            .ToList();
     }
 
     private static ReworkFeedback MapToDomain(ReworkFeedbackEntity entity)
