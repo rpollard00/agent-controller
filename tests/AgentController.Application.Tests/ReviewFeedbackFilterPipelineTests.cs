@@ -777,6 +777,547 @@ public class ReviewFeedbackFilterPipelineTests
         Assert.Equal(t2, result[0].LastQualifyingCommentAt);
     }
 
+    // ── Attributed-marker cases ────────────────────────────────────
+
+    [Fact]
+    public async Task FilterAsync_MarkerTagNameCaseMismatch_FailsClosed()
+    {
+        var pipeline = CreatePipeline(new TestPrLabelSource(
+            new Dictionary<string, List<PrLabel>>
+            {
+                ["1"] = new()
+                {
+                    // Label name differs in case — Ordinal comparison should not match
+                    new() { Name = "Agent-Rework-Requested", CreatedBy = "reviewer@example.com" },
+                },
+            }));
+
+        var query = new FeedbackQuery
+        {
+            OpenPrs = new List<PrUnderTest>
+            {
+                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+            },
+            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
+            ReworkMarkerTag = "agent-rework-requested",
+        };
+
+        var signals = new List<ReworkSignal>
+        {
+            new()
+            {
+                PullRequestId = "1",
+                Threads = ActiveThread("t1", "reviewer@example.com"),
+            },
+        };
+
+        var result = await pipeline.FilterAsync(query, signals, CancellationToken.None);
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task FilterAsync_MarkerAmongMultipleLabels_Passes()
+    {
+        var pipeline = CreatePipeline(new TestPrLabelSource(
+            new Dictionary<string, List<PrLabel>>
+            {
+                ["1"] = new()
+                {
+                    new() { Name = "priority-high", CreatedBy = "other@example.com" },
+                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                    new() { Name = "needs-review", CreatedBy = "other@example.com" },
+                },
+            }));
+
+        var query = new FeedbackQuery
+        {
+            OpenPrs = new List<PrUnderTest>
+            {
+                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+            },
+            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
+            ReworkMarkerTag = "agent-rework-requested",
+        };
+
+        var signals = new List<ReworkSignal>
+        {
+            new()
+            {
+                PullRequestId = "1",
+                Threads = ActiveThread("t1", "reviewer@example.com"),
+            },
+        };
+
+        var result = await pipeline.FilterAsync(query, signals, CancellationToken.None);
+
+        Assert.Single(result);
+        Assert.Single(result[0].Threads);
+    }
+
+    [Fact]
+    public async Task FilterAsync_MarkerCreatedByNull_FailsClosed()
+    {
+        var pipeline = CreatePipeline(new TestPrLabelSource(
+            new Dictionary<string, List<PrLabel>>
+            {
+                ["1"] = new()
+                {
+                    new() { Name = "agent-rework-requested", CreatedBy = null! },
+                },
+            }));
+
+        var query = new FeedbackQuery
+        {
+            OpenPrs = new List<PrUnderTest>
+            {
+                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+            },
+            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
+            ReworkMarkerTag = "agent-rework-requested",
+        };
+
+        var signals = new List<ReworkSignal>
+        {
+            new()
+            {
+                PullRequestId = "1",
+                Threads = ActiveThread("t1", "reviewer@example.com"),
+            },
+        };
+
+        var result = await pipeline.FilterAsync(query, signals, CancellationToken.None);
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task FilterAsync_MarkerCreatedByWhitespace_FailsClosed()
+    {
+        var pipeline = CreatePipeline(new TestPrLabelSource(
+            new Dictionary<string, List<PrLabel>>
+            {
+                ["1"] = new()
+                {
+                    new() { Name = "agent-rework-requested", CreatedBy = "   " },
+                },
+            }));
+
+        var query = new FeedbackQuery
+        {
+            OpenPrs = new List<PrUnderTest>
+            {
+                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+            },
+            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
+            ReworkMarkerTag = "agent-rework-requested",
+        };
+
+        var signals = new List<ReworkSignal>
+        {
+            new()
+            {
+                PullRequestId = "1",
+                Threads = ActiveThread("t1", "reviewer@example.com"),
+            },
+        };
+
+        var result = await pipeline.FilterAsync(query, signals, CancellationToken.None);
+
+        Assert.Empty(result);
+    }
+
+    // ── Load-bearing order ─────────────────────────────────────────
+
+    [Fact]
+    public async Task FilterAsync_MarkerGateRunsBeforeThreadFilters()
+    {
+        // Marker gate fails — thread-level filters must NOT be invoked.
+        // We verify this by ensuring no label fetch occurs for PR 2 (marker gate
+        // for PR 1 fails, so the pipeline short-circuits per-PR).
+        var labelFetches = new List<string>();
+        var trackingSource = new TrackingPrLabelSource(
+            new Dictionary<string, List<PrLabel>>
+            {
+                ["1"] = [], // No marker — fails closed
+                ["2"] = new()
+                {
+                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                },
+            },
+            labelFetches);
+
+        var pipeline = CreatePipeline(trackingSource);
+        var query = new FeedbackQuery
+        {
+            OpenPrs = new List<PrUnderTest>
+            {
+                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+                new() { PullRequestId = "2", PullRequestUrl = "https://example.com/pr/2" },
+            },
+            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
+            ReworkMarkerTag = "agent-rework-requested",
+        };
+
+        var signals = new List<ReworkSignal>
+        {
+            new()
+            {
+                PullRequestId = "1",
+                Threads = ActiveThread("t1", "reviewer@example.com"),
+            },
+            new()
+            {
+                PullRequestId = "2",
+                Threads = ActiveThread("t2", "reviewer@example.com"),
+            },
+        };
+
+        var result = await pipeline.FilterAsync(query, signals, CancellationToken.None);
+
+        // PR 1 fails marker gate (no label), PR 2 passes all filters.
+        Assert.Single(result);
+        Assert.Equal("2", result[0].PullRequestId);
+        // Both PRs should have had labels fetched (marker gate is per-PR, not global).
+        Assert.Contains("1", labelFetches);
+        Assert.Contains("2", labelFetches);
+    }
+
+    [Fact]
+    public async Task FilterAsync_AllowlistGateRunsBeforeMarkerGate()
+    {
+        // When allowlist is empty, the pipeline should return immediately
+        // without ever calling the label source.
+        var labelFetches = new List<string>();
+        var trackingSource = new TrackingPrLabelSource(
+            new Dictionary<string, List<PrLabel>>
+            {
+                ["1"] = new()
+                {
+                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                },
+            },
+            labelFetches);
+
+        var pipeline = CreatePipeline(trackingSource);
+        var query = new FeedbackQuery
+        {
+            OpenPrs = new List<PrUnderTest>
+            {
+                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+            },
+            AllowedReviewers = new HashSet<string>(), // Empty — fail-closed before marker gate
+            ReworkMarkerTag = "agent-rework-requested",
+        };
+
+        var signals = new List<ReworkSignal>
+        {
+            new()
+            {
+                PullRequestId = "1",
+                Threads = ActiveThread("t1", "reviewer@example.com"),
+            },
+        };
+
+        var result = await pipeline.FilterAsync(query, signals, CancellationToken.None);
+
+        Assert.Empty(result);
+        // Label source should never have been called.
+        Assert.Empty(labelFetches);
+    }
+
+    // ── Per-PR fail-closed (extended) ──────────────────────────────
+
+    [Fact]
+    public async Task FilterAsync_AllPrsFailMarker_ReturnsEmpty()
+    {
+        var pipeline = CreatePipeline(new TestPrLabelSource(
+            new Dictionary<string, List<PrLabel>>
+            {
+                ["1"] = [], // No marker
+                ["2"] = [], // No marker
+                ["3"] = [], // No marker
+            }));
+
+        var query = new FeedbackQuery
+        {
+            OpenPrs = new List<PrUnderTest>
+            {
+                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+                new() { PullRequestId = "2", PullRequestUrl = "https://example.com/pr/2" },
+                new() { PullRequestId = "3", PullRequestUrl = "https://example.com/pr/3" },
+            },
+            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
+            ReworkMarkerTag = "agent-rework-requested",
+        };
+
+        var signals = new List<ReworkSignal>
+        {
+            new() { PullRequestId = "1", Threads = ActiveThread("t1", "reviewer@example.com") },
+            new() { PullRequestId = "2", Threads = ActiveThread("t2", "reviewer@example.com") },
+            new() { PullRequestId = "3", Threads = ActiveThread("t3", "reviewer@example.com") },
+        };
+
+        var result = await pipeline.FilterAsync(query, signals, CancellationToken.None);
+
+        Assert.Empty(result);
+    }
+
+    // ── Signal without matching PR ─────────────────────────────────
+
+    [Fact]
+    public async Task FilterAsync_SignalWithoutMatchingPr_SkippedGracefully()
+    {
+        var pipeline = CreatePipeline(new TestPrLabelSource(
+            new Dictionary<string, List<PrLabel>>
+            {
+                ["1"] = new()
+                {
+                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                },
+            }));
+
+        var query = new FeedbackQuery
+        {
+            OpenPrs = new List<PrUnderTest>
+            {
+                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+                // PR "99" has no entry in OpenPrs
+            },
+            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
+            ReworkMarkerTag = "agent-rework-requested",
+        };
+
+        var signals = new List<ReworkSignal>
+        {
+            new()
+            {
+                PullRequestId = "1",
+                Threads = ActiveThread("t1", "reviewer@example.com"),
+            },
+            new()
+            {
+                PullRequestId = "99", // No matching PrUnderTest
+                Threads = ActiveThread("t99", "reviewer@example.com"),
+            },
+        };
+
+        var result = await pipeline.FilterAsync(query, signals, CancellationToken.None);
+
+        // Only PR 1 survives; PR 99 is skipped (no matching PrUnderTest).
+        Assert.Single(result);
+        Assert.Equal("1", result[0].PullRequestId);
+    }
+
+    // ── Allowlist fail-closed (multiple calls) ─────────────────────
+
+    [Fact]
+    public async Task FilterAsync_EmptyAllowlistMultipleCalls_AlwaysReturnsEmpty()
+    {
+        var pipeline = CreatePipeline(new TestPrLabelSource([]));
+        var query = new FeedbackQuery
+        {
+            OpenPrs = [],
+            AllowedReviewers = new HashSet<string>(), // Empty
+            ReworkMarkerTag = "agent-rework-requested",
+        };
+
+        var signals = new List<ReworkSignal>
+        {
+            new()
+            {
+                PullRequestId = "1",
+                Threads = ActiveThread("t1", "a@example.com"),
+            },
+        };
+
+        // Three successive calls — all must return empty.
+        var r1 = await pipeline.FilterAsync(query, signals, CancellationToken.None);
+        var r2 = await pipeline.FilterAsync(query, signals, CancellationToken.None);
+        var r3 = await pipeline.FilterAsync(query, signals, CancellationToken.None);
+
+        Assert.Empty(r1);
+        Assert.Empty(r2);
+        Assert.Empty(r3);
+    }
+
+    // ── Comment-content filter (extended) ──────────────────────────
+
+    [Fact]
+    public async Task FilterAsync_ThreadWithMixedContentKeepsIfAnyCommentHasContent()
+    {
+        var pipeline = CreatePipeline(new TestPrLabelSource(
+            new Dictionary<string, List<PrLabel>>
+            {
+                ["1"] = new()
+                {
+                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                },
+            }));
+
+        var query = new FeedbackQuery
+        {
+            OpenPrs = new List<PrUnderTest>
+            {
+                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+            },
+            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
+            ReworkMarkerTag = "agent-rework-requested",
+        };
+
+        var signals = new List<ReworkSignal>
+        {
+            new()
+            {
+                PullRequestId = "1",
+                Threads = new List<ReviewThread>
+                {
+                    // Thread with multiple comments — only one has content
+                    new()
+                    {
+                        ThreadId = "mixed",
+                        Status = ReviewThreadStatus.Active,
+                        Comments = new List<ReviewThreadComment>
+                        {
+                            new() { Author = "reviewer@example.com", Body = string.Empty },
+                            new() { Author = "other@example.com", Body = "   " },
+                            new() { Author = "reviewer@example.com", Body = "please fix", IsReply = true },
+                        },
+                    },
+                    // Thread where all comments are empty
+                    new()
+                    {
+                        ThreadId = "all-empty",
+                        Status = ReviewThreadStatus.Active,
+                        Comments = new List<ReviewThreadComment>
+                        {
+                            new() { Author = "reviewer@example.com", Body = string.Empty },
+                            new() { Author = "reviewer@example.com", Body = "\t\n" },
+                        },
+                    },
+                },
+            },
+        };
+
+        var result = await pipeline.FilterAsync(query, signals, CancellationToken.None);
+
+        Assert.Single(result);
+        Assert.Single(result[0].Threads);
+        Assert.Equal("mixed", result[0].Threads[0].ThreadId);
+    }
+
+    // ── Thread-author filter (reply chain) ─────────────────────────
+
+    [Fact]
+    public async Task FilterAsync_ThreadWithOnlyNonAllowedAuthorComments_Dropped()
+    {
+        var pipeline = CreatePipeline(new TestPrLabelSource(
+            new Dictionary<string, List<PrLabel>>
+            {
+                ["1"] = new()
+                {
+                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                },
+            }));
+
+        var query = new FeedbackQuery
+        {
+            OpenPrs = new List<PrUnderTest>
+            {
+                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+            },
+            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
+            ReworkMarkerTag = "agent-rework-requested",
+        };
+
+        var signals = new List<ReworkSignal>
+        {
+            new()
+            {
+                PullRequestId = "1",
+                Threads = new List<ReviewThread>
+                {
+                    // Initial by non-allowed, reply by non-allowed — dropped
+                    new()
+                    {
+                        ThreadId = "no-reviewer",
+                        Status = ReviewThreadStatus.Active,
+                        Comments = new List<ReviewThreadComment>
+                        {
+                            new() { Author = "author@example.com", Body = "initial comment" },
+                            new() { Author = "other@example.com", Body = "reply", IsReply = true },
+                        },
+                    },
+                    // Initial by non-allowed, reply by allowed — kept
+                    new()
+                    {
+                        ThreadId = "reviewer-replied",
+                        Status = ReviewThreadStatus.Active,
+                        Comments = new List<ReviewThreadComment>
+                        {
+                            new() { Author = "author@example.com", Body = "initial comment" },
+                            new() { Author = "reviewer@example.com", Body = "yes fix this", IsReply = true },
+                        },
+                    },
+                },
+            },
+        };
+
+        var result = await pipeline.FilterAsync(query, signals, CancellationToken.None);
+
+        Assert.Single(result);
+        Assert.Single(result[0].Threads);
+        Assert.Equal("reviewer-replied", result[0].Threads[0].ThreadId);
+    }
+
+    // ── Thread-status filter (all non-Active statuses) ─────────────
+
+    [Fact]
+    public async Task FilterAsync_DropsAllNonActiveStatuses()
+    {
+        var pipeline = CreatePipeline(new TestPrLabelSource(
+            new Dictionary<string, List<PrLabel>>
+            {
+                ["1"] = new()
+                {
+                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                },
+            }));
+
+        var query = new FeedbackQuery
+        {
+            OpenPrs = new List<PrUnderTest>
+            {
+                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+            },
+            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
+            ReworkMarkerTag = "agent-rework-requested",
+        };
+
+        var signals = new List<ReworkSignal>
+        {
+            new()
+            {
+                PullRequestId = "1",
+                Threads = new List<ReviewThread>
+                {
+                    CreateThread("resolved", ReviewThreadStatus.Resolved),
+                    CreateThread("fixed", ReviewThreadStatus.Fixed),
+                    CreateThread("wontfix", ReviewThreadStatus.WontFix),
+                    CreateThread("closed", ReviewThreadStatus.Closed),
+                    CreateThread("bydesign", ReviewThreadStatus.ByDesign),
+                    CreateThread("active", ReviewThreadStatus.Active),
+                },
+            },
+        };
+
+        var result = await pipeline.FilterAsync(query, signals, CancellationToken.None);
+
+        Assert.Single(result);
+        Assert.Single(result[0].Threads);
+        Assert.Equal("active", result[0].Threads[0].ThreadId);
+    }
+
     // ── Edge cases ─────────────────────────────────────────────────
 
     [Fact]
@@ -818,6 +1359,19 @@ public class ReviewFeedbackFilterPipelineTests
         };
     }
 
+    private static ReviewThread CreateThread(string threadId, ReviewThreadStatus status)
+    {
+        return new ReviewThread
+        {
+            ThreadId = threadId,
+            Status = status,
+            Comments = new List<ReviewThreadComment>
+            {
+                new() { Author = "reviewer@example.com", Body = "fix" },
+            },
+        };
+    }
+
     // ── Test doubles ───────────────────────────────────────────────
 
     private sealed class TestPrLabelSource : IPrLabelSource
@@ -848,6 +1402,38 @@ public class ReviewFeedbackFilterPipelineTests
             CancellationToken cancellationToken)
         {
             throw new InvalidOperationException("Simulated label fetch failure");
+        }
+    }
+
+    /// <summary>
+    /// Test double that records which PRs had their labels fetched,
+    /// enabling verification of load-bearing filter order.
+    /// </summary>
+    private sealed class TrackingPrLabelSource : IPrLabelSource
+    {
+        private readonly Dictionary<string, IReadOnlyList<PrLabel>> _labels;
+        private readonly List<string> _fetches;
+
+        public TrackingPrLabelSource(
+            Dictionary<string, List<PrLabel>> labels,
+            List<string> fetches)
+        {
+            _labels = labels.ToDictionary(
+                kvp => kvp.Key,
+                kvp => (IReadOnlyList<PrLabel>)kvp.Value,
+                StringComparer.Ordinal);
+            _fetches = fetches;
+        }
+
+        public IReadOnlyList<string> Fetches => _fetches;
+
+        public Task<IReadOnlyList<PrLabel>> GetLabelsAsync(
+            PrUnderTest pr,
+            CancellationToken cancellationToken)
+        {
+            _fetches.Add(pr.PullRequestId);
+            return Task.FromResult<IReadOnlyList<PrLabel>>(
+                _labels.TryGetValue(pr.PullRequestId, out var labels) ? labels : Array.Empty<PrLabel>());
         }
     }
 }
