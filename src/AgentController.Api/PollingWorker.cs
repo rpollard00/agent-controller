@@ -424,7 +424,8 @@ public sealed partial class PollingWorker : BackgroundService
         Log.CloneStarting(_logger, run.RunId, candidate.RepoKey ?? "(unknown)", transportForLog);
 
         checkout = await CloneRepositoryAsync(
-            run, candidate, envHandle, sourceControlProvider, repositoryStore, repoConfig, runStore, lifecycle, ct);
+            run, candidate, envHandle, sourceControlProvider, repositoryStore, repoConfig, runStore, lifecycle,
+            reworkContext, ct);
 
         if (checkout is null)
         {
@@ -472,7 +473,7 @@ public sealed partial class PollingWorker : BackgroundService
         var comments = await FetchCommentsAsync(workSource, candidate, ct);
 
         await InjectContextAsync(
-            run, candidate, envHandle, checkout, lifecycle, comments, ct);
+            run, candidate, envHandle, checkout, lifecycle, comments, reworkContext, ct);
         await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.ContextInjected,
             "Context injected into run workspace.", RunLifecycleState.ContextInjected, ct);
 
@@ -487,7 +488,7 @@ public sealed partial class PollingWorker : BackgroundService
         await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.AgentStarting,
             "Agent runtime start requested.", RunLifecycleState.AgentStarting, ct);
 
-        await HandOffToRuntimeAsync(run, candidate, envHandle, checkout, agentRuntime, lifecycle, ct);
+        await HandOffToRuntimeAsync(run, candidate, envHandle, checkout, agentRuntime, lifecycle, reworkContext, ct);
 
         // ── 7. AgentRunning ────────────────────────────────────────
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.AgentRunning, ct);
@@ -706,6 +707,7 @@ public sealed partial class PollingWorker : BackgroundService
         IReadOnlyDictionary<string, RepositoryProfileOptions> repoConfig,
         IAgentRunStore runStore,
         IRunLifecycleService lifecycle,
+        ReworkContext? reworkContext,
         CancellationToken ct)
     {
         try
@@ -821,6 +823,7 @@ public sealed partial class PollingWorker : BackgroundService
         RepositoryCheckout checkout,
         IRunLifecycleService lifecycle,
         IReadOnlyList<WorkItemComment> comments,
+        ReworkContext? reworkContext,
         CancellationToken ct)
     {
         var contextDir = Path.Combine(envHandle.RootPath, "context");
@@ -906,6 +909,7 @@ public sealed partial class PollingWorker : BackgroundService
         RepositoryCheckout checkout,
         IAgentRuntime agentRuntime,
         IRunLifecycleService lifecycle,
+        ReworkContext? reworkContext,
         CancellationToken ct)
     {
         try
@@ -1559,7 +1563,7 @@ public sealed partial class PollingWorker : BackgroundService
 
         checkout = await CloneRepositoryAsync(
             run, candidate, envHandle, sourceControlProvider, repositoryStore, repoConfig,
-            runStore, lifecycle, ct);
+            runStore, lifecycle, null, ct);
 
         if (checkout is null)
         {
@@ -1602,7 +1606,7 @@ public sealed partial class PollingWorker : BackgroundService
         // ── 5. ContextInjected ─────────────────────────────────────
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.ContextInjected, ct);
 
-        await InjectContextAsync(run, candidate, envHandle, checkout, lifecycle, Array.Empty<WorkItemComment>(), ct);
+        await InjectContextAsync(run, candidate, envHandle, checkout, lifecycle, Array.Empty<WorkItemComment>(), null, ct);
         await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.ContextInjected,
             "Context injected into run workspace.", RunLifecycleState.ContextInjected, ct);
 
@@ -1614,7 +1618,7 @@ public sealed partial class PollingWorker : BackgroundService
         await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.AgentStarting,
             "Agent runtime start requested.", RunLifecycleState.AgentStarting, ct);
 
-        await HandOffToRuntimeAsync(run, candidate, envHandle, checkout, agentRuntime, lifecycle, ct);
+        await HandOffToRuntimeAsync(run, candidate, envHandle, checkout, agentRuntime, lifecycle, null, ct);
 
         // ── 7. AgentRunning ────────────────────────────────────────
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.AgentRunning, ct);
