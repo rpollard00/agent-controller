@@ -73,6 +73,18 @@ public static class RetryableFailureReasons
     public const string EnvironmentUnreachable = "environment_unreachable";
 
     /// <summary>
+    /// Pre-accept setup failure: environment provisioning failed.
+    /// The workspace or runtime environment could not be created; retry may succeed.
+    /// </summary>
+    public const string EnvironmentProvisioningFailed = "environment_provisioning_failed";
+
+    /// <summary>
+    /// Pre-accept setup failure: repository clone failed.
+    /// The source repository could not be cloned; retry may succeed.
+    /// </summary>
+    public const string RepositoryCloneFailed = "repository_clone_failed";
+
+    /// <summary>
     /// Returns the complete set of retryable failure reason strings.
     /// Failures with a reason in this set are eligible for run-level retry.
     /// </summary>
@@ -82,6 +94,8 @@ public static class RetryableFailureReasons
         ProcessExitNonZero,
         ProcessStartFailed,
         EnvironmentUnreachable,
+        EnvironmentProvisioningFailed,
+        RepositoryCloneFailed,
     };
 
     /// <summary>

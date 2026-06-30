@@ -188,6 +188,24 @@ public sealed partial class PollingWorker : BackgroundService
         // Check recently-failed runs for retryable errors (keepalive-stall,
         // process-exit-without-terminal) and kick off fresh runs if under threshold.
         await EvaluateFailedRunsForRetryAsync(lifecycle, runStore, options, ct);
+
+        // ── 5. Advance Claimed runs (including retry runs) ───────────
+        // Retry runs created by EvaluateFailedRunsForRetryAsync sit in Claimed
+        // state. Process them through the full controller lifecycle so they
+        // actually execute instead of remaining stuck.
+        try
+        {
+            await ProcessClaimedRunsAsync(
+                lifecycle, runStore, workItemStore, agentRuntime,
+                environmentProvider, sourceControlProvider, environmentStore,
+                repositoryStore, repoConfig.Value, options, ct);
+        }
+        catch (Microsoft.Extensions.Options.OptionsValidationException)
+        {
+            // Repository profile validation failed — skip claimed run processing.
+            // The validation error will be surfaced by ProcessCandidateAsync
+            // when it runs (or already was in a previous cycle).
+        }
     }
 
     /// <summary>
@@ -616,7 +634,8 @@ public sealed partial class PollingWorker : BackgroundService
         {
             Log.EnvironmentProvisioningFailed(_logger, run.RunId, ex);
 
-            await FailRunAsync(run, runStore, lifecycle, $"Environment provisioning failed: {ex.Message}", ct);
+            await FailRunAsync(run, runStore, lifecycle,
+                $"[environment_provisioning_failed] Environment provisioning failed: {ex.Message}", ct);
             return null;
         }
     }
@@ -724,7 +743,8 @@ public sealed partial class PollingWorker : BackgroundService
         {
             Log.RepositoryCloneFailed(_logger, run.RunId, candidate.RepoKey, ex);
 
-            await FailRunAsync(run, runStore, lifecycle, $"Repository clone failed: {ex.Message}", ct);
+            await FailRunAsync(run, runStore, lifecycle,
+                $"[repository_clone_failed] Repository clone failed: {ex.Message}", ct);
             return null;
         }
     }
@@ -947,10 +967,16 @@ public sealed partial class PollingWorker : BackgroundService
     }
 
     /// <summary>
-    /// Release the ADO claim (strip agent-active/agent-worker tags, revert state),
+    /// Strip agent-controlled tags from the ADO work item (without reverting its state),
     /// destroy the workspace, and log the release. Called when a pre-agent setup
     /// step (environment provisioning, clone) fails so the concurrency slot is
-    /// freed immediately and the work item becomes retryable.
+    /// freed immediately.
+    ///
+    /// Does NOT revert the ADO state — the work item stays in its claimed state
+    /// (e.g. "Approved") so it is NOT re-discovered by the polling worker.
+    /// The run is left in Failed state; EvaluateFailedRunsForRetryAsync will
+    /// evaluate it for retry (incrementing RunAttempt via the existing
+    /// RunAttempt/PreviousRunId/MaxRunAttempts chain) or escalate to NeedsHuman.
     ///
     /// Does NOT add an agent-failed tag — a bad runtime environment should not
     /// dirty the external record.
@@ -965,11 +991,11 @@ public sealed partial class PollingWorker : BackgroundService
         IRunLifecycleService lifecycle,
         CancellationToken ct)
     {
-        // Determine target state: use the first eligible state or default to "New"
-        var eligibleStates = _workSourceOptions.CurrentValue.EligibleStates;
-        var targetState = eligibleStates is { Count: > 0 } ? eligibleStates[0] : "New";
-
-        // 1. Release the ADO claim (strip agent-active, agent-worker tags, revert state)
+        // 1. Strip agent-controlled tags WITHOUT reverting the ADO state.
+        // TargetState = null means "leave state unchanged" — the work item
+        // stays in its claimed state so it is NOT re-discovered by FindEligibleAsync.
+        // The Failed run will be evaluated by EvaluateFailedRunsForRetryAsync
+        // which handles retry (with RunAttempt increment) or escalation.
         if (candidate.Source != "LocalFake" && candidate.Source != "LocalFile"
             && !string.IsNullOrWhiteSpace(candidate.ExternalId))
         {
@@ -987,14 +1013,14 @@ public sealed partial class PollingWorker : BackgroundService
                     Revision = revision,
                 },
                 WorkerId = _options.CurrentValue.WorkerId,
-                TargetState = targetState,
+                TargetState = null, // Do NOT revert state — let retry/escalation handle it
                 Reason = reason,
             };
 
             try
             {
                 await workSource.ReleaseClaimAsync(releaseRequest, ct);
-                Log.ClaimReleased(_logger, run.RunId, candidate.Id, targetState);
+                Log.ClaimTagsStripped(_logger, run.RunId, candidate.Id);
             }
             catch (Exception ex)
             {
@@ -1024,11 +1050,11 @@ public sealed partial class PollingWorker : BackgroundService
             await lifecycle.AppendControllerEventAsync(
                 run.RunId,
                 ControllerEventTypes.ClaimReleased,
-                $"Claim released due to setup failure: {reason}",
+                $"Claim tags stripped due to setup failure (state preserved for retry/escalation): {reason}",
                 new Dictionary<string, object?>
                 {
                     ["reason"] = reason,
-                    ["targetState"] = targetState,
+                    ["stateReverted"] = false,
                 },
                 EventSeverity.Warning,
                 ct);
@@ -1346,6 +1372,190 @@ public sealed partial class PollingWorker : BackgroundService
     }
 
     /// <summary>
+    /// Find runs in Claimed state and advance them through the full controller
+    /// lifecycle. This handles retry runs created by EvaluateFailedRunsForRetryAsync
+    /// which sit in Claimed state waiting to be processed.
+    ///
+    /// For each Claimed run, looks up the associated work item, builds a
+    /// WorkCandidate, and advances through environment provisioning, repository
+    /// cloning, context injection, and runtime handoff.
+    /// </summary>
+    private async Task ProcessClaimedRunsAsync(
+        IRunLifecycleService lifecycle,
+        IAgentRunStore runStore,
+        IWorkItemStore workItemStore,
+        IAgentRuntime agentRuntime,
+        IEnvironmentProvider environmentProvider,
+        ISourceControlProvider sourceControlProvider,
+        IEnvironmentStore environmentStore,
+        IRepositoryStore repositoryStore,
+        IReadOnlyDictionary<string, RepositoryProfileOptions> repoConfig,
+        AgentControllerOptions options,
+        CancellationToken ct)
+    {
+        // Find runs stuck in Claimed state (retry runs from EvaluateFailedRunsForRetryAsync).
+        var claimedRuns = await runStore.ListAsync(
+            new ListRunsQuery { Status = RunLifecycleState.Claimed, MaxResults = 10 }, ct);
+
+        if (claimedRuns.Count == 0)
+            return;
+
+        Log.ClaimedRunsDiscovered(_logger, claimedRuns.Count);
+
+        foreach (var run in claimedRuns)
+        {
+            if (ct.IsCancellationRequested)
+                break;
+
+            try
+            {
+                await AdvanceRunThroughLifecycleAsync(
+                    run, workItemStore, runStore, agentRuntime,
+                    environmentProvider, sourceControlProvider,
+                    environmentStore, repositoryStore, repoConfig, lifecycle, ct);
+            }
+            catch (Exception ex)
+            {
+                Log.ClaimedRunAdvanceFailed(_logger, ex, run.RunId);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Advance an existing run (already in Claimed state) through the full
+    /// controller-owned lifecycle up to AwaitingResult.
+    /// </summary>
+    private async Task AdvanceRunThroughLifecycleAsync(
+        AgentRunHandle run,
+        IWorkItemStore workItemStore,
+        IAgentRunStore runStore,
+        IAgentRuntime agentRuntime,
+        IEnvironmentProvider environmentProvider,
+        ISourceControlProvider sourceControlProvider,
+        IEnvironmentStore environmentStore,
+        IRepositoryStore repositoryStore,
+        IReadOnlyDictionary<string, RepositoryProfileOptions> repoConfig,
+        IRunLifecycleService lifecycle,
+        CancellationToken ct)
+    {
+        // Look up the work item to build a WorkCandidate for the lifecycle steps.
+        var workItem = await workItemStore.GetByIdAsync(run.WorkItemId!, ct);
+        if (workItem is null)
+        {
+            Log.WorkItemNotFoundForRun(_logger, run.RunId, run.WorkItemId);
+            return;
+        }
+
+        var candidate = new WorkCandidate
+        {
+            Id = workItem.Id,
+            Title = workItem.Title ?? "",
+            ExternalId = workItem.ExternalId,
+            ExternalUrl = workItem.ExternalUrl,
+            Source = workItem.Source ?? "LocalFake",
+            RepoKey = workItem.RepoKey,
+            Priority = workItem.Priority,
+            SourceMetadata = workItem.SourceMetadata,
+        };
+
+        RepositoryCheckout? checkout = null;
+        EnvironmentHandle? envHandle = null;
+
+        if (ct.IsCancellationRequested) return;
+
+        // ── 1. EnvironmentProvisioning ─────────────────────────────
+        await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.EnvironmentProvisioning, ct);
+        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.EnvironmentProvisioning,
+            "Environment provisioning started.", RunLifecycleState.EnvironmentProvisioning, ct);
+
+        envHandle = await ProvisionEnvironmentAsync(
+            run, candidate, environmentProvider, environmentStore, runStore, lifecycle, ct);
+
+        if (envHandle is null)
+        {
+            // Environment provisioning failed — run is already transitioned to Failed.
+            // The ADO tags were already stripped by the previous ReleaseClaimAndCleanupAsync
+            // call (which preserved the ADO state). No workspace to destroy.
+            return;
+        }
+
+        // ── 2. EnvironmentReady ────────────────────────────────────
+        await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.EnvironmentReady, ct);
+        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.EnvironmentReady,
+            "Environment provisioned and ready.", RunLifecycleState.EnvironmentReady, ct);
+
+        if (ct.IsCancellationRequested) return;
+
+        // ── 3. RepositoryCloning ───────────────────────────────────
+        var transportForLog = CloneTransport.Unspecified;
+        if (!string.IsNullOrWhiteSpace(candidate.RepoKey) &&
+            repoConfig.TryGetValue(candidate.RepoKey!, out var transportProfile))
+        {
+            transportForLog = transportProfile.Transport;
+        }
+
+        await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.RepositoryCloning, ct);
+        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.RepositoryCloning,
+            "Repository cloning started.", RunLifecycleState.RepositoryCloning, ct);
+
+        Log.CloneStarting(_logger, run.RunId, candidate.RepoKey ?? "(unknown)", transportForLog);
+
+        checkout = await CloneRepositoryAsync(
+            run, candidate, envHandle, sourceControlProvider, repositoryStore, repoConfig,
+            runStore, lifecycle, ct);
+
+        if (checkout is null)
+        {
+            // Repository clone failed — run is already transitioned to Failed.
+            if (!string.IsNullOrWhiteSpace(envHandle.RootPath))
+            {
+                try { await environmentProvider.DestroyAsync(envHandle, ct); }
+                catch { /* best-effort */ }
+            }
+            return;
+        }
+
+        // ── 4. RepositoryReady ─────────────────────────────────────
+        await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.RepositoryReady, ct);
+        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.RepositoryReady,
+            $"Repository cloned and ready at '{checkout.LocalPath}'.",
+            RunLifecycleState.RepositoryReady, ct);
+
+        Log.WorkspaceReady(_logger, run.RunId, envHandle.RootPath, checkout.LocalPath);
+
+        if (ct.IsCancellationRequested) return;
+
+        // ── 5. ContextInjected ─────────────────────────────────────
+        await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.ContextInjected, ct);
+
+        await InjectContextAsync(run, candidate, envHandle, checkout, lifecycle, Array.Empty<WorkItemComment>(), ct);
+        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.ContextInjected,
+            "Context injected into run workspace.", RunLifecycleState.ContextInjected, ct);
+
+        if (ct.IsCancellationRequested) return;
+
+        // ── 6. AgentStarting ───────────────────────────────────────
+        Log.RuntimeDispatchStarting(_logger, run.RunId, candidate.Id, agentRuntime.GetType().Name);
+        await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.AgentStarting, ct);
+        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.AgentStarting,
+            "Agent runtime start requested.", RunLifecycleState.AgentStarting, ct);
+
+        await HandOffToRuntimeAsync(run, candidate, envHandle, checkout, agentRuntime, lifecycle, ct);
+
+        // ── 7. AgentRunning ────────────────────────────────────────
+        await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.AgentRunning, ct);
+        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.AgentRunning,
+            "Agent runtime is executing.", RunLifecycleState.AgentRunning, ct);
+
+        // ── 8. AwaitingResult ──────────────────────────────────────
+        await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.AwaitingResult, ct);
+        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.AwaitingResult,
+            "Run handed off to runtime, awaiting result.", RunLifecycleState.AwaitingResult, ct);
+
+        Log.RunAdvanced(_logger, run.RunId, candidate.Id);
+    }
+
+    /// <summary>
     /// Run a single poll cycle synchronously from test code.
     /// Exposed as internal for integration-style tests that wire the full
     /// local-only flow (LocalFile work source + local repo + mock runtime).
@@ -1510,6 +1720,13 @@ public sealed partial class PollingWorker : BackgroundService
             ILogger logger, string runId, string workItemId, string targetState);
 
         [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Stripped agent tags for run {RunId} (work item {WorkItemId}). "
+                + "ADO state preserved for retry/escalation evaluation.")]
+        public static partial void ClaimTagsStripped(
+            ILogger logger, string runId, string workItemId);
+
+        [LoggerMessage(
             Level = LogLevel.Warning,
             Message = "Failed to release ADO claim for run {RunId} (work item {WorkItemId}).")]
         public static partial void ClaimReleaseFailed(
@@ -1593,5 +1810,23 @@ public sealed partial class PollingWorker : BackgroundService
             Message = "Failed to evaluate retry for run {RunId}.")]
         public static partial void RetryEvaluationFailed(
             ILogger logger, Exception ex, string runId);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Discovered {Count} run(s) in Claimed state awaiting lifecycle advance.")]
+        public static partial void ClaimedRunsDiscovered(
+            ILogger logger, int count);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Failed to advance Claimed run {RunId} through lifecycle.")]
+        public static partial void ClaimedRunAdvanceFailed(
+            ILogger logger, Exception ex, string runId);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Work item {WorkItemId} not found for Claimed run {RunId}.")]
+        public static partial void WorkItemNotFoundForRun(
+            ILogger logger, string runId, string? workItemId);
     }
 }

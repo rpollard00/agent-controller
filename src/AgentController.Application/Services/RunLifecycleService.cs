@@ -1126,12 +1126,16 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             EventSeverity.Error,
             ct);
 
-        // Update the work item to NeedsHuman state.
+        // Update the local work item to NeedsHuman state.
         if (!string.IsNullOrWhiteSpace(failedRun.WorkItemId))
         {
             await _workItemStore.UpdateStatusAsync(
                 failedRun.WorkItemId, "NeedsHuman", ct);
         }
+
+        // Project NeedsHuman to the external work source (adds agent-needs-human tag).
+        // This is best-effort; projection failures are not fatal.
+        await MaybeProjectToWorkSource(failedRun, RunLifecycleState.NeedsHuman, ct);
 
         Log.RetryExhausted(_logger, failedRun.RunId, failedRun.WorkItemId, maxRunAttempts, failureReasons.Count);
     }
