@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using AgentController.Domain;
 using AgentController.Infrastructure.Options;
 using Microsoft.Extensions.DependencyInjection;
@@ -273,10 +274,12 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             if (currentRow is not null && currentRow.FeedbackBundleId == bundleId)
             {
                 // Bundle unchanged — bump LastQualifyingCommentAt.
+                var bundleJson = JsonSerializer.Serialize(signal.Threads);
                 var updated = await reworkFeedbackStore.UpsertAsync(
                     signal.OriginatingRunId,
                     signal.PullRequestId,
                     bundleId,
+                    bundleJson,
                     signal.Threads.Count,
                     signal.FirstQualifyingCommentAt,
                     signal.LastQualifyingCommentAt,
@@ -290,10 +293,12 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
                 // Bundle changed — supersede prior, start fresh Watching.
                 await reworkFeedbackStore.MarkSupersededAsync(currentRow.Id, ct);
 
+                var bundleJsonChanged = JsonSerializer.Serialize(signal.Threads);
                 await reworkFeedbackStore.UpsertAsync(
                     signal.OriginatingRunId,
                     signal.PullRequestId,
                     bundleId,
+                    bundleJsonChanged,
                     signal.Threads.Count,
                     signal.FirstQualifyingCommentAt,
                     signal.LastQualifyingCommentAt,
@@ -305,10 +310,12 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             else
             {
                 // First time seeing this PR — create Watching row.
+                var bundleJsonNew = JsonSerializer.Serialize(signal.Threads);
                 await reworkFeedbackStore.UpsertAsync(
                     signal.OriginatingRunId,
                     signal.PullRequestId,
                     bundleId,
+                    bundleJsonNew,
                     signal.Threads.Count,
                     signal.FirstQualifyingCommentAt,
                     signal.LastQualifyingCommentAt,
@@ -331,6 +338,67 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             {
                 await reworkFeedbackStore.MarkSoakedAsync(row.Id, ct);
                 Log.FeedbackSoaked(_logger, row.PullRequestId, row.FeedbackBundleId, row.ThreadCount);
+            }
+        }
+
+        // ── Step 9: Materialize Pending ReworkCycle from soaked feedback ──
+        // For each Soaked ReworkFeedback row: compute cycle number from
+        // existing cycles, pull BranchName/PullRequestUrl/BaseCommitSha
+        // from the prior run, and create the Pending row.
+        var soakedRows = await reworkFeedbackStore.GetSoakedAsync(ct);
+
+        foreach (var soaked in soakedRows)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            // Look up the prior run to get WorkItemId, BranchName, PullRequestUrl, CommitSha.
+            var priorRun = await runStore.GetByIdAsync(soaked.OriginatingRunId, ct);
+            if (priorRun is null)
+            {
+                Log.MissingPriorRun(_logger, soaked.OriginatingRunId, soaked.PullRequestId);
+                continue;
+            }
+
+            if (priorRun.WorkItemId is null)
+            {
+                Log.MissingWorkItemId(_logger, soaked.OriginatingRunId, soaked.PullRequestId);
+                continue;
+            }
+
+            if (priorRun.BranchName is null || priorRun.PullRequestUrl is null || priorRun.CommitSha is null)
+            {
+                Log.IncompletePriorRun(_logger, soaked.OriginatingRunId, soaked.PullRequestId);
+                continue;
+            }
+
+            // Compute cycle number = max existing cycle for this work item + 1.
+            var maxCycle = await reworkCycleStore.GetMaxCycleNumberAsync(priorRun.WorkItemId, ct);
+            var cycleNumber = maxCycle + 1;
+
+            try
+            {
+                await reworkCycleStore.CreateAsync(
+                    priorRun.WorkItemId,
+                    cycleNumber,
+                    soaked.OriginatingRunId,
+                    priorRun.BranchName,
+                    priorRun.PullRequestUrl,
+                    priorRun.CommitSha,
+                    soaked.FeedbackBundleJson,
+                    soaked.FeedbackBundleId,
+                    ct);
+
+                Log.ReworkCycleMaterialized(
+                    _logger,
+                    priorRun.WorkItemId,
+                    cycleNumber,
+                    soaked.FeedbackBundleId,
+                    soaked.ThreadCount);
+            }
+            catch (Exception ex) when (IsUniqueConstraintViolation(ex))
+            {
+                // Idempotency guard: another poll cycle already materialized this bundle.
+                Log.ReworkCycleAlreadyMaterialized(_logger, soaked.FeedbackBundleId);
             }
         }
 
@@ -412,6 +480,31 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             or Domain.RunLifecycleState.Failed
             or Domain.RunLifecycleState.Cancelled
             or Domain.RunLifecycleState.CleanedUp;
+    }
+
+    /// <summary>
+    /// Detect SQLite unique constraint violation (error code 19 / SQLITE_CONSTRAINT).
+    /// Used as an idempotency guard: if another poll cycle already materialized
+    /// the same FeedbackBundleId, the unique index prevents double-creation.
+    /// </summary>
+    private static bool IsUniqueConstraintViolation(Exception ex)
+    {
+        // SQLite returns error code 19 for constraint violations.
+        // The inner exception from EF Core carries the SqliteException.
+        var inner = ex.InnerException;
+        while (inner is not null)
+        {
+            if (inner.GetType().Name == "SqliteException" &&
+                inner.Message.Contains("UNIQUE constraint failed", StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            inner = inner.InnerException;
+        }
+
+        // Also check the top-level message as a fallback.
+        return ex.Message.Contains("UNIQUE constraint failed", StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -551,5 +644,36 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             Message = "PR {PullRequestId}: feedback soaked [{BundleId}] — {ThreadCount} thread(s) eligible for materialization.")]
         public static partial void FeedbackSoaked(
             ILogger logger, string pullRequestId, string bundleId, int threadCount);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Cannot materialize rework cycle: prior run {RunId} not found for PR {PullRequestId}.")]
+        public static partial void MissingPriorRun(
+            ILogger logger, string runId, string pullRequestId);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Cannot materialize rework cycle: prior run {RunId} has no WorkItemId for PR {PullRequestId}.")]
+        public static partial void MissingWorkItemId(
+            ILogger logger, string runId, string pullRequestId);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Cannot materialize rework cycle: prior run {RunId} missing BranchName/PullRequestUrl/CommitSha for PR {PullRequestId}.")]
+        public static partial void IncompletePriorRun(
+            ILogger logger, string runId, string pullRequestId);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Materialized ReworkCycle #{CycleNumber} for work item {WorkItemId} "
+                + "[bundle={BundleId}] — {ThreadCount} thread(s).")]
+        public static partial void ReworkCycleMaterialized(
+            ILogger logger, string workItemId, int cycleNumber, string bundleId, int threadCount);
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "ReworkCycle for bundle [{BundleId}] already materialized (unique constraint).")]
+        public static partial void ReworkCycleAlreadyMaterialized(
+            ILogger logger, string bundleId);
     }
 }

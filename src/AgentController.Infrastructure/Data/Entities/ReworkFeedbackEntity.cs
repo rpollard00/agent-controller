@@ -19,6 +19,9 @@ internal sealed class ReworkFeedbackEntity
     /// <summary>Stable hash of the feedback bundle contents.</summary>
     public string FeedbackBundleId { get; set; } = string.Empty;
 
+    /// <summary>Bundled review threads serialized as JSON.</summary>
+    public string FeedbackBundleJson { get; set; } = string.Empty;
+
     /// <summary>Timestamp of the first qualifying comment for this bundle.</summary>
     public DateTimeOffset FirstQualifyingCommentAt { get; set; }
 

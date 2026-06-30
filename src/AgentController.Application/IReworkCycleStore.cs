@@ -50,4 +50,13 @@ public interface IReworkCycleStore
     /// </summary>
     Task<IReadOnlyList<ReworkCycle>> ListConsumedAsync(
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Get the maximum cycle number for a given work item across all cycles
+    /// (Pending and Consumed). Returns 0 if no cycles exist for the work item.
+    /// Used by the feedback worker to compute the next cycle number.
+    /// </summary>
+    Task<int> GetMaxCycleNumberAsync(
+        string workItemId,
+        CancellationToken cancellationToken);
 }

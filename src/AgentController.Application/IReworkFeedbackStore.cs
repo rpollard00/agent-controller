@@ -18,6 +18,7 @@ public interface IReworkFeedbackStore
         string originatingRunId,
         string pullRequestId,
         string feedbackBundleId,
+        string feedbackBundleJson,
         int threadCount,
         DateTimeOffset firstQualifyingCommentAt,
         DateTimeOffset lastQualifyingCommentAt,
@@ -47,5 +48,13 @@ public interface IReworkFeedbackStore
     /// </summary>
     Task MarkSupersededAsync(
         string id,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// List all rework feedback rows currently in Soaked status.
+    /// Used by the feedback worker to find rows eligible for
+    /// materialization into Pending ReworkCycle records.
+    /// </summary>
+    Task<IReadOnlyList<ReworkFeedback>> GetSoakedAsync(
         CancellationToken cancellationToken);
 }

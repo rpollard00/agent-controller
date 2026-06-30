@@ -30,6 +30,9 @@ internal sealed class ReworkFeedbackEntityConfiguration : IEntityTypeConfigurati
             .IsRequired()
             .HasMaxLength(64);
 
+        builder.Property(x => x.FeedbackBundleJson)
+            .IsRequired();
+
         builder.Property(x => x.FirstQualifyingCommentAt)
             .IsRequired();
 

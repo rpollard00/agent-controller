@@ -96,6 +96,17 @@ internal sealed class EfReworkCycleStore : IReworkCycleStore
         return entities.Select(MapToDomain).ToList();
     }
 
+    public async Task<int> GetMaxCycleNumberAsync(
+        string workItemId,
+        CancellationToken cancellationToken)
+    {
+        var maxCycle = await _db.ReworkCycles
+            .Where(e => e.WorkItemId == workItemId)
+            .MaxAsync(e => (int?)e.CycleNumber, cancellationToken);
+
+        return maxCycle ?? 0;
+    }
+
     private static ReworkCycle MapToDomain(ReworkCycleEntity entity)
     {
         return new ReworkCycle

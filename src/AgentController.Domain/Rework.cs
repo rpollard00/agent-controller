@@ -175,6 +175,13 @@ public sealed record ReworkFeedback
     /// </summary>
     public string FeedbackBundleId { get; init; } = string.Empty;
 
+    /// <summary>
+    /// Bundled review threads serialized as JSON.
+    /// Persisted alongside the soak row so the bundle is available
+    /// at materialization time without re-fetching from the feedback source.
+    /// </summary>
+    public string FeedbackBundleJson { get; init; } = string.Empty;
+
     /// <summary>Timestamp of the first qualifying comment for this bundle.</summary>
     public DateTimeOffset FirstQualifyingCommentAt { get; init; }
 

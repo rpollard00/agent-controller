@@ -23,6 +23,7 @@ internal sealed class EfReworkFeedbackStore : IReworkFeedbackStore
         string originatingRunId,
         string pullRequestId,
         string feedbackBundleId,
+        string feedbackBundleJson,
         int threadCount,
         DateTimeOffset firstQualifyingCommentAt,
         DateTimeOffset lastQualifyingCommentAt,
@@ -41,6 +42,7 @@ internal sealed class EfReworkFeedbackStore : IReworkFeedbackStore
         {
             // Update existing row.
             existing.OriginatingRunId = originatingRunId;
+            existing.FeedbackBundleJson = feedbackBundleJson;
             existing.ThreadCount = threadCount;
             existing.FirstQualifyingCommentAt = firstQualifyingCommentAt;
             existing.LastQualifyingCommentAt = lastQualifyingCommentAt;
@@ -58,6 +60,7 @@ internal sealed class EfReworkFeedbackStore : IReworkFeedbackStore
             OriginatingRunId = originatingRunId,
             PullRequestId = pullRequestId,
             FeedbackBundleId = feedbackBundleId,
+            FeedbackBundleJson = feedbackBundleJson,
             ThreadCount = threadCount,
             FirstQualifyingCommentAt = firstQualifyingCommentAt,
             LastQualifyingCommentAt = lastQualifyingCommentAt,
@@ -125,6 +128,17 @@ internal sealed class EfReworkFeedbackStore : IReworkFeedbackStore
         await _db.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<ReworkFeedback>> GetSoakedAsync(
+        CancellationToken cancellationToken)
+    {
+        var entities = await _db.ReworkFeedback
+            .Where(e => e.Status == (int)ReworkFeedbackStatus.Soaked)
+            .OrderBy(e => e.UpdatedAt)
+            .ToListAsync(cancellationToken);
+
+        return entities.Select(MapToDomain).ToList();
+    }
+
     private static ReworkFeedback MapToDomain(ReworkFeedbackEntity entity)
     {
         return new ReworkFeedback
@@ -133,6 +147,7 @@ internal sealed class EfReworkFeedbackStore : IReworkFeedbackStore
             OriginatingRunId = entity.OriginatingRunId,
             PullRequestId = entity.PullRequestId,
             FeedbackBundleId = entity.FeedbackBundleId,
+            FeedbackBundleJson = entity.FeedbackBundleJson,
             FirstQualifyingCommentAt = entity.FirstQualifyingCommentAt,
             LastQualifyingCommentAt = entity.LastQualifyingCommentAt,
             ThreadCount = entity.ThreadCount,
