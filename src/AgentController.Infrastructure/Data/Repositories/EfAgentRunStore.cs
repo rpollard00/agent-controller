@@ -68,7 +68,7 @@ internal sealed class EfAgentRunStore : IAgentRunStore
             entity.StartedAt = DateTimeOffset.UtcNow;
 
         // Set finished time on terminal states
-        if (IsTerminalState(status) && entity.FinishedAt == null)
+        if (status.IsTerminal() && entity.FinishedAt == null)
             entity.FinishedAt = DateTimeOffset.UtcNow;
 
         await _db.SaveChangesAsync(cancellationToken);
@@ -215,21 +215,13 @@ internal sealed class EfAgentRunStore : IAgentRunStore
         // Post-execution states (ResultReceived, PrOpened, BranchPushed, NeedsHuman)
         // and terminal states (Completed, Failed, Cancelled, CleanupPending, CleanedUp)
         // do not consume a concurrency slot.
-        var activeStatuses = new[]
-        {
-            (int)RunLifecycleState.Claimed,
-            (int)RunLifecycleState.EnvironmentProvisioning,
-            (int)RunLifecycleState.EnvironmentReady,
-            (int)RunLifecycleState.RepositoryCloning,
-            (int)RunLifecycleState.RepositoryReady,
-            (int)RunLifecycleState.ContextInjected,
-            (int)RunLifecycleState.AgentStarting,
-            (int)RunLifecycleState.AgentRunning,
-            (int)RunLifecycleState.AwaitingResult,
-        };
+        var activeStates = Enum.GetValues<RunLifecycleState>()
+            .Where(s => s.IsActiveForConcurrency())
+            .Select(s => (int)s)
+            .ToArray();
 
         return await _db.AgentRuns
-            .CountAsync(e => activeStatuses.Contains(e.Status), cancellationToken);
+            .CountAsync(e => activeStates.Contains(e.Status), cancellationToken);
     }
 
     private static AgentRunHandle MapToHandle(AgentRunEntity entity)
@@ -254,18 +246,6 @@ internal sealed class EfAgentRunStore : IAgentRunStore
             PreviousRunId = entity.PreviousRunId,
             CreatedAt = entity.CreatedAt,
             UpdatedAt = entity.UpdatedAt,
-        };
-    }
-
-    private static bool IsTerminalState(RunLifecycleState status)
-    {
-        return status switch
-        {
-            RunLifecycleState.Completed => true,
-            RunLifecycleState.Failed => true,
-            RunLifecycleState.Cancelled => true,
-            RunLifecycleState.CleanedUp => true,
-            _ => false,
         };
     }
 

@@ -476,10 +476,7 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
     /// </summary>
     private static bool IsTerminalState(Domain.RunLifecycleState status)
     {
-        return status is Domain.RunLifecycleState.Completed
-            or Domain.RunLifecycleState.Failed
-            or Domain.RunLifecycleState.Cancelled
-            or Domain.RunLifecycleState.CleanedUp;
+        return status.IsTerminal();
     }
 
     /// <summary>
