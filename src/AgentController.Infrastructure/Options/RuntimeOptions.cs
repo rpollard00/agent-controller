@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using AgentController.Domain;
 
 namespace AgentController.Infrastructure.Options;
 
@@ -77,5 +78,26 @@ public sealed class RuntimeOptions
         ["PI_MATERIA_EVENTING"] = "true",
         ["Pi_MATERIA_EVENTING_HEARTBEAT_MS"] = "30000",
         ["PI_MATERIA_EVENTING_PRESETS"] = "agent-controller"
+    };
+
+    /// <summary>
+    /// Map of <see cref="ExecutionKind"/> to pi-materia loadout names.
+    ///
+    /// The runtime resolves the loadout for a given run by looking up
+    /// <c>Loadouts[spec.ExecutionKind]</c>, falling back to the
+    /// <see cref="ExecutionKind.NewWork"/> entry when the specific kind is missing.
+    ///
+    /// Default entries:
+    /// <list type="bullet">
+    ///   <item><term>NewWork → "ADO-Build-NewWork"</term>
+    ///     <description>Creates a new branch and PR for fresh work items.</description></item>
+    ///   <item><term>Rework → "ADO-Build-Rework"</term>
+    ///     <description>Addresses PR feedback on an existing branch without opening a new PR.</description></item>
+    /// </list>
+    /// </summary>
+    public IDictionary<ExecutionKind, string> Loadouts { get; init; } = new Dictionary<ExecutionKind, string>
+    {
+        [ExecutionKind.NewWork] = "ADO-Build-NewWork",
+        [ExecutionKind.Rework] = "ADO-Build-Rework"
     };
 }
