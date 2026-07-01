@@ -19,6 +19,14 @@ public interface IReworkCycleStore
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Check whether a rework cycle for the given feedback bundle already exists
+    /// (in any status). Returns true if the bundle has already been materialized.
+    /// </summary>
+    Task<bool> ExistsByFeedbackBundleIdAsync(
+        string feedbackBundleId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Create a new Pending rework cycle.
     /// Fails if a cycle with the same <paramref name="feedbackBundleId"/>
     /// already exists (unique index guard against double-materialization).
@@ -41,6 +49,13 @@ public interface IReworkCycleStore
     Task MarkConsumedAsync(
         string id,
         string newRunId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// List all Pending rework cycles.
+    /// Used by the feedback worker to find cycles that need work item reactivation.
+    /// </summary>
+    Task<IReadOnlyList<ReworkCycle>> ListPendingAsync(
         CancellationToken cancellationToken);
 
     /// <summary>

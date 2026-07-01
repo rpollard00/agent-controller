@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using AgentController.Application;
 using AgentController.Infrastructure.Options;
+using Microsoft.Extensions.Logging;
 
 namespace AgentController.Infrastructure;
 
@@ -12,15 +13,17 @@ namespace AgentController.Infrastructure;
 /// Calls <c>GET {project}/_apis/git/repositories/{repository}/pullRequests/{pullRequestId}/labels?api-version=7.1</c>
 /// to fetch labels for a pull request.
 /// </summary>
-internal sealed class AzureDevOpsReposPrLabelSource : IPrLabelSource
+internal sealed partial class AzureDevOpsReposPrLabelSource : IPrLabelSource
 {
     private readonly HttpClient _http;
     private readonly AzureDevOpsBoardsOptions _options;
+    private readonly ILogger<AzureDevOpsReposPrLabelSource> _logger;
 
-    public AzureDevOpsReposPrLabelSource(HttpClient http, AzureDevOpsBoardsOptions options)
+    public AzureDevOpsReposPrLabelSource(HttpClient http, AzureDevOpsBoardsOptions options, ILogger<AzureDevOpsReposPrLabelSource> logger)
     {
         _http = http;
         _options = options;
+        _logger = logger;
 
         // Configure base address from options (same pattern as AzureDevOpsReposFeedbackSource).
         if (!string.IsNullOrWhiteSpace(options.BaseUrl))
@@ -66,10 +69,12 @@ internal sealed class AzureDevOpsReposPrLabelSource : IPrLabelSource
 
             if (!response.IsSuccessStatusCode)
             {
+                Log.LabelFetchFailed(_logger, endpoint, (int)response.StatusCode, response.StatusCode.ToString());
                 return [];
             }
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            Log.LabelFetchResponse(_logger, endpoint, json);
             using var doc = JsonDocument.Parse(json);
 
             var labels = new List<PrLabel>();
@@ -77,6 +82,7 @@ internal sealed class AzureDevOpsReposPrLabelSource : IPrLabelSource
             if (!doc.RootElement.TryGetProperty("value", out var valueArray)
                 || valueArray.ValueKind != JsonValueKind.Array)
             {
+                Log.LabelFetchNoValue(_logger, endpoint);
                 return [];
             }
 
@@ -87,19 +93,9 @@ internal sealed class AzureDevOpsReposPrLabelSource : IPrLabelSource
                     ? nameEl.GetString() ?? string.Empty
                     : string.Empty;
 
-                var createdBy = string.Empty;
-                if (label.TryGetProperty("createdBy", out var createdByEl)
-                    && createdByEl.ValueKind == JsonValueKind.Object
-                    && createdByEl.TryGetProperty("uniqueName", out var uniqueNameEl)
-                    && uniqueNameEl.ValueKind == JsonValueKind.String)
-                {
-                    createdBy = uniqueNameEl.GetString() ?? string.Empty;
-                }
-
                 labels.Add(new PrLabel
                 {
                     Name = name,
-                    CreatedBy = createdBy,
                 });
             }
 
@@ -109,9 +105,10 @@ internal sealed class AzureDevOpsReposPrLabelSource : IPrLabelSource
         {
             throw;
         }
-        catch
+        catch (Exception ex)
         {
             // Any error — return empty list (marker gate fails-closed).
+            Log.LabelFetchException(_logger, endpoint, ex);
             return [];
         }
     }
@@ -147,5 +144,34 @@ internal sealed class AzureDevOpsReposPrLabelSource : IPrLabelSource
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Source-generated high-performance logger methods.
+    /// </summary>
+    private static partial class Log
+    {
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Failed to fetch PR labels from {Endpoint}: {StatusCode} ({StatusText}).")]
+        public static partial void LabelFetchFailed(
+            ILogger logger, string endpoint, int statusCode, string statusText);
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "PR label fetch response from {Endpoint}: {Response}")]
+        public static partial void LabelFetchResponse(
+            ILogger logger, string endpoint, string response);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "PR label fetch from {Endpoint}: no 'value' array in response.")]
+        public static partial void LabelFetchNoValue(ILogger logger, string endpoint);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "PR label fetch from {Endpoint} threw exception.")]
+        public static partial void LabelFetchException(
+            ILogger logger, string endpoint, Exception ex);
     }
 }

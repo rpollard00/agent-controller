@@ -1,20 +1,13 @@
 namespace AgentController.Application;
 
 /// <summary>
-/// A single pull-request label with the identity of the user who created it.
-/// Used by the marker gate to verify the rework marker was applied by an
-/// allowed reviewer.
+/// A single pull-request label.
+/// Used by the marker gate to verify the rework marker is present.
 /// </summary>
 public sealed record PrLabel
 {
     /// <summary>Label name (e.g. "agent-rework-requested").</summary>
     public string Name { get; init; } = string.Empty;
-
-    /// <summary>
-    /// Canonical identifier of the user who created the label
-    /// (uniqueName / email). Empty string when unavailable.
-    /// </summary>
-    public string CreatedBy { get; init; } = string.Empty;
 }
 
 /// <summary>

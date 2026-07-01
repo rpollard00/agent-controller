@@ -85,7 +85,6 @@ internal sealed class LocalPrLabelSource : IPrLabelSource
                     prLabels.Add(new PrLabel
                     {
                         Name = labelDef.Name,
-                        CreatedBy = labelDef.CreatedBy,
                     });
                 }
 

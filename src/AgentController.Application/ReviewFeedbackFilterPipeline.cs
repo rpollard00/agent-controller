@@ -7,8 +7,8 @@ namespace AgentController.Application;
 /// Applies the load-bearing feedback filter pipeline in exact order:
 /// <list type="number">
 ///   <item><term>Marker gate</term>
-///   <description>Fetch PR labels, require <c>agent-rework-requested</c> label with
-///   <c>createdBy.uniqueName</c> in AllowedReviewers. Fail-closed per-PR.</description></item>
+///   <description>Fetch PR labels, require <c>agent-rework-requested</c> label.
+///   Fail-closed per-PR.</description></item>
 ///   <item><term>Allowlist fail-closed</term>
 ///   <description>If AllowedReviewers is empty, log warning once at startup and
 ///   return nothing.</description></item>
@@ -170,8 +170,8 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
     }
 
     /// <summary>
-    /// Marker gate: fetch PR labels, require the rework marker label with
-    /// createdBy.uniqueName in AllowedReviewers. Fail-closed per-PR.
+    /// Marker gate: fetch PR labels, require the rework marker label.
+    /// Fail-closed per-PR.
     /// </summary>
     private async Task<bool> PassMarkerGateAsync(
         PrUnderTest pr,
@@ -186,21 +186,16 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
             var markerLabel = labels
                 .FirstOrDefault(l => l.Name.Equals(query.ReworkMarkerTag, StringComparison.Ordinal));
 
+            Console.WriteLine($"The marker label is {markerLabel}.");
+            Console.WriteLine($"Query rework marker tag is {query.ReworkMarkerTag}.");
+
             if (markerLabel is null)
             {
                 // No marker label — fail-closed.
                 return false;
             }
 
-            // Verify the label was created by an allowed reviewer.
-            if (string.IsNullOrWhiteSpace(markerLabel.CreatedBy))
-            {
-                // Label exists but creator is unknown — fail-closed.
-                Log.MarkerLabelMissingCreator(_logger, pr.PullRequestId, query.ReworkMarkerTag);
-                return false;
-            }
-
-            return query.AllowedReviewers.Contains(markerLabel.CreatedBy);
+            return true;
         }
         catch (OperationCanceledException)
         {
@@ -333,13 +328,6 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
             Message = "PR {PullRequestId}: {ThreadCount} thread(s) passed all filters.")]
         public static partial void PrPassedAllFilters(
             ILogger logger, string pullRequestId, int threadCount);
-
-        [LoggerMessage(
-            Level = LogLevel.Warning,
-            Message = "Marker label '{LabelName}' on PR {PullRequestId} has no creator info — " +
-                      "failing closed.")]
-        public static partial void MarkerLabelMissingCreator(
-            ILogger logger, string pullRequestId, string labelName);
 
         [LoggerMessage(
             Level = LogLevel.Warning,

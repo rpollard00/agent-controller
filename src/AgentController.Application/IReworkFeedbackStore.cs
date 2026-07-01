@@ -57,4 +57,13 @@ public interface IReworkFeedbackStore
     /// </summary>
     Task<IReadOnlyList<ReworkFeedback>> GetSoakedAsync(
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Mark a Soaked row as Materialized after its feedback has been
+    /// used to create a Pending ReworkCycle. Idempotent: no-op if
+    /// not in Soaked status.
+    /// </summary>
+    Task MarkMaterializedAsync(
+        string id,
+        CancellationToken cancellationToken);
 }

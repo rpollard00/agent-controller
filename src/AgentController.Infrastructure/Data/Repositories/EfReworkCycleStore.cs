@@ -31,6 +31,14 @@ internal sealed class EfReworkCycleStore : IReworkCycleStore
         return entity is null ? null : MapToDomain(entity);
     }
 
+    public async Task<bool> ExistsByFeedbackBundleIdAsync(
+        string feedbackBundleId,
+        CancellationToken cancellationToken)
+    {
+        return await _db.ReworkCycles
+            .AnyAsync(e => e.FeedbackBundleId == feedbackBundleId, cancellationToken);
+    }
+
     public async Task<ReworkCycle> CreateAsync(
         string workItemId,
         int cycleNumber,
@@ -84,6 +92,17 @@ internal sealed class EfReworkCycleStore : IReworkCycleStore
         entity.NewRunId = newRunId;
 
         await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<ReworkCycle>> ListPendingAsync(
+        CancellationToken cancellationToken)
+    {
+        var entities = await _db.ReworkCycles
+            .Where(e => e.Status == (int)ReworkCycleStatus.Pending)
+            .OrderBy(e => e.CreatedAt)
+            .ToListAsync(cancellationToken);
+
+        return entities.Select(MapToDomain).ToList();
     }
 
     public async Task<IReadOnlyList<ReworkCycle>> ListConsumedAsync(

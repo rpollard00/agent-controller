@@ -143,6 +143,26 @@ internal sealed class EfReworkFeedbackStore : IReworkFeedbackStore
             .ToList();
     }
 
+    public async Task MarkMaterializedAsync(
+        string id,
+        CancellationToken cancellationToken)
+    {
+        var entity = await _db.ReworkFeedback
+            .FindAsync([id], cancellationToken);
+
+        if (entity is null)
+            return;
+
+        // Only transition from Soaked — prevents re-processing.
+        if (entity.Status != (int)ReworkFeedbackStatus.Soaked)
+            return;
+
+        entity.Status = (int)ReworkFeedbackStatus.Materialized;
+        entity.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await _db.SaveChangesAsync(cancellationToken);
+    }
+
     private static ReworkFeedback MapToDomain(ReworkFeedbackEntity entity)
     {
         return new ReworkFeedback

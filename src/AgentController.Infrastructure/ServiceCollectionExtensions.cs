@@ -8,6 +8,7 @@ using AgentController.Infrastructure.Options;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Microsoft.Extensions.DependencyInjection;
@@ -452,17 +453,20 @@ public static class AgentControllerServiceCollectionExtensions
             return new AzureDevOpsReposFeedbackSource(http, boardsOptions);
         });
 
-        // Register the PR label source (marker gate) as scoped.
-        services.AddScoped<IPrLabelSource>(sp =>
+        // Register the PR label source (marker gate) as singleton.
+        // The filter pipeline is a singleton and depends on IPrLabelSource,
+        // so the label source must not be scoped.
+        services.AddSingleton<IPrLabelSource>(sp =>
         {
             var boardsOptions = sp.GetRequiredService<IOptions<AzureDevOpsBoardsOptions>>().Value;
             var workSourceOptions = sp.GetRequiredService<IOptions<WorkSourceOptions>>().Value;
+            var logger = sp.GetRequiredService<ILogger<AzureDevOpsReposPrLabelSource>>();
 
             boardsOptions.BaseUrl = workSourceOptions.OrganizationUrl;
             boardsOptions.Project = workSourceOptions.Project;
 
             var http = new HttpClient();
-            return new AzureDevOpsReposPrLabelSource(http, boardsOptions);
+            return new AzureDevOpsReposPrLabelSource(http, boardsOptions, logger);
         });
 
         return services;
@@ -527,6 +531,11 @@ public static class AgentControllerServiceCollectionExtensions
         var feedbackProvider = configuration.GetValue<string>(
             $"{FeedbackOptions.SectionName}:provider") ?? "None";
 
+        // ── Filter pipeline (always registered, must come first) ──
+        // The filter pipeline registers a no-op IPrLabelSource as the default.
+        // Provider-specific registrations below override it.
+        AddAgentControllerFeedbackFilterPipeline(services);
+
         // ── Provider selection ────────────────────────────────────
         switch (feedbackProvider)
         {
@@ -541,13 +550,10 @@ public static class AgentControllerServiceCollectionExtensions
             case "None":
             default:
                 // No-op feedback source: PollAsync returns empty.
-                // The no-op IPrLabelSource is registered by the filter pipeline below.
+                // The no-op IPrLabelSource is registered by the filter pipeline above.
                 services.AddSingleton<IFeedbackSource, NoOpFeedbackSource>();
                 break;
         }
-
-        // ── Filter pipeline (always registered) ───────────────────
-        AddAgentControllerFeedbackFilterPipeline(services);
 
         // Note: FeedbackPollingWorker is registered in Program.cs via
         // AddHostedService<FeedbackPollingWorker>() because the worker

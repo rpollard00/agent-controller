@@ -100,14 +100,10 @@ public sealed class LocalFeedbackCommentDefinition
 
 /// <summary>
 /// A PR label definition for the <c>Local</c> feedback source.
-/// Used by the marker gate in the filter pipeline to simulate
-/// PR labels with their creators.
+/// Used by the marker gate in the filter pipeline.
 /// </summary>
 public sealed class LocalFeedbackLabelDefinition
 {
     /// <summary>Label name (e.g. "agent-rework-requested").</summary>
     public string Name { get; init; } = string.Empty;
-
-    /// <summary>Canonical creator identifier (uniqueName / email).</summary>
-    public string CreatedBy { get; init; } = string.Empty;
 }

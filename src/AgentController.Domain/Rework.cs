@@ -150,6 +150,12 @@ public enum ReworkFeedbackStatus
     /// This row is stale and will not be materialized.
     /// </summary>
     Superseded,
+
+    /// <summary>
+    /// This feedback has been materialized into a Pending ReworkCycle.
+    /// Terminal state — will not be re-processed.
+    /// </summary>
+    Materialized,
 }
 
 /// <summary>
