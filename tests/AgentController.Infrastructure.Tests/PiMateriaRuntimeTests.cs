@@ -17,7 +17,9 @@ namespace AgentController.Infrastructure.Tests;
 /// Tests for <see cref="PiMateriaRuntime"/> as a fire-and-forget CLI launcher.
 ///
 /// The runtime launches <c>pi</c> as a detached process:
-/// <c>pi "/materia loadout Elena" "/materia cast {task}"</c>
+/// <c>pi "/materia loadout {loadout}" "/materia cast {task}"</c>
+/// where the loadout is resolved from <c>RuntimeOptions.Loadouts[spec.ExecutionKind]</c>
+/// (defaulting to <c>"ADO-Build-NewWork"</c> for <c>ExecutionKind.NewWork</c>).
 /// with three environment variables: CONTROLLER_RUN_ID, CONTROLLER_EVENT_URL,
 /// CONTROLLER_CONTEXT_DIR. After spawn it returns immediately.
 ///
@@ -108,7 +110,7 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         Assert.True(File.Exists(capturePath), "Capture file should exist.");
 
         var content = await File.ReadAllTextAsync(capturePath);
-        Assert.Contains("/materia loadout Elena", content);
+        Assert.Contains("/materia loadout ADO-Build-NewWork", content);
         Assert.Contains("/materia cast", content);
         Assert.Contains("Test task", content);
 
@@ -529,7 +531,7 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         Assert.True(File.Exists(wrapperCapturePath), "Wrapper capture file should exist.");
         var wrapperContent = await File.ReadAllTextAsync(wrapperCapturePath);
         Assert.Contains("-qfc", wrapperContent);
-        Assert.Contains("/materia loadout Elena", wrapperContent);
+        Assert.Contains("/materia loadout ADO-Build-NewWork", wrapperContent);
         Assert.Contains("/materia cast", wrapperContent);
 
         runtime.Dispose();
@@ -568,8 +570,82 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
 
         var content = await File.ReadAllTextAsync(capturePath);
         // When launched directly, the script receives pi's args directly (not wrapped).
-        Assert.Contains("/materia loadout Elena", content);
+        Assert.Contains("/materia loadout ADO-Build-NewWork", content);
         Assert.Contains("/materia cast", content);
+
+        runtime.Dispose();
+    }
+
+    // ── Loadout selection per ExecutionKind ─────────────────────────
+
+    [Fact]
+    public async Task StartAsync_ReworkExecutionKind_ResolvesToApoBuildRework()
+    {
+        var fakePiPath = WriteCaptureScript(_tempRoot, "capture-rework.sh");
+        var runId = await SeedRunAsync();
+        var baseSpec = await BuildSpecAsync(runId, "Rework task");
+        var spec = baseSpec with { ExecutionKind = ExecutionKind.Rework };
+
+        var runtime = CreateRuntime(fakePiPath);
+
+        var handle = await runtime.StartAsync(spec, CancellationToken.None);
+        Assert.Equal(spec.RunId, handle.RunId);
+
+        await Task.Delay(500);
+
+        var capturePath = Path.Combine(_tempRoot, "capture.txt");
+        Assert.True(File.Exists(capturePath), "Capture file should exist.");
+
+        var content = await File.ReadAllTextAsync(capturePath);
+        Assert.Contains("/materia loadout ADO-Build-Rework", content);
+        Assert.DoesNotContain("/materia loadout ADO-Build-NewWork", content);
+        Assert.Contains("/materia cast", content);
+
+        runtime.Dispose();
+    }
+
+    [Fact]
+    public async Task StartAsync_CustomLoadoutMap_UsesConfiguredLoadout()
+    {
+        var fakePiPath = WriteCaptureScript(_tempRoot, "capture-custom-loadout.sh");
+        var runId = await SeedRunAsync();
+        var baseSpec = await BuildSpecAsync(runId, "Custom loadout task");
+        var spec = baseSpec with { ExecutionKind = ExecutionKind.NewWork };
+
+        using var portFinder = new TcpListener(IPAddress.Loopback, 0);
+        portFinder.Start();
+        var port = ((IPEndPoint)portFinder.LocalEndpoint).Port;
+        portFinder.Stop();
+
+        var runtime = new PiMateriaRuntime(
+            _scopeFactory,
+            new StaticOptionsMonitor<RuntimeOptions>(
+                new RuntimeOptions
+                {
+                    Provider = "PiMateria",
+                    PiExecutablePath = fakePiPath,
+                    ControllerBaseUrl = $"http://127.0.0.1:{port}",
+                    Loadouts = new Dictionary<ExecutionKind, string>
+                    {
+                        [ExecutionKind.NewWork] = "Custom-NewWork-Loadout",
+                        [ExecutionKind.Rework] = "Custom-Rework-Loadout",
+                    },
+                }
+            ),
+            _provider.GetRequiredService<ILogger<PiMateriaRuntime>>()
+        );
+
+        var handle = await runtime.StartAsync(spec, CancellationToken.None);
+        Assert.Equal(spec.RunId, handle.RunId);
+
+        await Task.Delay(500);
+
+        var capturePath = Path.Combine(_tempRoot, "capture.txt");
+        Assert.True(File.Exists(capturePath), "Capture file should exist.");
+
+        var content = await File.ReadAllTextAsync(capturePath);
+        Assert.Contains("/materia loadout Custom-NewWork-Loadout", content);
+        Assert.DoesNotContain("/materia loadout ADO-Build-NewWork", content);
 
         runtime.Dispose();
     }

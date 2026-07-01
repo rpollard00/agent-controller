@@ -14,7 +14,7 @@ namespace AgentController.Infrastructure;
 /// <summary>
 /// Minimal <see cref="IAgentRuntime"/> that launches <c>pi</c> inside an
 /// ephemeral PTY-allocated shell. The invocation is:
-/// <c>script -qfc 'pi "/materia loadout Elena" "/materia cast {task}"' /dev/null</c>.
+/// <c>script -qfc 'pi "/materia loadout {loadout}" "/materia cast {task}"' /dev/null</c>.
 ///
 /// <para>The <c>script</c> wrapper (util-linux) allocates a pseudo-terminal so
 /// pi's TUI can initialize headlessly without deadlocking on missing TTY.</para>
@@ -52,8 +52,6 @@ namespace AgentController.Infrastructure;
 /// </summary>
 public sealed partial class PiMateriaRuntime : IAgentRuntime
 {
-    private const string DefaultCliLoadout = "Elena";
-
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IOptionsMonitor<RuntimeOptions> _runtimeOptions;
     private readonly ILogger<PiMateriaRuntime> _logger;
@@ -121,6 +119,11 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
             ? options.PtyWrapperArgs!.Trim()
             : null;
 
+        // ── 3b. Resolve loadout from ExecutionKind via config ────────
+        var loadout = options.Loadouts.TryGetValue(spec.ExecutionKind, out var kindLoadout)
+            ? kindLoadout
+            : options.Loadouts[ExecutionKind.NewWork];
+
         // ── 4. Prepare log directory and file writers ─────────────────
         // ── 5. Start process (fire and forget) ────────────────────────
         try
@@ -167,7 +170,7 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
                 }
 
                 // Build the inner pi command string for the -c argument.
-                var piCommand = $"{piExe} \"/materia loadout {DefaultCliLoadout}\" \"/materia cast {taskText}\"";
+                var piCommand = $"{piExe} \"/materia loadout {loadout}\" \"/materia cast {taskText}\"";
                 psi.ArgumentList.Add(piCommand);
                 psi.ArgumentList.Add("/dev/null");
             }
@@ -175,7 +178,7 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
             {
                 // No wrapper — launch pi directly.
                 psi.FileName = piExe;
-                psi.ArgumentList.Add("/materia loadout " + DefaultCliLoadout);
+                psi.ArgumentList.Add("/materia loadout " + loadout);
                 psi.ArgumentList.Add("/materia cast " + taskText);
             }
 
