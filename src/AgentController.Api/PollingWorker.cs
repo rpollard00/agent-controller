@@ -1014,6 +1014,9 @@ public sealed partial class PollingWorker : BackgroundService
                 RepoCheckout = checkout,
                 EnvironmentHandle = envHandle,
                 RuntimeProfile = "default",
+                ExecutionKind = reworkContext is not null
+                    ? ExecutionKind.Rework
+                    : ExecutionKind.NewWork,
             };
 
             var handle = await agentRuntime.StartAsync(spec, ct);
