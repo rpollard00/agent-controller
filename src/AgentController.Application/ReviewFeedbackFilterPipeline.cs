@@ -186,9 +186,6 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
             var markerLabel = labels
                 .FirstOrDefault(l => l.Name.Equals(query.ReworkMarkerTag, StringComparison.Ordinal));
 
-            Console.WriteLine($"The marker label is {markerLabel}.");
-            Console.WriteLine($"Query rework marker tag is {query.ReworkMarkerTag}.");
-
             if (markerLabel is null)
             {
                 // No marker label — fail-closed.

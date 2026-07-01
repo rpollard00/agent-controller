@@ -397,8 +397,9 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             });
         }
 
-        if (status.Tags is { Count: > 0 })
+        if (status.Tags is { Count: > 0 } && status.RemovedTags is null or [])
         {
+            // Simple tag addition — no removals needed.
             patchOps.Add(new
             {
                 op = "add",
@@ -407,7 +408,8 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             });
         }
 
-        // Handle tag removal: read current tags, filter out removed tags, write back.
+        // Handle tag removal (and optional addition): read current tags, filter,
+        // merge in any new tags, and write back in a single PATCH operation.
         if (status.RemovedTags is { Count: > 0 })
         {
             // Fetch current work item to read existing tags
@@ -432,13 +434,32 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                     .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-                // Remove the specified tags
+                // Remove matching tags (supports exact match and prefix:* wildcard).
                 foreach (var tagToRemove in status.RemovedTags)
                 {
-                    if (!string.IsNullOrWhiteSpace(tagToRemove))
+                    var trimmed = tagToRemove?.Trim();
+                    if (string.IsNullOrWhiteSpace(trimmed))
+                        continue;
+
+                    if (trimmed.EndsWith(" :*", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var prefix = trimmed[..^1]; // strip the '*', keep the ':'
+                        existingTags.RemoveWhere(t =>
+                            t.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+                    }
+                    else
                     {
                         existingTags.RemoveWhere(t =>
-                            t.Equals(tagToRemove.Trim(), StringComparison.OrdinalIgnoreCase));
+                            t.Equals(trimmed, StringComparison.OrdinalIgnoreCase));
+                    }
+                }
+
+                // Merge in any tags to add.
+                if (status.Tags is { Count: > 0 })
+                {
+                    foreach (var tagToAdd in status.Tags)
+                    {
+                        existingTags.Add(tagToAdd);
                     }
                 }
 

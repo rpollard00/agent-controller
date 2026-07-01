@@ -212,7 +212,9 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
             };
         }
 
-        // (2) Ensure agent-ready tag; remove agent lifecycle exclusion tags.
+        // (2) Ensure agent-ready tag; remove all agent lifecycle tags
+        //     (agent-active, agent-failed, agent-needs-human, agent-worker:*).
+        //     The wildcard agent-worker:* strips any worker claim tags.
         await client.UpdateWorkItemStatusAsync(
             workRef,
             new ExternalWorkStatus
@@ -223,6 +225,7 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
                     WorkSourceOptions.DefaultExcludedTagAgentActive,
                     WorkSourceOptions.DefaultExcludedTagAgentFailed,
                     WorkSourceOptions.DefaultExcludedTagAgentNeedsHuman,
+                    "agent-worker:*",
                 ],
             },
             cancellationToken);

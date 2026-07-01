@@ -74,4 +74,13 @@ public interface IReworkCycleStore
     Task<int> GetMaxCycleNumberAsync(
         string workItemId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Mark a Pending rework cycle as reactivated (work item state transitioned
+    /// and tags cleaned). Idempotent: no-op if already reactivated.
+    /// Used to ensure reactivation runs at most once per cycle.
+    /// </summary>
+    Task MarkReactivatedAsync(
+        string id,
+        CancellationToken cancellationToken);
 }

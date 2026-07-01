@@ -43,6 +43,9 @@ internal sealed class ReworkCycleEntity
     /// <summary>When the cycle record was first persisted.</summary>
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
+    /// <summary>When the work item was reactivated for this cycle.</summary>
+    public DateTimeOffset? ReactivatedAt { get; set; }
+
     /// <summary>When the cycle was consumed by the happy path.</summary>
     public DateTimeOffset? ConsumedAt { get; set; }
 

@@ -250,6 +250,12 @@ public sealed record ReworkCycle
     /// <summary>When the cycle record was first persisted.</summary>
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
 
+    /// <summary>
+    /// When the work item was reactivated for this cycle (null if not yet
+    /// reactivated). Used to ensure reactivation runs at most once per cycle.
+    /// </summary>
+    public DateTimeOffset? ReactivatedAt { get; init; }
+
     /// <summary>When the cycle was consumed by the happy path (null if still pending).</summary>
     public DateTimeOffset? ConsumedAt { get; init; }
 

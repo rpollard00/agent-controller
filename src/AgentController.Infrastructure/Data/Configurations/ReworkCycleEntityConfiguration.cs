@@ -57,6 +57,8 @@ internal sealed class ReworkCycleEntityConfiguration : IEntityTypeConfiguration<
         builder.Property(x => x.CreatedAt)
             .IsRequired();
 
+        builder.Property(x => x.ReactivatedAt);
+
         builder.Property(x => x.ConsumedAt);
 
         // Unique index on FeedbackBundleId — hard idempotency guard

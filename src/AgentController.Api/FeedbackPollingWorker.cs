@@ -419,11 +419,19 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
         // For each Pending cycle that hasn't been consumed yet, reactivate
         // the work item in the external source (state transition + tag cleanup)
         // so the PollingWorker can re-discover and claim it.
+        // Skip cycles already reactivated (tracked on the cycle itself,
+        // not the work item whose local status may be stale).
         var pendingCycles = await reworkCycleStore.ListPendingAsync(ct);
 
         foreach (var cycle in pendingCycles)
         {
             ct.ThrowIfCancellationRequested();
+
+            // Skip: already reactivated by a prior poll cycle.
+            if (cycle.ReactivatedAt is not null)
+            {
+                continue;
+            }
 
             var workItem = await workItemStore.GetByIdAsync(cycle.WorkItemId, ct);
             if (workItem is null)
@@ -463,6 +471,8 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
 
                 if (result.Success)
                 {
+                    // Mark reactivated so we don't repeat on the next poll cycle.
+                    await reworkCycleStore.MarkReactivatedAsync(cycle.Id, ct);
                     Log.ReworkItemReactivated(_logger, cycle.WorkItemId, cycle.CycleNumber, cycle.Id);
                 }
                 else

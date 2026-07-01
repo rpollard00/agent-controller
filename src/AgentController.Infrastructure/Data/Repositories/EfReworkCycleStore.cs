@@ -97,12 +97,16 @@ internal sealed class EfReworkCycleStore : IReworkCycleStore
     public async Task<IReadOnlyList<ReworkCycle>> ListPendingAsync(
         CancellationToken cancellationToken)
     {
+        // SQLite EF Core 9.x cannot translate DateTimeOffset ORDER BY clauses,
+        // so fetch then sort client-side.
         var entities = await _db.ReworkCycles
             .Where(e => e.Status == (int)ReworkCycleStatus.Pending)
-            .OrderBy(e => e.CreatedAt)
             .ToListAsync(cancellationToken);
 
-        return entities.Select(MapToDomain).ToList();
+        return entities
+            .OrderBy(e => e.CreatedAt)
+            .Select(MapToDomain)
+            .ToList();
     }
 
     public async Task<IReadOnlyList<ReworkCycle>> ListConsumedAsync(
@@ -126,6 +130,25 @@ internal sealed class EfReworkCycleStore : IReworkCycleStore
         return maxCycle ?? 0;
     }
 
+    public async Task MarkReactivatedAsync(
+        string id,
+        CancellationToken cancellationToken)
+    {
+        var entity = await _db.ReworkCycles
+            .FindAsync([id], cancellationToken);
+
+        if (entity is null)
+            return;
+
+        // Idempotent: no-op if already reactivated.
+        if (entity.ReactivatedAt is not null)
+            return;
+
+        entity.ReactivatedAt = DateTimeOffset.UtcNow;
+
+        await _db.SaveChangesAsync(cancellationToken);
+    }
+
     private static ReworkCycle MapToDomain(ReworkCycleEntity entity)
     {
         return new ReworkCycle
@@ -141,6 +164,7 @@ internal sealed class EfReworkCycleStore : IReworkCycleStore
             FeedbackBundleId = entity.FeedbackBundleId,
             Status = (ReworkCycleStatus)entity.Status,
             CreatedAt = entity.CreatedAt,
+            ReactivatedAt = entity.ReactivatedAt,
             ConsumedAt = entity.ConsumedAt,
             NewRunId = entity.NewRunId,
         };
