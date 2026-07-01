@@ -29,6 +29,12 @@ public sealed record AgentRunSpec
 
     /// <summary>Callback URL where the runtime can POST events.</summary>
     public string? CallbackUrl { get; init; }
+
+    /// <summary>
+    /// Kind of execution — determines which pi-materia loadout is used.
+    /// Defaults to <see cref="ExecutionKind.NewWork"/>.
+    /// </summary>
+    public ExecutionKind ExecutionKind { get; init; } = ExecutionKind.NewWork;
 }
 
 /// <summary>
