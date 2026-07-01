@@ -72,9 +72,12 @@ public interface IAgentRunStore
     );
 
     /// <summary>
-    /// Count the number of runs that are not in a terminal state
-    /// (Completed, Failed, Cancelled, CleanedUp). Used by the worker
-    /// polling loop to enforce max concurrency.
+    /// Count the number of runs whose agent runtime is actively executing
+    /// or being staged (Claimed through AwaitingResult). Runs whose runtime
+    /// has reported a result (ResultReceived, PrOpened, BranchPushed, NeedsHuman)
+    /// or that are in a terminal state (Completed, Failed, Cancelled,
+    /// CleanupPending, CleanedUp) do not count toward MaxConcurrentRuns.
+    /// Used by the worker polling loop to enforce max concurrency.
     /// </summary>
     Task<int> CountActiveAsync(CancellationToken cancellationToken);
 

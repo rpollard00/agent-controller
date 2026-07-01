@@ -211,13 +211,25 @@ internal sealed class EfAgentRunStore : IAgentRunStore
 
     public async Task<int> CountActiveAsync(CancellationToken cancellationToken)
     {
+        // Count only runs whose agent runtime is actively executing or being staged.
+        // Post-execution states (ResultReceived, PrOpened, BranchPushed, NeedsHuman)
+        // and terminal states (Completed, Failed, Cancelled, CleanupPending, CleanedUp)
+        // do not consume a concurrency slot.
+        var activeStatuses = new[]
+        {
+            (int)RunLifecycleState.Claimed,
+            (int)RunLifecycleState.EnvironmentProvisioning,
+            (int)RunLifecycleState.EnvironmentReady,
+            (int)RunLifecycleState.RepositoryCloning,
+            (int)RunLifecycleState.RepositoryReady,
+            (int)RunLifecycleState.ContextInjected,
+            (int)RunLifecycleState.AgentStarting,
+            (int)RunLifecycleState.AgentRunning,
+            (int)RunLifecycleState.AwaitingResult,
+        };
+
         return await _db.AgentRuns
-            .CountAsync(
-                e => e.Status != (int)RunLifecycleState.Completed
-                     && e.Status != (int)RunLifecycleState.Failed
-                     && e.Status != (int)RunLifecycleState.Cancelled
-                     && e.Status != (int)RunLifecycleState.CleanedUp,
-                cancellationToken);
+            .CountAsync(e => activeStatuses.Contains(e.Status), cancellationToken);
     }
 
     private static AgentRunHandle MapToHandle(AgentRunEntity entity)
