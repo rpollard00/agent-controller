@@ -746,6 +746,176 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         }
     }
 
+    // ── Rework context prepending ──────────────────────────────────
+
+    [Fact]
+    public void ReadCastTask_ReworkContextPresent_PrependsBeforeWorkItemBody()
+    {
+        var contextDir = Path.Combine(Path.GetTempPath(), $"pimateria-readcasttask-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(contextDir);
+
+        try
+        {
+            File.WriteAllText(
+                Path.Combine(contextDir, "rework-context.md"),
+                "You are continuing an EXISTING PR. Do not open a new one.\n\n## Prior Run\n\n- Cycle: 1\n- Branch: feature-abc\n"
+            );
+            File.WriteAllText(
+                Path.Combine(contextDir, "work-item.md"),
+                "# Fix the bug\n\nAddress the review feedback.\n"
+            );
+
+            var spec = new AgentRunSpec
+            {
+                RunId = "test-run-id",
+                WorkRef = new ExternalWorkRef { Source = "Local", ExternalId = "WI-42" },
+            };
+
+            var taskText = InvokeReadCastTask(spec, contextDir);
+
+            // Rework context header should be present.
+            Assert.Contains("## Rework Context", taskText);
+            // Rework content should be present.
+            Assert.Contains("You are continuing an EXISTING PR", taskText);
+            Assert.Contains("Cycle: 1", taskText);
+            // Work item body should also be present.
+            Assert.Contains("# Fix the bug", taskText);
+            // Rework context must appear BEFORE the work-item body.
+            var reworkIndex = taskText.IndexOf("## Rework Context", StringComparison.Ordinal);
+            var workItemIndex = taskText.IndexOf("# Fix the bug", StringComparison.Ordinal);
+            Assert.True(reworkIndex < workItemIndex,
+                "Rework context should be prepended before the work-item body.");
+        }
+        finally
+        {
+            Directory.Delete(contextDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ReadCastTask_ReworkContextAbsent_NoReworkSection()
+    {
+        var contextDir = Path.Combine(Path.GetTempPath(), $"pimateria-readcasttask-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(contextDir);
+
+        try
+        {
+            // Only work-item.md, no rework-context.md.
+            File.WriteAllText(
+                Path.Combine(contextDir, "work-item.md"),
+                "# Original task\n\nImplement the feature.\n"
+            );
+
+            var spec = new AgentRunSpec
+            {
+                RunId = "test-run-id",
+                WorkRef = new ExternalWorkRef { Source = "Local", ExternalId = "WI-50" },
+            };
+
+            var taskText = InvokeReadCastTask(spec, contextDir);
+
+            // Work item body should be present.
+            Assert.Contains("# Original task", taskText);
+            Assert.Contains("Implement the feature", taskText);
+            // No rework section should appear.
+            Assert.DoesNotContain("## Rework Context", taskText);
+        }
+        finally
+        {
+            Directory.Delete(contextDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ReadCastTask_ReworkContextWithAllFiles_CorrectOrder()
+    {
+        var contextDir = Path.Combine(Path.GetTempPath(), $"pimateria-readcasttask-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(contextDir);
+
+        try
+        {
+            File.WriteAllText(
+                Path.Combine(contextDir, "rework-context.md"),
+                "## Review Threads\n\n1. src/Widget.cs:42 - Please add null check\n"
+            );
+            File.WriteAllText(
+                Path.Combine(contextDir, "work-item.md"),
+                "# Add null checks\n\nGuard against null inputs.\n"
+            );
+            File.WriteAllText(
+                Path.Combine(contextDir, "acceptance-criteria.md"),
+                "- Null inputs throw ArgumentNullException\n"
+            );
+            File.WriteAllText(
+                Path.Combine(contextDir, "comments.md"),
+                "Use ArgumentNullException with paramName.\n"
+            );
+
+            var spec = new AgentRunSpec
+            {
+                RunId = "test-run-id",
+                WorkRef = new ExternalWorkRef { Source = "Local", ExternalId = "WI-60" },
+            };
+
+            var taskText = InvokeReadCastTask(spec, contextDir);
+
+            // All four sections should be present.
+            Assert.Contains("## Rework Context", taskText);
+            Assert.Contains("## Review Threads", taskText);
+            Assert.Contains("# Add null checks", taskText);
+            Assert.Contains("## Acceptance Criteria", taskText);
+            Assert.Contains("## Comments", taskText);
+
+            // Verify correct ordering: Rework -> Work Item -> Acceptance Criteria -> Comments.
+            var reworkIndex = taskText.IndexOf("## Rework Context", StringComparison.Ordinal);
+            var workItemIndex = taskText.IndexOf("# Add null checks", StringComparison.Ordinal);
+            var acIndex = taskText.IndexOf("## Acceptance Criteria", StringComparison.Ordinal);
+            var commentsIndex = taskText.IndexOf("## Comments", StringComparison.Ordinal);
+
+            Assert.True(reworkIndex < workItemIndex, "Rework should come before work item.");
+            Assert.True(workItemIndex < acIndex, "Work item should come before acceptance criteria.");
+            Assert.True(acIndex < commentsIndex, "Acceptance criteria should come before comments.");
+        }
+        finally
+        {
+            Directory.Delete(contextDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ReadCastTask_ReworkContextEmptyFile_NoReworkSection()
+    {
+        var contextDir = Path.Combine(Path.GetTempPath(), $"pimateria-readcasttask-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(contextDir);
+
+        try
+        {
+            // rework-context.md exists but is truly empty (0 bytes).
+            File.WriteAllText(Path.Combine(contextDir, "rework-context.md"), "");
+            File.WriteAllText(
+                Path.Combine(contextDir, "work-item.md"),
+                "# Normal task\n\nDo the thing.\n"
+            );
+
+            var spec = new AgentRunSpec
+            {
+                RunId = "test-run-id",
+                WorkRef = new ExternalWorkRef { Source = "Local", ExternalId = "WI-70" },
+            };
+
+            var taskText = InvokeReadCastTask(spec, contextDir);
+
+            // Work item should be present.
+            Assert.Contains("# Normal task", taskText);
+            // Empty rework-context.md should not add a section.
+            Assert.DoesNotContain("## Rework Context", taskText);
+        }
+        finally
+        {
+            Directory.Delete(contextDir, recursive: true);
+        }
+    }
+
     [Fact]
     public void ReadCastTask_NoWorkItemFile_FallsBackToRunIdWhenExternalIdMissing()
     {
