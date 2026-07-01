@@ -283,7 +283,10 @@ public static class AgentControllerServiceCollectionExtensions
     /// <summary>
     /// Registers the <see cref="PiMateriaRuntime"/> as a singleton
     /// <see cref="IAgentRuntime"/> that launches <c>pi</c> as a detached CLI process
-    /// via <c>pi "/materia loadout Elena" "/materia cast {task}"</c>.
+    /// via <c>pi "/materia loadout {loadout}" "/materia cast {task}"</c>.
+    /// The loadout is resolved from <c>RuntimeOptions.Loadouts[spec.ExecutionKind]</c>
+    /// (defaulting to <c>ADO-Build-NewWork</c> for new work or <c>ADO-Build-Rework</c>
+    /// for rework feedback).
     /// The launched job reports important status back only via webhook;
     /// the controller treats the launch as fire-and-forget.
     ///

@@ -63,8 +63,10 @@ The MVP should evolve the same design into a durable internal service using stro
 `PiMateriaRuntime` are registered. `MockPiMateriaRuntime` emits a deterministic
 sequence of runtime events in-process. `PiMateriaRuntime` launches `pi` inside an
 ephemeral PTY-allocated shell via
-`pi "/materia loadout Elena" "/materia cast {task}"` and tracks the session
-until a terminal event. All observability comes from
+`pi "/materia loadout {loadout}" "/materia cast {task}"` where the loadout
+is resolved from `RuntimeOptions.Loadouts[spec.ExecutionKind]` (defaulting to
+`ADO-Build-NewWork` for new work or `ADO-Build-Rework` for rework feedback),
+and tracks the session until a terminal event. All observability comes from
 pi-materia POSTing `runtime.*` lifecycle events to the existing
 `POST /runs/{runId}/events` HTTP webhook endpoint (see §13b).
 
@@ -91,8 +93,11 @@ The local-first milestone (§13a) enables fully local controller runs without Az
    end-to-end:** `PiMateriaRuntime`
    (`src/AgentController.Infrastructure/PiMateriaRuntime.cs`) launches `pi` inside an
    ephemeral PTY-allocated shell via
-   `pi "/materia loadout Elena" "/materia cast {task}"` and tracks the session
-   until a terminal event. The full controller-driven chain — real `PollingWorker` + real runtime +
+   `pi "/materia loadout {loadout}" "/materia cast {task}"` where the loadout
+   is resolved from `RuntimeOptions.Loadouts[spec.ExecutionKind]` (defaulting
+   to `ADO-Build-NewWork` for new work or `ADO-Build-Rework` for rework
+   feedback), and tracks the session until a terminal event. The full
+   controller-driven chain — real `PollingWorker` + real runtime +
    real `pi` + the real `POST /runs/{runId}/events` endpoint — is exercised by
    the Tier B harness at `dev/integration-test/`, which runs a complete Wedge
    cast through the real controller and asserts `runtime.completed`. Coverage
@@ -1791,8 +1796,10 @@ all the settings needed for a local-only run.
 The local-only E2E path works with the mock runtime, and the real pi-materia
 invocation is now implemented and validated end-to-end. `PiMateriaRuntime`
 (see §13b) launches `pi` inside an ephemeral PTY-allocated shell via
-`pi "/materia loadout Elena" "/materia cast {task}"` and tracks the session
-until a terminal event; the
+`pi "/materia loadout {loadout}" "/materia cast {task}"` where the loadout
+is resolved from `RuntimeOptions.Loadouts[spec.ExecutionKind]` (defaulting to
+`ADO-Build-NewWork` for new work or `ADO-Build-Rework` for rework feedback),
+and tracks the session until a terminal event; the
 full controller-driven chain — real `PollingWorker` + real runtime + real `pi`
 + the real `POST /runs/{runId}/events` endpoint — is exercised by the Tier B
 harness at `dev/integration-test/`. The standalone spike at
@@ -1834,9 +1841,12 @@ for state transitions and observability.
 **Status:** Implemented. `PiMateriaRuntime`
 (`src/AgentController.Infrastructure/PiMateriaRuntime.cs`) launches `pi` inside an
 ephemeral PTY-allocated shell via
-`pi "/materia loadout Elena" "/materia cast {task}"` and tracks the session
-handle until a terminal event. The controller does not drive the agent
-synchronously via RPC. All observability comes from pi-materia POSTing
+`pi "/materia loadout {loadout}" "/materia cast {task}"` where the loadout
+is resolved from `RuntimeOptions.Loadouts[spec.ExecutionKind]` (defaulting to
+`ADO-Build-NewWork` for new work or `ADO-Build-Rework` for rework feedback),
+and tracks the session handle until a terminal event. The controller does not
+drive the agent synchronously via RPC. All observability comes from pi-materia
+POSTing
 `runtime.*` events to the controller's `POST /runs/{runId}/events` webhook
 endpoint. If the webhook fails, the controller can recycle/restart jobs and
 update its own state.
@@ -1918,7 +1928,13 @@ namespace AgentController.Infrastructure;
 /// <summary>
 /// IAgentRuntime that launches pi inside an ephemeral PTY-allocated shell.
 /// The invocation is:
-/// pi "/materia loadout Elena" "/materia cast {task}".
+/// pi "/materia loadout {loadout}" "/materia cast {task}".
+///
+/// The loadout is resolved from RuntimeOptions.Loadouts[spec.ExecutionKind]:
+///   - ExecutionKind.NewWork  → "ADO-Build-NewWork" (default)
+///   - ExecutionKind.Rework   → "ADO-Build-Rework"
+/// ExecutionKind is set by the PollingWorker based on whether a rework context
+/// is present (Rework for PR feedback, NewWork otherwise).
 ///
 /// The controller injects only three environment variables:
 ///   CONTROLLER_RUN_ID, CONTROLLER_EVENT_URL, CONTROLLER_CONTEXT_DIR.
@@ -1935,7 +1951,8 @@ namespace AgentController.Infrastructure;
 /// </summary>
 public sealed partial class PiMateriaRuntime : IAgentRuntime
 {
-    private const string DefaultCliLoadout = "Elena";
+    // Loadout is resolved dynamically from RuntimeOptions.Loadouts[spec.ExecutionKind]
+    // (e.g. "ADO-Build-NewWork" or "ADO-Build-Rework"). No hardcoded default.
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IOptionsMonitor<RuntimeOptions> _runtimeOptions;
@@ -1961,7 +1978,9 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
 
 2. BUILD process start info
    - FileName: resolved pi executable path
-   - Arguments: ["/materia loadout Elena", "/materia cast {task}"]
+   - Arguments: ["/materia loadout {loadout}", "/materia cast {task}"]
+     where {loadout} = RuntimeOptions.Loadouts[spec.ExecutionKind]
+     (defaulting to "ADO-Build-NewWork" for NewWork, "ADO-Build-Rework" for Rework)
    - WorkingDirectory: spec.RepoCheckout.LocalPath (the cloned repo)
    - UseShellExecute: false
    - CreateNoWindow: true
@@ -2022,7 +2041,10 @@ PTY sessions persist after the runtime is collected.
 /// Registers the <see cref="PiMateriaRuntime"/> as a singleton
 /// <see cref="IAgentRuntime"/> that launches <c>pi</c> inside an ephemeral
 /// PTY-allocated shell via
-/// <c>pi "/materia loadout Elena" "/materia cast {task}"</c>.
+/// <c>pi "/materia loadout {loadout}" "/materia cast {task}"</c>.
+/// The loadout is resolved from <c>RuntimeOptions.Loadouts[spec.ExecutionKind]</c>
+/// (defaulting to <c>ADO-Build-NewWork</c> for new work or <c>ADO-Build-Rework</c>
+/// for rework feedback).
 /// The launched job reports status back only via webhook; the controller
 /// tracks the session handle for resource lifecycle cleanup.
 ///
@@ -2109,10 +2131,16 @@ The forwarded variables are configured via `RuntimeOptions.ForwardEnvironmentVar
 pi is launched inside an ephemeral PTY-allocated shell with two arguments:
 
 ```bash
-pi "/materia loadout Elena" "/materia cast {task}"
+pi "/materia loadout {loadout}" "/materia cast {task}"
 ```
 
-- The loadout name is hardcoded as `"Elena"` (`DefaultCliLoadout` const).
+- The loadout is resolved from `RuntimeOptions.Loadouts[spec.ExecutionKind]`:
+  - `ExecutionKind.NewWork` → `"ADO-Build-NewWork"` (default for new work items)
+  - `ExecutionKind.Rework` → `"ADO-Build-Rework"` (for PR feedback rework)
+- The `ExecutionKind` is set by `PollingWorker.HandOffToRuntimeAsync` based on
+  whether a rework context is present (`Rework` when reworking PR feedback,
+  `NewWork` otherwise).
+- The loadout map is configurable in `appsettings.json` under `runtime:loadouts`
 - `{task}` is the content of `context/work-item.md` (+ acceptance-criteria.md,
   comments.md when present).
 - The session is tracked via a SessionHandle: stdout/stderr are drained to
@@ -2192,7 +2220,8 @@ When emitting `runtime.completed`, pi-materia sets `payload.outcome` to one of:
 │                            if source unset)                     │
 │                                                                 │
 │ Invocation (session-tracked PTY shell):                          │
-│   pi "/materia loadout Elena" "/materia cast {task}"            │
+│   pi "/materia loadout {loadout}" "/materia cast {task}"         │
+│   (loadout from RuntimeOptions.Loadouts[spec.ExecutionKind])     │
 │                                                                 │
 │ Stdout/stderr drained to logs/pi.*.log (diagnostic artifact).    │
 │ Session handle tracked for stdin lifecycle + cancel cleanup.      │
