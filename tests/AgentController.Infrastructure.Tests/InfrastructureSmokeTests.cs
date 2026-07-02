@@ -444,6 +444,7 @@ public class InfrastructureSmokeTests
 
         var originalProvider = Environment.GetEnvironmentVariable("persistence__provider");
         var originalConnString = Environment.GetEnvironmentVariable("persistence__connectionString");
+        var originalLogLevel = Environment.GetEnvironmentVariable("Logging__LogLevel__Default");
 
         try
         {
@@ -451,6 +452,7 @@ public class InfrastructureSmokeTests
             Environment.SetEnvironmentVariable(
                 "persistence__connectionString",
                 $"Data Source={dbPath}");
+            Environment.SetEnvironmentVariable("Logging__LogLevel__Default", "Warning");
 
             var exitCode = await Program.Main(Array.Empty<string>());
 
@@ -464,6 +466,7 @@ public class InfrastructureSmokeTests
         {
             Environment.SetEnvironmentVariable("persistence__provider", originalProvider);
             Environment.SetEnvironmentVariable("persistence__connectionString", originalConnString);
+            Environment.SetEnvironmentVariable("Logging__LogLevel__Default", originalLogLevel);
 
             if (Directory.Exists(tempRoot))
                 Directory.Delete(tempRoot, recursive: true);
@@ -485,6 +488,7 @@ public class InfrastructureSmokeTests
 
         var originalProvider = Environment.GetEnvironmentVariable("persistence__provider");
         var originalConnString = Environment.GetEnvironmentVariable("persistence__connectionString");
+        var originalLogLevel = Environment.GetEnvironmentVariable("Logging__LogLevel__Default");
 
         try
         {
@@ -492,6 +496,7 @@ public class InfrastructureSmokeTests
             Environment.SetEnvironmentVariable(
                 "persistence__connectionString",
                 $"Data Source={dbPath}");
+            Environment.SetEnvironmentVariable("Logging__LogLevel__Default", "Warning");
 
             var exitCode = await Program.Main(Array.Empty<string>());
 
@@ -506,6 +511,7 @@ public class InfrastructureSmokeTests
         {
             Environment.SetEnvironmentVariable("persistence__provider", originalProvider);
             Environment.SetEnvironmentVariable("persistence__connectionString", originalConnString);
+            Environment.SetEnvironmentVariable("Logging__LogLevel__Default", originalLogLevel);
 
             if (Directory.Exists(tempRoot))
                 Directory.Delete(tempRoot, recursive: true);
