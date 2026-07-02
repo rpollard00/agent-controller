@@ -441,7 +441,7 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                     if (string.IsNullOrWhiteSpace(trimmed))
                         continue;
 
-                    if (trimmed.EndsWith(" :*", StringComparison.OrdinalIgnoreCase))
+                    if (trimmed.EndsWith(":*", StringComparison.OrdinalIgnoreCase))
                     {
                         var prefix = trimmed[..^1]; // strip the '*', keep the ':'
                         existingTags.RemoveWhere(t =>
@@ -496,12 +496,16 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
 
         var response = await _http.SendAsync(request, cancellationToken);
 
-        // 412 Precondition Failed is not thrown — it means someone else
-        // modified the work item concurrently. We treat status projection as
-        // best-effort: log and continue. The next poll cycle will pick up the
-        // latest revision from QueryWorkItemsAsync.
+        // 412 Precondition Failed: concurrent modification.
+        // For RemovedTags-bearing PATCHes (reactivation path) fail loudly so the
+        // caller can surface the failure and retry on the next poll.
+        // Status-only projections retain best-effort behavior.
         if (response.StatusCode == System.Net.HttpStatusCode.PreconditionFailed)
         {
+            if (status.RemovedTags is { Count: > 0 })
+            {
+                return false;
+            }
             // Best-effort status projection: concurrent modification is not fatal.
             return true;
         }

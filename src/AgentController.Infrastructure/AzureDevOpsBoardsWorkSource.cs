@@ -195,30 +195,16 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
         await using var scope = _scopeFactory.CreateAsyncScope();
         var client = scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClient>();
 
-        // (1) Transition state to first eligible state (e.g. Resolved → New).
-        //     Surface [rework_state_transition_blocked] if the board rejects it.
-        var stateOk = await client.UpdateWorkItemStatusAsync(
-            workRef,
-            new ExternalWorkStatus { Status = targetState },
-            cancellationToken);
-
-        if (!stateOk)
-        {
-            return new ReworkReactivateResult
-            {
-                Success = false,
-                FailureReason = $"[rework_state_transition_blocked] Cannot transition work item to '{targetState}'. " +
-                                "The board process model may not allow this state change.",
-            };
-        }
-
-        // (2) Ensure agent-ready tag; remove all agent lifecycle tags
-        //     (agent-active, agent-failed, agent-needs-human, agent-worker:*).
-        //     The wildcard agent-worker:* strips any worker claim tags.
-        await client.UpdateWorkItemStatusAsync(
+        // (1) Single atomic PATCH: transition state + strip agent lifecycle tags + re-add agent-ready.
+        //     This eliminates the stale-revision race where a rev-bump between two separate
+        //     PATCHes caused the tag-strip to be silently skipped.
+        //     On failure (412 or non-success) the PATCH returns false and we surface
+        //     [rework_tag_strip_failed] so the cycle is NOT marked reactivated.
+        var mergedOk = await client.UpdateWorkItemStatusAsync(
             workRef,
             new ExternalWorkStatus
             {
+                Status = targetState,
                 Tags = [WorkSourceOptions.DefaultTagAgentReady],
                 RemovedTags =
                 [
@@ -230,7 +216,18 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
             },
             cancellationToken);
 
-        // (3) Post rework-start comment.
+        if (!mergedOk)
+        {
+            return new ReworkReactivateResult
+            {
+                Success = false,
+                FailureReason = $"[rework_tag_strip_failed] Cannot transition work item to '{targetState}' " +
+                                "and strip agent lifecycle tags in a single PATCH. " +
+                                "The board may have been modified concurrently or the process model may not allow this state change.",
+            };
+        }
+
+        // (2) Post rework-start comment.
         var comment = $"Rework cycle {request.CycleNumber} started: " +
                       $"{request.ThreadCount} review threads bundled from PR {request.PullRequestUrl}.";
         await client.AddCommentAsync(workRef, comment, cancellationToken);
