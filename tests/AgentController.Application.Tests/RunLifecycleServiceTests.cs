@@ -883,6 +883,136 @@ public class RunLifecycleServiceTests
         Assert.Equal("agent/999-feat", updated.BranchName);
     }
 
+    // ── pi-materia wire shape conformance (cast 2026-07-02T19-43-36) ──
+
+    [Fact]
+    public async Task IngestPrCreated_RealMateriaWireShape_PersistsCorrectly()
+    {
+        // Mirrors the exact payload shape from the real pi-materia pr_created event:
+        // {"prUrl":"...","prNumber":8,"branchName":"...","baseBranch":"main",
+        //  "organization":"rpollard0630","project":"Projecto","repository":"test1"}
+        var run = await CreateRunAsync(advanceTo: RunLifecycleState.AwaitingResult);
+
+        var evt = new RuntimeEvent
+        {
+            EventId = "evt_pr_real_wire",
+            RunId = run.RunId,
+            EventType = RuntimeEventTypes.PrCreated,
+            Payload = new Dictionary<string, object?>
+            {
+                ["prUrl"] = "https://dev.azure.com/rpollard0630/Projecto/_git/test1/pullrequest/8",
+                ["prNumber"] = 8,
+                ["branchName"] = "mime/crystal-heals-53ddfa4cd4",
+                ["baseBranch"] = "main",
+                ["organization"] = "rpollard0630",
+                ["project"] = "Projecto",
+                ["repository"] = "test1",
+            },
+        };
+
+        await _service.IngestRuntimeEventAsync(evt, CancellationToken.None);
+
+        var updated = await _runStore.GetByIdAsync(run.RunId, CancellationToken.None);
+        Assert.Equal(RunLifecycleState.AwaitingResult, updated!.Status);
+        Assert.Equal("https://dev.azure.com/rpollard0630/Projecto/_git/test1/pullrequest/8", updated.PullRequestUrl);
+        Assert.Equal("mime/crystal-heals-53ddfa4cd4", updated.BranchName);
+    }
+
+    [Fact]
+    public async Task IngestCompleted_PullRequestOpened_RealMateriaWireShape_PersistsCorrectly()
+    {
+        // Mirrors the real pi-materia runtime.completed pull_request_opened payload
+        // with prUrl and branchName (no prNumber in completed events).
+        var run = await CreateRunAsync(advanceTo: RunLifecycleState.AwaitingResult);
+        var now = DateTimeOffset.UtcNow;
+
+        var evt = new RuntimeEvent
+        {
+            EventId = "evt_comp_real_wire",
+            RunId = run.RunId,
+            EventType = RuntimeEventTypes.Completed,
+            OccurredAt = now,
+            Message = "Completed with PR",
+            Payload = new Dictionary<string, object?>
+            {
+                ["outcome"] = CompletionOutcomes.PullRequestOpened,
+                ["prUrl"] = "https://dev.azure.com/rpollard0630/Projecto/_git/test1/pullrequest/8",
+                ["branchName"] = "mime/crystal-heals-53ddfa4cd4",
+                ["summary"] = "Added Ruby iMac color scheme",
+            },
+        };
+
+        await _service.IngestRuntimeEventAsync(evt, CancellationToken.None);
+
+        var updated = await _runStore.GetByIdAsync(run.RunId, CancellationToken.None);
+        Assert.Equal(RunLifecycleState.PrOpened, updated!.Status);
+        Assert.Equal("https://dev.azure.com/rpollard0630/Projecto/_git/test1/pullrequest/8", updated.PullRequestUrl);
+        Assert.Equal("mime/crystal-heals-53ddfa4cd4", updated.BranchName);
+        Assert.Equal("Added Ruby iMac color scheme", updated.ResultSummary);
+    }
+
+    // ── Defensive guards: old pullRequestUrl key must NOT drive persistence ──
+
+    [Fact]
+    public async Task IngestPrCreated_OldPullRequestUrlKey_IgnoresAndDoesNotPersist()
+    {
+        // Defensive guard: if a legacy payload uses "pullRequestUrl" instead of "prUrl",
+        // the handler should NOT persist it (we conform to pi-materia's prUrl key).
+        var run = await CreateRunAsync(advanceTo: RunLifecycleState.AwaitingResult);
+
+        var evt = new RuntimeEvent
+        {
+            EventId = "evt_pr_old_key",
+            RunId = run.RunId,
+            EventType = RuntimeEventTypes.PrCreated,
+            Payload = new Dictionary<string, object?>
+            {
+                ["pullRequestUrl"] = "https://dev.azure.com/old/key/pr/1",
+                ["branchName"] = "agent/old-key",
+            },
+        };
+
+        await _service.IngestRuntimeEventAsync(evt, CancellationToken.None);
+
+        var updated = await _runStore.GetByIdAsync(run.RunId, CancellationToken.None);
+        // State should not change
+        Assert.Equal(RunLifecycleState.AwaitingResult, updated!.Status);
+        // PullRequestUrl should NOT be set from the old key
+        Assert.Null(updated.PullRequestUrl);
+        // BranchName should still be set (branchName key is unchanged)
+        Assert.Equal("agent/old-key", updated.BranchName);
+    }
+
+    [Fact]
+    public async Task IngestCompleted_PullRequestOpened_OldPullRequestUrlKey_IgnoresAndDoesNotPersist()
+    {
+        // Defensive guard: completed pull_request_opened with old "pullRequestUrl" key
+        // should NOT persist the URL.
+        var run = await CreateRunAsync(advanceTo: RunLifecycleState.AwaitingResult);
+
+        var evt = new RuntimeEvent
+        {
+            EventId = "evt_comp_old_key",
+            RunId = run.RunId,
+            EventType = RuntimeEventTypes.Completed,
+            Payload = new Dictionary<string, object?>
+            {
+                ["outcome"] = CompletionOutcomes.PullRequestOpened,
+                ["pullRequestUrl"] = "https://dev.azure.com/old/key/pr/2",
+                ["branchName"] = "agent/old-completed",
+            },
+        };
+
+        await _service.IngestRuntimeEventAsync(evt, CancellationToken.None);
+
+        var updated = await _runStore.GetByIdAsync(run.RunId, CancellationToken.None);
+        Assert.Equal(RunLifecycleState.PrOpened, updated!.Status);
+        // PullRequestUrl should NOT be set from the old key
+        Assert.Null(updated.PullRequestUrl);
+        // BranchName should still be set
+        Assert.Equal("agent/old-completed", updated.BranchName);
+    }
+
     // ── AppendControllerEvent ──────────────────────────────────────
 
     [Fact]
