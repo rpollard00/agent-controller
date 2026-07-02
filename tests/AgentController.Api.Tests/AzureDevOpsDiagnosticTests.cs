@@ -14,7 +14,7 @@ namespace AgentController.Api.Tests;
     Justification = "IAsyncLifetime.DisposeAsync disposes all owned fields.")]
 public class AzureDevOpsDiagnosticTests : IAsyncLifetime
 {
-    private WebApplicationFactory<Program> _factory = null!;
+    private SilentWebApplicationFactory _factory = null!;
     private HttpClient _client = null!;
 
     public async Task InitializeAsync()
@@ -29,7 +29,7 @@ public class AzureDevOpsDiagnosticTests : IAsyncLifetime
         // Use no-op persistence to avoid DB dependency
         Environment.SetEnvironmentVariable("persistence__provider", "NoOp");
 
-        _factory = new WebApplicationFactory<Program>();
+        _factory = new SilentWebApplicationFactory();
         _client = _factory.CreateClient();
         await Task.CompletedTask;
     }

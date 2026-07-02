@@ -17,7 +17,7 @@ namespace AgentController.Api.Tests;
 /// Deriving test classes should use this instead of bare
 /// <c>new WebApplicationFactory&lt;Program&gt;()</c>.
 /// </summary>
-public abstract class SilentWebApplicationFactory : WebApplicationFactory<Program>
+public class SilentWebApplicationFactory : WebApplicationFactory<Program>
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {

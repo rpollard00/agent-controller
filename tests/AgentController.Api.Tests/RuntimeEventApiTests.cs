@@ -26,7 +26,7 @@ namespace AgentController.Api.Tests;
     Justification = "IAsyncLifetime.DisposeAsync disposes all owned fields.")]
 public class RuntimeEventApiTests : IAsyncLifetime
 {
-    private WebApplicationFactory<Program> _factory = null!;
+    private SilentWebApplicationFactory _factory = null!;
     private HttpClient _client = null!;
     private string _dbPath = null!;
     private string _runId = null!;
@@ -44,7 +44,7 @@ public class RuntimeEventApiTests : IAsyncLifetime
         Environment.SetEnvironmentVariable("agentController__workerId", "test-api-worker");
         Environment.SetEnvironmentVariable("agentController__workerEnabled", "false");
 
-        _factory = new WebApplicationFactory<Program>();
+        _factory = new SilentWebApplicationFactory();
 
         // Create database schema before any HTTP requests
         using var scope = _factory.Services.CreateScope();
