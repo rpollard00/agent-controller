@@ -26,6 +26,14 @@
 
     </ItemGroup>
 
+    <!-- Test projects: default VSTest console verbosity to minimal so the xUnit
+         adapter's [xUnit.net ...] Discovering/Discovered/Starting/Finished and
+         adapter-version lines are suppressed on plain `dotnet test`.
+         CLI -v flags always override this project-file default. -->
+    <PropertyGroup Condition="'$(IsTestProject)' == 'true'">
+        <VSTestConsoleVerbosity>minimal</VSTestConsoleVerbosity>
+    </PropertyGroup>
+
     <!-- Copy shared xunit.runner.json into every test project's output directory -->
     <ItemGroup Condition="'$(IsTestProject)' == 'true'">
         <Content Include="$(MSBuildThisFileDirectory)xunit.runner.json">
