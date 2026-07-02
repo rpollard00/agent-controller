@@ -35,6 +35,8 @@ internal static partial class Program
                     .AddJsonFile("appsettings.Development.json", optional: true)
                     .AddEnvironmentVariables();
             })
+            .ConfigureLogging(builder =>
+                builder.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.Warning))
             .ConfigureServices((context, services) =>
             {
                 // Bind persistence options — same path as the API/worker
