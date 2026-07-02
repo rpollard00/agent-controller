@@ -40,7 +40,7 @@ public class MockPiMateriaRuntimeTests : IAsyncLifetime
         services.AddSingleton<IWorkSource, StubWorkSource>();
 
         // Logging
-        services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Warning));
+        services.AddSilentLogging();
 
         // RunLifecycleService (scoped, but we use scope factory)
         services.AddScoped<IRunLifecycleService, RunLifecycleService>();

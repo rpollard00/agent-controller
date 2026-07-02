@@ -52,7 +52,7 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         );
         services.AddSingleton<IWorkItemStore>(sp => sp.GetRequiredService<InMemoryWorkItemStore>());
         services.AddSingleton<IWorkSource, StubWorkSource>();
-        services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Warning));
+        services.AddSilentLogging();
         services.AddScoped<IRunLifecycleService, RunLifecycleService>();
         services.AddSingleton<IAgentRuntime, PiMateriaRuntime>();
 
