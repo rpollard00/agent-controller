@@ -1202,6 +1202,328 @@ public class AzureDevOpsBoardsClientTests
     }
 
     // ──────────────────────────────────────────────
+    // Wildcard tag stripping (agent-worker:*)
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task UpdateWorkItemStatus_WildcardAgentWorkerStripsConcreteTag()
+    {
+        // Arrange: work item has a concrete agent-worker:{id} tag
+        string? patchBody = null;
+
+        var handler = new CaptureHttpMessageHandler(async (req) =>
+        {
+            if (req.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemGetResponse(42, 5, "Resolved",
+                            "agent-active; agent-worker:live-ado_worker; backend; high-priority"),
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            if (req.Method == HttpMethod.Patch)
+            {
+                if (req.Content is not null)
+                    patchBody = await req.Content.ReadAsStringAsync();
+
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemPatchResponse(42, 6),
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var http = new HttpClient(handler) { BaseAddress = new Uri(OrgUrl + "/") };
+        var authBytes = Encoding.ASCII.GetBytes(":test-pat");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            BaseUrl = OrgUrl,
+            Project = Project,
+            PersonalAccessToken = "test-pat",
+        };
+        var client = new AzureDevOpsBoardsClient(http, options);
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "42",
+            Revision = "5",
+        };
+
+        var status = new ExternalWorkStatus
+        {
+            Status = "New",
+            Tags = new[] { "agent-ready" },
+            RemovedTags = new[] { "agent-active", "agent-worker:*" },
+        };
+
+        // Act
+        var ok = await client.UpdateWorkItemStatusAsync(workRef, status, CancellationToken.None);
+
+        // Assert: PATCH succeeded
+        Assert.True(ok);
+        Assert.NotNull(patchBody);
+
+        // Assert: agent-worker:live-ado_worker was stripped by the wildcard
+        Assert.DoesNotContain("agent-worker:", patchBody!);
+        Assert.DoesNotContain("agent-active", patchBody!);
+
+        // Assert: unrelated tags preserved
+        Assert.Contains("backend", patchBody!);
+        Assert.Contains("high-priority", patchBody!);
+
+        // Assert: agent-ready was added
+        Assert.Contains("agent-ready", patchBody!);
+    }
+
+    [Fact]
+    public async Task UpdateWorkItemStatus_WildcardPreservesUnrelatedTags()
+    {
+        // Arrange: work item has agent-worker tag plus many unrelated tags
+        string? patchBody = null;
+
+        var handler = new CaptureHttpMessageHandler(async (req) =>
+        {
+            if (req.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemGetResponse(10, 3, "Resolved",
+                            "agent-worker:worker-a; backend; ui; frontend; repo:my-service"),
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            if (req.Method == HttpMethod.Patch)
+            {
+                if (req.Content is not null)
+                    patchBody = await req.Content.ReadAsStringAsync();
+
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemPatchResponse(10, 4),
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var http = new HttpClient(handler) { BaseAddress = new Uri(OrgUrl + "/") };
+        var authBytes = Encoding.ASCII.GetBytes(":test-pat");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            BaseUrl = OrgUrl,
+            Project = Project,
+            PersonalAccessToken = "test-pat",
+        };
+        var client = new AzureDevOpsBoardsClient(http, options);
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "10",
+            Revision = "3",
+        };
+
+        var status = new ExternalWorkStatus
+        {
+            RemovedTags = new[] { "agent-worker:*" },
+        };
+
+        // Act
+        var ok = await client.UpdateWorkItemStatusAsync(workRef, status, CancellationToken.None);
+
+        // Assert
+        Assert.True(ok);
+        Assert.NotNull(patchBody);
+
+        // Assert: agent-worker:worker-a was stripped
+        Assert.DoesNotContain("agent-worker:", patchBody!);
+
+        // Assert: all unrelated tags preserved
+        Assert.Contains("backend", patchBody!);
+        Assert.Contains("ui", patchBody!);
+        Assert.Contains("frontend", patchBody!);
+        Assert.Contains("repo:my-service", patchBody!);
+    }
+
+    [Fact]
+    public async Task UpdateWorkItemStatus_ExactMatchRemovalStillWorks()
+    {
+        // Arrange: work item has multiple tags, we remove one by exact match
+        string? patchBody = null;
+
+        var handler = new CaptureHttpMessageHandler(async (req) =>
+        {
+            if (req.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemGetResponse(20, 2, "Active",
+                            "agent-active; agent-ready; backend; ui"),
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            if (req.Method == HttpMethod.Patch)
+            {
+                if (req.Content is not null)
+                    patchBody = await req.Content.ReadAsStringAsync();
+
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemPatchResponse(20, 3),
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var http = new HttpClient(handler) { BaseAddress = new Uri(OrgUrl + "/") };
+        var authBytes = Encoding.ASCII.GetBytes(":test-pat");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            BaseUrl = OrgUrl,
+            Project = Project,
+            PersonalAccessToken = "test-pat",
+        };
+        var client = new AzureDevOpsBoardsClient(http, options);
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "20",
+            Revision = "2",
+        };
+
+        // Remove only agent-active by exact match — no wildcards
+        var status = new ExternalWorkStatus
+        {
+            RemovedTags = new[] { "agent-active" },
+        };
+
+        // Act
+        var ok = await client.UpdateWorkItemStatusAsync(workRef, status, CancellationToken.None);
+
+        // Assert
+        Assert.True(ok);
+        Assert.NotNull(patchBody);
+
+        // Assert: agent-active was stripped
+        Assert.DoesNotContain("agent-active", patchBody!);
+
+        // Assert: all other tags preserved (including agent-ready which is similar but not exact match)
+        Assert.Contains("agent-ready", patchBody!);
+        Assert.Contains("backend", patchBody!);
+        Assert.Contains("ui", patchBody!);
+    }
+
+    [Fact]
+    public async Task UpdateWorkItemStatus_WildcardAndExactMatchCombined()
+    {
+        // Arrange: work item has agent-worker tag, agent-active, and unrelated tags
+        string? patchBody = null;
+
+        var handler = new CaptureHttpMessageHandler(async (req) =>
+        {
+            if (req.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemGetResponse(30, 4, "Resolved",
+                            "agent-active; agent-worker:live-ado_worker; agent-failed; backend; ui"),
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            if (req.Method == HttpMethod.Patch)
+            {
+                if (req.Content is not null)
+                    patchBody = await req.Content.ReadAsStringAsync();
+
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemPatchResponse(30, 5),
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var http = new HttpClient(handler) { BaseAddress = new Uri(OrgUrl + "/") };
+        var authBytes = Encoding.ASCII.GetBytes(":test-pat");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            BaseUrl = OrgUrl,
+            Project = Project,
+            PersonalAccessToken = "test-pat",
+        };
+        var client = new AzureDevOpsBoardsClient(http, options);
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "30",
+            Revision = "4",
+        };
+
+        // Combine wildcard (agent-worker:*) with exact match (agent-active, agent-failed)
+        var status = new ExternalWorkStatus
+        {
+            Status = "New",
+            Tags = new[] { "agent-ready" },
+            RemovedTags = new[] { "agent-active", "agent-failed", "agent-worker:*" },
+        };
+
+        // Act
+        var ok = await client.UpdateWorkItemStatusAsync(workRef, status, CancellationToken.None);
+
+        // Assert
+        Assert.True(ok);
+        Assert.NotNull(patchBody);
+
+        // Assert: all agent lifecycle tags stripped
+        Assert.DoesNotContain("agent-active", patchBody!);
+        Assert.DoesNotContain("agent-failed", patchBody!);
+        Assert.DoesNotContain("agent-worker:", patchBody!);
+
+        // Assert: unrelated tags preserved
+        Assert.Contains("backend", patchBody!);
+        Assert.Contains("ui", patchBody!);
+
+        // Assert: agent-ready was re-added
+        Assert.Contains("agent-ready", patchBody!);
+    }
+
+    // ──────────────────────────────────────────────
     // Comment projection (AddCommentAsync)
     // ──────────────────────────────────────────────
 
