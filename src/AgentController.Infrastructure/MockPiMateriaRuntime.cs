@@ -164,6 +164,26 @@ public sealed partial class MockPiMateriaRuntime : IAgentRuntime
 
             await DelaySafe(DefaultEventDelay, ct);
 
+            // ── 3.5 Emit runtime.pr_created ───────────────────────
+            await EmitEventAsync(runId, runtimeRunId, new RuntimeEvent
+            {
+                EventId = $"mock-pr-created-{runId}",
+                RunId = runId,
+                RuntimeRunId = runtimeRunId,
+                OccurredAt = DateTimeOffset.UtcNow,
+                EventType = RuntimeEventTypes.PrCreated,
+                Severity = EventSeverity.Info,
+                Message = "Mock runtime created a pull request.",
+                Payload = new Dictionary<string, object?>
+                {
+                    ["prUrl"] = $"https://dev.azure.com/mock/project/_git/repo/pullrequest/mock-{runId}",
+                    ["prNumber"] = "42",
+                    ["branchName"] = $"agent/mock-{runId}",
+                },
+            }, ct);
+
+            await DelaySafe(DefaultEventDelay, ct);
+
             // ── 4. Emit runtime.completed ─────────────────────────
             var (outcome, message, payload) = ResolveCompletionOutcome(runId);
 
@@ -256,7 +276,7 @@ public sealed partial class MockPiMateriaRuntime : IAgentRuntime
                 ["outcome"] = CompletionOutcomes.PullRequestOpened,
                 ["summary"] = "Implemented change in mock runtime.",
                 ["branchName"] = $"agent/mock-{runId}",
-                ["pullRequestUrl"] = $"https://dev.azure.com/mock/project/_git/repo/pullrequest/mock-{runId}",
+                ["prUrl"] = $"https://dev.azure.com/mock/project/_git/repo/pullrequest/mock-{runId}",
             }
         );
     }
