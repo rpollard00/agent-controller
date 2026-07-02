@@ -48,8 +48,25 @@ dotnet run --project src/AgentController.Api
 
 ## Test
 
+The canonical way to run tests is the quiet wrapper:
+
 ```bash
-dotnet test
+./dev/test.sh
+```
+
+This runs `dotnet test` with `-v minimal`, suppressing xUnit adapter chatter
+(Discovering/Discovered/Starting/Finished/version lines) while keeping
+per-project pass/fail summaries and full failure detail.
+
+You can also run `dotnet test` directly — the `Directory.Build.props` default
+sets minimal verbosity for test projects. The script is the guaranteed-quiet
+fallback.
+
+Pass any `dotnet test` arguments through:
+
+```bash
+./dev/test.sh --filter "FullyQualifiedName~Api"
+./dev/test.sh -v normal          # override verbosity
 ```
 
 Tests use [xUnit](https://xunit.net/). Test projects are under `tests/`.
