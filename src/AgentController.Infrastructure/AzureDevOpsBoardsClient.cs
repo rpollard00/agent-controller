@@ -410,6 +410,8 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
 
         // Handle tag removal (and optional addition): read current tags, filter,
         // merge in any new tags, and write back in a single PATCH operation.
+        // The tag-read GET is load-bearing: if RemovedTags is specified and the
+        // GET fails, abort entirely — no state-only PATCH masquerading as success.
         if (status.RemovedTags is { Count: > 0 })
         {
             // Fetch current work item to read existing tags
@@ -417,63 +419,68 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                 $"{project}/_apis/wit/workitems/{workRef.ExternalId}?api-version=7.1&$expand=minimal",
                 cancellationToken);
 
-            if (getResponse.IsSuccessStatusCode)
+            if (!getResponse.IsSuccessStatusCode)
             {
-                var getJson = await getResponse.Content.ReadAsStringAsync(cancellationToken);
-                using var getDoc = JsonDocument.Parse(getJson);
-
-                var currentTags = string.Empty;
-                if (getDoc.RootElement.TryGetProperty("fields", out var fields)
-                    && fields.TryGetProperty("System.Tags", out var tagsEl)
-                    && tagsEl.ValueKind == JsonValueKind.String)
-                {
-                    currentTags = tagsEl.GetString() ?? string.Empty;
-                }
-
-                var existingTags = currentTags
-                    .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-                // Remove matching tags (supports exact match and prefix:* wildcard).
-                foreach (var tagToRemove in status.RemovedTags)
-                {
-                    var trimmed = tagToRemove?.Trim();
-                    if (string.IsNullOrWhiteSpace(trimmed))
-                        continue;
-
-                    if (trimmed.EndsWith(":*", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var prefix = trimmed[..^1]; // strip the '*', keep the ':'
-                        existingTags.RemoveWhere(t =>
-                            t.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
-                    }
-                    else
-                    {
-                        existingTags.RemoveWhere(t =>
-                            t.Equals(trimmed, StringComparison.OrdinalIgnoreCase));
-                    }
-                }
-
-                // Merge in any tags to add.
-                if (status.Tags is { Count: > 0 })
-                {
-                    foreach (var tagToAdd in status.Tags)
-                    {
-                        existingTags.Add(tagToAdd);
-                    }
-                }
-
-                var newTags = existingTags.Count > 0
-                    ? string.Join("; ", existingTags.OrderBy(t => t, StringComparer.OrdinalIgnoreCase))
-                    : string.Empty;
-
-                patchOps.Add(new
-                {
-                    op = "add",
-                    path = "/fields/System.Tags",
-                    value = newTags,
-                });
+                // Load-bearing GET failed — abort the PATCH entirely.
+                // Returning false so the caller (e.g. reactivation) knows the
+                // tag operations were NOT applied.
+                return false;
             }
+
+            var getJson = await getResponse.Content.ReadAsStringAsync(cancellationToken);
+            using var getDoc = JsonDocument.Parse(getJson);
+
+            var currentTags = string.Empty;
+            if (getDoc.RootElement.TryGetProperty("fields", out var fields)
+                && fields.TryGetProperty("System.Tags", out var tagsEl)
+                && tagsEl.ValueKind == JsonValueKind.String)
+            {
+                currentTags = tagsEl.GetString() ?? string.Empty;
+            }
+
+            var existingTags = currentTags
+                .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            // Remove matching tags (supports exact match and prefix:* wildcard).
+            foreach (var tagToRemove in status.RemovedTags)
+            {
+                var trimmed = tagToRemove?.Trim();
+                if (string.IsNullOrWhiteSpace(trimmed))
+                    continue;
+
+                if (trimmed.EndsWith(":*", StringComparison.OrdinalIgnoreCase))
+                {
+                    var prefix = trimmed[..^1]; // strip the '*', keep the ':'
+                    existingTags.RemoveWhere(t =>
+                        t.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+                }
+                else
+                {
+                    existingTags.RemoveWhere(t =>
+                        t.Equals(trimmed, StringComparison.OrdinalIgnoreCase));
+                }
+            }
+
+            // Merge in any tags to add.
+            if (status.Tags is { Count: > 0 })
+            {
+                foreach (var tagToAdd in status.Tags)
+                {
+                    existingTags.Add(tagToAdd);
+                }
+            }
+
+            var newTags = existingTags.Count > 0
+                ? string.Join("; ", existingTags.OrderBy(t => t, StringComparer.OrdinalIgnoreCase))
+                : string.Empty;
+
+            patchOps.Add(new
+            {
+                op = "add",
+                path = "/fields/System.Tags",
+                value = newTags,
+            });
         }
 
         if (patchOps.Count == 0)
