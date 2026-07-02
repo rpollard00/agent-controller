@@ -302,7 +302,7 @@ public class CloneFailureReleaseTests : IAsyncLifetime
     {
         // Build a minimal DI container with the lifecycle service
         var services = new ServiceCollection();
-        services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Warning));
+        services.AddSilentLogging();
 
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -420,7 +420,7 @@ public class CloneFailureReleaseTests : IAsyncLifetime
     {
         var services = new ServiceCollection();
 
-        services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Warning));
+        services.AddSilentLogging();
 
         services.AddAgentControllerOptions(config);
         services.AddAgentControllerDbContext(config);

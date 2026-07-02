@@ -125,7 +125,7 @@ public class ReworkConsumptionTests : IAsyncLifetime
         // ── 2. Build the DI container ───────────────────────────────
         var services = new ServiceCollection();
 
-        services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Warning));
+        services.AddSilentLogging();
 
         services.AddAgentControllerOptions(config);
         services.AddAgentControllerDbContext(config);
@@ -356,7 +356,7 @@ public class ReworkConsumptionTests : IAsyncLifetime
             .Build();
 
         var services = new ServiceCollection();
-        services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Warning));
+        services.AddSilentLogging();
         services.AddAgentControllerOptions(config);
         services.AddAgentControllerDbContext(config);
         services.AddAgentControllerRepositories();
@@ -469,7 +469,7 @@ public class ReworkConsumptionTests : IAsyncLifetime
             .Build();
 
         var services = new ServiceCollection();
-        services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Warning));
+        services.AddSilentLogging();
         services.AddAgentControllerOptions(config);
         services.AddAgentControllerDbContext(config);
         services.AddAgentControllerRepositories();

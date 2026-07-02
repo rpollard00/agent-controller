@@ -133,7 +133,7 @@ public class ApiSmokeTests
     {
         // Prove the polling worker can be constructed with its Phase 1 dependencies.
         var options = Options.Create(new AgentControllerOptions { WorkerId = "test-worker" });
-        var loggerFactory = LoggerFactory.Create(b => b.AddConsole());
+        var loggerFactory = TestLogging.CreateSilentLoggerFactory();
         var monitor = new TestOptionsMonitor<AgentControllerOptions>(options.Value);
         var workSourceMonitor = new TestOptionsMonitor<WorkSourceOptionsView>(new WorkSourceOptionsView());
 
