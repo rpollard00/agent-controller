@@ -418,6 +418,10 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             });
         }
 
+        // Track fresh revision from the tag-read GET (when RemovedTags path is taken).
+        // Used as If-Match token to prevent 412 on the tag-strip PATCH.
+        string? freshRev = null;
+
         // Handle tag removal (and optional addition): read current tags, filter,
         // merge in any new tags, and write back in a single PATCH operation.
         // The tag-read GET is load-bearing: if RemovedTags is specified and the
@@ -442,6 +446,15 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
 
             var getJson = await getResponse.Content.ReadAsStringAsync(cancellationToken);
             using var getDoc = JsonDocument.Parse(getJson);
+
+            // Capture the freshly-read revision from this GET so the PATCH
+            // uses the current rev, not a possibly-stale workRef.Revision.
+            // This prevents 412 Precondition Failed on the tag-strip PATCH.
+            freshRev = getDoc.RootElement.TryGetProperty("rev", out var freshRevEl)
+                           && freshRevEl.ValueKind == JsonValueKind.Number
+                           && freshRevEl.TryGetInt32(out var freshRevInt)
+                ? freshRevInt.ToString(CultureInfo.InvariantCulture)
+                : null;
 
             var currentTags = string.Empty;
             if (getDoc.RootElement.TryGetProperty("fields", out var fields)
@@ -508,10 +521,16 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             Content = content,
         };
 
-        // Use If-Match with revision for optimistic concurrency when available
-        if (!string.IsNullOrWhiteSpace(workRef.Revision))
+        // Use If-Match with revision for optimistic concurrency when available.
+        // Prefer freshRev (captured from the tag-read GET) over workRef.Revision
+        // to prevent 412 Precondition Failed from stale revision tokens on
+        // RemovedTags-bearing PATCHes.
+        var ifMatchRev = !string.IsNullOrWhiteSpace(freshRev)
+            ? freshRev
+            : workRef.Revision;
+        if (!string.IsNullOrWhiteSpace(ifMatchRev))
         {
-            request.Headers.TryAddWithoutValidation("If-Match", workRef.Revision);
+            request.Headers.TryAddWithoutValidation("If-Match", ifMatchRev);
         }
 
         var response = await _http.SendAsync(request, cancellationToken);
