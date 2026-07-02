@@ -15,12 +15,22 @@
 
         <!-- Keep the build warning-free -->
         <NoWarn>$(NoWarn);CS1591</NoWarn>
+
+        <!-- Derive IsTestProject from project location (all tests live under tests/) -->
+        <IsTestProject Condition="$(MSBuildProjectDirectory.Contains('\\tests')) Or $(MSBuildProjectDirectory.Contains('/tests'))">true</IsTestProject>
     </PropertyGroup>
 
     <ItemGroup>
         <!-- GHSA-hv8m-jj95-wg3x: MessagePack unsafe deserialization (transitive via Aspire) -->
         <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-hv8m-jj95-wg3x" />
 
+    </ItemGroup>
+
+    <!-- Copy shared xunit.runner.json into every test project's output directory -->
+    <ItemGroup Condition="'$(IsTestProject)' == 'true'">
+        <Content Include="$(MSBuildThisFileDirectory)xunit.runner.json">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </Content>
     </ItemGroup>
 
     <!-- Force newer SQLitePCLRaw versions to resolve GHSA-2m69-gcr7-jv3q (CVE-2025-6965)
