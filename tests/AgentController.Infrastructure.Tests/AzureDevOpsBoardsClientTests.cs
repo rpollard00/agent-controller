@@ -84,6 +84,30 @@ public class AzureDevOpsBoardsClientTests
         return new AzureDevOpsBoardsClient(http, options);
     }
 
+    /// <summary>
+    /// Creates an <see cref="AzureDevOpsBoardsClient"/> wired to a custom HTTP handler.
+    /// </summary>
+    private static AzureDevOpsBoardsClient CreateClientWithHandler(HttpMessageHandler handler)
+    {
+        var http = new HttpClient(handler)
+        {
+            BaseAddress = new Uri(OrgUrl + "/"),
+        };
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            BaseUrl = OrgUrl,
+            Project = Project,
+            PersonalAccessToken = "test-pat",
+        };
+
+        var authBytes = Encoding.ASCII.GetBytes(":test-pat");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        return new AzureDevOpsBoardsClient(http, options);
+    }
+
     // ──────────────────────────────────────────────
     // Successful mapping
     // ──────────────────────────────────────────────
@@ -807,14 +831,32 @@ public class AzureDevOpsBoardsClientTests
             Url = $"{OrgUrl}/{Project}/_workitems/edit/42",
         };
 
-        var client = CreateClient(
-            // GET work item — unclaimed, rev 3
-            (urlContains: "workitems/42?api-version=7.1&$expand=all",
-             jsonResponse: WorkItemGetResponse(42, 3, "New", "agent-ready; backend")),
-            // PATCH claim — success, returns rev 4
-            (urlContains: "workitems/42?api-version=7.1",
-             jsonResponse: WorkItemPatchResponse(42, 4))
-        );
+        var handler = new CaptureHttpMessageHandler(async (req) =>
+        {
+            if (req.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemGetResponse(42, 3, "New", "agent-ready; backend"),
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            if (req.Method == HttpMethod.Patch)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemPatchResponse(42, 4),
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var client = CreateClientWithHandler(handler);
 
         var claim = new ClaimRequest
         {
@@ -844,7 +886,7 @@ public class AzureDevOpsBoardsClientTests
 
         var client = CreateClient(
             // GET work item — already has agent-active tag
-            (urlContains: "workitems/42?api-version=7.1&$expand=all",
+            (urlContains: "workitems/42?api-version=7.1",
              jsonResponse: WorkItemGetResponse(42, 3, "New", "agent-ready; agent-active; backend"))
         );
 
@@ -874,7 +916,7 @@ public class AzureDevOpsBoardsClientTests
 
         var client = CreateClient(
             // GET work item — already has agent-worker:someone-else tag
-            (urlContains: "workitems/42?api-version=7.1&$expand=all",
+            (urlContains: "workitems/42?api-version=7.1",
              jsonResponse: WorkItemGetResponse(42, 3, "New", "agent-ready; agent-worker:other-worker; backend"))
         );
 
@@ -901,16 +943,33 @@ public class AzureDevOpsBoardsClientTests
             Url = $"{OrgUrl}/{Project}/_workitems/edit/42",
         };
 
-        var client = CreateClientWithStatusCodes(
-            // GET work item — unclaimed, rev 3
-            (urlContains: "workitems/42?api-version=7.1&$expand=all",
-             statusCode: HttpStatusCode.OK,
-             body: WorkItemGetResponse(42, 3, "New", "agent-ready")),
-            // PATCH claim — 412 Precondition Failed (someone else modified it)
-            (urlContains: "workitems/42?api-version=7.1",
-             statusCode: HttpStatusCode.PreconditionFailed,
-             body: """{"message":"The resource has been modified by another user."}""")
-        );
+        var handler = new CaptureHttpMessageHandler(async (req) =>
+        {
+            if (req.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemGetResponse(42, 3, "New", "agent-ready"),
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            if (req.Method == HttpMethod.Patch)
+            {
+                // Simulate 412 Precondition Failed (someone else modified it)
+                return new HttpResponseMessage(HttpStatusCode.PreconditionFailed)
+                {
+                    Content = new StringContent(
+                        """{"message":"The resource has been modified by another user."}""",
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var client = CreateClientWithHandler(handler);
 
         var claim = new ClaimRequest
         {
@@ -937,7 +996,7 @@ public class AzureDevOpsBoardsClientTests
 
         var client = CreateClientWithStatusCodes(
             // GET work item — 404 Not Found
-            (urlContains: "workitems/99?api-version=7.1&$expand=all",
+            (urlContains: "workitems/99?api-version=7.1",
              statusCode: HttpStatusCode.NotFound,
              body: """{"message":"Work item not found."}""")
         );

@@ -64,6 +64,13 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             _http.DefaultRequestHeaders.Authorization =
                 new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
         }
+
+        // Ensure JSON responses for all ADO REST API calls.
+        // Without an explicit Accept header, some ADO endpoints may return
+        // non-JSON or omit fields depending on field selection rules.
+        _http.DefaultRequestHeaders.Accept.Clear();
+        _http.DefaultRequestHeaders.Accept.Add(
+            new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
     }
 
     public async Task<IReadOnlyList<WorkCandidate>> QueryWorkItemsAsync(
@@ -227,9 +234,12 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
 
         try
         {
-            // 1. GET the current work item to read revision and tags
+            // 1. GET the current work item to read revision and tags.
+            //     Plain GET without $expand — ADO returns all fields by default.
+            //     Using $expand=all or $expand=minimal is unnecessary and may
+            //     trigger field-selection rules that omit System.Tags.
             var getResponse = await _http.GetAsync(
-                $"{project}/_apis/wit/workitems/{workRef.ExternalId}?api-version=7.1&$expand=all",
+                $"{project}/_apis/wit/workitems/{workRef.ExternalId}?api-version=7.1",
                 cancellationToken);
 
             if (!getResponse.IsSuccessStatusCode)
@@ -414,9 +424,12 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         // GET fails, abort entirely — no state-only PATCH masquerading as success.
         if (status.RemovedTags is { Count: > 0 })
         {
-            // Fetch current work item to read existing tags
+            // Fetch current work item to read existing tags.
+            //     Plain GET without $expand — ADO returns all fields by default.
+            //     Using $expand=minimal is unnecessary and may trigger field-selection
+            //     rules that omit System.Tags in the live ADO environment.
             var getResponse = await _http.GetAsync(
-                $"{project}/_apis/wit/workitems/{workRef.ExternalId}?api-version=7.1&$expand=minimal",
+                $"{project}/_apis/wit/workitems/{workRef.ExternalId}?api-version=7.1",
                 cancellationToken);
 
             if (!getResponse.IsSuccessStatusCode)
@@ -738,9 +751,10 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
 
         try
         {
-            // 1. GET the current work item to read revision and tags
+            // 1. GET the current work item to read revision and tags.
+            //     Plain GET without $expand — ADO returns all fields by default.
             var getResponse = await _http.GetAsync(
-                $"{project}/_apis/wit/workitems/{request.WorkRef.ExternalId}?api-version=7.1&$expand=minimal",
+                $"{project}/_apis/wit/workitems/{request.WorkRef.ExternalId}?api-version=7.1",
                 cancellationToken);
 
             if (!getResponse.IsSuccessStatusCode)
