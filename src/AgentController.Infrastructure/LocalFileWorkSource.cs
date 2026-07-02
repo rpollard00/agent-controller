@@ -184,10 +184,13 @@ internal sealed partial class LocalFileWorkSource : IWorkSource, IDisposable
         }
 
         // Ensure agent-ready; remove agent lifecycle exclusion tags.
+        // Aligns with the ADO path: strips agent-active, agent-failed,
+        // agent-needs-human, and any agent-worker:{id} tags.
         var tags = candidate.Tags
             .Where(t => t != WorkSourceOptions.DefaultExcludedTagAgentActive &&
                         t != WorkSourceOptions.DefaultExcludedTagAgentFailed &&
-                        t != WorkSourceOptions.DefaultExcludedTagAgentNeedsHuman)
+                        t != WorkSourceOptions.DefaultExcludedTagAgentNeedsHuman &&
+                        !t.StartsWith("agent-worker:", StringComparison.Ordinal))
             .ToList();
 
         if (!tags.Contains(WorkSourceOptions.DefaultTagAgentReady))

@@ -749,6 +749,105 @@ public class LocalFileWorkSourceTests
     }
 
     [Fact]
+    public async Task ReactivateForReworkAsync_StripsAgentWorkerTagAndReaddsAgentReady()
+    {
+        var dbPath = Path.GetTempFileName();
+        var connStr = $"Data Source={dbPath}";
+
+        try
+        {
+            var config = BuildConfiguration(new Dictionary<string, string?>
+            {
+                ["workSource:provider"] = "LocalFile",
+                ["workSource:eligibleStates:0"] = "New",
+                ["agentController:workerId"] = "test-worker",
+                ["agentController:pollIntervalSeconds"] = "30",
+                ["agentController:maxConcurrentRuns"] = "3",
+                ["agentController:runRoot"] = "/tmp/runs",
+                ["persistence:provider"] = "Sqlite",
+                ["persistence:connectionString"] = connStr,
+                ["sourceControl:provider"] = "LocalFake",
+                ["environmentProvider:provider"] = "LocalWorkspace",
+                ["runtime:provider"] = "NoOp",
+                ["localWork:definitions:0:repoKey"] = "example-service",
+                ["localWork:definitions:0:title"] = "Rework task",
+                ["localWork:definitions:0:tags:0"] = "agent-ready",
+            });
+
+            var services = BuildServiceProvider(config, connStr);
+            var workSource = services.GetRequiredService<IWorkSource>();
+
+            // Discover the item to get its ID
+            var candidates = await workSource.FindEligibleAsync(
+                new WorkQuery(),
+                CancellationToken.None);
+
+            var candidate = Assert.Single(candidates);
+
+            // Simulate the item having agent-active and agent-worker tags
+            // (as would be set during claim/execution)
+            var workItemId = candidate.Id;
+
+            // Directly upsert the item with agent lifecycle tags to simulate
+            // the state after a run has been claimed and executed
+            await using (var scope = services.CreateAsyncScope())
+            {
+                var store = scope.ServiceProvider.GetRequiredService<IWorkItemStore>();
+                var current = await store.GetByIdAsync(workItemId, CancellationToken.None);
+                Assert.NotNull(current);
+
+                await store.UpsertAsync(current with
+                {
+                    Tags = new List<string>
+                    {
+                        "agent-active",
+                        "agent-worker:test-worker",
+                        "backend",
+                        "high-priority",
+                    },
+                }, CancellationToken.None);
+            }
+
+            // Now call ReactivateForReworkAsync
+            var result = await workSource.ReactivateForReworkAsync(
+                new ReworkReactivateRequest
+                {
+                    WorkItemId = workItemId,
+                    WorkRef = new ExternalWorkRef { Source = "LocalFile", ExternalId = candidate.ExternalId },
+                    CycleNumber = 1,
+                    ThreadCount = 2,
+                    PullRequestUrl = "https://example.com/pr/42",
+                },
+                CancellationToken.None);
+
+            Assert.True(result.Success);
+
+            // Verify the tags were updated correctly
+            await using (var scope = services.CreateAsyncScope())
+            {
+                var store = scope.ServiceProvider.GetRequiredService<IWorkItemStore>();
+                var updated = await store.GetByIdAsync(workItemId, CancellationToken.None);
+                Assert.NotNull(updated);
+
+                // agent-active and agent-worker:test-worker should be stripped
+                Assert.DoesNotContain("agent-active", updated.Tags);
+                Assert.DoesNotContain("agent-worker:test-worker", updated.Tags);
+
+                // agent-ready should be re-added
+                Assert.Contains("agent-ready", updated.Tags);
+
+                // Unrelated tags should be preserved
+                Assert.Contains("backend", updated.Tags);
+                Assert.Contains("high-priority", updated.Tags);
+            }
+        }
+        finally
+        {
+            TryDeleteFile(dbPath);
+        }
+    }
+
+    [Fact]
     public async Task LocalFileWorkSource_NoDefinitions_ReturnsEmpty()
     {
         var dbPath = Path.GetTempFileName();
