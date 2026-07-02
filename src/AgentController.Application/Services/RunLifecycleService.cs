@@ -927,7 +927,7 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         {
             RuntimeRunId = evt.RuntimeRunId ?? run.RuntimeRunId,
             BranchName = GetPayloadString(evt.Payload, "branchName") ?? run.BranchName,
-            PullRequestUrl = GetPayloadString(evt.Payload, "pullRequestUrl") ?? run.PullRequestUrl,
+            PullRequestUrl = GetPayloadString(evt.Payload, "prUrl") ?? run.PullRequestUrl,
             CommitSha = GetPayloadString(evt.Payload, "commitSha") ?? run.CommitSha,
             LastHeartbeatAt = evt.OccurredAt,
         };
