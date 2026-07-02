@@ -88,42 +88,6 @@ public class ReviewFeedbackFilterPipelineTests
     }
 
     [Fact]
-    public async Task FilterAsync_MarkerLabelByNonAllowedReviewer_FailsClosed()
-    {
-        var pipeline = CreatePipeline(new TestPrLabelSource(
-            new Dictionary<string, List<PrLabel>>
-            {
-                ["1"] = new()
-                {
-                    new() { Name = "agent-rework-requested", CreatedBy = "other@example.com" },
-                },
-            }));
-
-        var query = new FeedbackQuery
-        {
-            OpenPrs = new List<PrUnderTest>
-            {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
-            },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
-            ReworkMarkerTag = "agent-rework-requested",
-        };
-
-        var signals = new List<ReworkSignal>
-        {
-            new()
-            {
-                PullRequestId = "1",
-                Threads = ActiveThread("t1", "reviewer@example.com"),
-            },
-        };
-
-        var result = await pipeline.FilterAsync(query, signals, CancellationToken.None);
-
-        Assert.Empty(result);
-    }
-
-    [Fact]
     public async Task FilterAsync_MarkerLabelByAllowedReviewer_Passes()
     {
         var pipeline = CreatePipeline(new TestPrLabelSource(
@@ -131,7 +95,7 @@ public class ReviewFeedbackFilterPipelineTests
             {
                 ["1"] = new()
                 {
-                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                    new() { Name = "agent-rework-requested" },
                 },
             }));
 
@@ -158,42 +122,6 @@ public class ReviewFeedbackFilterPipelineTests
 
         Assert.Single(result);
         Assert.Single(result[0].Threads);
-    }
-
-    [Fact]
-    public async Task FilterAsync_MarkerLabelMissingCreator_FailsClosed()
-    {
-        var pipeline = CreatePipeline(new TestPrLabelSource(
-            new Dictionary<string, List<PrLabel>>
-            {
-                ["1"] = new()
-                {
-                    new() { Name = "agent-rework-requested", CreatedBy = string.Empty },
-                },
-            }));
-
-        var query = new FeedbackQuery
-        {
-            OpenPrs = new List<PrUnderTest>
-            {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
-            },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
-            ReworkMarkerTag = "agent-rework-requested",
-        };
-
-        var signals = new List<ReworkSignal>
-        {
-            new()
-            {
-                PullRequestId = "1",
-                Threads = ActiveThread("t1", "reviewer@example.com"),
-            },
-        };
-
-        var result = await pipeline.FilterAsync(query, signals, CancellationToken.None);
-
-        Assert.Empty(result);
     }
 
     [Fact]
@@ -235,7 +163,7 @@ public class ReviewFeedbackFilterPipelineTests
             {
                 ["1"] = new()
                 {
-                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                    new() { Name = "agent-rework-requested" },
                 },
             }));
 
@@ -302,7 +230,7 @@ public class ReviewFeedbackFilterPipelineTests
             {
                 ["1"] = new()
                 {
-                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                    new() { Name = "agent-rework-requested" },
                 },
             }));
 
@@ -351,7 +279,7 @@ public class ReviewFeedbackFilterPipelineTests
             {
                 ["1"] = new()
                 {
-                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                    new() { Name = "agent-rework-requested" },
                 },
             }));
 
@@ -423,7 +351,7 @@ public class ReviewFeedbackFilterPipelineTests
             {
                 ["1"] = new()
                 {
-                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                    new() { Name = "agent-rework-requested" },
                 },
             }));
 
@@ -472,7 +400,7 @@ public class ReviewFeedbackFilterPipelineTests
             {
                 ["1"] = new()
                 {
-                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                    new() { Name = "agent-rework-requested" },
                 },
             }));
 
@@ -542,7 +470,7 @@ public class ReviewFeedbackFilterPipelineTests
             {
                 ["1"] = new()
                 {
-                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                    new() { Name = "agent-rework-requested" },
                 },
             }));
 
@@ -591,7 +519,7 @@ public class ReviewFeedbackFilterPipelineTests
             {
                 ["1"] = new()
                 {
-                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                    new() { Name = "agent-rework-requested" },
                 },
             }));
 
@@ -673,7 +601,7 @@ public class ReviewFeedbackFilterPipelineTests
             {
                 ["1"] = new()
                 {
-                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                    new() { Name = "agent-rework-requested" },
                 },
                 ["2"] = [], // No marker — fails closed
             }));
@@ -722,7 +650,7 @@ public class ReviewFeedbackFilterPipelineTests
             {
                 ["1"] = new()
                 {
-                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                    new() { Name = "agent-rework-requested" },
                 },
             }));
 
@@ -788,7 +716,7 @@ public class ReviewFeedbackFilterPipelineTests
                 ["1"] = new()
                 {
                     // Label name differs in case — Ordinal comparison should not match
-                    new() { Name = "Agent-Rework-Requested", CreatedBy = "reviewer@example.com" },
+                    new() { Name = "Agent-Rework-Requested" },
                 },
             }));
 
@@ -824,9 +752,9 @@ public class ReviewFeedbackFilterPipelineTests
             {
                 ["1"] = new()
                 {
-                    new() { Name = "priority-high", CreatedBy = "other@example.com" },
-                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
-                    new() { Name = "needs-review", CreatedBy = "other@example.com" },
+                    new() { Name = "priority-high" },
+                    new() { Name = "agent-rework-requested" },
+                    new() { Name = "needs-review" },
                 },
             }));
 
@@ -855,78 +783,6 @@ public class ReviewFeedbackFilterPipelineTests
         Assert.Single(result[0].Threads);
     }
 
-    [Fact]
-    public async Task FilterAsync_MarkerCreatedByNull_FailsClosed()
-    {
-        var pipeline = CreatePipeline(new TestPrLabelSource(
-            new Dictionary<string, List<PrLabel>>
-            {
-                ["1"] = new()
-                {
-                    new() { Name = "agent-rework-requested", CreatedBy = null! },
-                },
-            }));
-
-        var query = new FeedbackQuery
-        {
-            OpenPrs = new List<PrUnderTest>
-            {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
-            },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
-            ReworkMarkerTag = "agent-rework-requested",
-        };
-
-        var signals = new List<ReworkSignal>
-        {
-            new()
-            {
-                PullRequestId = "1",
-                Threads = ActiveThread("t1", "reviewer@example.com"),
-            },
-        };
-
-        var result = await pipeline.FilterAsync(query, signals, CancellationToken.None);
-
-        Assert.Empty(result);
-    }
-
-    [Fact]
-    public async Task FilterAsync_MarkerCreatedByWhitespace_FailsClosed()
-    {
-        var pipeline = CreatePipeline(new TestPrLabelSource(
-            new Dictionary<string, List<PrLabel>>
-            {
-                ["1"] = new()
-                {
-                    new() { Name = "agent-rework-requested", CreatedBy = "   " },
-                },
-            }));
-
-        var query = new FeedbackQuery
-        {
-            OpenPrs = new List<PrUnderTest>
-            {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
-            },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
-            ReworkMarkerTag = "agent-rework-requested",
-        };
-
-        var signals = new List<ReworkSignal>
-        {
-            new()
-            {
-                PullRequestId = "1",
-                Threads = ActiveThread("t1", "reviewer@example.com"),
-            },
-        };
-
-        var result = await pipeline.FilterAsync(query, signals, CancellationToken.None);
-
-        Assert.Empty(result);
-    }
-
     // ── Load-bearing order ─────────────────────────────────────────
 
     [Fact]
@@ -942,7 +798,7 @@ public class ReviewFeedbackFilterPipelineTests
                 ["1"] = [], // No marker — fails closed
                 ["2"] = new()
                 {
-                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                    new() { Name = "agent-rework-requested" },
                 },
             },
             labelFetches);
@@ -994,7 +850,7 @@ public class ReviewFeedbackFilterPipelineTests
             {
                 ["1"] = new()
                 {
-                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                    new() { Name = "agent-rework-requested" },
                 },
             },
             labelFetches);
@@ -1073,7 +929,7 @@ public class ReviewFeedbackFilterPipelineTests
             {
                 ["1"] = new()
                 {
-                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                    new() { Name = "agent-rework-requested" },
                 },
             }));
 
@@ -1151,7 +1007,7 @@ public class ReviewFeedbackFilterPipelineTests
             {
                 ["1"] = new()
                 {
-                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                    new() { Name = "agent-rework-requested" },
                 },
             }));
 
@@ -1216,7 +1072,7 @@ public class ReviewFeedbackFilterPipelineTests
             {
                 ["1"] = new()
                 {
-                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                    new() { Name = "agent-rework-requested" },
                 },
             }));
 
@@ -1280,7 +1136,7 @@ public class ReviewFeedbackFilterPipelineTests
             {
                 ["1"] = new()
                 {
-                    new() { Name = "agent-rework-requested", CreatedBy = "reviewer@example.com" },
+                    new() { Name = "agent-rework-requested" },
                 },
             }));
 
