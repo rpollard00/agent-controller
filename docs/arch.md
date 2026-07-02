@@ -995,9 +995,9 @@ Example:
   "occurredAt": "2026-06-11T21:20:00Z",
   "eventType": "runtime.pr_created",
   "payload": {
-    "pullRequestUrl": "https://dev.azure.com/org/project/_git/repo/pullrequest/123",
-    "branchName": "agent/123-add-retry-handling",
-    "targetBranch": "main"
+    "prUrl": "https://dev.azure.com/org/project/_git/repo/pullrequest/123",
+    "prNumber": 123,
+    "branchName": "agent/123-add-retry-handling"
   }
 }
 ```
@@ -1055,7 +1055,7 @@ Example:
   "message": "Run completed with PR opened",
   "payload": {
     "outcome": "pull_request_opened",
-    "pullRequestUrl": "https://dev.azure.com/org/project/_git/repo/pullrequest/123",
+    "prUrl": "https://dev.azure.com/org/project/_git/repo/pullrequest/123",
     "branchName": "agent/123-add-retry-handling",
     "summary": "Implemented retry handling for transient 5xx responses and added tests."
   }
@@ -1141,7 +1141,7 @@ runtime.completed
 runtime.failed
 ```
 
-PR-specific events are useful but not strictly required if `runtime.completed` includes `pullRequestUrl` and `branchName`.
+PR-specific events are useful but not strictly required if `runtime.completed` includes `prUrl` and `branchName`.
 
 Minimum final result:
 
@@ -1155,7 +1155,7 @@ Minimum final result:
     "outcome": "pull_request_opened",
     "summary": "Implemented requested change.",
     "branchName": "agent/123-example",
-    "pullRequestUrl": "https://dev.azure.com/org/project/_git/repo/pullrequest/123"
+    "prUrl": "https://dev.azure.com/org/project/_git/repo/pullrequest/123"
   }
 }
 ```
@@ -2187,7 +2187,7 @@ When emitting `runtime.completed`, pi-materia sets `payload.outcome` to one of:
 
 | Outcome | Controller State | Required payload fields |
 |---------|-----------------|------------------------|
-| `pull_request_opened` | `PrOpened` | `pullRequestUrl`, `branchName`, `summary` |
+| `pull_request_opened` | `PrOpened` | `prUrl`, `branchName`, `summary` |
 | `branch_pushed` | `BranchPushed` | `branchName`, `summary` |
 | `patch_created` | `Completed` | `summary` |
 | `no_changes_needed` | `Completed` | `summary` |

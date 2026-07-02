@@ -116,6 +116,7 @@ The runtime created or selected a branch.
 The runtime opened a pull request.
 
 - **State effect**: None (informational only).
+- **Payload keys**: `prUrl`, `prNumber`, `branchName`. The `prNumber` is URL-capture-only and not persisted as a separate column.
 - **Runtime fields updated**: `RuntimeRunId`, `BranchName`, `PullRequestUrl`, `LastHeartbeatAt`.
 
 ### 4.6 `runtime.needs_human`
@@ -138,6 +139,7 @@ The runtime completed its work.
   - `needs_human` → `NeedsHuman`
   - `failed` → `Failed`
 - **Runtime fields updated**: `RuntimeRunId`, `BranchName`, `PullRequestUrl`, `ResultSummary`, `LastHeartbeatAt`, `FinishedAt`.
+- **Payload keys for `pull_request_opened`**: `prUrl`, `branchName`, `summary`. The `prUrl` key maps to the persisted `PullRequestUrl` field.
 - **Work item status**: Matches the resolved state.
 - **Unsupported outcomes**: Return `422 Unprocessable Entity`.
 
@@ -335,7 +337,7 @@ POST /runs/run_abc123/events
     "outcome": "pull_request_opened",
     "summary": "Implemented retry handling for transient 5xx responses.",
     "branchName": "agent/42-add-retry",
-    "pullRequestUrl": "https://dev.azure.com/org/project/_git/repo/pullrequest/99"
+    "prUrl": "https://dev.azure.com/org/project/_git/repo/pullrequest/99"
   }
 }
 ```
@@ -490,8 +492,8 @@ For the first usable prototype, a runtime only needs to support:
 
 The `runtime.completed` event should include enough context in its payload so that
 separate `runtime.pr_created` and `runtime.branch_created` events are optional.
-The `pullRequestUrl`, `branchName`, and `summary` fields in the `payload` of
-`runtime.completed` carry the same information.
+The `prUrl`, `branchName`, and `summary` fields in the `payload` of
+`runtime.completed` carry the same information. The `prUrl` key (not `pullRequestUrl`) matches the pi-materia wire format; `prNumber` may also be present but is URL-capture-only and not persisted.
 
 ---
 
