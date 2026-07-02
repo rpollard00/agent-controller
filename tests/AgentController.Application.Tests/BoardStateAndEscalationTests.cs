@@ -175,7 +175,7 @@ public class BoardStateAndEscalationTests
             Payload = new Dictionary<string, object?>
             {
                 ["outcome"] = CompletionOutcomes.PullRequestOpened,
-                ["pullRequestUrl"] = "https://dev.azure.com/pr/456",
+                ["prUrl"] = "https://dev.azure.com/pr/456",
                 ["summary"] = "Fixed the bug",
             },
         };

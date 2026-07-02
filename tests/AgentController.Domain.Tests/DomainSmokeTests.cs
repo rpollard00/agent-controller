@@ -442,7 +442,8 @@ public class DomainSmokeTests
             Payload = new Dictionary<string, object?>
             {
                 ["outcome"] = "pull_request_opened",
-                ["pullRequestUrl"] = "https://dev.azure.com/org/project/_git/repo/pullrequest/123",
+                ["prUrl"] = "https://dev.azure.com/org/project/_git/repo/pullrequest/123",
+                ["prNumber"] = 123,
                 ["branchName"] = "agent/123-fix",
             },
         };

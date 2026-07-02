@@ -577,7 +577,8 @@ public class RunLifecycleServiceTests
             Payload = new Dictionary<string, object?>
             {
                 ["outcome"] = CompletionOutcomes.PullRequestOpened,
-                ["pullRequestUrl"] = "https://dev.azure.com/pr/123",
+                ["prUrl"] = "https://dev.azure.com/pr/123",
+                ["prNumber"] = 123,
                 ["branchName"] = "agent/123-fix",
                 ["summary"] = "Fixed the bug",
             },
@@ -868,7 +869,8 @@ public class RunLifecycleServiceTests
             EventType = RuntimeEventTypes.PrCreated,
             Payload = new Dictionary<string, object?>
             {
-                ["pullRequestUrl"] = "https://dev.azure.com/pr/999",
+                ["prUrl"] = "https://dev.azure.com/pr/999",
+                ["prNumber"] = 999,
                 ["branchName"] = "agent/999-feat",
             },
         };

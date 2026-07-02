@@ -163,7 +163,8 @@ public class RuntimeEventApiTests : IAsyncLifetime
             payload = new Dictionary<string, object>
             {
                 ["outcome"] = CompletionOutcomes.PullRequestOpened,
-                ["pullRequestUrl"] = "https://dev.azure.com/pr/42",
+                ["prUrl"] = "https://dev.azure.com/pr/42",
+                ["prNumber"] = 42,
                 ["branchName"] = "agent/42-fix",
             },
         };
