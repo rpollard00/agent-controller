@@ -163,7 +163,57 @@ To retry a failed or needs-human item:
 
 ---
 
-## 6. Full Board Item Lifecycle
+## 6. Rework Reactivation — Tag-Cleanup Guarantee
+
+When a completed work item is moved back to an eligible state for rework (e.g. the PR was rejected and the item is moved back to `New`), the controller's reactivation path (`ReactivateForReworkAsync`) performs an **atomic single-PATCH** operation that:
+
+1. **Transitions the work item** to the first configured `eligibleStates` (e.g. `New`).
+2. **Strips agent lifecycle tags** in the same PATCH:
+   - `agent-active` — removes the active-claim marker.
+   - `agent-failed` — removes any prior failure marker.
+   - `agent-needs-human` — removes any prior escalation marker.
+   - `agent-worker:*` — wildcard pattern that strips the concrete `agent-worker:{workerId}` tag (e.g. `agent-worker:live-ado-worker`).
+3. **Re-adds `agent-ready`** so the item is immediately eligible for re-pickup.
+
+All of this is carried in a **single ADO PATCH request** with one `If-Match` revision token. This eliminates the stale-revision race where a revision bump between two separate PATCHes would cause the tag-strip to be silently skipped.
+
+### 6.1 Fail-Loud Semantics
+
+The reactivation PATCH uses **fail-loud** semantics for tag-removal-bearing operations:
+
+| HTTP Status | `RemovedTags` present? | Behavior |
+|-------------|------------------------|----------|
+| `412 Precondition Failed` | Yes (reactivation path) | **Returns `false`** — reactivation fails, cycle is **not** marked reactivated. `FeedbackPollingWorker` logs `ReworkItemReactivationFailed` and retries on the next poll cycle. |
+| `412 Precondition Failed` | No (status-only projection) | **Returns `true`** — best-effort, concurrent modification is not fatal for status-only updates. |
+| Any other non-success | Yes or No | **Returns `false`** — fails the operation. |
+
+This scoping ensures that:
+- **Reactivation failures are never silently swallowed** — a 412 on a tag-strip PATCH means the item was modified concurrently and the cleanup did not apply. The cycle remains pending and is retried on the next poll.
+- **Status-only projections remain best-effort** — normal lifecycle state transitions (e.g. `RunLifecycleService.BuildExternalProjection`) are not disrupted by concurrent board edits.
+
+### 6.2 Result Contract
+
+`ReactivateForReworkAsync` returns a `ReworkReactivateResult`:
+
+| Field | Value on Success | Value on Failure |
+|-------|-----------------|------------------|
+| `Success` | `true` | `false` |
+| `FailureReason` | `null` | Diagnostic string (e.g. `[rework_tag_strip_failed] Cannot transition work item to 'New' and strip agent lifecycle tags...`) |
+
+When `Success` is `false`, the controller skips `MarkReactivatedAsync` — the rework cycle stays pending and is retried on the next discovery poll.
+
+### 6.3 Local File Source Alignment
+
+`LocalFileWorkSource.ReactivateForReworkAsync` applies the same tag-cleanup logic:
+- Strips `agent-active`, `agent-failed`, `agent-needs-human`, and any tag matching `agent-worker:` prefix.
+- Re-adds `agent-ready`.
+- Transitions to the first eligible state.
+
+Both ADO and local work sources maintain consistent rework tag-cleanup semantics.
+
+---
+
+## 7. Full Board Item Lifecycle
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -246,7 +296,7 @@ To retry a failed or needs-human item:
 
 ---
 
-## 7. Clarifying-Comment Behavior on Association Mismatch
+## 8. Clarifying-Comment Behavior on Association Mismatch
 
 When the controller discovers a work item with a `repo:{key}` tag but no matching repository profile, it posts a clarifying comment to the ADO work item:
 
@@ -260,9 +310,9 @@ This ensures that:
 
 ---
 
-## 8. Acceptance Criteria and Comments in Agent Context
+## 9. Acceptance Criteria and Comments in Agent Context
 
-### 8.1 Acceptance Criteria
+### 9.1 Acceptance Criteria
 
 The controller extracts acceptance criteria from ADO work items using this precedence:
 
@@ -272,13 +322,13 @@ The controller extracts acceptance criteria from ADO work items using this prece
 
 The extracted criteria are written to `context/acceptance-criteria.md` in the agent's runtime workspace.
 
-### 8.2 Discussion Comments
+### 9.2 Discussion Comments
 
 The controller fetches ADO work item thread history (discussion comments) during the `ContextInjected` lifecycle phase and writes them to `context/comments.md`. This is bounded by `workSource.maxComments` (default: 50) to keep context manageable.
 
 ---
 
-## 9. Configuration Reference
+## 10. Configuration Reference
 
 Complete `workSource` configuration with defaults:
 
@@ -298,7 +348,7 @@ Complete `workSource` configuration with defaults:
 }
 ```
 
-### 9.1 Switching Between Mock and Live Providers
+### 10.1 Switching Between Mock and Live Providers
 
 | Provider | When to Use | Notes |
 |----------|-------------|-------|
@@ -306,13 +356,13 @@ Complete `workSource` configuration with defaults:
 | `LocalFake` | Offline testing | Uses `POST /work-items` to seed work items |
 | `LocalFile` | Declarative local testing | Reads work item definitions from `localWork.definitions` in config |
 
-### 9.2 Stale Run Recovery
+### 10.2 Stale Run Recovery
 
 If a run in `AwaitingResult` state exceeds `agentController.staleTimeoutSeconds` (default: 1800s / 30min) without a heartbeat, the controller transitions it to `NeedsHuman` and posts an `agent-needs-human` tag. This prevents orphaned runs from occupying concurrency slots indefinitely.
 
 ---
 
-## 10. Related Documentation
+## 11. Related Documentation
 
 - [Architecture Document](./arch.md) — §3.6 (Work Item Eligibility), §8 (Azure DevOps Boards Integration), §10 (Runtime Event Contract).
 - [Runtime Event Contract](./runtime-events.md) — Event types, state transitions, and API contract.

@@ -297,11 +297,55 @@ When using the real `PiMateria` runtime:
 - **No `agent-failed` tag is left behind** — a bad runtime environment should not dirty the external ADO record.
 - The item is immediately retryable once the underlying issue is fixed.
 
-## 7. Repository Profiles
+## 7. Rework Reactivation — Tag-Cleanup Guarantee
+
+When a work item is moved back to an eligible state for rework (e.g. the PR was rejected and the item is moved back to `New`), the controller's `FeedbackPollingWorker` detects the item and calls `ReactivateForReworkAsync`. This performs an **atomic single-PATCH** operation on the ADO work item that:
+
+1. **Transitions the work item** to the first configured `eligibleStates` (e.g. `New`).
+2. **Strips agent lifecycle tags** in the same PATCH:
+   - `agent-active` — removes the active-claim marker.
+   - `agent-failed` — removes any prior failure marker.
+   - `agent-needs-human` — removes any prior escalation marker.
+   - `agent-worker:*` — wildcard pattern that strips the concrete `agent-worker:{workerId}` tag (e.g. `agent-worker:live-ado-worker`).
+3. **Re-adds `agent-ready`** so the item is immediately eligible for re-pickup.
+
+All operations are carried in a **single ADO PATCH request** with one `If-Match` revision token. This eliminates the stale-revision race where a revision bump between two separate PATCHes would cause the tag-strip to be silently skipped, leaving `agent-active` and `agent-worker:*` tags on the board item and preventing it from being picked up again.
+
+### 7.1 Fail-Loud Semantics on Tag-Removal PATCHes
+
+The reactivation PATCH uses **fail-loud** semantics when `RemovedTags` are present:
+
+| HTTP Status | `RemovedTags` present? | Behavior |
+|-------------|------------------------|----------|
+| `412 Precondition Failed` | Yes (reactivation path) | **Returns `false`** — reactivation fails. `FeedbackPollingWorker` logs `ReworkItemReactivationFailed` and the cycle is **not** marked reactivated. It will be retried on the next poll cycle. |
+| `412 Precondition Failed` | No (status-only projection) | **Returns `true`** — best-effort. Concurrent modification is not fatal for normal lifecycle state updates. |
+| Any other non-success | Yes or No | **Returns `false`** — fails the operation. |
+
+This means:
+- **Reactivation failures are never silently swallowed** — if a 412 occurs during a tag-strip PATCH, the item was modified concurrently and the cleanup did not apply. The rework cycle remains pending and is retried on the next poll.
+- **Status-only projections remain best-effort** — normal lifecycle state transitions (e.g. moving an item to `Resolved` on PR open) are not disrupted by concurrent board edits.
+
+### 7.2 Observing Rework Reactivation in Logs
+
+When rework reactivation succeeds:
+```
+[Information] ReworkItemReactivated — workItemId={id}, cycleNumber={n}, cycleId={cycleId}
+```
+
+When rework reactivation fails (e.g. 412):
+```
+[Warning] ReworkItemReactivationFailed — workItemId={id}, cycleNumber={n}, cycleId={cycleId}, reason='[rework_tag_strip_failed] ...'
+```
+
+The failed cycle is **not** marked reactivated and will be retried on the next poll cycle.
+
+---
+
+## 8. Repository Profiles
 
 The `repositories` section in `appsettings.json` (or an environment-specific override) defines which repos the controller can work with. Each profile is referenced by a `repo:{key}` tag on ADO work items.
 
-### 7.1 Profile Options
+### 8.1 Profile Options
 
 | Option | Type | Required | Description |
 |--------|------|----------|-------------|
@@ -312,7 +356,7 @@ The `repositories` section in `appsettings.json` (or an environment-specific ove
 | `runtimeProfile` | string | No | Runtime profile name for runs targeting this repo. |
 | `allowedPaths` | string[] | No | Paths the agent may modify. Empty array means no restrictions. |
 
-### 7.2 SSH Transport Example (live-ado)
+### 8.2 SSH Transport Example (live-ado)
 
 ```json
 {
@@ -328,7 +372,7 @@ The `repositories` section in `appsettings.json` (or an environment-specific ove
 }
 ```
 
-### 7.3 HTTPS+PAT Transport Example
+### 8.3 HTTPS+PAT Transport Example
 
 ```json
 {
@@ -342,7 +386,7 @@ The `repositories` section in `appsettings.json` (or an environment-specific ove
 }
 ```
 
-### 7.4 Local Path Example
+### 8.4 Local Path Example
 
 ```json
 {
@@ -356,7 +400,7 @@ The `repositories` section in `appsettings.json` (or an environment-specific ove
 }
 ```
 
-### 7.5 Adding a New Repository Profile
+### 8.5 Adding a New Repository Profile
 
 1. Add a profile entry with a unique key to `appsettings.json` under `repositories`.
 2. Tag ADO work items with `repo:{key}` (e.g., `repo:test1`).
@@ -364,7 +408,7 @@ The `repositories` section in `appsettings.json` (or an environment-specific ove
 
 The controller will post a clarifying comment on any work item whose `repo:` tag doesn't match a configured profile.
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 ### Controller won't start
 
@@ -464,7 +508,7 @@ To resolve:
    If the PAT was not forwarded, pi's Azure DevOps tooling will fail with
    credential errors rather than completing the cast.
 
-## 9. Stopping the Controller
+## 10. Stopping the Controller
 
 Press `Ctrl+C` to stop. The controller handles graceful shutdown:
 
@@ -473,7 +517,7 @@ Press `Ctrl+C` to stop. The controller handles graceful shutdown:
 
 ---
 
-## 10. Related Documentation
+## 11. Related Documentation
 
 - [Board Provisioning](./board-provisioning.md) — Tag recipe, eligibility model, and lifecycle diagram.
 - [Architecture Document](./arch.md) — System design and integration points.
