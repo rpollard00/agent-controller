@@ -1583,6 +1583,335 @@ public class AzureDevOpsBoardsClientTests
     }
 
     // ──────────────────────────────────────────────
+    // Load-bearing GET + fresh-revision (RemovedTags path)
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task UpdateWorkItemStatus_RemovedTags_GetFails_ReturnsFalse_NoPatchEmitted()
+    {
+        // Arrange: fake handler returns non-success on GET — simulates missing work item
+        // or insufficient scope on the PAT. The code should abort entirely, not emit
+        // a state-only PATCH masquerading as success.
+        int requestCount = 0;
+        HttpMethod? lastMethod = null;
+
+        var handler = new CaptureHttpMessageHandler(async (req) =>
+        {
+            requestCount++;
+            lastMethod = req.Method;
+
+            if (req.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.NotFound)
+                {
+                    Content = new StringContent(
+                        """{"message":"Work item not found."}""",
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            // Should never reach PATCH
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+
+        var http = new HttpClient(handler) { BaseAddress = new Uri(OrgUrl + "/") };
+        var authBytes = Encoding.ASCII.GetBytes(":test-pat");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            BaseUrl = OrgUrl,
+            Project = Project,
+            PersonalAccessToken = "test-pat",
+        };
+        var client = new AzureDevOpsBoardsClient(http, options);
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "42",
+            Revision = "5",
+        };
+
+        var status = new ExternalWorkStatus
+        {
+            Status = "New",
+            Tags = new[] { "agent-ready" },
+            RemovedTags = new[] { "agent-active", "agent-worker:*" },
+        };
+
+        // Act
+        var ok = await client.UpdateWorkItemStatusAsync(workRef, status, CancellationToken.None);
+
+        // Assert: returns false — no false success when GET fails
+        Assert.False(ok);
+
+        // Assert: only GET was made, no PATCH was emitted
+        Assert.Equal(1, requestCount);
+        Assert.Equal(HttpMethod.Get, lastMethod);
+    }
+
+    [Fact]
+    public async Task UpdateWorkItemStatus_RemovedTags_GetSuccess_CorrectPatchBodyAndFreshRev()
+    {
+        // Arrange: GET succeeds with agent-active + agent-worker:{id} tags.
+        // PATCH should carry correct RemovedTags + Tags agent-ready, using the
+        // freshly-read rev for If-Match (not a stale workRef.Revision).
+        string? patchBody = null;
+        string? ifMatchValue = null;
+        string? getRequestUri = null;
+
+        var handler = new CaptureHttpMessageHandler(async (req) =>
+        {
+            if (req.Method == HttpMethod.Get)
+            {
+                getRequestUri = req.RequestUri?.AbsoluteUri;
+
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemGetResponse(42, 7, "Resolved",
+                            "agent-active; agent-worker:live-ado_worker; backend; high-priority"),
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            if (req.Method == HttpMethod.Patch)
+            {
+                if (req.Content is not null)
+                    patchBody = await req.Content.ReadAsStringAsync();
+
+                ifMatchValue = req.Headers.TryGetValues("If-Match", out var values)
+                    ? values.FirstOrDefault()
+                    : null;
+
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemPatchResponse(42, 8),
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var http = new HttpClient(handler) { BaseAddress = new Uri(OrgUrl + "/") };
+        var authBytes = Encoding.ASCII.GetBytes(":test-pat");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            BaseUrl = OrgUrl,
+            Project = Project,
+            PersonalAccessToken = "test-pat",
+        };
+        var client = new AzureDevOpsBoardsClient(http, options);
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "42",
+            Revision = "3", // stale revision — should NOT be used for If-Match
+        };
+
+        var status = new ExternalWorkStatus
+        {
+            Status = "New",
+            Tags = new[] { "agent-ready" },
+            RemovedTags = new[] { "agent-active", "agent-worker:*" },
+        };
+
+        // Act
+        var ok = await client.UpdateWorkItemStatusAsync(workRef, status, CancellationToken.None);
+
+        // Assert: PATCH succeeded
+        Assert.True(ok);
+
+        // Assert: If-Match uses freshly-read rev (7) not stale workRef.Revision (3)
+        Assert.Equal("7", ifMatchValue);
+
+        // Assert: PATCH body contains state change and merged tags
+        Assert.NotNull(patchBody);
+        Assert.Contains("System.State", patchBody);
+        Assert.Contains("New", patchBody);
+        Assert.Contains("System.Tags", patchBody);
+        Assert.Contains("agent-ready", patchBody);
+
+        // Assert: agent lifecycle tags stripped
+        Assert.DoesNotContain("agent-active", patchBody!);
+        Assert.DoesNotContain("agent-worker:", patchBody!);
+
+        // Assert: unrelated tags preserved
+        Assert.Contains("backend", patchBody!);
+        Assert.Contains("high-priority", patchBody!);
+
+        // Assert: simplified GET URL — no $expand parameter
+        Assert.NotNull(getRequestUri);
+        Assert.DoesNotContain("$expand", getRequestUri);
+    }
+
+    [Fact]
+    public async Task UpdateWorkItemStatus_RemovedTags_EmptyExistingTags_EmitsTagOps()
+    {
+        // Arrange: work item has NO tags (empty System.Tags). The tag op should
+        // still be emitted so agent-ready is added. ADO tolerates RemovedTags
+        // entries that are not present.
+        string? patchBody = null;
+
+        var handler = new CaptureHttpMessageHandler(async (req) =>
+        {
+            if (req.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemGetResponse(42, 5, "Resolved", ""),
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            if (req.Method == HttpMethod.Patch)
+            {
+                if (req.Content is not null)
+                    patchBody = await req.Content.ReadAsStringAsync();
+
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemPatchResponse(42, 6),
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var http = new HttpClient(handler) { BaseAddress = new Uri(OrgUrl + "/") };
+        var authBytes = Encoding.ASCII.GetBytes(":test-pat");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            BaseUrl = OrgUrl,
+            Project = Project,
+            PersonalAccessToken = "test-pat",
+        };
+        var client = new AzureDevOpsBoardsClient(http, options);
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "42",
+            Revision = "5",
+        };
+
+        var status = new ExternalWorkStatus
+        {
+            Status = "New",
+            Tags = new[] { "agent-ready" },
+            RemovedTags = new[] { "agent-active", "agent-worker:*" },
+        };
+
+        // Act
+        var ok = await client.UpdateWorkItemStatusAsync(workRef, status, CancellationToken.None);
+
+        // Assert: PATCH succeeded even though existingTags was empty
+        Assert.True(ok);
+
+        // Assert: tag op is still emitted — agent-ready is added
+        Assert.NotNull(patchBody);
+        Assert.Contains("agent-ready", patchBody);
+
+        // Assert: System.Tags path is present in the PATCH (op was not skipped)
+        Assert.Contains("System.Tags", patchBody);
+    }
+
+    [Fact]
+    public async Task UpdateWorkItemStatus_RemovedTags_Patch412_ReturnsFalse()
+    {
+        // Arrange: GET succeeds (reads tags), but PATCH returns 412 Precondition Failed.
+        // Because RemovedTags is specified, the scoped hard-fail kicks in and returns false.
+        bool getCalled = false;
+        string? patchBody = null;
+
+        var handler = new CaptureHttpMessageHandler(async (req) =>
+        {
+            if (req.Method == HttpMethod.Get)
+            {
+                getCalled = true;
+
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemGetResponse(42, 5, "Resolved",
+                            "agent-active; agent-worker:live-ado_worker; backend"),
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            if (req.Method == HttpMethod.Patch)
+            {
+                if (req.Content is not null)
+                    patchBody = await req.Content.ReadAsStringAsync();
+
+                // Simulate 412 Precondition Failed — concurrent modification
+                return new HttpResponseMessage(HttpStatusCode.PreconditionFailed)
+                {
+                    Content = new StringContent(
+                        """{"message":"The resource has been modified by another user."}""",
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var http = new HttpClient(handler) { BaseAddress = new Uri(OrgUrl + "/") };
+        var authBytes = Encoding.ASCII.GetBytes(":test-pat");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            BaseUrl = OrgUrl,
+            Project = Project,
+            PersonalAccessToken = "test-pat",
+        };
+        var client = new AzureDevOpsBoardsClient(http, options);
+
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "42",
+            Revision = "5",
+        };
+
+        var status = new ExternalWorkStatus
+        {
+            Status = "New",
+            Tags = new[] { "agent-ready" },
+            RemovedTags = new[] { "agent-active", "agent-worker:*" },
+        };
+
+        // Act
+        var ok = await client.UpdateWorkItemStatusAsync(workRef, status, CancellationToken.None);
+
+        // Assert: returns false — scoped hard-fail for RemovedTags-bearing PATCHes on 412
+        Assert.False(ok);
+
+        // Assert: GET was called (tag-read succeeded)
+        Assert.True(getCalled);
+
+        // Assert: PATCH body was constructed (tag ops were emitted before 412)
+        Assert.NotNull(patchBody);
+        Assert.Contains("System.Tags", patchBody);
+    }
+
+    // ──────────────────────────────────────────────
     // Comment projection (AddCommentAsync)
     // ──────────────────────────────────────────────
 
