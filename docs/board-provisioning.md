@@ -165,33 +165,39 @@ To retry a failed or needs-human item:
 
 ## 6. Rework Reactivation — Tag-Cleanup Guarantee
 
-When a completed work item is moved back to an eligible state for rework (e.g. the PR was rejected and the item is moved back to `New`), the controller's reactivation path (`ReactivateForReworkAsync`) performs an **atomic single-PATCH** operation that:
+When a completed work item is moved back to an eligible state for rework (e.g. the PR was rejected and the item is moved back to `New`), the controller's reactivation path (`ReactivateForReworkAsync`) performs a **GET-then-PATCH** flow:
 
-1. **Transitions the work item** to the first configured `eligibleStates` (e.g. `New`).
-2. **Strips agent lifecycle tags** in the same PATCH:
-   - `agent-active` — removes the active-claim marker.
-   - `agent-failed` — removes any prior failure marker.
-   - `agent-needs-human` — removes any prior escalation marker.
-   - `agent-worker:*` — wildcard pattern that strips the concrete `agent-worker:{workerId}` tag (e.g. `agent-worker:live-ado-worker`).
-3. **Re-adds `agent-ready`** so the item is immediately eligible for re-pickup.
+1. **Tag-read GET**: A `GET /workitems/{id}?api-version=7.1` reads the work item's current `System.Tags` and revision (`rev`). This GET is **load-bearing** — if it returns non-success, the entire reactivation aborts and returns `false` (no state-only PATCH is emitted, no false success).
+2. **Combined PATCH**: A single `PATCH /workitems/{id}` carries both the state transition and tag operations, using the **freshly-read `rev` from the GET** as the `If-Match` token (not a possibly-stale revision from the work item reference). This prevents 412 errors from stale revision tokens.
 
-All of this is carried in a **single ADO PATCH request** with one `If-Match` revision token. This eliminates the stale-revision race where a revision bump between two separate PATCHes would cause the tag-strip to be silently skipped.
+### 6.1 Tag Operations (Always Emitted)
 
-### 6.1 Fail-Loud Semantics
+The reactivation tag set is **always included** in the PATCH payload, even when the read-back `existingTags` set is empty or contains none of the target tags. This guarantees:
+- `agent-active` — removed (via `RemovedTags`).
+- `agent-failed` — removed (via `RemovedTags`).
+- `agent-needs-human` — removed (via `RemovedTags`).
+- `agent-worker:{id}` — removed (exact match, via `RemovedTags`).
+- `agent-worker:*` — wildcard pattern that strips any `agent-worker:` prefixed tag (via `RemovedTags`).
+- `agent-ready` — re-added (via `Tags` add operation).
 
-The reactivation PATCH uses **fail-loud** semantics for tag-removal-bearing operations:
+ADO tolerates `RemovedTags` entries for tags that are not present, so this defensive approach ensures re-pickup eligibility regardless of prior tag state.
 
-| HTTP Status | `RemovedTags` present? | Behavior |
-|-------------|------------------------|----------|
-| `412 Precondition Failed` | Yes (reactivation path) | **Returns `false`** — reactivation fails, cycle is **not** marked reactivated. `FeedbackPollingWorker` logs `ReworkItemReactivationFailed` and retries on the next poll cycle. |
-| `412 Precondition Failed` | No (status-only projection) | **Returns `true`** — best-effort, concurrent modification is not fatal for status-only updates. |
-| Any other non-success | Yes or No | **Returns `false`** — fails the operation. |
+### 6.2 Fail-Loud Semantics
+
+The reactivation flow uses **fail-loud** semantics at two levels:
+
+| Failure Point | Condition | Behavior |
+|---------------|-----------|----------|
+| Tag-read GET | Non-success response | **Returns `false`** — aborts entirely, no PATCH is emitted. No false success. |
+| PATCH | `412 Precondition Failed` + `RemovedTags` present | **Returns `false`** — reactivation fails, cycle is **not** marked reactivated. `FeedbackPollingWorker` logs `ReworkItemReactivationFailed` and retries on the next poll cycle. |
+| PATCH | `412 Precondition Failed` + status-only (no `RemovedTags`) | **Returns `true`** — best-effort retained for status-only projections. |
+| PATCH | Any other non-success | **Returns `false`** — fails the operation. |
 
 This scoping ensures that:
-- **Reactivation failures are never silently swallowed** — a 412 on a tag-strip PATCH means the item was modified concurrently and the cleanup did not apply. The cycle remains pending and is retried on the next poll.
+- **Reactivation failures are never silently swallowed** — a GET failure or 412 on a tag-strip PATCH means the cleanup did not apply. The cycle remains pending and is retried on the next poll.
 - **Status-only projections remain best-effort** — normal lifecycle state transitions (e.g. `RunLifecycleService.BuildExternalProjection`) are not disrupted by concurrent board edits.
 
-### 6.2 Result Contract
+### 6.3 Result Contract
 
 `ReactivateForReworkAsync` returns a `ReworkReactivateResult`:
 
@@ -202,7 +208,20 @@ This scoping ensures that:
 
 When `Success` is `false`, the controller skips `MarkReactivatedAsync` — the rework cycle stays pending and is retried on the next discovery poll.
 
-### 6.3 Local File Source Alignment
+### 6.4 Observable Log Markers
+
+The reactivation flow emits structured log markers for production diagnosis:
+
+| Log Marker | When | Key Fields |
+|-----------|------|----------|
+| `[rework_reactivate_get]` | Tag-read GET succeeds | HTTP status, `System.Tags` presence, parsed `rev`, tag count |
+| `[rework_reactivate_get_failed]` | Tag-read GET fails | HTTP status, error body excerpt |
+| `[rework_reactivate_patch]` | PATCH submitted | `rev` used for `If-Match`, `RemovedTags` set, `Tags` set, target state |
+| `[rework_reactivate_patch_failed]` | PATCH fails | HTTP status code, error body excerpt |
+
+These markers let an operator confirm whether the GET succeeded, whether the tag operations are present in the PATCH payload, and whether ADO accepted the request.
+
+### 6.5 Local File Source Alignment
 
 `LocalFileWorkSource.ReactivateForReworkAsync` applies the same tag-cleanup logic:
 - Strips `agent-active`, `agent-failed`, `agent-needs-human`, and any tag matching `agent-worker:` prefix.

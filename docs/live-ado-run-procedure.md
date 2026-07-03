@@ -299,45 +299,60 @@ When using the real `PiMateria` runtime:
 
 ## 7. Rework Reactivation — Tag-Cleanup Guarantee
 
-When a work item is moved back to an eligible state for rework (e.g. the PR was rejected and the item is moved back to `New`), the controller's `FeedbackPollingWorker` detects the item and calls `ReactivateForReworkAsync`. This performs an **atomic single-PATCH** operation on the ADO work item that:
+When a work item is moved back to an eligible state for rework (e.g. the PR was rejected and the item is moved back to `New`), the controller's `FeedbackPollingWorker` detects the item and calls `ReactivateForReworkAsync`. This performs a **GET-then-PATCH** flow:
 
-1. **Transitions the work item** to the first configured `eligibleStates` (e.g. `New`).
-2. **Strips agent lifecycle tags** in the same PATCH:
-   - `agent-active` — removes the active-claim marker.
-   - `agent-failed` — removes any prior failure marker.
-   - `agent-needs-human` — removes any prior escalation marker.
-   - `agent-worker:*` — wildcard pattern that strips the concrete `agent-worker:{workerId}` tag (e.g. `agent-worker:live-ado-worker`).
-3. **Re-adds `agent-ready`** so the item is immediately eligible for re-pickup.
+1. **Tag-read GET**: A `GET /workitems/{id}?api-version=7.1` reads the work item's current `System.Tags` and revision (`rev`). This GET is **load-bearing** — if it returns non-success, the entire reactivation aborts and returns `false` (no state-only PATCH is emitted, no false success).
+2. **Combined PATCH**: A single `PATCH /workitems/{id}` carries both the state transition and tag operations, using the **freshly-read `rev` from the GET** as the `If-Match` token (not a possibly-stale revision from the work item reference). This prevents 412 errors from stale revision tokens.
 
-All operations are carried in a **single ADO PATCH request** with one `If-Match` revision token. This eliminates the stale-revision race where a revision bump between two separate PATCHes would cause the tag-strip to be silently skipped, leaving `agent-active` and `agent-worker:*` tags on the board item and preventing it from being picked up again.
+### 7.1 Tag Operations (Always Emitted)
 
-### 7.1 Fail-Loud Semantics on Tag-Removal PATCHes
+The reactivation tag set is **always included** in the PATCH payload, even when the read-back `existingTags` set is empty or contains none of the target tags. This guarantees:
+- `agent-active` — removed (via `RemovedTags`).
+- `agent-failed` — removed (via `RemovedTags`).
+- `agent-needs-human` — removed (via `RemovedTags`).
+- `agent-worker:{id}` — removed (exact match, via `RemovedTags`).
+- `agent-worker:*` — wildcard pattern that strips any `agent-worker:` prefixed tag (via `RemovedTags`).
+- `agent-ready` — re-added (via `Tags` add operation).
 
-The reactivation PATCH uses **fail-loud** semantics when `RemovedTags` are present:
+ADO tolerates `RemovedTags` entries for tags that are not present, so this defensive approach ensures re-pickup eligibility regardless of prior tag state.
 
-| HTTP Status | `RemovedTags` present? | Behavior |
-|-------------|------------------------|----------|
-| `412 Precondition Failed` | Yes (reactivation path) | **Returns `false`** — reactivation fails. `FeedbackPollingWorker` logs `ReworkItemReactivationFailed` and the cycle is **not** marked reactivated. It will be retried on the next poll cycle. |
-| `412 Precondition Failed` | No (status-only projection) | **Returns `true`** — best-effort. Concurrent modification is not fatal for normal lifecycle state updates. |
-| Any other non-success | Yes or No | **Returns `false`** — fails the operation. |
+### 7.2 Fail-Loud Semantics
+
+The reactivation flow uses **fail-loud** semantics at two levels:
+
+| Failure Point | Condition | Behavior |
+|---------------|-----------|----------|
+| Tag-read GET | Non-success response | **Returns `false`** — aborts entirely, no PATCH is emitted. No false success. |
+| PATCH | `412 Precondition Failed` + `RemovedTags` present | **Returns `false`** — reactivation fails. `FeedbackPollingWorker` logs `ReworkItemReactivationFailed` and the cycle is **not** marked reactivated. Retried on next poll. |
+| PATCH | `412 Precondition Failed` + status-only (no `RemovedTags`) | **Returns `true`** — best-effort retained for status-only projections. |
+| PATCH | Any other non-success | **Returns `false`** — fails the operation. |
 
 This means:
-- **Reactivation failures are never silently swallowed** — if a 412 occurs during a tag-strip PATCH, the item was modified concurrently and the cleanup did not apply. The rework cycle remains pending and is retried on the next poll.
+- **Reactivation failures are never silently swallowed** — a GET failure or 412 on a tag-strip PATCH means the cleanup did not apply. The rework cycle remains pending and is retried on the next poll.
 - **Status-only projections remain best-effort** — normal lifecycle state transitions (e.g. moving an item to `Resolved` on PR open) are not disrupted by concurrent board edits.
 
-### 7.2 Observing Rework Reactivation in Logs
+### 7.3 Observing Rework Reactivation in Logs
+
+The reactivation flow emits structured log markers for production diagnosis:
+
+| Log Marker | When | Key Fields |
+|-----------|------|----------|
+| `[rework_reactivate_get]` | Tag-read GET succeeds | HTTP status, `System.Tags` presence, parsed `rev`, tag count |
+| `[rework_reactivate_get_failed]` | Tag-read GET fails | HTTP status, error body excerpt |
+| `[rework_reactivate_patch]` | PATCH submitted | `rev` used for `If-Match`, `RemovedTags` set, `Tags` set, target state |
+| `[rework_reactivate_patch_failed]` | PATCH fails | HTTP status code, error body excerpt |
 
 When rework reactivation succeeds:
 ```
 [Information] ReworkItemReactivated — workItemId={id}, cycleNumber={n}, cycleId={cycleId}
 ```
 
-When rework reactivation fails (e.g. 412):
+When rework reactivation fails:
 ```
 [Warning] ReworkItemReactivationFailed — workItemId={id}, cycleNumber={n}, cycleId={cycleId}, reason='[rework_tag_strip_failed] ...'
 ```
 
-The failed cycle is **not** marked reactivated and will be retried on the next poll cycle.
+The failed cycle is **not** marked reactivated and will be retried on the next poll cycle. Use the `[rework_reactivate_*]` log markers to diagnose whether the GET failed (check `[rework_reactivate_get_failed]`), the PATCH was rejected with 412 (check `[rework_reactivate_patch_failed]`), or the tag operations were present in the payload (check `[rework_reactivate_patch]`).
 
 ---
 
