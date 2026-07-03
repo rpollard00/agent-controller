@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using AgentController.Application;
 using AgentController.Domain;
 using AgentController.Infrastructure.Options;
+using Microsoft.Extensions.Logging;
 
 namespace AgentController.Infrastructure;
 
@@ -19,10 +20,11 @@ namespace AgentController.Infrastructure;
 ///
 /// API version used: 7.1 (Azure DevOps Services).
 /// </summary>
-internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
+internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
 {
     private readonly HttpClient _http;
     private readonly AzureDevOpsBoardsOptions _options;
+    private readonly ILogger<AzureDevOpsBoardsClient> _logger;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -45,10 +47,11 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         "System.WorkItemType",
     ];
 
-    public AzureDevOpsBoardsClient(HttpClient http, AzureDevOpsBoardsOptions options)
+    public AzureDevOpsBoardsClient(HttpClient http, AzureDevOpsBoardsOptions options, ILogger<AzureDevOpsBoardsClient> logger)
     {
         _http = http;
         _options = options;
+        _logger = logger;
 
         // Configure the base address from options
         if (!string.IsNullOrWhiteSpace(options.BaseUrl))
@@ -436,8 +439,21 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                 $"{project}/_apis/wit/workitems/{workRef.ExternalId}?api-version=7.1",
                 cancellationToken);
 
+            // [rework_reactivate_get] — structured log for the tag-read GET.
+            // Lets an operator confirm whether the GET is succeeding and whether
+            // System.Tags is present in the response.
+            var tagsPresent = false;
+            int? getRev = null;
+            int tagCount = 0;
+
             if (!getResponse.IsSuccessStatusCode)
             {
+                Log.ReworkReactivateGetFailed(
+                    _logger,
+                    workRef.ExternalId,
+                    (int)getResponse.StatusCode,
+                    getResponse.ReasonPhrase ?? "(no reason phrase)");
+
                 // Load-bearing GET failed — abort the PATCH entirely.
                 // Returning false so the caller (e.g. reactivation) knows the
                 // tag operations were NOT applied.
@@ -455,6 +471,8 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                            && freshRevEl.TryGetInt32(out var freshRevInt)
                 ? freshRevInt.ToString(CultureInfo.InvariantCulture)
                 : null;
+            if (!string.IsNullOrWhiteSpace(freshRev))
+                getRev = int.Parse(freshRev, CultureInfo.InvariantCulture);
 
             var currentTags = string.Empty;
             if (getDoc.RootElement.TryGetProperty("fields", out var fields)
@@ -462,11 +480,21 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                 && tagsEl.ValueKind == JsonValueKind.String)
             {
                 currentTags = tagsEl.GetString() ?? string.Empty;
+                tagsPresent = true;
             }
 
             var existingTags = currentTags
                 .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            tagCount = existingTags.Count;
+
+            Log.ReworkReactivateGet(
+                _logger,
+                workRef.ExternalId,
+                (int)getResponse.StatusCode,
+                tagsPresent,
+                getRev,
+                tagCount);
 
             // Remove matching tags (supports exact match and prefix:* wildcard).
             foreach (var tagToRemove in status.RemovedTags)
@@ -533,6 +561,20 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             request.Headers.TryAddWithoutValidation("If-Match", ifMatchRev);
         }
 
+        // [rework_reactivate_patch] — structured log for the PATCH submission.
+        // Lets an operator confirm the rev used for If-Match, the RemovedTags set,
+        // the Tags set, and the target state.
+        if (status.RemovedTags is { Count: > 0 })
+        {
+            Log.ReworkReactivatePatch(
+                _logger,
+                workRef.ExternalId,
+                ifMatchRev,
+                status.RemovedTags,
+                status.Tags,
+                status.Status);
+        }
+
         var response = await _http.SendAsync(request, cancellationToken);
 
         // 412 Precondition Failed: concurrent modification.
@@ -543,6 +585,12 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         {
             if (status.RemovedTags is { Count: > 0 })
             {
+                var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                Log.ReworkReactivatePatchFailed(
+                    _logger,
+                    workRef.ExternalId,
+                    (int)response.StatusCode,
+                    Truncate(errorBody, 200));
                 return false;
             }
             // Best-effort status projection: concurrent modification is not fatal.
@@ -551,6 +599,15 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
 
         if (!response.IsSuccessStatusCode)
         {
+            if (status.RemovedTags is { Count: > 0 })
+            {
+                var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                Log.ReworkReactivatePatchFailed(
+                    _logger,
+                    workRef.ExternalId,
+                    (int)response.StatusCode,
+                    Truncate(errorBody, 200));
+            }
             return false;
         }
 
@@ -1453,5 +1510,59 @@ internal sealed class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Source-generated structured log markers for the reactivation PATCH flow.
+    /// Stable log marker strings ([rework_reactivate_*]) allow operators to
+    /// confirm whether the tag-read GET is succeeding, whether the tag op is
+    /// present in the PATCH, and whether ADO accepted it.
+    /// </summary>
+    private static partial class Log
+    {
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "[rework_reactivate_get] WorkItem={WorkItemId} Status={StatusCode} " +
+                      "TagsPresent={TagsPresent} Rev={Rev} TagCount={TagCount}")]
+        public static partial void ReworkReactivateGet(
+            ILogger logger,
+            string workItemId,
+            int statusCode,
+            bool tagsPresent,
+            int? rev,
+            int tagCount);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "[rework_reactivate_get_failed] WorkItem={WorkItemId} " +
+                      "Status={StatusCode} Reason={Reason} — aborting PATCH (load-bearing GET failed)")]
+        public static partial void ReworkReactivateGetFailed(
+            ILogger logger,
+            string workItemId,
+            int statusCode,
+            string reason);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "[rework_reactivate_patch] WorkItem={WorkItemId} " +
+                      "IfMatchRev={IfMatchRev} RemovedTags={RemovedTags} " +
+                      "Tags={Tags} State={State}")]
+        public static partial void ReworkReactivatePatch(
+            ILogger logger,
+            string workItemId,
+            string? ifMatchRev,
+            IReadOnlyList<string>? removedTags,
+            IReadOnlyList<string>? tags,
+            string? state);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "[rework_reactivate_patch_failed] WorkItem={WorkItemId} " +
+                      "Status={StatusCode} Error={Error}")]
+        public static partial void ReworkReactivatePatchFailed(
+            ILogger logger,
+            string workItemId,
+            int statusCode,
+            string error);
     }
 }

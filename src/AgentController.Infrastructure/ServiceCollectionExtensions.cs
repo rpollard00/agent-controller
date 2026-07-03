@@ -386,7 +386,8 @@ public static class AgentControllerServiceCollectionExtensions
             }
 
             var http = new HttpClient();
-            return new AzureDevOpsBoardsClient(http, boardsOptions);
+            var logger = sp.GetRequiredService<ILogger<AzureDevOpsBoardsClient>>();
+            return new AzureDevOpsBoardsClient(http, boardsOptions, logger);
         });
 
         // Register the work source implementation as singleton.

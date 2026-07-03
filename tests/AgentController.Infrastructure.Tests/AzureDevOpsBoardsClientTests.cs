@@ -6,6 +6,7 @@ using System.Text.Json;
 using AgentController.Application;
 using AgentController.Domain;
 using AgentController.Infrastructure.Options;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AgentController.Infrastructure.Tests;
 
@@ -45,7 +46,7 @@ public class AzureDevOpsBoardsClientTests
         http.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
 
-        return new AzureDevOpsBoardsClient(http, options);
+        return new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
     }
 
     /// <summary>
@@ -81,7 +82,7 @@ public class AzureDevOpsBoardsClientTests
         http.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
 
-        return new AzureDevOpsBoardsClient(http, options);
+        return new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
     }
 
     /// <summary>
@@ -105,7 +106,7 @@ public class AzureDevOpsBoardsClientTests
         http.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
 
-        return new AzureDevOpsBoardsClient(http, options);
+        return new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
     }
 
     // ──────────────────────────────────────────────
@@ -677,7 +678,7 @@ public class AzureDevOpsBoardsClientTests
             Project = Project,
             PersonalAccessToken = "test-pat",
         };
-        var client = new AzureDevOpsBoardsClient(http, options);
+        var client = new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
 
         var parameters = new BoardsQueryParameters
         {
@@ -736,7 +737,7 @@ public class AzureDevOpsBoardsClientTests
             Project = Project,
             PersonalAccessToken = "test-pat",
         };
-        var client = new AzureDevOpsBoardsClient(http, options);
+        var client = new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
 
         // Use the same exclusion tags that WorkSourceOptions defaults to
         var parameters = new BoardsQueryParameters
@@ -781,7 +782,7 @@ public class AzureDevOpsBoardsClientTests
             Project = null, // No project configured
             PersonalAccessToken = "test-pat",
         };
-        var client = new AzureDevOpsBoardsClient(http, options);
+        var client = new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             client.QueryWorkItemsAsync(new BoardsQueryParameters(), CancellationToken.None));
@@ -810,7 +811,7 @@ public class AzureDevOpsBoardsClientTests
             Project = Project,
             PersonalAccessToken = "bad-pat",
         };
-        var client = new AzureDevOpsBoardsClient(http, options);
+        var client = new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
 
         var parameters = new BoardsQueryParameters { Project = Project };
         await Assert.ThrowsAsync<HttpRequestException>(() =>
@@ -1084,7 +1085,7 @@ public class AzureDevOpsBoardsClientTests
             Project = Project,
             PersonalAccessToken = "test-pat",
         };
-        var client = new AzureDevOpsBoardsClient(http, options);
+        var client = new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
 
         var workRef = new ExternalWorkRef
         {
@@ -1153,7 +1154,7 @@ public class AzureDevOpsBoardsClientTests
             Project = Project,
             PersonalAccessToken = "test-pat",
         };
-        var client = new AzureDevOpsBoardsClient(http, options);
+        var client = new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
 
         var workRef = new ExternalWorkRef
         {
@@ -1199,7 +1200,7 @@ public class AzureDevOpsBoardsClientTests
             Project = Project,
             PersonalAccessToken = "test-pat",
         };
-        var client = new AzureDevOpsBoardsClient(http, options);
+        var client = new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
 
         var workRef = new ExternalWorkRef
         {
@@ -1242,7 +1243,7 @@ public class AzureDevOpsBoardsClientTests
             Project = Project,
             PersonalAccessToken = "test-pat",
         };
-        var client = new AzureDevOpsBoardsClient(http, options);
+        var client = new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
 
         var workRef = new ExternalWorkRef
         {
@@ -1310,7 +1311,7 @@ public class AzureDevOpsBoardsClientTests
             Project = Project,
             PersonalAccessToken = "test-pat",
         };
-        var client = new AzureDevOpsBoardsClient(http, options);
+        var client = new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
 
         var workRef = new ExternalWorkRef
         {
@@ -1391,7 +1392,7 @@ public class AzureDevOpsBoardsClientTests
             Project = Project,
             PersonalAccessToken = "test-pat",
         };
-        var client = new AzureDevOpsBoardsClient(http, options);
+        var client = new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
 
         var workRef = new ExternalWorkRef
         {
@@ -1468,7 +1469,7 @@ public class AzureDevOpsBoardsClientTests
             Project = Project,
             PersonalAccessToken = "test-pat",
         };
-        var client = new AzureDevOpsBoardsClient(http, options);
+        var client = new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
 
         var workRef = new ExternalWorkRef
         {
@@ -1545,7 +1546,7 @@ public class AzureDevOpsBoardsClientTests
             Project = Project,
             PersonalAccessToken = "test-pat",
         };
-        var client = new AzureDevOpsBoardsClient(http, options);
+        var client = new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
 
         var workRef = new ExternalWorkRef
         {
@@ -1625,7 +1626,7 @@ public class AzureDevOpsBoardsClientTests
             Project = Project,
             PersonalAccessToken = "test-pat",
         };
-        var client = new AzureDevOpsBoardsClient(http, options);
+        var client = new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
 
         var workRef = new ExternalWorkRef
         {
@@ -1708,7 +1709,7 @@ public class AzureDevOpsBoardsClientTests
             Project = Project,
             PersonalAccessToken = "test-pat",
         };
-        var client = new AzureDevOpsBoardsClient(http, options);
+        var client = new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
 
         var workRef = new ExternalWorkRef
         {
@@ -1800,7 +1801,7 @@ public class AzureDevOpsBoardsClientTests
             Project = Project,
             PersonalAccessToken = "test-pat",
         };
-        var client = new AzureDevOpsBoardsClient(http, options);
+        var client = new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
 
         var workRef = new ExternalWorkRef
         {
@@ -1881,7 +1882,7 @@ public class AzureDevOpsBoardsClientTests
             Project = Project,
             PersonalAccessToken = "test-pat",
         };
-        var client = new AzureDevOpsBoardsClient(http, options);
+        var client = new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
 
         var workRef = new ExternalWorkRef
         {
@@ -1947,7 +1948,7 @@ public class AzureDevOpsBoardsClientTests
             Project = Project,
             PersonalAccessToken = "test-pat",
         };
-        var client = new AzureDevOpsBoardsClient(http, options);
+        var client = new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
 
         var workRef = new ExternalWorkRef
         {
@@ -1989,7 +1990,7 @@ public class AzureDevOpsBoardsClientTests
             Project = Project,
             PersonalAccessToken = "test-pat",
         };
-        var client = new AzureDevOpsBoardsClient(http, options);
+        var client = new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
 
         var workRef = new ExternalWorkRef
         {
@@ -2591,7 +2592,7 @@ public class AzureDevOpsBoardsClientTests
             Project = string.Empty, // Empty project
             PersonalAccessToken = "test-pat",
         };
-        var emptyClient = new AzureDevOpsBoardsClient(http, options);
+        var emptyClient = new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
 
         var comments = await emptyClient.GetCommentsAsync(workRef, 50, CancellationToken.None);
 

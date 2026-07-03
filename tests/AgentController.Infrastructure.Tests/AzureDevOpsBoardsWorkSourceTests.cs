@@ -7,6 +7,7 @@ using AgentController.Domain;
 using AgentController.Infrastructure;
 using AgentController.Infrastructure.Options;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace AgentController.Infrastructure.Tests;
@@ -579,7 +580,7 @@ public class AzureDevOpsBoardsWorkSourceTests
         http.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
 
-        return new AzureDevOpsBoardsClient(http, options);
+        return new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
     }
 
     /// <summary>
