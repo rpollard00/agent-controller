@@ -59,6 +59,18 @@ public static class ServiceCollectionExtensions
             >,
             DeleteAzureDevOpsEnvironmentCommandHandler
         >();
+        services.AddScoped<
+            ICommandHandler<CreateRuntimeEnvironmentCommand, RuntimeEnvironmentOperationResult>,
+            CreateRuntimeEnvironmentCommandHandler
+        >();
+        services.AddScoped<
+            ICommandHandler<UpdateRuntimeEnvironmentCommand, RuntimeEnvironmentOperationResult>,
+            UpdateRuntimeEnvironmentCommandHandler
+        >();
+        services.AddScoped<
+            ICommandHandler<DeleteRuntimeEnvironmentCommand, RuntimeEnvironmentOperationResult>,
+            DeleteRuntimeEnvironmentCommandHandler
+        >();
 
         // Query handlers
         services.AddScoped<
@@ -99,6 +111,14 @@ public static class ServiceCollectionExtensions
                 AzureDevOpsEnvironmentOperationResult
             >,
             GetAzureDevOpsEnvironmentByKeyQueryHandler
+        >();
+        services.AddScoped<
+            IQueryHandler<ListRuntimeEnvironmentsQuery, IReadOnlyList<RuntimeEnvironmentProfile>>,
+            ListRuntimeEnvironmentsQueryHandler
+        >();
+        services.AddScoped<
+            IQueryHandler<GetRuntimeEnvironmentByKeyQuery, RuntimeEnvironmentOperationResult>,
+            GetRuntimeEnvironmentByKeyQueryHandler
         >();
 
         return services;
