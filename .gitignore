@@ -23,6 +23,11 @@ coverage/
 *.coveragexml
 coveragereport/
 
+# Web UI dependencies and build output
+**/node_modules/
+**/dist/
+**/.vite/
+
 # IDE files
 .vs/
 .vscode/
