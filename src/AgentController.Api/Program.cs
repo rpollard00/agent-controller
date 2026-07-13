@@ -14,7 +14,8 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.Converters.Add(
-        new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
+        new JsonStringEnumConverter(JsonNamingPolicy.CamelCase)
+    );
 });
 
 // Register configuration options with validation-on-start
@@ -44,9 +45,12 @@ builder.Services.AddApplicationHandlers();
 // The last-registered implementation for each interface wins.
 builder.Services.AddAgentControllerNoOpProviders();
 
-var workSourceProvider = builder.Configuration.GetValue<string>("workSource:provider") ?? "LocalFake";
-var sourceControlProvider = builder.Configuration.GetValue<string>("sourceControl:provider") ?? string.Empty;
-var envProvider = builder.Configuration.GetValue<string>("environmentProvider:provider") ?? string.Empty;
+var workSourceProvider =
+    builder.Configuration.GetValue<string>("workSource:provider") ?? "LocalFake";
+var sourceControlProvider =
+    builder.Configuration.GetValue<string>("sourceControl:provider") ?? string.Empty;
+var envProvider =
+    builder.Configuration.GetValue<string>("environmentProvider:provider") ?? string.Empty;
 var runtimeProvider = builder.Configuration.GetValue<string>("runtime:provider") ?? string.Empty;
 
 // Work source (required — always override the no-op)
@@ -84,6 +88,7 @@ else if (runtimeProvider.Equals("PiMateria", StringComparison.OrdinalIgnoreCase)
 {
     builder.Services.AddAgentControllerPiMateriaRuntime();
 }
+
 // ── End provider wiring ───────────────────────────────────────
 
 // Register the background polling worker (disabled by default via agentController.workerEnabled).
@@ -101,6 +106,7 @@ builder.Services.AddAgentControllerFeedback(builder.Configuration);
 // the Infrastructure extension has wired the source and pipeline.
 // The worker checks FeedbackOptions.Enabled at runtime.
 builder.Services.AddHostedService<FeedbackPollingWorker>();
+
 // ── End feedback pipeline wiring ──────────────────────────────
 
 var app = builder.Build();
@@ -110,5 +116,6 @@ app.MapWorkItemEndpoints();
 app.MapRunEndpoints();
 app.MapRuntimeEventEndpoints();
 app.MapAzureDevOpsDiagnosticEndpoints();
+app.MapWebUiControllers();
 
 app.Run();

@@ -1,0 +1,458 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using AgentController.Infrastructure.Data;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+
+namespace AgentController.Api.Tests;
+
+/// <summary>End-to-end coverage for the managed-profile web UI API.</summary>
+[System.Diagnostics.CodeAnalysis.SuppressMessage(
+    "Design",
+    "CA1001:Types that own disposable fields should be disposable",
+    Justification = "IAsyncLifetime.DisposeAsync disposes all owned fields."
+)]
+public sealed class WebUiControllerTests : IAsyncLifetime
+{
+    private string _databasePath = null!;
+    private WebUiApiFactory _factory = null!;
+    private HttpClient _client = null!;
+
+    public async Task InitializeAsync()
+    {
+        _databasePath = Path.Combine(
+            Path.GetTempPath(),
+            $"agent-controller-webui-{Guid.NewGuid():N}.db"
+        );
+        _factory = new WebUiApiFactory(_databasePath);
+
+        using var scope = _factory.Services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
+        await database.Database.EnsureCreatedAsync();
+
+        _client = _factory.CreateClient();
+    }
+
+    public Task DisposeAsync()
+    {
+        _client.Dispose();
+        _factory.Dispose();
+
+        DeleteDatabaseFile(_databasePath);
+        DeleteDatabaseFile($"{_databasePath}-shm");
+        DeleteDatabaseFile($"{_databasePath}-wal");
+        return Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task RepositoryEndpoints_SupportEveryVerbAndProblemDetails()
+    {
+        var profile = new
+        {
+            key = " Web.Repo ",
+            cloneUrl = " https://example.test/org/repo.git ",
+            defaultBranch = " main ",
+            transport = "httpsPat",
+            allowedPaths = new[] { " src/AgentController.Api ", "tests" },
+        };
+
+        using var createResponse = await _client.PostAsJsonAsync(
+            "/api/webui/repositories",
+            profile
+        );
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+        Assert.Equal(
+            "/api/webui/repositories/web.repo",
+            createResponse.Headers.Location?.ToString()
+        );
+        var created = await ReadJsonAsync(createResponse);
+        Assert.Equal("web.repo", created.GetProperty("key").GetString());
+        Assert.Equal("src/AgentController.Api", created.GetProperty("allowedPaths")[0].GetString());
+
+        using var duplicateResponse = await _client.PostAsJsonAsync(
+            "/api/webui/repositories",
+            profile
+        );
+        await AssertProblemAsync(duplicateResponse, HttpStatusCode.Conflict, "Resource conflict.");
+
+        using var listResponse = await _client.GetAsync("/api/webui/repositories");
+        Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
+        var repositories = await ReadJsonAsync(listResponse);
+        Assert.Contains(
+            repositories.EnumerateArray(),
+            repository => repository.GetProperty("key").GetString() == "web.repo"
+        );
+
+        using var getResponse = await _client.GetAsync("/api/webui/repositories/WEB.REPO");
+        Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
+        var repository = await ReadJsonAsync(getResponse);
+        Assert.Equal("web.repo", repository.GetProperty("key").GetString());
+
+        var update = new
+        {
+            key = "web.repo",
+            cloneUrl = "https://example.test/org/repo.git",
+            defaultBranch = "develop",
+            transport = "httpsPat",
+            allowedPaths = new[] { "src" },
+        };
+        using var updateResponse = await _client.PutAsJsonAsync(
+            "/api/webui/repositories/web.repo",
+            update
+        );
+        Assert.Equal(HttpStatusCode.OK, updateResponse.StatusCode);
+        var updated = await ReadJsonAsync(updateResponse);
+        Assert.Equal("develop", updated.GetProperty("defaultBranch").GetString());
+
+        using var validationResponse = await _client.PostAsJsonAsync(
+            "/api/webui/repositories",
+            new
+            {
+                key = "",
+                cloneUrl = "",
+                defaultBranch = "",
+            }
+        );
+        var validationProblem = await AssertProblemAsync(
+            validationResponse,
+            HttpStatusCode.BadRequest,
+            "Validation failed."
+        );
+        Assert.True(validationProblem.GetProperty("errors").TryGetProperty("key", out _));
+
+        using var deleteResponse = await _client.DeleteAsync("/api/webui/repositories/web.repo");
+        Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
+
+        using var missingResponse = await _client.GetAsync("/api/webui/repositories/web.repo");
+        await AssertProblemAsync(missingResponse, HttpStatusCode.NotFound, "Resource not found.");
+    }
+
+    [Fact]
+    public async Task AzureDevOpsEnvironmentEndpoints_SupportEveryVerbAndRedactCredentials()
+    {
+        const string credentialValue = "ado-secret-that-must-never-be-returned";
+        const string credentialVariable = "WEBUI_TEST_ADO_PAT";
+        Environment.SetEnvironmentVariable(credentialVariable, credentialValue);
+        try
+        {
+            var profile = new
+            {
+                key = " ADO.Main ",
+                displayName = " Main Azure DevOps ",
+                enabled = true,
+                organizationUrl = "https://dev.azure.com/example/",
+                project = "Agent Controller",
+                workItemType = "User Story",
+                eligibleTags = new[] { "agent-ready" },
+                excludedTags = new[] { "agent-active" },
+                eligibleStates = new[] { "New" },
+                excludedStates = new[] { "Closed" },
+                activeState = "Active",
+                completedState = "Resolved",
+                patEnvironmentVariable = credentialVariable,
+                personalAccessToken = credentialValue,
+            };
+
+            using var createResponse = await _client.PostAsJsonAsync(
+                "/api/webui/ado-environments",
+                profile
+            );
+            Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+            Assert.Equal(
+                "/api/webui/ado-environments/ado.main",
+                createResponse.Headers.Location?.ToString()
+            );
+            await AssertCredentialRedactedAsync(createResponse, credentialValue);
+
+            using var duplicateResponse = await _client.PostAsJsonAsync(
+                "/api/webui/ado-environments",
+                profile
+            );
+            await AssertProblemAsync(
+                duplicateResponse,
+                HttpStatusCode.Conflict,
+                "Resource conflict."
+            );
+            await AssertCredentialRedactedAsync(duplicateResponse, credentialValue);
+
+            using var listResponse = await _client.GetAsync("/api/webui/ado-environments");
+            Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
+            var listBody = await AssertCredentialRedactedAsync(listResponse, credentialValue);
+            using var listJson = JsonDocument.Parse(listBody);
+            Assert.Contains(
+                listJson.RootElement.EnumerateArray(),
+                environment => environment.GetProperty("key").GetString() == "ado.main"
+            );
+
+            using var getResponse = await _client.GetAsync("/api/webui/ado-environments/ADO.MAIN");
+            Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
+            var getBody = await AssertCredentialRedactedAsync(getResponse, credentialValue);
+            using var getJson = JsonDocument.Parse(getBody);
+            Assert.Equal(
+                credentialVariable,
+                getJson.RootElement.GetProperty("patEnvironmentVariable").GetString()
+            );
+            Assert.False(getJson.RootElement.TryGetProperty("personalAccessToken", out _));
+
+            var update = new
+            {
+                key = "ado.main",
+                displayName = "Updated Azure DevOps",
+                enabled = false,
+                organizationUrl = "https://dev.azure.com/example",
+                project = "Agent Controller",
+                workItemType = "Bug",
+                eligibleTags = new[] { "agent-ready" },
+                excludedTags = Array.Empty<string>(),
+                eligibleStates = new[] { "New" },
+                excludedStates = new[] { "Closed" },
+                activeState = "Active",
+                completedState = "Resolved",
+                patEnvironmentVariable = credentialVariable,
+                personalAccessToken = credentialValue,
+            };
+            using var updateResponse = await _client.PutAsJsonAsync(
+                "/api/webui/ado-environments/ado.main",
+                update
+            );
+            Assert.Equal(HttpStatusCode.OK, updateResponse.StatusCode);
+            var updateBody = await AssertCredentialRedactedAsync(updateResponse, credentialValue);
+            using var updateJson = JsonDocument.Parse(updateBody);
+            Assert.Equal(
+                "Updated Azure DevOps",
+                updateJson.RootElement.GetProperty("displayName").GetString()
+            );
+            Assert.False(updateJson.RootElement.GetProperty("enabled").GetBoolean());
+
+            using var deleteResponse = await _client.DeleteAsync(
+                "/api/webui/ado-environments/ado.main"
+            );
+            Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
+
+            using var missingResponse = await _client.GetAsync(
+                "/api/webui/ado-environments/ado.main"
+            );
+            await AssertProblemAsync(
+                missingResponse,
+                HttpStatusCode.NotFound,
+                "Resource not found."
+            );
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(credentialVariable, null);
+        }
+    }
+
+    [Fact]
+    public async Task RuntimeEnvironmentEndpoints_SupportEveryVerbAndRedactCredentialValues()
+    {
+        const string credentialValue = "runtime-secret-that-must-never-be-returned";
+        const string credentialVariable = "WEBUI_TEST_RUNTIME_TOKEN";
+        Environment.SetEnvironmentVariable(credentialVariable, credentialValue);
+        try
+        {
+            var profile = new
+            {
+                key = " Runtime.Local ",
+                displayName = " Local Runtime ",
+                enabled = true,
+                environmentProvider = "localworkspace",
+                environmentSettings = new { workspaceRoot = "/tmp/agent-workspaces" },
+                runtimeProvider = "mockpimateria",
+                runtimeSettings = new
+                {
+                    piExecutablePath = (string?)null,
+                    controllerBaseUrl = (string?)null,
+                    ptyWrapperPath = (string?)null,
+                    ptyWrapperArgs = (string?)null,
+                    loadouts = new { newWork = "ADO-Build-NewWork", rework = "ADO-Build-Rework" },
+                    forwardEnvironmentVariables = new Dictionary<string, string>
+                    {
+                        ["RUNTIME_TOKEN"] = credentialVariable,
+                    },
+                    environmentVariableValues = new Dictionary<string, string>
+                    {
+                        ["RUNTIME_TOKEN"] = credentialValue,
+                    },
+                },
+            };
+
+            using var createResponse = await _client.PostAsJsonAsync(
+                "/api/webui/runtime-environments",
+                profile
+            );
+            Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+            Assert.Equal(
+                "/api/webui/runtime-environments/runtime.local",
+                createResponse.Headers.Location?.ToString()
+            );
+            await AssertCredentialRedactedAsync(createResponse, credentialValue);
+
+            using var duplicateResponse = await _client.PostAsJsonAsync(
+                "/api/webui/runtime-environments",
+                profile
+            );
+            await AssertProblemAsync(
+                duplicateResponse,
+                HttpStatusCode.Conflict,
+                "Resource conflict."
+            );
+            await AssertCredentialRedactedAsync(duplicateResponse, credentialValue);
+
+            using var listResponse = await _client.GetAsync("/api/webui/runtime-environments");
+            Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
+            var listBody = await AssertCredentialRedactedAsync(listResponse, credentialValue);
+            using var listJson = JsonDocument.Parse(listBody);
+            Assert.Contains(
+                listJson.RootElement.EnumerateArray(),
+                environment => environment.GetProperty("key").GetString() == "runtime.local"
+            );
+
+            using var getResponse = await _client.GetAsync(
+                "/api/webui/runtime-environments/RUNTIME.LOCAL"
+            );
+            Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
+            var getBody = await AssertCredentialRedactedAsync(getResponse, credentialValue);
+            using var getJson = JsonDocument.Parse(getBody);
+            var runtimeSettings = getJson.RootElement.GetProperty("runtimeSettings");
+            Assert.Equal(
+                credentialVariable,
+                runtimeSettings
+                    .GetProperty("forwardEnvironmentVariables")
+                    .GetProperty("RUNTIME_TOKEN")
+                    .GetString()
+            );
+            Assert.False(runtimeSettings.TryGetProperty("environmentVariableValues", out _));
+
+            var update = new
+            {
+                key = "runtime.local",
+                displayName = "Updated Local Runtime",
+                enabled = false,
+                environmentProvider = "LocalWorkspace",
+                environmentSettings = new { workspaceRoot = "/tmp/updated-workspaces" },
+                runtimeProvider = "MockPiMateria",
+                runtimeSettings = new
+                {
+                    piExecutablePath = (string?)null,
+                    controllerBaseUrl = (string?)null,
+                    ptyWrapperPath = (string?)null,
+                    ptyWrapperArgs = (string?)null,
+                    loadouts = new { newWork = "updated-new-work", rework = "updated-rework" },
+                    forwardEnvironmentVariables = new Dictionary<string, string>
+                    {
+                        ["RUNTIME_TOKEN"] = credentialVariable,
+                    },
+                    environmentVariableValues = new Dictionary<string, string>
+                    {
+                        ["RUNTIME_TOKEN"] = credentialValue,
+                    },
+                },
+            };
+            using var updateResponse = await _client.PutAsJsonAsync(
+                "/api/webui/runtime-environments/runtime.local",
+                update
+            );
+            Assert.Equal(HttpStatusCode.OK, updateResponse.StatusCode);
+            var updateBody = await AssertCredentialRedactedAsync(updateResponse, credentialValue);
+            using var updateJson = JsonDocument.Parse(updateBody);
+            Assert.Equal(
+                "Updated Local Runtime",
+                updateJson.RootElement.GetProperty("displayName").GetString()
+            );
+            Assert.False(updateJson.RootElement.GetProperty("enabled").GetBoolean());
+
+            using var deleteResponse = await _client.DeleteAsync(
+                "/api/webui/runtime-environments/runtime.local"
+            );
+            Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
+
+            using var missingResponse = await _client.GetAsync(
+                "/api/webui/runtime-environments/runtime.local"
+            );
+            await AssertProblemAsync(
+                missingResponse,
+                HttpStatusCode.NotFound,
+                "Resource not found."
+            );
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(credentialVariable, null);
+        }
+    }
+
+    private static async Task<JsonElement> ReadJsonAsync(HttpResponseMessage response) =>
+        await response.Content.ReadFromJsonAsync<JsonElement>();
+
+    private static async Task<JsonElement> AssertProblemAsync(
+        HttpResponseMessage response,
+        HttpStatusCode expectedStatus,
+        string expectedTitle
+    )
+    {
+        Assert.Equal(expectedStatus, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+
+        var problem = await ReadJsonAsync(response);
+        Assert.Equal((int)expectedStatus, problem.GetProperty("status").GetInt32());
+        Assert.Equal(expectedTitle, problem.GetProperty("title").GetString());
+        return problem;
+    }
+
+    private static async Task<string> AssertCredentialRedactedAsync(
+        HttpResponseMessage response,
+        string credentialValue
+    )
+    {
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain(credentialValue, body, StringComparison.Ordinal);
+        return body;
+    }
+
+    private static void DeleteDatabaseFile(string path)
+    {
+        if (File.Exists(path))
+        {
+            File.Delete(path);
+        }
+    }
+
+    private sealed class WebUiApiFactory(string databasePath) : SilentWebApplicationFactory
+    {
+        protected override void ConfigureWebHost(IWebHostBuilder builder)
+        {
+            base.ConfigureWebHost(builder);
+            builder.ConfigureAppConfiguration(
+                (_, configuration) =>
+                    configuration.AddInMemoryCollection(
+                        new Dictionary<string, string?>
+                        {
+                            ["agentController:workerEnabled"] = "false",
+                            ["workSource:provider"] = "LocalFake",
+                            ["sourceControl:provider"] = "NoOp",
+                            ["environmentProvider:provider"] = "NoOp",
+                            ["runtime:provider"] = "NoOp",
+                            ["feedback:enabled"] = "false",
+                            ["feedback:provider"] = "None",
+                        }
+                    )
+            );
+            builder.ConfigureServices(services =>
+            {
+                services.RemoveAll<AgentControllerDbContext>();
+                services.RemoveAll<DbContextOptions<AgentControllerDbContext>>();
+                services.RemoveAll<IDbContextOptionsConfiguration<AgentControllerDbContext>>();
+                services.AddDbContext<AgentControllerDbContext>(options =>
+                    options.UseSqlite($"Data Source={databasePath}")
+                );
+            });
+        }
+    }
+}
