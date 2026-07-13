@@ -8,7 +8,28 @@
     <RootNamespace>AgentController.Api</RootNamespace>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <WebUiRoot>$(MSBuildProjectDirectory)/../AgentController.WebUi/</WebUiRoot>
   </PropertyGroup>
+
+  <Target
+    Name="PublishWebUi"
+    AfterTargets="ComputeFilesToPublish"
+    Condition="'$(SkipWebUiBuild)' != 'true'"
+  >
+    <Exec WorkingDirectory="$(WebUiRoot)" Command="npm ci" />
+    <Exec WorkingDirectory="$(WebUiRoot)" Command="npm run build" />
+    <ItemGroup>
+      <WebUiDistFiles Include="$(WebUiRoot)dist/**/*" />
+      <ResolvedFileToPublish
+        Include="@(WebUiDistFiles->'%(FullPath)')"
+        Exclude="@(ResolvedFileToPublish)"
+      >
+        <RelativePath>wwwroot/%(RecursiveDir)%(Filename)%(Extension)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <InternalsVisibleTo Include="AgentController.Api.Tests" />

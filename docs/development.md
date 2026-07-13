@@ -3,6 +3,7 @@
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
+- [Node.js](https://nodejs.org/) with npm
 
 ## Tooling
 
@@ -39,11 +40,49 @@ dotnet run --project src/AgentController.AppHost
 ```
 
 The Aspire AppHost orchestrates startup: migrations run to completion first,
-then the API starts. The Aspire dashboard shows logs, traces, and metrics for
-both projects. When running outside Aspire, start the API directly:
+then the API and the Vite development server start. The Web UI waits for and
+proxies `/api` requests to the API through its Aspire service reference. The
+Aspire dashboard shows logs, traces, and metrics for all three resources.
+
+To run without Aspire, start the API and Web UI in separate terminals:
 
 ```bash
-dotnet run --project src/AgentController.Api
+# terminal 1 (the Vite proxy defaults to this HTTP endpoint)
+dotnet run --project src/AgentController.Api --launch-profile http
+
+# terminal 2
+cd src/AgentController.WebUi
+npm ci
+npm run dev
+```
+
+Set `API_URL` before `npm run dev` to proxy `/api` to a different API endpoint.
+
+## Production Web UI
+
+Publishing the API performs a clean Web UI dependency install and production
+build, then includes the generated Vite assets in the API's `wwwroot` output:
+
+```bash
+dotnet publish src/AgentController.Api -c Release -o ./publish
+dotnet ./publish/AgentController.Api.dll
+```
+
+The published host serves static assets and falls back to `index.html` for
+client-side routes. Existing controller routes take precedence, and unknown
+`/api` routes remain 404 responses. Set the MSBuild property
+`SkipWebUiBuild=true` only when intentionally publishing the API without Web UI
+assets.
+
+For a standalone frontend build or preview:
+
+```bash
+cd src/AgentController.WebUi
+npm ci
+npm run check
+npm test
+npm run build
+npm run preview
 ```
 
 ## Test
@@ -106,6 +145,7 @@ src/
   AgentController.Infrastructure/  Provider implementations (no-op by default)
   AgentController.Migrations/      EF Core migration runner (console)
   AgentController.ServiceDefaults/ Shared Aspire conventions (OTel, health, resilience)
+  AgentController.WebUi/           Svelte, TypeScript, Vite, and Tailwind Web UI
 tests/
   AgentController.Api.Tests/
   AgentController.Application.Tests/

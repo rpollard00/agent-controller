@@ -21,7 +21,14 @@ var builder = DistributedApplication.CreateBuilder(args);
 var migrations = builder.AddProject<AgentController_Migrations>("migrations");
 
 // API — ASP.NET Core web host.
-var _ = builder.AddProject<AgentController_Api>("api")
-.WaitForCompletion(migrations);
+var api = builder.AddProject<AgentController_Api>("api").WaitForCompletion(migrations);
+
+// Web UI — Vite development server. The API reference supplies API_HTTP for
+// Vite's /api proxy, and the wait keeps startup deterministic.
+var webUi = builder.AddViteApp("webui", "../AgentController.WebUi").WithReference(api).WaitFor(api);
+
+// In Aspire publish mode, the API owns the public production surface and receives
+// the Vite build output in its wwwroot directory.
+api.PublishWithContainerFiles(webUi, "wwwroot");
 
 builder.Build().Run();
