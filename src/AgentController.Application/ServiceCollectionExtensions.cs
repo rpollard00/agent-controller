@@ -18,15 +18,53 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddApplicationHandlers(this IServiceCollection services)
     {
         // Command handlers
-        services.AddScoped<ICommandHandler<CreateWorkItemCommand, WorkCandidate>, CreateWorkItemCommandHandler>();
-        services.AddScoped<ICommandHandler<IngestRuntimeEventCommand, IngestRuntimeEventResult>, IngestRuntimeEventCommandHandler>();
+        services.AddScoped<
+            ICommandHandler<CreateWorkItemCommand, WorkCandidate>,
+            CreateWorkItemCommandHandler
+        >();
+        services.AddScoped<
+            ICommandHandler<IngestRuntimeEventCommand, IngestRuntimeEventResult>,
+            IngestRuntimeEventCommandHandler
+        >();
+        services.AddScoped<
+            ICommandHandler<CreateRepositoryCommand, RepositoryOperationResult>,
+            CreateRepositoryCommandHandler
+        >();
+        services.AddScoped<
+            ICommandHandler<UpdateRepositoryCommand, RepositoryOperationResult>,
+            UpdateRepositoryCommandHandler
+        >();
+        services.AddScoped<
+            ICommandHandler<DeleteRepositoryCommand, RepositoryOperationResult>,
+            DeleteRepositoryCommandHandler
+        >();
 
         // Query handlers
-        services.AddScoped<IQueryHandler<ListWorkItemsQuery, IReadOnlyList<WorkCandidate>>, ListWorkItemsQueryHandler>();
-        services.AddScoped<IQueryHandler<GetWorkItemByIdQuery, WorkCandidate?>, GetWorkItemByIdQueryHandler>();
+        services.AddScoped<
+            IQueryHandler<ListWorkItemsQuery, IReadOnlyList<WorkCandidate>>,
+            ListWorkItemsQueryHandler
+        >();
+        services.AddScoped<
+            IQueryHandler<GetWorkItemByIdQuery, WorkCandidate?>,
+            GetWorkItemByIdQueryHandler
+        >();
         services.AddScoped<IQueryHandler<ListRunsQuery, RunListResult>, ListRunsQueryHandler>();
-        services.AddScoped<IQueryHandler<GetRunByIdQuery, RunDetailResult?>, GetRunByIdQueryHandler>();
-        services.AddScoped<IQueryHandler<RunAzureDevOpsDiagnosticQuery, AzureDevOpsDiagnosticResult>, RunAzureDevOpsDiagnosticQueryHandler>();
+        services.AddScoped<
+            IQueryHandler<GetRunByIdQuery, RunDetailResult?>,
+            GetRunByIdQueryHandler
+        >();
+        services.AddScoped<
+            IQueryHandler<RunAzureDevOpsDiagnosticQuery, AzureDevOpsDiagnosticResult>,
+            RunAzureDevOpsDiagnosticQueryHandler
+        >();
+        services.AddScoped<
+            IQueryHandler<ListRepositoriesQuery, IReadOnlyList<RepositoryProfile>>,
+            ListRepositoriesQueryHandler
+        >();
+        services.AddScoped<
+            IQueryHandler<GetRepositoryByKeyQuery, RepositoryOperationResult>,
+            GetRepositoryByKeyQueryHandler
+        >();
 
         return services;
     }
