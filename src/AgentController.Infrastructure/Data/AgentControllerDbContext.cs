@@ -6,8 +6,7 @@ namespace AgentController.Infrastructure.Data;
 
 /// <summary>
 /// EF Core database context for the Agent Work Controller.
-/// Owns all five Phase 1 tables: WorkItems, AgentRuns, Environments,
-/// LifecycleEvents, and Repositories.
+/// Owns run-scoped operational data and managed onboarding profiles.
 ///
 /// Entity configurations are applied via
 /// <see cref="OnModelCreating(ModelBuilder)"/> using
@@ -31,6 +30,8 @@ internal sealed class AgentControllerDbContext : DbContext
     public DbSet<EnvironmentEntity> Environments => Set<EnvironmentEntity>();
     public DbSet<LifecycleEventEntity> LifecycleEvents => Set<LifecycleEventEntity>();
     public DbSet<RepositoryEntity> Repositories => Set<RepositoryEntity>();
+    public DbSet<AzureDevOpsEnvironmentEntity> AzureDevOpsEnvironments =>
+        Set<AzureDevOpsEnvironmentEntity>();
     public DbSet<ReworkCycleEntity> ReworkCycles => Set<ReworkCycleEntity>();
     public DbSet<ReworkFeedbackEntity> ReworkFeedback => Set<ReworkFeedbackEntity>();
 
@@ -41,6 +42,7 @@ internal sealed class AgentControllerDbContext : DbContext
         modelBuilder.ApplyConfiguration(new EnvironmentEntityConfiguration());
         modelBuilder.ApplyConfiguration(new LifecycleEventEntityConfiguration());
         modelBuilder.ApplyConfiguration(new RepositoryEntityConfiguration());
+        modelBuilder.ApplyConfiguration(new AzureDevOpsEnvironmentEntityConfiguration());
         modelBuilder.ApplyConfiguration(new ReworkCycleEntityConfiguration());
         modelBuilder.ApplyConfiguration(new ReworkFeedbackEntityConfiguration());
     }
