@@ -38,6 +38,27 @@ public static class ServiceCollectionExtensions
             ICommandHandler<DeleteRepositoryCommand, RepositoryOperationResult>,
             DeleteRepositoryCommandHandler
         >();
+        services.AddScoped<
+            ICommandHandler<
+                CreateAzureDevOpsEnvironmentCommand,
+                AzureDevOpsEnvironmentOperationResult
+            >,
+            CreateAzureDevOpsEnvironmentCommandHandler
+        >();
+        services.AddScoped<
+            ICommandHandler<
+                UpdateAzureDevOpsEnvironmentCommand,
+                AzureDevOpsEnvironmentOperationResult
+            >,
+            UpdateAzureDevOpsEnvironmentCommandHandler
+        >();
+        services.AddScoped<
+            ICommandHandler<
+                DeleteAzureDevOpsEnvironmentCommand,
+                AzureDevOpsEnvironmentOperationResult
+            >,
+            DeleteAzureDevOpsEnvironmentCommandHandler
+        >();
 
         // Query handlers
         services.AddScoped<
@@ -64,6 +85,20 @@ public static class ServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<GetRepositoryByKeyQuery, RepositoryOperationResult>,
             GetRepositoryByKeyQueryHandler
+        >();
+        services.AddScoped<
+            IQueryHandler<
+                ListAzureDevOpsEnvironmentsQuery,
+                IReadOnlyList<AzureDevOpsEnvironmentProfile>
+            >,
+            ListAzureDevOpsEnvironmentsQueryHandler
+        >();
+        services.AddScoped<
+            IQueryHandler<
+                GetAzureDevOpsEnvironmentByKeyQuery,
+                AzureDevOpsEnvironmentOperationResult
+            >,
+            GetAzureDevOpsEnvironmentByKeyQueryHandler
         >();
 
         return services;
