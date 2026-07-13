@@ -17,6 +17,8 @@ public static class ServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddApplicationHandlers(this IServiceCollection services)
     {
+        services.AddScoped<IManagedProfileResolver, ManagedProfileResolver>();
+
         // Command handlers
         services.AddScoped<
             ICommandHandler<CreateWorkItemCommand, WorkCandidate>,

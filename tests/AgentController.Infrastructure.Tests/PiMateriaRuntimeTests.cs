@@ -268,7 +268,9 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         var content = await File.ReadAllTextAsync(capturePath);
         // The working directory should be the repo path.
         Assert.Contains("CWD=", content);
-        var cwdLine = content.Split('\n').FirstOrDefault(l => l.StartsWith("CWD=", StringComparison.Ordinal));
+        var cwdLine = content
+            .Split('\n')
+            .FirstOrDefault(l => l.StartsWith("CWD=", StringComparison.Ordinal));
         Assert.NotNull(cwdLine);
         Assert.Contains("repo", cwdLine!, StringComparison.OrdinalIgnoreCase);
 
@@ -353,10 +355,12 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         Assert.Equal(RunLifecycleState.Failed, run!.Status);
 
         var events = await _eventStore.ListByRunIdAsync(runId, CancellationToken.None);
-        Assert.Contains(events, e =>
-            e.EventType == RuntimeEventTypes.Failed &&
-            e.Message != null &&
-            e.Message.Contains("controllerBaseUrl", StringComparison.OrdinalIgnoreCase)
+        Assert.Contains(
+            events,
+            e =>
+                e.EventType == RuntimeEventTypes.Failed
+                && e.Message != null
+                && e.Message.Contains("controllerBaseUrl", StringComparison.OrdinalIgnoreCase)
         );
 
         runtime.Dispose();
@@ -394,8 +398,10 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         sw.Stop();
 
         // Should be nearly instant (no process to kill).
-        Assert.True(sw.ElapsedMilliseconds < 100,
-            $"CancelAsync should return quickly but took {sw.ElapsedMilliseconds}ms");
+        Assert.True(
+            sw.ElapsedMilliseconds < 100,
+            $"CancelAsync should return quickly but took {sw.ElapsedMilliseconds}ms"
+        );
 
         runtime.Dispose();
     }
@@ -414,8 +420,10 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         Assert.Equal(spec.RunId, handle.RunId);
 
         // Verify the session was registered via reflection on the private _sessions field.
-        var sessionsField = typeof(PiMateriaRuntime)
-            .GetField("_sessions", BindingFlags.NonPublic | BindingFlags.Instance);
+        var sessionsField = typeof(PiMateriaRuntime).GetField(
+            "_sessions",
+            BindingFlags.NonPublic | BindingFlags.Instance
+        );
         Assert.NotNull(sessionsField);
         var sessionsObj = sessionsField!.GetValue(runtime)!;
 
@@ -489,19 +497,26 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         // Write a wrapper script that captures its arguments and exits.
         var wrapperPath = Path.Combine(_tempRoot, "fake-wrapper.sh");
         var wrapperCapturePath = Path.Combine(_tempRoot, "wrapper-capture.txt");
-        var wrapperScript = $"#!/usr/bin/env bash" +
-            $"\necho \"WRAPPER_ARGS: $@\" > '{wrapperCapturePath}'" +
-            "\nexit 0\n";
+        var wrapperScript =
+            $"#!/usr/bin/env bash"
+            + $"\necho \"WRAPPER_ARGS: $@\" > '{wrapperCapturePath}'"
+            + "\nexit 0\n";
         File.WriteAllText(wrapperPath, wrapperScript);
         try
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("chmod", ["+x", wrapperPath])
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            })?.WaitForExit(2000);
+            System
+                .Diagnostics.Process.Start(
+                    new System.Diagnostics.ProcessStartInfo("chmod", ["+x", wrapperPath])
+                    {
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                    }
+                )
+                ?.WaitForExit(2000);
         }
-        catch { /* best-effort */ }
+        catch
+        { /* best-effort */
+        }
 
         var runId = await SeedRunAsync();
         var spec = await BuildSpecAsync(runId, "Wrapper test");
@@ -650,6 +665,83 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         runtime.Dispose();
     }
 
+    [Fact]
+    public async Task StartAsync_ManagedRuntimeProfileOverridesConfiguredProcessSettings()
+    {
+        var fakePiPath = WriteCaptureScript(_tempRoot, "capture-managed-runtime.sh");
+        var runId = await SeedRunAsync();
+        var baseSpec = await BuildSpecAsync(runId, "Managed runtime task");
+        var spec = baseSpec with
+        {
+            RuntimeProfile = "managed-pi",
+            RuntimeEnvironmentProfile = new RuntimeEnvironmentProfile
+            {
+                Key = "managed-pi",
+                Enabled = true,
+                EnvironmentProvider = "LocalWorkspace",
+                RuntimeProvider = "PiMateria",
+                RuntimeSettings = new RuntimeProviderSettings
+                {
+                    PiExecutablePath = fakePiPath,
+                    ControllerBaseUrl = "http://127.0.0.1:43210",
+                    PtyWrapperPath = null,
+                    Loadouts = new Dictionary<ExecutionKind, string>
+                    {
+                        [ExecutionKind.NewWork] = "Managed-NewWork-Loadout",
+                    },
+                    ForwardEnvironmentVariables = new Dictionary<string, string>
+                    {
+                        ["MANAGED_TARGET"] = "MANAGED_SOURCE",
+                    },
+                },
+            },
+        };
+        var originalValue = Environment.GetEnvironmentVariable("MANAGED_SOURCE");
+        Environment.SetEnvironmentVariable("MANAGED_SOURCE", "managed-value");
+
+        try
+        {
+            var runtime = new PiMateriaRuntime(
+                _scopeFactory,
+                new StaticOptionsMonitor<RuntimeOptions>(
+                    new RuntimeOptions
+                    {
+                        Provider = "PiMateria",
+                        PiExecutablePath = "/configured/path/that-must-not-be-used",
+                        ControllerBaseUrl = "http://127.0.0.1:9999",
+                        PtyWrapperPath = null,
+                        Loadouts = new Dictionary<ExecutionKind, string>
+                        {
+                            [ExecutionKind.NewWork] = "Configured-Loadout",
+                        },
+                    }
+                ),
+                _provider.GetRequiredService<ILogger<PiMateriaRuntime>>()
+            );
+
+            _ = await runtime.StartAsync(spec, CancellationToken.None);
+            await Task.Delay(500);
+
+            var arguments = await File.ReadAllTextAsync(Path.Combine(_tempRoot, "capture.txt"));
+            var environment = await File.ReadAllTextAsync(
+                Path.Combine(_tempRoot, "capture-env.txt")
+            );
+            Assert.Contains("/materia loadout Managed-NewWork-Loadout", arguments);
+            Assert.DoesNotContain("Configured-Loadout", arguments);
+            Assert.Contains(
+                $"CONTROLLER_EVENT_URL=http://127.0.0.1:43210/runs/{runId}/events",
+                environment
+            );
+            Assert.Contains("MANAGED_TARGET=managed-value", environment);
+
+            runtime.Dispose();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("MANAGED_SOURCE", originalValue);
+        }
+    }
+
     // ── Default executable falls back to "pi" ───────────────────────
 
     [Fact]
@@ -720,7 +812,10 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
     [Fact]
     public void ReadCastTask_FullWorkItemWithAcceptanceCriteriaAndComments_ContainsAllSections()
     {
-        var contextDir = Path.Combine(Path.GetTempPath(), $"pimateria-readcasttask-{Guid.NewGuid():N}");
+        var contextDir = Path.Combine(
+            Path.GetTempPath(),
+            $"pimateria-readcasttask-{Guid.NewGuid():N}"
+        );
         Directory.CreateDirectory(contextDir);
 
         try
@@ -767,7 +862,10 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
     [Fact]
     public void ReadCastTask_WorkItemOnly_ContainsFullBodyWithoutTitleOnly()
     {
-        var contextDir = Path.Combine(Path.GetTempPath(), $"pimateria-readcasttask-{Guid.NewGuid():N}");
+        var contextDir = Path.Combine(
+            Path.GetTempPath(),
+            $"pimateria-readcasttask-{Guid.NewGuid():N}"
+        );
         Directory.CreateDirectory(contextDir);
 
         try
@@ -801,7 +899,10 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
     [Fact]
     public void ReadCastTask_NoWorkItemFile_ReturnsGenericFallback()
     {
-        var contextDir = Path.Combine(Path.GetTempPath(), $"pimateria-readcasttask-{Guid.NewGuid():N}");
+        var contextDir = Path.Combine(
+            Path.GetTempPath(),
+            $"pimateria-readcasttask-{Guid.NewGuid():N}"
+        );
         Directory.CreateDirectory(contextDir);
 
         try
@@ -827,7 +928,10 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
     [Fact]
     public void ReadCastTask_ReworkContextPresent_PrependsBeforeWorkItemBody()
     {
-        var contextDir = Path.Combine(Path.GetTempPath(), $"pimateria-readcasttask-{Guid.NewGuid():N}");
+        var contextDir = Path.Combine(
+            Path.GetTempPath(),
+            $"pimateria-readcasttask-{Guid.NewGuid():N}"
+        );
         Directory.CreateDirectory(contextDir);
 
         try
@@ -859,8 +963,10 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
             // Rework context must appear BEFORE the work-item body.
             var reworkIndex = taskText.IndexOf("## Rework Context", StringComparison.Ordinal);
             var workItemIndex = taskText.IndexOf("# Fix the bug", StringComparison.Ordinal);
-            Assert.True(reworkIndex < workItemIndex,
-                "Rework context should be prepended before the work-item body.");
+            Assert.True(
+                reworkIndex < workItemIndex,
+                "Rework context should be prepended before the work-item body."
+            );
         }
         finally
         {
@@ -871,7 +977,10 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
     [Fact]
     public void ReadCastTask_ReworkContextAbsent_NoReworkSection()
     {
-        var contextDir = Path.Combine(Path.GetTempPath(), $"pimateria-readcasttask-{Guid.NewGuid():N}");
+        var contextDir = Path.Combine(
+            Path.GetTempPath(),
+            $"pimateria-readcasttask-{Guid.NewGuid():N}"
+        );
         Directory.CreateDirectory(contextDir);
 
         try
@@ -905,7 +1014,10 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
     [Fact]
     public void ReadCastTask_ReworkContextWithAllFiles_CorrectOrder()
     {
-        var contextDir = Path.Combine(Path.GetTempPath(), $"pimateria-readcasttask-{Guid.NewGuid():N}");
+        var contextDir = Path.Combine(
+            Path.GetTempPath(),
+            $"pimateria-readcasttask-{Guid.NewGuid():N}"
+        );
         Directory.CreateDirectory(contextDir);
 
         try
@@ -949,8 +1061,14 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
             var commentsIndex = taskText.IndexOf("## Comments", StringComparison.Ordinal);
 
             Assert.True(reworkIndex < workItemIndex, "Rework should come before work item.");
-            Assert.True(workItemIndex < acIndex, "Work item should come before acceptance criteria.");
-            Assert.True(acIndex < commentsIndex, "Acceptance criteria should come before comments.");
+            Assert.True(
+                workItemIndex < acIndex,
+                "Work item should come before acceptance criteria."
+            );
+            Assert.True(
+                acIndex < commentsIndex,
+                "Acceptance criteria should come before comments."
+            );
         }
         finally
         {
@@ -961,7 +1079,10 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
     [Fact]
     public void ReadCastTask_ReworkContextEmptyFile_NoReworkSection()
     {
-        var contextDir = Path.Combine(Path.GetTempPath(), $"pimateria-readcasttask-{Guid.NewGuid():N}");
+        var contextDir = Path.Combine(
+            Path.GetTempPath(),
+            $"pimateria-readcasttask-{Guid.NewGuid():N}"
+        );
         Directory.CreateDirectory(contextDir);
 
         try
@@ -995,7 +1116,10 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
     [Fact]
     public void ReadCastTask_NoWorkItemFile_FallsBackToRunIdWhenExternalIdMissing()
     {
-        var contextDir = Path.Combine(Path.GetTempPath(), $"pimateria-readcasttask-{Guid.NewGuid():N}");
+        var contextDir = Path.Combine(
+            Path.GetTempPath(),
+            $"pimateria-readcasttask-{Guid.NewGuid():N}"
+        );
         Directory.CreateDirectory(contextDir);
 
         try
@@ -1021,8 +1145,10 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
     /// </summary>
     private static string InvokeReadCastTask(AgentRunSpec spec, string contextDir)
     {
-        var method = typeof(PiMateriaRuntime)
-            .GetMethod("ReadCastTask", BindingFlags.NonPublic | BindingFlags.Static);
+        var method = typeof(PiMateriaRuntime).GetMethod(
+            "ReadCastTask",
+            BindingFlags.NonPublic | BindingFlags.Static
+        );
         Assert.NotNull(method);
         return (string)method.Invoke(null, new object?[] { spec, contextDir })!;
     }
@@ -1042,7 +1168,8 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
         var captureDetachedPath = Path.Combine(tempDir, "capture-detached.txt");
 
         // Use a Python script for cross-platform compatibility.
-        var pythonScript = $@"#!/usr/bin/env python3
+        var pythonScript =
+            $@"#!/usr/bin/env python3
 import sys, os
 
 # Capture arguments
@@ -1306,12 +1433,15 @@ sys.exit(0)
             }
         }
 
-        public Task<AgentRunHandle?> FindLatestRunByWorkItemAsync(string workItemId, CancellationToken ct)
+        public Task<AgentRunHandle?> FindLatestRunByWorkItemAsync(
+            string workItemId,
+            CancellationToken ct
+        )
         {
             lock (_lock)
             {
-                var latest = _runs.Values
-                    .Where(r => r.WorkItemId == workItemId)
+                var latest = _runs
+                    .Values.Where(r => r.WorkItemId == workItemId)
                     .OrderByDescending(r => r.CreatedAt)
                     .FirstOrDefault();
                 return Task.FromResult<AgentRunHandle?>(latest);
@@ -1328,8 +1458,8 @@ sys.exit(0)
                     RunLifecycleState.BranchPushed,
                     RunLifecycleState.Completed,
                 };
-                var results = _runs.Values
-                    .Where(r => eligibleStatuses.Contains(r.Status))
+                var results = _runs
+                    .Values.Where(r => eligibleStatuses.Contains(r.Status))
                     .Where(r => r.PullRequestUrl is not null)
                     .GroupBy(r => r.PullRequestUrl!)
                     .Select(g => g.OrderByDescending(r => r.CreatedAt).First())
@@ -1473,10 +1603,8 @@ sys.exit(0)
             CancellationToken ct
         ) => Task.FromResult<IReadOnlyList<WorkItemComment>>(Array.Empty<WorkItemComment>());
 
-        public Task ReleaseClaimAsync(
-            ReleaseClaimRequest request,
-            CancellationToken ct
-        ) => Task.CompletedTask;
+        public Task ReleaseClaimAsync(ReleaseClaimRequest request, CancellationToken ct) =>
+            Task.CompletedTask;
 
         public Task<ReworkReactivateResult> ReactivateForReworkAsync(
             ReworkReactivateRequest request,

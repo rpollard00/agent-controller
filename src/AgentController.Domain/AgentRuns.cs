@@ -18,8 +18,11 @@ public sealed record AgentRunSpec
     /// <summary>Environment handle for the run.</summary>
     public EnvironmentHandle EnvironmentHandle { get; init; } = new();
 
-    /// <summary>Runtime profile name from configuration.</summary>
+    /// <summary>Stable runtime profile key selected for this execution.</summary>
     public string RuntimeProfile { get; init; } = string.Empty;
+
+    /// <summary>Resolved managed or configured runtime-environment profile.</summary>
+    public RuntimeEnvironmentProfile? RuntimeEnvironmentProfile { get; init; }
 
     /// <summary>Additional context files to write into the run workspace (path → content).</summary>
     public IReadOnlyDictionary<string, string>? ContextFiles { get; init; }

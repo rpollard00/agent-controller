@@ -30,7 +30,8 @@ public sealed partial class LocalWorkspaceEnvironmentProvider : IEnvironmentProv
 
     public LocalWorkspaceEnvironmentProvider(
         IOptionsMonitor<AgentControllerOptions> controllerOptions,
-        ILogger<LocalWorkspaceEnvironmentProvider> logger)
+        ILogger<LocalWorkspaceEnvironmentProvider> logger
+    )
     {
         _controllerOptions = controllerOptions;
         _logger = logger;
@@ -39,9 +40,10 @@ public sealed partial class LocalWorkspaceEnvironmentProvider : IEnvironmentProv
     /// <inheritdoc />
     public Task<EnvironmentHandle> CreateAsync(
         EnvironmentSpec spec,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
-        var runRoot = ResolveRunRoot();
+        var runRoot = ResolveRunRoot(spec);
         var envPath = Path.Combine(runRoot, spec.RunId);
 
         Log.CreatingEnvironment(_logger, spec.RunId, envPath);
@@ -71,12 +73,12 @@ public sealed partial class LocalWorkspaceEnvironmentProvider : IEnvironmentProv
     public async Task<CommandResult> ExecuteAsync(
         EnvironmentHandle handle,
         CommandSpec command,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
         if (string.IsNullOrWhiteSpace(command.Command))
         {
-            throw new InvalidOperationException(
-                "Cannot execute command: command is empty.");
+            throw new InvalidOperationException("Cannot execute command: command is empty.");
         }
 
         var workingDirectory = ResolveWorkingDirectory(handle, command);
@@ -84,13 +86,13 @@ public sealed partial class LocalWorkspaceEnvironmentProvider : IEnvironmentProv
         if (!Directory.Exists(workingDirectory))
         {
             throw new InvalidOperationException(
-                $"Cannot execute command: working directory does not exist: '{workingDirectory}'.");
+                $"Cannot execute command: working directory does not exist: '{workingDirectory}'."
+            );
         }
 
         var timeout = command.Timeout ?? DefaultCommandTimeout;
 
-        Log.ExecutingCommand(
-            _logger, command.Command, workingDirectory);
+        Log.ExecutingCommand(_logger, command.Command, workingDirectory);
 
         using var process = new Process
         {
@@ -138,7 +140,11 @@ public sealed partial class LocalWorkspaceEnvironmentProvider : IEnvironmentProv
             var duration = DateTimeOffset.UtcNow - startedAt;
 
             Log.CommandCompleted(
-                _logger, command.Command, process.ExitCode, (int)duration.TotalSeconds);
+                _logger,
+                command.Command,
+                process.ExitCode,
+                (int)duration.TotalSeconds
+            );
 
             return new CommandResult
             {
@@ -149,14 +155,20 @@ public sealed partial class LocalWorkspaceEnvironmentProvider : IEnvironmentProv
                 TimedOut = false,
             };
         }
-        catch (OperationCanceledException) when (cts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException)
+            when (cts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
-            try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch
+            { /* best effort */
+            }
 
             var duration = DateTimeOffset.UtcNow - startedAt;
 
-            Log.CommandTimedOut(
-                _logger, command.Command, (int)duration.TotalSeconds);
+            Log.CommandTimedOut(_logger, command.Command, (int)duration.TotalSeconds);
 
             return new CommandResult
             {
@@ -170,9 +182,7 @@ public sealed partial class LocalWorkspaceEnvironmentProvider : IEnvironmentProv
     }
 
     /// <inheritdoc />
-    public Task DestroyAsync(
-        EnvironmentHandle handle,
-        CancellationToken cancellationToken)
+    public Task DestroyAsync(EnvironmentHandle handle, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(handle.RootPath))
         {
@@ -214,15 +224,25 @@ public sealed partial class LocalWorkspaceEnvironmentProvider : IEnvironmentProv
     /// <summary>
     /// Resolve the run root path from configuration, expanding tildes.
     /// </summary>
-    private string ResolveRunRoot()
+    private string ResolveRunRoot(EnvironmentSpec spec)
     {
-        var raw = _controllerOptions.CurrentValue.RunRoot;
+        var raw = spec.RootPath;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            raw = spec.RuntimeEnvironmentProfile?.EnvironmentSettings.WorkspaceRoot;
+        }
+
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            raw = _controllerOptions.CurrentValue.RunRoot;
+        }
 
         if (string.IsNullOrWhiteSpace(raw))
         {
             throw new InvalidOperationException(
-                "Cannot create environment: runRoot is not configured. " +
-                "Set 'agentController:runRoot' in configuration.");
+                "Cannot create environment: runRoot is not configured. "
+                    + "Set 'agentController:runRoot' in configuration."
+            );
         }
 
         return ExpandTilde(raw);
@@ -233,9 +253,7 @@ public sealed partial class LocalWorkspaceEnvironmentProvider : IEnvironmentProv
     /// Uses the environment root path as the base and joins any
     /// command-specified relative working directory.
     /// </summary>
-    private static string ResolveWorkingDirectory(
-        EnvironmentHandle handle,
-        CommandSpec command)
+    private static string ResolveWorkingDirectory(EnvironmentHandle handle, CommandSpec command)
     {
         if (string.IsNullOrWhiteSpace(command.WorkingDirectory))
         {
@@ -279,50 +297,67 @@ public sealed partial class LocalWorkspaceEnvironmentProvider : IEnvironmentProv
     {
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Creating local environment for run '{RunId}' at '{EnvPath}'.")]
+            Message = "Creating local environment for run '{RunId}' at '{EnvPath}'."
+        )]
         public static partial void CreatingEnvironment(
-            ILogger logger, string runId, string envPath);
+            ILogger logger,
+            string runId,
+            string envPath
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Local environment for run '{RunId}' created at '{EnvPath}'.")]
-        public static partial void EnvironmentCreated(
-            ILogger logger, string runId, string envPath);
+            Message = "Local environment for run '{RunId}' created at '{EnvPath}'."
+        )]
+        public static partial void EnvironmentCreated(ILogger logger, string runId, string envPath);
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Executing command '{Command}' in '{WorkingDirectory}'.")]
+            Message = "Executing command '{Command}' in '{WorkingDirectory}'."
+        )]
         public static partial void ExecutingCommand(
-            ILogger logger, string command, string workingDirectory);
+            ILogger logger,
+            string command,
+            string workingDirectory
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Command '{Command}' completed with exit code {ExitCode} in {DurationSeconds}s.")]
+            Message = "Command '{Command}' completed with exit code {ExitCode} in {DurationSeconds}s."
+        )]
         public static partial void CommandCompleted(
-            ILogger logger, string command, int exitCode, int durationSeconds);
+            ILogger logger,
+            string command,
+            int exitCode,
+            int durationSeconds
+        );
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "Command '{Command}' timed out after {DurationSeconds}s.")]
+            Message = "Command '{Command}' timed out after {DurationSeconds}s."
+        )]
         public static partial void CommandTimedOut(
-            ILogger logger, string command, int durationSeconds);
+            ILogger logger,
+            string command,
+            int durationSeconds
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Destroying local environment at '{EnvPath}'.")]
-        public static partial void DestroyingEnvironment(
-            ILogger logger, string envPath);
+            Message = "Destroying local environment at '{EnvPath}'."
+        )]
+        public static partial void DestroyingEnvironment(ILogger logger, string envPath);
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Local environment at '{EnvPath}' destroyed.")]
-        public static partial void EnvironmentDestroyed(
-            ILogger logger, string envPath);
+            Message = "Local environment at '{EnvPath}' destroyed."
+        )]
+        public static partial void EnvironmentDestroyed(ILogger logger, string envPath);
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "Failed to destroy local environment at '{EnvPath}'.")]
-        public static partial void DestroyFailed(
-            ILogger logger, string envPath, Exception ex);
+            Message = "Failed to destroy local environment at '{EnvPath}'."
+        )]
+        public static partial void DestroyFailed(ILogger logger, string envPath, Exception ex);
     }
 }

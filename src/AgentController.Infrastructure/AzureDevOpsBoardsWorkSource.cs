@@ -24,7 +24,8 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
 
     public AzureDevOpsBoardsWorkSource(
         IServiceScopeFactory scopeFactory,
-        IOptionsMonitor<WorkSourceOptions> options)
+        IOptionsMonitor<WorkSourceOptions> options
+    )
     {
         _scopeFactory = scopeFactory;
         _options = options;
@@ -32,67 +33,102 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
 
     public async Task<IReadOnlyList<WorkCandidate>> FindEligibleAsync(
         WorkQuery query,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
-        var options = _options.CurrentValue;
-
-        // Merge configured filters into the query, letting caller overrides win
-        // where explicitly provided.
-        var parameters = new BoardsQueryParameters
-        {
-            Project = query.Project ?? options.Project ?? string.Empty,
-            States = query.States is { Count: > 0 }
-                ? query.States
-                : (options.EligibleStates is { Count: > 0 }
-                    ? options.EligibleStates
-                    : null),
-            Tags = query.Tags is { Count: > 0 }
-                ? query.Tags
-                : (options.EligibleTags is { Count: > 0 }
-                    ? options.EligibleTags
-                    : null),
-            ExcludedTags = query.ExcludedTags is { Count: > 0 }
-                ? query.ExcludedTags
-                : (options.ExcludedTags is { Count: > 0 }
-                    ? options.ExcludedTags
-                    : null),
-            MaxResults = query.MaxResults,
-        };
-
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var client = scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClient>();
+        var resolver = scope.ServiceProvider.GetService<IManagedProfileResolver>();
+        var environments = resolver is null
+            ? Array.Empty<ResolvedAzureDevOpsEnvironment>()
+            : await resolver.ListAzureDevOpsEnvironmentsAsync(cancellationToken);
+        var managedEnvironments = environments.Where(environment => environment.IsManaged).ToList();
 
-        return await client.QueryWorkItemsAsync(parameters, cancellationToken);
+        if (managedEnvironments.Count == 0)
+        {
+            var options = _options.CurrentValue;
+            var parameters = BuildQueryParameters(query, options);
+            var configuredClient =
+                scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClient>();
+            return await configuredClient.QueryWorkItemsAsync(parameters, cancellationToken);
+        }
+
+        var factory = scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClientFactory>();
+        var candidates = new List<WorkCandidate>();
+
+        foreach (var environment in managedEnvironments)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var profile = environment.Profile;
+            var boardsClient = factory.Create(profile);
+            using var disposableClient = boardsClient as IDisposable;
+            var parameters = BuildQueryParameters(query, profile);
+            var remaining = Math.Max(0, query.MaxResults - candidates.Count);
+            if (remaining == 0)
+            {
+                break;
+            }
+
+            parameters = parameters with { MaxResults = remaining };
+            var discovered = await boardsClient.QueryWorkItemsAsync(parameters, cancellationToken);
+
+            candidates.AddRange(
+                discovered
+                    .Take(remaining)
+                    .Select(candidate =>
+                        candidate with
+                        {
+                            SourceMetadata = AddEnvironmentKey(
+                                candidate.SourceMetadata,
+                                profile.Key
+                            ),
+                        }
+                    )
+            );
+        }
+
+        return candidates;
     }
 
     public async Task<ClaimResult> TryClaimAsync(
         WorkCandidate candidate,
         ClaimRequest claim,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
-        // Validate required Azure DevOps configuration
-        var options = _options.CurrentValue;
-        if (string.IsNullOrWhiteSpace(options.Project))
+        var environmentKey = GetEnvironmentKey(candidate.SourceMetadata);
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var selection = await ResolveClientAsync(
+            scope.ServiceProvider,
+            environmentKey,
+            cancellationToken
+        );
+        using var disposableClient = selection.OwnsClient ? selection.Client as IDisposable : null;
+
+        if (!selection.IsManaged)
         {
-            return new ClaimResult
+            var options = _options.CurrentValue;
+            if (string.IsNullOrWhiteSpace(options.Project))
             {
-                Success = false,
-                FailureReason = "Azure DevOps project is not configured in workSource:project.",
-            };
+                return new ClaimResult
+                {
+                    Success = false,
+                    FailureReason = "Azure DevOps project is not configured in workSource:project.",
+                };
+            }
+
+            if (string.IsNullOrWhiteSpace(options.OrganizationUrl))
+            {
+                return new ClaimResult
+                {
+                    Success = false,
+                    FailureReason =
+                        "Azure DevOps organization URL is not configured in workSource:organizationUrl.",
+                };
+            }
         }
 
-        if (string.IsNullOrWhiteSpace(options.OrganizationUrl))
-        {
-            return new ClaimResult
-            {
-                Success = false,
-                FailureReason = "Azure DevOps organization URL is not configured in workSource:organizationUrl.",
-            };
-        }
-
-        var revision = candidate.SourceMetadata?.TryGetValue("revision", out var rev) == true
-            ? rev
-            : null;
+        var revision =
+            candidate.SourceMetadata?.TryGetValue("revision", out var rev) == true ? rev : null;
 
         var workRef = new ExternalWorkRef
         {
@@ -100,75 +136,94 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
             ExternalId = candidate.ExternalId,
             Url = candidate.ExternalUrl,
             Revision = revision,
+            EnvironmentKey = environmentKey,
         };
 
-        await using var scope = _scopeFactory.CreateAsyncScope();
-        var client = scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClient>();
-
-        return await client.TryClaimWorkItemAsync(workRef, claim, cancellationToken);
+        return await selection.Client.TryClaimWorkItemAsync(workRef, claim, cancellationToken);
     }
 
     public async Task UpdateStatusAsync(
         ExternalWorkRef workRef,
         ExternalWorkStatus status,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
-        var options = _options.CurrentValue;
-        if (string.IsNullOrWhiteSpace(options.Project))
-            return;
-
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var client = scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClient>();
+        var selection = await ResolveClientAsync(
+            scope.ServiceProvider,
+            workRef.EnvironmentKey,
+            cancellationToken
+        );
+        using var disposableClient = selection.OwnsClient ? selection.Client as IDisposable : null;
 
-        await client.UpdateWorkItemStatusAsync(workRef, status, cancellationToken);
+        await selection.Client.UpdateWorkItemStatusAsync(workRef, status, cancellationToken);
     }
 
     public async Task AddCommentAsync(
         ExternalWorkRef workRef,
         string comment,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
-        var options = _options.CurrentValue;
-        if (string.IsNullOrWhiteSpace(options.Project))
-            return;
-
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var client = scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClient>();
+        var selection = await ResolveClientAsync(
+            scope.ServiceProvider,
+            workRef.EnvironmentKey,
+            cancellationToken
+        );
+        using var disposableClient = selection.OwnsClient ? selection.Client as IDisposable : null;
 
-        await client.AddCommentAsync(workRef, comment, cancellationToken);
+        await selection.Client.AddCommentAsync(workRef, comment, cancellationToken);
     }
 
     public async Task<IReadOnlyList<WorkItemComment>> GetCommentsAsync(
         ExternalWorkRef workRef,
         int maxComments,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var client = scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClient>();
+        var selection = await ResolveClientAsync(
+            scope.ServiceProvider,
+            workRef.EnvironmentKey,
+            cancellationToken
+        );
+        using var disposableClient = selection.OwnsClient ? selection.Client as IDisposable : null;
 
-        return await client.GetCommentsAsync(workRef, maxComments, cancellationToken);
+        return await selection.Client.GetCommentsAsync(workRef, maxComments, cancellationToken);
     }
 
     public async Task ReleaseClaimAsync(
         ReleaseClaimRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
-        var options = _options.CurrentValue;
-        if (string.IsNullOrWhiteSpace(options.Project))
-            return;
-
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var client = scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClient>();
+        var selection = await ResolveClientAsync(
+            scope.ServiceProvider,
+            request.WorkRef.EnvironmentKey,
+            cancellationToken
+        );
+        using var disposableClient = selection.OwnsClient ? selection.Client as IDisposable : null;
 
-        await client.ReleaseClaimWorkItemAsync(request, cancellationToken);
+        await selection.Client.ReleaseClaimWorkItemAsync(request, cancellationToken);
     }
 
     public async Task<ReworkReactivateResult> ReactivateForReworkAsync(
         ReworkReactivateRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var selection = await ResolveClientAsync(
+            scope.ServiceProvider,
+            request.WorkRef.EnvironmentKey,
+            cancellationToken
+        );
+        using var disposableClient = selection.OwnsClient ? selection.Client as IDisposable : null;
+
         var options = _options.CurrentValue;
-        if (string.IsNullOrWhiteSpace(options.Project))
+        if (!selection.IsManaged && string.IsNullOrWhiteSpace(options.Project))
         {
             return new ReworkReactivateResult
             {
@@ -177,14 +232,16 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
             };
         }
 
-        // Determine target state: first eligible state.
-        var eligibleStates = options.EligibleStates;
+        // Determine target state from the selected managed profile or appsettings.
+        var eligibleStates =
+            selection.Environment?.Profile.EligibleStates ?? options.EligibleStates;
         if (eligibleStates is null || eligibleStates.Count == 0)
         {
             return new ReworkReactivateResult
             {
                 Success = false,
-                FailureReason = "No eligible states configured; cannot determine target state for reactivation.",
+                FailureReason =
+                    "No eligible states configured; cannot determine target state for reactivation.",
             };
         }
 
@@ -192,15 +249,12 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
 
         var workRef = request.WorkRef;
 
-        await using var scope = _scopeFactory.CreateAsyncScope();
-        var client = scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClient>();
-
         // (1) Single atomic PATCH: transition state + strip agent lifecycle tags + re-add agent-ready.
         //     This eliminates the stale-revision race where a rev-bump between two separate
         //     PATCHes caused the tag-strip to be silently skipped.
         //     On failure (412 or non-success) the PATCH returns false and we surface
         //     [rework_tag_strip_failed] so the cycle is NOT marked reactivated.
-        var mergedOk = await client.UpdateWorkItemStatusAsync(
+        var mergedOk = await selection.Client.UpdateWorkItemStatusAsync(
             workRef,
             new ExternalWorkStatus
             {
@@ -214,24 +268,131 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
                     "agent-worker:*",
                 ],
             },
-            cancellationToken);
+            cancellationToken
+        );
 
         if (!mergedOk)
         {
             return new ReworkReactivateResult
             {
                 Success = false,
-                FailureReason = $"[rework_tag_strip_failed] Cannot transition work item to '{targetState}' " +
-                                "and strip agent lifecycle tags in a single PATCH. " +
-                                "The board may have been modified concurrently or the process model may not allow this state change.",
+                FailureReason =
+                    $"[rework_tag_strip_failed] Cannot transition work item to '{targetState}' "
+                    + "and strip agent lifecycle tags in a single PATCH. "
+                    + "The board may have been modified concurrently or the process model may not allow this state change.",
             };
         }
 
         // (2) Post rework-start comment.
-        var comment = $"Rework cycle {request.CycleNumber} started: " +
-                      $"{request.ThreadCount} review threads bundled from PR {request.PullRequestUrl}.";
-        await client.AddCommentAsync(workRef, comment, cancellationToken);
+        var comment =
+            $"Rework cycle {request.CycleNumber} started: "
+            + $"{request.ThreadCount} review threads bundled from PR {request.PullRequestUrl}.";
+        await selection.Client.AddCommentAsync(workRef, comment, cancellationToken);
 
         return new ReworkReactivateResult { Success = true };
+    }
+
+    private static BoardsQueryParameters BuildQueryParameters(
+        WorkQuery query,
+        WorkSourceOptions options
+    )
+    {
+        return new BoardsQueryParameters
+        {
+            Project = query.Project ?? options.Project ?? string.Empty,
+            WorkItemType = query.WorkItemType ?? options.WorkItemType,
+            States = query.States is { Count: > 0 }
+                ? query.States
+                : NullIfEmpty(options.EligibleStates),
+            Tags = query.Tags is { Count: > 0 } ? query.Tags : NullIfEmpty(options.EligibleTags),
+            ExcludedTags = query.ExcludedTags is { Count: > 0 }
+                ? query.ExcludedTags
+                : NullIfEmpty(options.ExcludedTags),
+            MaxResults = query.MaxResults,
+        };
+    }
+
+    private static BoardsQueryParameters BuildQueryParameters(
+        WorkQuery query,
+        AzureDevOpsEnvironmentProfile profile
+    )
+    {
+        return new BoardsQueryParameters
+        {
+            Project = query.Project ?? profile.Project,
+            WorkItemType = query.WorkItemType ?? profile.WorkItemType,
+            States = query.States is { Count: > 0 }
+                ? query.States
+                : NullIfEmpty(profile.EligibleStates),
+            ExcludedStates = NullIfEmpty(profile.ExcludedStates),
+            Tags = query.Tags is { Count: > 0 } ? query.Tags : NullIfEmpty(profile.EligibleTags),
+            ExcludedTags = query.ExcludedTags is { Count: > 0 }
+                ? query.ExcludedTags
+                : NullIfEmpty(profile.ExcludedTags),
+            MaxResults = query.MaxResults,
+        };
+    }
+
+    private static async Task<ClientSelection> ResolveClientAsync(
+        IServiceProvider services,
+        string? environmentKey,
+        CancellationToken cancellationToken
+    )
+    {
+        if (!string.IsNullOrWhiteSpace(environmentKey))
+        {
+            var resolver = services.GetService<IManagedProfileResolver>();
+            var environment = resolver is null
+                ? null
+                : await resolver.ResolveAzureDevOpsEnvironmentAsync(
+                    environmentKey,
+                    cancellationToken
+                );
+
+            if (environment?.IsManaged == true)
+            {
+                var factory = services.GetRequiredService<IAzureDevOpsBoardsClientFactory>();
+                return new ClientSelection(
+                    factory.Create(environment.Profile),
+                    environment,
+                    OwnsClient: true
+                );
+            }
+        }
+
+        return new ClientSelection(
+            services.GetRequiredService<IAzureDevOpsBoardsClient>(),
+            Environment: null,
+            OwnsClient: false
+        );
+    }
+
+    private static Dictionary<string, string> AddEnvironmentKey(
+        IReadOnlyDictionary<string, string>? metadata,
+        string key
+    )
+    {
+        var result = metadata is null
+            ? new Dictionary<string, string>()
+            : new Dictionary<string, string>(metadata);
+        result["azureDevOpsEnvironmentKey"] = key;
+        return result;
+    }
+
+    private static string? GetEnvironmentKey(IReadOnlyDictionary<string, string>? metadata)
+    {
+        return metadata?.TryGetValue("azureDevOpsEnvironmentKey", out var key) == true ? key : null;
+    }
+
+    private static IReadOnlyList<string>? NullIfEmpty(IReadOnlyList<string>? values) =>
+        values is { Count: > 0 } ? values : null;
+
+    private sealed record ClientSelection(
+        IAzureDevOpsBoardsClient Client,
+        ResolvedAzureDevOpsEnvironment? Environment,
+        bool OwnsClient
+    )
+    {
+        public bool IsManaged => Environment?.IsManaged == true;
     }
 }

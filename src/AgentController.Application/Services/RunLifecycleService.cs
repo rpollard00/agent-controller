@@ -24,6 +24,7 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
     private readonly IWorkItemStore _workItemStore;
     private readonly IWorkSource _workSource;
     private readonly IOptionsMonitor<WorkSourceOptionsView> _workSourceOptions;
+    private readonly IManagedProfileResolver? _profileResolver;
 
     /// <summary>
     /// Legal state transitions.
@@ -31,7 +32,10 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
     /// Any state not listed as a key can only transition to states defined by
     /// runtime events (handled separately in <see cref="IngestRuntimeEventAsync"/>).
     /// </summary>
-    private static readonly Dictionary<RunLifecycleState, HashSet<RunLifecycleState>> AllowedTransitions = new()
+    private static readonly Dictionary<
+        RunLifecycleState,
+        HashSet<RunLifecycleState>
+    > AllowedTransitions = new()
     {
         [RunLifecycleState.Queued] = [RunLifecycleState.Claimed],
         [RunLifecycleState.Claimed] = [RunLifecycleState.EnvironmentProvisioning],
@@ -68,7 +72,9 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         ILifecycleEventStore eventStore,
         IWorkItemStore workItemStore,
         IWorkSource workSource,
-        IOptionsMonitor<WorkSourceOptionsView> workSourceOptions)
+        IOptionsMonitor<WorkSourceOptionsView> workSourceOptions,
+        IManagedProfileResolver? profileResolver = null
+    )
     {
         _logger = logger;
         _runStore = runStore;
@@ -76,19 +82,22 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         _workItemStore = workItemStore;
         _workSource = workSource;
         _workSourceOptions = workSourceOptions;
+        _profileResolver = profileResolver;
     }
 
     /// <inheritdoc />
     public async Task<AgentRunHandle> CreateRunForWorkItemAsync(
         string workItemId,
         string workerId,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         var workItem = await _workItemStore.GetByIdAsync(workItemId, ct);
         if (workItem is null)
         {
             throw new InvalidOperationException(
-                $"Cannot create run: work item '{workItemId}' not found.");
+                $"Cannot create run: work item '{workItemId}' not found."
+            );
         }
 
         var run = await _runStore.CreateAsync(
@@ -98,7 +107,8 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
                 WorkerId = workerId,
                 InitialStatus = RunLifecycleState.Claimed,
             },
-            ct);
+            ct
+        );
 
         await AppendControllerEventAsync(
             run.RunId,
@@ -110,7 +120,8 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
                 ["workItemTitle"] = workItem.Title,
                 ["repoKey"] = workItem.RepoKey,
             },
-            ct);
+            ct
+        );
 
         // Project claim tags (agent-active) to the external work source.
         // Board state (ActiveState) is NOT set here — it is gated on
@@ -125,27 +136,29 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
     public async Task TransitionAsync(
         string runId,
         RunLifecycleState targetState,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         var run = await _runStore.GetByIdAsync(runId, ct);
         if (run is null)
         {
-            throw new InvalidOperationException(
-                $"Cannot transition run '{runId}': run not found.");
+            throw new InvalidOperationException($"Cannot transition run '{runId}': run not found.");
         }
 
         if (IsTerminal(run.Status))
         {
             throw new InvalidOperationException(
-                $"Cannot transition run '{runId}': run is in terminal state '{run.Status}'.");
+                $"Cannot transition run '{runId}': run is in terminal state '{run.Status}'."
+            );
         }
 
         if (!IsTransitionAllowed(run.Status, targetState))
         {
             throw new InvalidOperationException(
-                $"Cannot transition run '{runId}' from '{run.Status}' to '{targetState}': " +
-                "transition is not allowed. Use runtime event ingestion for " +
-                "AwaitingResult → terminal transitions.");
+                $"Cannot transition run '{runId}' from '{run.Status}' to '{targetState}': "
+                    + "transition is not allowed. Use runtime event ingestion for "
+                    + "AwaitingResult → terminal transitions."
+            );
         }
 
         var previousState = run.Status;
@@ -161,7 +174,8 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
                 ["previousState"] = previousState.ToString(),
                 ["targetState"] = targetState.ToString(),
             },
-            ct);
+            ct
+        );
 
         // Update work item status for key controller-owned transitions
         await MaybeUpdateWorkItemStatus(run, targetState, ct);
@@ -173,10 +187,17 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         string eventType,
         string message,
         IReadOnlyDictionary<string, object?>? payload,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         await AppendControllerEventAsync(
-            runId, eventType, message, payload, EventSeverity.Info, ct);
+            runId,
+            eventType,
+            message,
+            payload,
+            EventSeverity.Info,
+            ct
+        );
     }
 
     /// <inheritdoc />
@@ -186,7 +207,8 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         string message,
         IReadOnlyDictionary<string, object?>? payload,
         EventSeverity severity,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         var normalizedType = eventType.StartsWith("controller.", StringComparison.Ordinal)
             ? eventType
@@ -201,13 +223,12 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
                 Message = message,
                 Payload = payload,
             },
-            ct);
+            ct
+        );
     }
 
     /// <inheritdoc />
-    public async Task IngestRuntimeEventAsync(
-        RuntimeEvent evt,
-        CancellationToken ct)
+    public async Task IngestRuntimeEventAsync(RuntimeEvent evt, CancellationToken ct)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var previousState = default(RunLifecycleState?);
@@ -217,26 +238,30 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             if (string.IsNullOrWhiteSpace(evt.EventId))
             {
                 throw new InvalidOperationException(
-                    "Runtime event is missing required field 'eventId'.");
+                    "Runtime event is missing required field 'eventId'."
+                );
             }
 
             if (string.IsNullOrWhiteSpace(evt.RunId))
             {
                 throw new InvalidOperationException(
-                    "Runtime event is missing required field 'runId'.");
+                    "Runtime event is missing required field 'runId'."
+                );
             }
 
             if (string.IsNullOrWhiteSpace(evt.EventType))
             {
                 throw new InvalidOperationException(
-                    "Runtime event is missing required field 'eventType'.");
+                    "Runtime event is missing required field 'eventType'."
+                );
             }
 
             if (!Enum.IsDefined(evt.Severity))
             {
                 throw new InvalidOperationException(
-                    $"Unsupported severity value {(int)evt.Severity}. " +
-                    $"Valid values: {string.Join(", ", Enum.GetNames<EventSeverity>())}.");
+                    $"Unsupported severity value {(int)evt.Severity}. "
+                        + $"Valid values: {string.Join(", ", Enum.GetNames<EventSeverity>())}."
+                );
             }
 
             // Idempotency check
@@ -244,21 +269,24 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             if (alreadyExists)
             {
                 throw new InvalidOperationException(
-                    $"Runtime event '{evt.EventId}' has already been processed for run '{evt.RunId}'.");
+                    $"Runtime event '{evt.EventId}' has already been processed for run '{evt.RunId}'."
+                );
             }
 
             var run = await _runStore.GetByIdAsync(evt.RunId, ct);
             if (run is null)
             {
                 throw new InvalidOperationException(
-                    $"Cannot ingest runtime event for run '{evt.RunId}': run not found.");
+                    $"Cannot ingest runtime event for run '{evt.RunId}': run not found."
+                );
             }
 
             if (IsTerminal(run.Status))
             {
                 throw new InvalidOperationException(
-                    $"Cannot ingest runtime event for run '{evt.RunId}': " +
-                    $"run is in terminal state '{run.Status}'.");
+                    $"Cannot ingest runtime event for run '{evt.RunId}': "
+                        + $"run is in terminal state '{run.Status}'."
+                );
             }
 
             previousState = run.Status;
@@ -306,7 +334,8 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
 
                 default:
                     throw new InvalidOperationException(
-                        $"Unsupported runtime event type '{evt.EventType}'.");
+                        $"Unsupported runtime event type '{evt.EventType}'."
+                    );
             }
 
             // Reload the run to observe the new state after dispatch
@@ -317,21 +346,37 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             if (IsNoOpEventType(evt.EventType))
             {
                 Log.RuntimeEventNoOp(
-                    _logger, evt.EventType, evt.RunId, evt.EventId,
-                    previousState.Value, stopwatch.Elapsed.TotalMilliseconds);
+                    _logger,
+                    evt.EventType,
+                    evt.RunId,
+                    evt.EventId,
+                    previousState.Value,
+                    stopwatch.Elapsed.TotalMilliseconds
+                );
             }
             else if (newState is not null && newState != previousState)
             {
                 Log.RuntimeEventTransition(
-                    _logger, evt.EventType, evt.RunId, evt.EventId,
-                    previousState.Value, newState.Value, stopwatch.Elapsed.TotalMilliseconds);
+                    _logger,
+                    evt.EventType,
+                    evt.RunId,
+                    evt.EventId,
+                    previousState.Value,
+                    newState.Value,
+                    stopwatch.Elapsed.TotalMilliseconds
+                );
             }
             else
             {
                 // State didn't change but it wasn't a known no-op (e.g. accepted on AwaitingResult)
                 Log.RuntimeEventNoOp(
-                    _logger, evt.EventType, evt.RunId, evt.EventId,
-                    previousState.Value, stopwatch.Elapsed.TotalMilliseconds);
+                    _logger,
+                    evt.EventType,
+                    evt.RunId,
+                    evt.EventId,
+                    previousState.Value,
+                    stopwatch.Elapsed.TotalMilliseconds
+                );
             }
 
             // Record the ingested event in the controller event log
@@ -346,7 +391,8 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
                     Payload = evt.Payload,
                     CreatedAt = evt.OccurredAt,
                 },
-                ct);
+                ct
+            );
 
             await AppendControllerEventAsync(
                 evt.RunId,
@@ -358,13 +404,19 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
                     ["eventType"] = evt.EventType,
                     ["severity"] = evt.Severity.ToString(),
                 },
-                ct);
+                ct
+            );
         }
         catch (Exception ex)
         {
             Log.RuntimeEventDispatchError(
-                _logger, ex, evt.EventType, evt.RunId ?? "(unknown)",
-                evt.EventId ?? "(unknown)", stopwatch.Elapsed.TotalMilliseconds);
+                _logger,
+                ex,
+                evt.EventType,
+                evt.RunId ?? "(unknown)",
+                evt.EventId ?? "(unknown)",
+                stopwatch.Elapsed.TotalMilliseconds
+            );
             throw;
         }
     }
@@ -375,44 +427,49 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
     /// </summary>
     private static bool IsNoOpEventType(string eventType)
     {
-        return eventType is RuntimeEventTypes.Heartbeat or
-               RuntimeEventTypes.Status or
-               RuntimeEventTypes.BranchCreated or
-               RuntimeEventTypes.PrCreated;
+        return eventType
+            is RuntimeEventTypes.Heartbeat
+                or RuntimeEventTypes.Status
+                or RuntimeEventTypes.BranchCreated
+                or RuntimeEventTypes.PrCreated;
     }
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<AgentRunHandle>> FindStaleRunsAsync(
         TimeSpan staleTimeout,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         return await _runStore.FindStaleAsync(staleTimeout, ct);
     }
 
     /// <inheritdoc />
-    public async Task RecoverStaleRunAsync(
-        string runId,
-        CancellationToken ct)
+    public async Task RecoverStaleRunAsync(string runId, CancellationToken ct)
     {
         var run = await _runStore.GetByIdAsync(runId, ct);
         if (run is null)
         {
             throw new InvalidOperationException(
-                $"Cannot recover stale run '{runId}': run not found.");
+                $"Cannot recover stale run '{runId}': run not found."
+            );
         }
 
         if (IsTerminal(run.Status))
         {
             throw new InvalidOperationException(
-                $"Cannot recover stale run '{runId}': run is already in terminal state '{run.Status}'.");
+                $"Cannot recover stale run '{runId}': run is already in terminal state '{run.Status}'."
+            );
         }
 
-        if (run.Status != RunLifecycleState.AwaitingResult
-            && run.Status != RunLifecycleState.AgentRunning)
+        if (
+            run.Status != RunLifecycleState.AwaitingResult
+            && run.Status != RunLifecycleState.AgentRunning
+        )
         {
             throw new InvalidOperationException(
-                $"Cannot recover stale run '{runId}': run is in state '{run.Status}', " +
-                "only runs in AwaitingResult or AgentRunning can be recovered as stale.");
+                $"Cannot recover stale run '{runId}': run is in state '{run.Status}', "
+                    + "only runs in AwaitingResult or AgentRunning can be recovered as stale."
+            );
         }
 
         await _runStore.UpdateStatusAsync(runId, RunLifecycleState.NeedsHuman, ct);
@@ -421,8 +478,8 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         await AppendControllerEventAsync(
             runId,
             ControllerEventTypes.StaleRecovered,
-            $"Stale run recovered: no heartbeat or final event received within the timeout. " +
-            $"Transitioned from {run.Status} to {RunLifecycleState.NeedsHuman}.",
+            $"Stale run recovered: no heartbeat or final event received within the timeout. "
+                + $"Transitioned from {run.Status} to {RunLifecycleState.NeedsHuman}.",
             new Dictionary<string, object?>
             {
                 ["previousState"] = run.Status.ToString(),
@@ -431,7 +488,8 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
                 ["startedAt"] = run.StartedAt?.ToString("O"),
             },
             EventSeverity.Warning,
-            ct);
+            ct
+        );
     }
 
     /// <inheritdoc />
@@ -484,27 +542,29 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
     private async Task MaybeUpdateWorkItemStatus(
         AgentRunHandle run,
         RunLifecycleState targetState,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         if (string.IsNullOrWhiteSpace(run.WorkItemId))
             return;
 
-        // Update work item status for key lifecycle milestones.
-        // The actual status values are driven by the configured
-        // ActiveState and CompletedState from WorkSourceOptions.
-        var options = _workSourceOptions.CurrentValue;
+        var workItem = await _workItemStore.GetByIdAsync(run.WorkItemId, ct);
+        if (workItem is null)
+            return;
+
+        // Managed board-state settings follow the environment that produced the
+        // work item. Appsettings remain the fallback for legacy or missing keys.
+        var states = await ResolveWorkSourceStatesAsync(workItem, ct);
         var status = targetState switch
         {
-            // Active states map to the configured activeState.
             // Note: Claimed does NOT project board state here — that is gated
             // on runtime.accepted in HandleAcceptedAsync.
-            RunLifecycleState.EnvironmentProvisioning => options.ActiveState,
-            RunLifecycleState.AgentRunning => options.ActiveState,
-            RunLifecycleState.AwaitingResult => options.ActiveState,
-            // Terminal/completion states map to the configured completedState.
-            RunLifecycleState.Completed => options.CompletedState,
-            RunLifecycleState.PrOpened => options.CompletedState,
-            RunLifecycleState.BranchPushed => options.CompletedState,
+            RunLifecycleState.EnvironmentProvisioning => states.ActiveState,
+            RunLifecycleState.AgentRunning => states.ActiveState,
+            RunLifecycleState.AwaitingResult => states.ActiveState,
+            RunLifecycleState.Completed => states.CompletedState,
+            RunLifecycleState.PrOpened => states.CompletedState,
+            RunLifecycleState.BranchPushed => states.CompletedState,
             // Failed/needs_human/cancelled remain in active state (or unchanged)
             // so they stay visible on the active board columns.
             _ => null,
@@ -518,7 +578,7 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         // Project status to the external work source (Phase 2 feedback loop).
         // Best-effort: failures in external projection are not fatal to the
         // controller's internal state transition.
-        await MaybeProjectToWorkSource(run, targetState, ct);
+        await MaybeProjectToWorkSource(run, workItem, targetState, states, ct);
     }
 
     /// <summary>
@@ -535,25 +595,38 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
     private async Task MaybeProjectToWorkSource(
         AgentRunHandle run,
         RunLifecycleState targetState,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         if (string.IsNullOrWhiteSpace(run.WorkItemId))
             return;
 
-        // Look up the work item to get external reference details
         var workItem = await _workItemStore.GetByIdAsync(run.WorkItemId, ct);
         if (workItem is null)
             return;
 
-        // Only project for work items that have an external source
-        if (string.IsNullOrWhiteSpace(workItem.ExternalId) ||
-            string.IsNullOrWhiteSpace(workItem.Source) ||
-            workItem.Source == "LocalFake")
+        var states = await ResolveWorkSourceStatesAsync(workItem, ct);
+        await MaybeProjectToWorkSource(run, workItem, targetState, states, ct);
+    }
+
+    private async Task MaybeProjectToWorkSource(
+        AgentRunHandle run,
+        WorkCandidate workItem,
+        RunLifecycleState targetState,
+        WorkSourceStates states,
+        CancellationToken ct
+    )
+    {
+        // Only project for work items that have an external source.
+        if (
+            string.IsNullOrWhiteSpace(workItem.ExternalId)
+            || string.IsNullOrWhiteSpace(workItem.Source)
+            || workItem.Source == "LocalFake"
+        )
             return;
 
-        var revision = workItem.SourceMetadata?.TryGetValue("revision", out var rev) == true
-            ? rev
-            : null;
+        var revision =
+            workItem.SourceMetadata?.TryGetValue("revision", out var rev) == true ? rev : null;
 
         var workRef = new ExternalWorkRef
         {
@@ -561,11 +634,11 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             ExternalId = workItem.ExternalId,
             Url = workItem.ExternalUrl,
             Revision = revision,
+            EnvironmentKey = GetAzureDevOpsEnvironmentKey(workItem.SourceMetadata),
         };
 
         // Determine status update (tags, state) and comment for this lifecycle milestone.
-        // Uses configured ActiveState/CompletedState from WorkSourceOptions.
-        var (extStatus, comment) = BuildExternalProjection(targetState, run);
+        var (extStatus, comment) = BuildExternalProjection(targetState, run, states);
 
         try
         {
@@ -586,9 +659,14 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             // poll cycle may retry through QueryWorkItemsAsync.
             // However, we log the failure and record a lifecycle event so it is observable.
             Log.WorkSourceProjectionFailed(
-                _logger, ex,
-                run.RunId, run.WorkItemId ?? string.Empty,
-                workItem.ExternalId, workItem.Source, targetState);
+                _logger,
+                ex,
+                run.RunId,
+                run.WorkItemId ?? string.Empty,
+                workItem.ExternalId,
+                workItem.Source,
+                targetState
+            );
 
             await _eventStore.AppendAsync(
                 new LifecycleEvent
@@ -596,9 +674,10 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
                     RunId = run.RunId,
                     EventType = ControllerEventTypes.WorkSourceProjectionFailed,
                     Severity = EventSeverity.Warning,
-                    Message = $"Work-source projection failed for run {run.RunId} " +
-                              $"(workItemId={run.WorkItemId}, externalId={workItem.ExternalId}, " +
-                              $"source={workItem.Source}, targetState={targetState}): {ex.Message}",
+                    Message =
+                        $"Work-source projection failed for run {run.RunId} "
+                        + $"(workItemId={run.WorkItemId}, externalId={workItem.ExternalId}, "
+                        + $"source={workItem.Source}, targetState={targetState}): {ex.Message}",
                     Payload = new Dictionary<string, object?>
                     {
                         ["runId"] = run.RunId,
@@ -609,7 +688,8 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
                         ["error"] = ex.Message,
                     },
                 },
-                ct);
+                ct
+            );
         }
     }
 
@@ -618,19 +698,17 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
     /// transition. Returns <c>null</c> for states that do not require
     /// external projection.
     ///
-    /// Uses the configured <c>ActiveState</c> and <c>CompletedState</c> from
-    /// <see cref="WorkSourceOptions"/> to derive the ADO board state.
+    /// Uses the selected managed environment's <c>ActiveState</c> and
+    /// <c>CompletedState</c>, with appsettings as the legacy fallback.
     /// This makes the projection idempotent: re-projecting the same state
     /// is a no-op at the ADO API level (PATCH with the same value is harmless).
     /// </summary>
-    private (ExternalWorkStatus? Status, string? Comment) BuildExternalProjection(
+    private static (ExternalWorkStatus? Status, string? Comment) BuildExternalProjection(
         RunLifecycleState targetState,
-        AgentRunHandle run)
+        AgentRunHandle run,
+        WorkSourceStates states
+    )
     {
-        var options = _workSourceOptions.CurrentValue;
-        var activeState = options.ActiveState;
-        var completedState = options.CompletedState;
-
         return targetState switch
         {
             // ── Claim: add claim tag only, NO board state change ────
@@ -638,57 +716,45 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             // HandleAcceptedAsync so the board only goes Active once
             // pi-materia confirms a successful agent start.
             RunLifecycleState.Claimed => (
-                new ExternalWorkStatus
-                {
-                    Tags = ["agent-active"],
-                },
-                "Agent controller claimed this work item and started processing."),
+                new ExternalWorkStatus { Tags = ["agent-active"] },
+                "Agent controller claimed this work item and started processing."
+            ),
 
             // ── Agent running: ensure active state ──────────────────
             RunLifecycleState.AgentRunning => (
-                new ExternalWorkStatus
-                {
-                    Status = activeState,
-                },
-                "Agent runtime is now executing."),
+                new ExternalWorkStatus { Status = states.ActiveState },
+                "Agent runtime is now executing."
+            ),
 
             // ── Awaiting result: ensure active state (idempotent) ───
             RunLifecycleState.AwaitingResult => (
-                new ExternalWorkStatus
-                {
-                    Status = activeState,
-                },
-                "Agent runtime is working; awaiting result."),
+                new ExternalWorkStatus { Status = states.ActiveState },
+                "Agent runtime is working; awaiting result."
+            ),
 
             // ── PR opened: move to completed state ──────────────────
             RunLifecycleState.PrOpened => (
-                new ExternalWorkStatus
-                {
-                    Status = completedState,
-                },
+                new ExternalWorkStatus { Status = states.CompletedState },
                 !string.IsNullOrWhiteSpace(run.PullRequestUrl)
                     ? $"Pull request opened: {run.PullRequestUrl}"
-                    : "Pull request opened."),
+                    : "Pull request opened."
+            ),
 
             // ── Branch pushed: move to completed state ──────────────
             RunLifecycleState.BranchPushed => (
-                new ExternalWorkStatus
-                {
-                    Status = completedState,
-                },
+                new ExternalWorkStatus { Status = states.CompletedState },
                 !string.IsNullOrWhiteSpace(run.BranchName)
                     ? $"Branch pushed: {run.BranchName}"
-                    : "Branch pushed to remote."),
+                    : "Branch pushed to remote."
+            ),
 
             // ── Completed: move to completed state ──────────────────
             RunLifecycleState.Completed => (
-                new ExternalWorkStatus
-                {
-                    Status = completedState,
-                },
+                new ExternalWorkStatus { Status = states.CompletedState },
                 !string.IsNullOrWhiteSpace(run.ResultSummary)
                     ? $"Run completed: {run.ResultSummary}"
-                    : "Run completed successfully."),
+                    : "Run completed successfully."
+            ),
 
             // ── Failed: comment only, no agent-failed tag ──
             // A bad runtime environment should not dirty the external record.
@@ -698,24 +764,19 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             // For runtime failures, the work item stays in active state for visibility.
             RunLifecycleState.Failed => (
                 null,
-                !string.IsNullOrWhiteSpace(run.Error)
-                    ? $"Run failed: {run.Error}"
-                    : "Run failed."),
+                !string.IsNullOrWhiteSpace(run.Error) ? $"Run failed: {run.Error}" : "Run failed."
+            ),
 
             // ── Needs human: add needs-human tag (keep in active state) ──
             RunLifecycleState.NeedsHuman => (
-                new ExternalWorkStatus
-                {
-                    Tags = ["agent-needs-human"],
-                },
+                new ExternalWorkStatus { Tags = ["agent-needs-human"] },
                 !string.IsNullOrWhiteSpace(run.ResultSummary)
                     ? $"Run requires human input: {run.ResultSummary}"
-                    : "Run requires human input."),
+                    : "Run requires human input."
+            ),
 
             // ── Cancelled: comment only ─────────────────────────────
-            RunLifecycleState.Cancelled => (
-                null,
-                "Run was cancelled."),
+            RunLifecycleState.Cancelled => (null, "Run was cancelled."),
 
             _ => (null, null),
         };
@@ -724,7 +785,8 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
     private async Task HandleAcceptedAsync(
         AgentRunHandle run,
         RuntimeEvent evt,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         // runtime.accepted normally arrives while the run is still before
         // AgentRunning. With a real pi runtime, the PollingWorker advances the
@@ -762,28 +824,20 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
     private async Task HandleHeartbeatAsync(
         AgentRunHandle run,
         RuntimeEvent evt,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
-        var update = new RuntimeFieldUpdate
-        {
-            LastHeartbeatAt = evt.OccurredAt,
-        };
+        var update = new RuntimeFieldUpdate { LastHeartbeatAt = evt.OccurredAt };
         await _runStore.UpdateRuntimeFieldsAsync(run.RunId, update, ct);
     }
 
-    private async Task HandleStatusAsync(
-        AgentRunHandle run,
-        RuntimeEvent evt,
-        CancellationToken ct)
+    private async Task HandleStatusAsync(AgentRunHandle run, RuntimeEvent evt, CancellationToken ct)
     {
         // Status events are informational only — no state change.
         // Update runtime fields if the runtime provided its run id.
         if (!string.IsNullOrWhiteSpace(evt.RuntimeRunId))
         {
-            var update = new RuntimeFieldUpdate
-            {
-                RuntimeRunId = evt.RuntimeRunId,
-            };
+            var update = new RuntimeFieldUpdate { RuntimeRunId = evt.RuntimeRunId };
             await _runStore.UpdateRuntimeFieldsAsync(run.RunId, update, ct);
         }
     }
@@ -791,7 +845,8 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
     private async Task HandleCompletedAsync(
         AgentRunHandle run,
         RuntimeEvent evt,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         var outcome = GetPayloadString(evt.Payload, "outcome");
         var targetState = ResolveCompletionState(outcome);
@@ -806,22 +861,21 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             BranchName = GetPayloadString(evt.Payload, "branchName") ?? run.BranchName,
             PullRequestUrl = GetPayloadString(evt.Payload, "prUrl") ?? run.PullRequestUrl,
             CommitSha = GetPayloadString(evt.Payload, "commitSha") ?? run.CommitSha,
-            ResultSummary = GetPayloadString(evt.Payload, "summary") ?? evt.Message ?? run.ResultSummary,
+            ResultSummary =
+                GetPayloadString(evt.Payload, "summary") ?? evt.Message ?? run.ResultSummary,
             LastHeartbeatAt = evt.OccurredAt,
             FinishedAt = evt.OccurredAt,
             // When the completion outcome is "failed", carry the error message
             // and reason so the run record is diagnosable.
-            Error = targetState == RunLifecycleState.Failed
-                ? (evt.Message ?? GetPayloadString(evt.Payload, "summary"))
-                : run.Error,
+            Error =
+                targetState == RunLifecycleState.Failed
+                    ? (evt.Message ?? GetPayloadString(evt.Payload, "summary"))
+                    : run.Error,
         };
         await _runStore.UpdateRuntimeFieldsAsync(run.RunId, update, ct);
     }
 
-    private async Task HandleFailedAsync(
-        AgentRunHandle run,
-        RuntimeEvent evt,
-        CancellationToken ct)
+    private async Task HandleFailedAsync(AgentRunHandle run, RuntimeEvent evt, CancellationToken ct)
     {
         await _runStore.UpdateStatusAsync(run.RunId, RunLifecycleState.Failed, ct);
         await MaybeUpdateWorkItemStatus(run, RunLifecycleState.Failed, ct);
@@ -847,10 +901,10 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
     private async Task HandleFailedRetryableAsync(
         AgentRunHandle run,
         RuntimeEvent evt,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
-        var reason = GetPayloadString(evt.Payload, "reason")
-            ?? evt.Message;
+        var reason = GetPayloadString(evt.Payload, "reason") ?? evt.Message;
 
         await _runStore.UpdateStatusAsync(run.RunId, RunLifecycleState.Failed, ct);
         await MaybeUpdateWorkItemStatus(run, RunLifecycleState.Failed, ct);
@@ -869,8 +923,8 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         await AppendControllerEventAsync(
             run.RunId,
             ControllerEventTypes.RetryableFailure,
-            $"Run failed with retryable error (reason: {reason ?? "unknown"}). " +
-            "The controller will evaluate the retry threshold.",
+            $"Run failed with retryable error (reason: {reason ?? "unknown"}). "
+                + "The controller will evaluate the retry threshold.",
             new Dictionary<string, object?>
             {
                 ["reason"] = reason,
@@ -878,13 +932,15 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
                 ["retryable"] = true,
             },
             EventSeverity.Warning,
-            ct);
+            ct
+        );
     }
 
     private async Task HandleNeedsHumanAsync(
         AgentRunHandle run,
         RuntimeEvent evt,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         await _runStore.UpdateStatusAsync(run.RunId, RunLifecycleState.NeedsHuman, ct);
         await MaybeUpdateWorkItemStatus(run, RunLifecycleState.NeedsHuman, ct);
@@ -902,7 +958,8 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
     private async Task HandleCancelledAsync(
         AgentRunHandle run,
         RuntimeEvent evt,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         await _runStore.UpdateStatusAsync(run.RunId, RunLifecycleState.Cancelled, ct);
         await MaybeUpdateWorkItemStatus(run, RunLifecycleState.Cancelled, ct);
@@ -919,7 +976,8 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
     private async Task HandleInformationalEventAsync(
         AgentRunHandle run,
         RuntimeEvent evt,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         // branch_created and pr_created are informational — record fields
         // but do not change run status.
@@ -934,6 +992,41 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         await _runStore.UpdateRuntimeFieldsAsync(run.RunId, update, ct);
     }
 
+    private async Task<WorkSourceStates> ResolveWorkSourceStatesAsync(
+        WorkCandidate workItem,
+        CancellationToken ct
+    )
+    {
+        var configured = _workSourceOptions.CurrentValue;
+        var fallback = new WorkSourceStates(configured.ActiveState, configured.CompletedState);
+        var environmentKey = GetAzureDevOpsEnvironmentKey(workItem.SourceMetadata);
+
+        if (_profileResolver is null || string.IsNullOrWhiteSpace(environmentKey))
+        {
+            return fallback;
+        }
+
+        var environment = await _profileResolver.ResolveAzureDevOpsEnvironmentAsync(
+            environmentKey,
+            ct
+        );
+        return environment?.IsManaged == true
+            ? new WorkSourceStates(
+                environment.Profile.ActiveState,
+                environment.Profile.CompletedState
+            )
+            : fallback;
+    }
+
+    private static string? GetAzureDevOpsEnvironmentKey(
+        IReadOnlyDictionary<string, string>? metadata
+    )
+    {
+        return metadata?.TryGetValue("azureDevOpsEnvironmentKey", out var key) == true ? key : null;
+    }
+
+    private sealed record WorkSourceStates(string? ActiveState, string? CompletedState);
+
     private static RunLifecycleState ResolveCompletionState(string? outcome)
     {
         return outcome switch
@@ -945,17 +1038,19 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             CompletionOutcomes.NeedsHuman => RunLifecycleState.NeedsHuman,
             CompletionOutcomes.Failed => RunLifecycleState.Failed,
             _ => throw new InvalidOperationException(
-                $"Unsupported completion outcome '{outcome ?? "(null)"}'. " +
-                $"Supported outcomes: {CompletionOutcomes.PullRequestOpened}, " +
-                $"{CompletionOutcomes.BranchPushed}, {CompletionOutcomes.PatchCreated}, " +
-                $"{CompletionOutcomes.NoChangesNeeded}, {CompletionOutcomes.NeedsHuman}, " +
-                $"{CompletionOutcomes.Failed}."),
+                $"Unsupported completion outcome '{outcome ?? "(null)"}'. "
+                    + $"Supported outcomes: {CompletionOutcomes.PullRequestOpened}, "
+                    + $"{CompletionOutcomes.BranchPushed}, {CompletionOutcomes.PatchCreated}, "
+                    + $"{CompletionOutcomes.NoChangesNeeded}, {CompletionOutcomes.NeedsHuman}, "
+                    + $"{CompletionOutcomes.Failed}."
+            ),
         };
     }
 
     private static string? GetPayloadString(
         IReadOnlyDictionary<string, object?>? payload,
-        string key)
+        string key
+    )
     {
         if (payload is null || !payload.TryGetValue(key, out var value) || value is null)
             return null;
@@ -970,13 +1065,15 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         string failedRunId,
         string workerId,
         int maxRunAttempts,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         var failedRun = await _runStore.GetByIdAsync(failedRunId, ct);
         if (failedRun is null)
         {
             throw new InvalidOperationException(
-                $"Cannot evaluate retry: run '{failedRunId}' not found.");
+                $"Cannot evaluate retry: run '{failedRunId}' not found."
+            );
         }
 
         if (failedRun.Status != RunLifecycleState.Failed)
@@ -996,16 +1093,14 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         }
 
         // Find the latest run for this work item to determine the attempt count.
-        var latestRun = await _runStore.FindLatestRunByWorkItemAsync(
-            failedRun.WorkItemId!, ct);
+        var latestRun = await _runStore.FindLatestRunByWorkItemAsync(failedRun.WorkItemId!, ct);
 
         var currentAttempt = latestRun?.RunAttempt ?? 1;
 
         if (currentAttempt >= maxRunAttempts)
         {
             // Exhausted all retry attempts — escalate to NeedsHuman.
-            await EscalateToNeedsHumanAsync(
-                failedRun, currentAttempt, maxRunAttempts, ct);
+            await EscalateToNeedsHumanAsync(failedRun, currentAttempt, maxRunAttempts, ct);
             return null;
         }
 
@@ -1020,14 +1115,15 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
                 RunAttempt = retryAttempt,
                 PreviousRunId = failedRunId,
             },
-            ct);
+            ct
+        );
 
         // Record the retry creation as a controller event.
         await AppendControllerEventAsync(
             retryRun.RunId,
             ControllerEventTypes.RetryRunCreated,
-            $"Retry run created (attempt {retryAttempt}/{maxRunAttempts}) " +
-            $"for work item '{failedRun.WorkItemId}' after previous run '{failedRunId}' failed.",
+            $"Retry run created (attempt {retryAttempt}/{maxRunAttempts}) "
+                + $"for work item '{failedRun.WorkItemId}' after previous run '{failedRunId}' failed.",
             new Dictionary<string, object?>
             {
                 ["previousRunId"] = failedRunId,
@@ -1037,7 +1133,8 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
                 ["retryAttempt"] = retryAttempt,
                 ["maxRunAttempts"] = maxRunAttempts,
             },
-            ct);
+            ct
+        );
 
         // Also record on the failed run for traceability.
         await AppendControllerEventAsync(
@@ -1049,7 +1146,8 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
                 ["retryRunId"] = retryRun.RunId,
                 ["retryAttempt"] = retryAttempt,
             },
-            ct);
+            ct
+        );
 
         Log.RetryRunCreated(_logger, retryRun.RunId, failedRunId, retryAttempt, maxRunAttempts);
 
@@ -1061,27 +1159,33 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         string staleRunId,
         string workerId,
         int maxRunAttempts,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         var staleRun = await _runStore.GetByIdAsync(staleRunId, ct);
         if (staleRun is null)
         {
             throw new InvalidOperationException(
-                $"Cannot recover stale run '{staleRunId}': run not found.");
+                $"Cannot recover stale run '{staleRunId}': run not found."
+            );
         }
 
         if (IsTerminal(staleRun.Status))
         {
             throw new InvalidOperationException(
-                $"Cannot recover stale run '{staleRunId}': run is already in terminal state '{staleRun.Status}'.");
+                $"Cannot recover stale run '{staleRunId}': run is already in terminal state '{staleRun.Status}'."
+            );
         }
 
-        if (staleRun.Status != RunLifecycleState.AwaitingResult
-            && staleRun.Status != RunLifecycleState.AgentRunning)
+        if (
+            staleRun.Status != RunLifecycleState.AwaitingResult
+            && staleRun.Status != RunLifecycleState.AgentRunning
+        )
         {
             throw new InvalidOperationException(
-                $"Cannot recover stale run '{staleRunId}': run is in state '{staleRun.Status}', " +
-                "only runs in AwaitingResult or AgentRunning can be recovered as stale.");
+                $"Cannot recover stale run '{staleRunId}': run is in state '{staleRun.Status}', "
+                    + "only runs in AwaitingResult or AgentRunning can be recovered as stale."
+            );
         }
 
         // StaleTimeout is a non-retryable failure — it goes straight to NeedsHuman.
@@ -1092,9 +1196,9 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         await AppendControllerEventAsync(
             staleRunId,
             ControllerEventTypes.StaleRecovered,
-            $"Stale run recovered: no heartbeat or final event received within the timeout. " +
-            $"Transitioned from {staleRun.Status} to {RunLifecycleState.NeedsHuman}. " +
-            $"Note: StaleTimeout is a non-retryable failure and does NOT trigger run-level retry.",
+            $"Stale run recovered: no heartbeat or final event received within the timeout. "
+                + $"Transitioned from {staleRun.Status} to {RunLifecycleState.NeedsHuman}. "
+                + $"Note: StaleTimeout is a non-retryable failure and does NOT trigger run-level retry.",
             new Dictionary<string, object?>
             {
                 ["previousState"] = staleRun.Status.ToString(),
@@ -1104,7 +1208,8 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
                 ["staleTimeoutIsNonRetryable"] = true,
             },
             EventSeverity.Warning,
-            ct);
+            ct
+        );
 
         return null;
     }
@@ -1117,7 +1222,8 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         AgentRunHandle failedRun,
         int currentAttempt,
         int maxRunAttempts,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         // Collect failure reasons from the retry chain.
         var failureReasons = new List<string>();
@@ -1131,7 +1237,10 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             if (previousRun is null)
                 break;
 
-            failureReasons.Insert(0, $"Attempt {previousRun.RunAttempt}: {previousRun.Error ?? "unknown"}");
+            failureReasons.Insert(
+                0,
+                $"Attempt {previousRun.RunAttempt}: {previousRun.Error ?? "unknown"}"
+            );
             previousRunId = previousRun.PreviousRunId;
         }
 
@@ -1143,8 +1252,8 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         await AppendControllerEventAsync(
             failedRun.RunId,
             ControllerEventTypes.RetryExhausted,
-            $"Run escalated to NeedsHuman after {maxRunAttempts} failed attempts. " +
-            $"Failure summary: {failureSummary}",
+            $"Run escalated to NeedsHuman after {maxRunAttempts} failed attempts. "
+                + $"Failure summary: {failureSummary}",
             new Dictionary<string, object?>
             {
                 ["maxRunAttempts"] = maxRunAttempts,
@@ -1152,20 +1261,26 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
                 ["failureSummary"] = failureSummary,
             },
             EventSeverity.Error,
-            ct);
+            ct
+        );
 
         // Update the local work item to NeedsHuman state.
         if (!string.IsNullOrWhiteSpace(failedRun.WorkItemId))
         {
-            await _workItemStore.UpdateStatusAsync(
-                failedRun.WorkItemId, "NeedsHuman", ct);
+            await _workItemStore.UpdateStatusAsync(failedRun.WorkItemId, "NeedsHuman", ct);
         }
 
         // Project NeedsHuman to the external work source (adds agent-needs-human tag).
         // This is best-effort; projection failures are not fatal.
         await MaybeProjectToWorkSource(failedRun, RunLifecycleState.NeedsHuman, ct);
 
-        Log.RetryExhausted(_logger, failedRun.RunId, failedRun.WorkItemId, maxRunAttempts, failureReasons.Count);
+        Log.RetryExhausted(
+            _logger,
+            failedRun.RunId,
+            failedRun.WorkItemId,
+            maxRunAttempts,
+            failureReasons.Count
+        );
     }
 
     /// <summary>
@@ -1196,9 +1311,10 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
     {
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Runtime event drove state transition — eventType={EventType}, " +
-                      "runId={RunId}, eventId={EventId}, from={FromState}, to={ToState}, " +
-                      "elapsed={ElapsedMilliseconds:F1}ms")]
+            Message = "Runtime event drove state transition — eventType={EventType}, "
+                + "runId={RunId}, eventId={EventId}, from={FromState}, to={ToState}, "
+                + "elapsed={ElapsedMilliseconds:F1}ms"
+        )]
         public static partial void RuntimeEventTransition(
             ILogger logger,
             string eventType,
@@ -1206,67 +1322,75 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             string eventId,
             RunLifecycleState fromState,
             RunLifecycleState toState,
-            double elapsedMilliseconds);
+            double elapsedMilliseconds
+        );
 
         [LoggerMessage(
             Level = LogLevel.Debug,
-            Message = "Runtime event no-op — eventType={EventType}, " +
-                      "runId={RunId}, eventId={EventId}, state={State}, " +
-                      "elapsed={ElapsedMilliseconds:F1}ms")]
+            Message = "Runtime event no-op — eventType={EventType}, "
+                + "runId={RunId}, eventId={EventId}, state={State}, "
+                + "elapsed={ElapsedMilliseconds:F1}ms"
+        )]
         public static partial void RuntimeEventNoOp(
             ILogger logger,
             string eventType,
             string runId,
             string eventId,
             RunLifecycleState state,
-            double elapsedMilliseconds);
+            double elapsedMilliseconds
+        );
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "Runtime event dispatch failed — eventType={EventType}, " +
-                      "runId={RunId}, eventId={EventId}, elapsed={ElapsedMilliseconds:F1}ms")]
+            Message = "Runtime event dispatch failed — eventType={EventType}, "
+                + "runId={RunId}, eventId={EventId}, elapsed={ElapsedMilliseconds:F1}ms"
+        )]
         public static partial void RuntimeEventDispatchError(
             ILogger logger,
             Exception ex,
             string eventType,
             string runId,
             string eventId,
-            double elapsedMilliseconds);
+            double elapsedMilliseconds
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Retry run created — retryRunId={RetryRunId}, " +
-                      "previousRunId={PreviousRunId}, attempt={Attempt}/{MaxAttempts}")]
+            Message = "Retry run created — retryRunId={RetryRunId}, "
+                + "previousRunId={PreviousRunId}, attempt={Attempt}/{MaxAttempts}"
+        )]
         public static partial void RetryRunCreated(
             ILogger logger,
             string retryRunId,
             string previousRunId,
             int attempt,
-            int maxAttempts);
+            int maxAttempts
+        );
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "Non-retryable failure — runId={RunId}, error={Error}")]
-        public static partial void NonRetryableFailure(
-            ILogger logger,
-            string runId,
-            string error);
+            Message = "Non-retryable failure — runId={RunId}, error={Error}"
+        )]
+        public static partial void NonRetryableFailure(ILogger logger, string runId, string error);
 
         [LoggerMessage(
             Level = LogLevel.Error,
-            Message = "Retry exhausted — runId={RunId}, workItemId={WorkItemId}, " +
-                      "maxAttempts={MaxAttempts}, failureCount={FailureCount}")]
+            Message = "Retry exhausted — runId={RunId}, workItemId={WorkItemId}, "
+                + "maxAttempts={MaxAttempts}, failureCount={FailureCount}"
+        )]
         public static partial void RetryExhausted(
             ILogger logger,
             string runId,
             string? workItemId,
             int maxAttempts,
-            int failureCount);
+            int failureCount
+        );
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "Work-source projection failed — runId={RunId}, workItemId={WorkItemId}, " +
-                      "externalId={ExternalId}, source={Source}, targetState={TargetState}")]
+            Message = "Work-source projection failed — runId={RunId}, workItemId={WorkItemId}, "
+                + "externalId={ExternalId}, source={Source}, targetState={TargetState}"
+        )]
         public static partial void WorkSourceProjectionFailed(
             ILogger logger,
             Exception ex,
@@ -1274,6 +1398,7 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             string workItemId,
             string? externalId,
             string? source,
-            RunLifecycleState targetState);
+            RunLifecycleState targetState
+        );
     }
 }

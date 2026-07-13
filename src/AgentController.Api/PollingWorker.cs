@@ -1,12 +1,12 @@
+using System.Diagnostics;
+using System.Linq;
+using System.Text.Json;
 using AgentController.Application;
 using AgentController.Application.Abstractions;
 using AgentController.Domain;
 using AgentController.Infrastructure.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
-using System.Diagnostics;
-using System.Linq;
-using System.Text.Json;
 
 namespace AgentController.Api;
 
@@ -79,7 +79,8 @@ public sealed partial class PollingWorker : BackgroundService
             options.WorkerId,
             options.PollIntervalSeconds,
             options.MaxConcurrentRuns,
-            options.StaleTimeoutSeconds);
+            options.StaleTimeoutSeconds
+        );
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -99,8 +100,7 @@ public sealed partial class PollingWorker : BackgroundService
 
             try
             {
-                await Task.Delay(
-                    TimeSpan.FromSeconds(options.PollIntervalSeconds), stoppingToken);
+                await Task.Delay(TimeSpan.FromSeconds(options.PollIntervalSeconds), stoppingToken);
             }
             catch (OperationCanceledException)
             {
@@ -125,13 +125,13 @@ public sealed partial class PollingWorker : BackgroundService
         var lifecycle = scope.ServiceProvider.GetRequiredService<IRunLifecycleService>();
         var runStore = scope.ServiceProvider.GetRequiredService<IAgentRunStore>();
         var workItemStore = scope.ServiceProvider.GetRequiredService<IWorkItemStore>();
-        var agentRuntime = scope.ServiceProvider.GetRequiredService<IAgentRuntime>();
-        var environmentProvider = scope.ServiceProvider.GetRequiredService<IEnvironmentProvider>();
-        var sourceControlProvider = scope.ServiceProvider.GetRequiredService<ISourceControlProvider>();
+        var executionProviderResolver =
+            scope.ServiceProvider.GetRequiredService<IExecutionProviderResolver>();
+        var sourceControlProvider =
+            scope.ServiceProvider.GetRequiredService<ISourceControlProvider>();
         var environmentStore = scope.ServiceProvider.GetRequiredService<IEnvironmentStore>();
-        var repositoryStore = scope.ServiceProvider.GetRequiredService<IRepositoryStore>();
+        var profileResolver = scope.ServiceProvider.GetRequiredService<IManagedProfileResolver>();
         var reworkCycleStore = scope.ServiceProvider.GetRequiredService<IReworkCycleStore>();
-        var repoConfig = scope.ServiceProvider.GetRequiredService<IOptions<Dictionary<string, RepositoryProfileOptions>>>();
         var options = _options.CurrentValue;
 
         // ── 1. Check concurrency ─────────────────────────────────────
@@ -145,6 +145,8 @@ public sealed partial class PollingWorker : BackgroundService
         else
         {
             // ── 2. Discover eligible work ────────────────────────────
+            // AzureDevOpsBoardsWorkSource resolves all enabled managed environments;
+            // other sources ignore the provider-specific managed profile set.
             var query = new WorkQuery { MaxResults = availableSlots };
             var candidates = await workSource.FindEligibleAsync(query, ct);
 
@@ -165,21 +167,19 @@ public sealed partial class PollingWorker : BackgroundService
                         workSource,
                         lifecycle,
                         workItemStore,
-                        agentRuntime,
                         runStore,
-                        environmentProvider,
+                        executionProviderResolver,
                         sourceControlProvider,
                         environmentStore,
-                        repositoryStore,
+                        profileResolver,
                         reworkCycleStore,
-                        repoConfig.Value,
                         options,
-                        ct);
+                        ct
+                    );
                 }
                 catch (Exception ex)
                 {
-                    Log.CandidateProcessingFailed(
-                        _logger, ex, candidate.Id, candidate.Title);
+                    Log.CandidateProcessingFailed(_logger, ex, candidate.Id, candidate.Title);
                 }
             }
         }
@@ -200,9 +200,16 @@ public sealed partial class PollingWorker : BackgroundService
         try
         {
             await ProcessClaimedRunsAsync(
-                lifecycle, runStore, workItemStore, agentRuntime,
-                environmentProvider, sourceControlProvider, environmentStore,
-                repositoryStore, repoConfig.Value, options, ct);
+                lifecycle,
+                runStore,
+                workItemStore,
+                executionProviderResolver,
+                sourceControlProvider,
+                environmentStore,
+                profileResolver,
+                options,
+                ct
+            );
         }
         catch (Microsoft.Extensions.Options.OptionsValidationException)
         {
@@ -236,24 +243,20 @@ public sealed partial class PollingWorker : BackgroundService
     /// <see cref="LocalGitSourceControlProvider"/>) are registered, real work
     /// is performed and the run can complete end-to-end without Azure DevOps.
     /// </summary>
-    // CA1859: repoConfig is IReadOnlyDictionary at the call site; narrowing would
-    // require changing the caller. The interface is the correct abstraction here.
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1859:Use concrete types when possible for improved performance", Justification = "Interface parameter from caller.")]
     private async Task ProcessCandidateAsync(
         WorkCandidate candidate,
         IWorkSource workSource,
         IRunLifecycleService lifecycle,
         IWorkItemStore workItemStore,
-        IAgentRuntime agentRuntime,
         IAgentRunStore runStore,
-        IEnvironmentProvider environmentProvider,
+        IExecutionProviderResolver executionProviderResolver,
         ISourceControlProvider sourceControlProvider,
         IEnvironmentStore environmentStore,
-        IRepositoryStore repositoryStore,
+        IManagedProfileResolver profileResolver,
         IReworkCycleStore reworkCycleStore,
-        IReadOnlyDictionary<string, RepositoryProfileOptions> repoConfig,
         AgentControllerOptions options,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         // ── Upsert remote candidates into local persistence ────────
         // Azure DevOps Boards (and future remote sources) return
@@ -270,47 +273,62 @@ public sealed partial class PollingWorker : BackgroundService
         // repository profiles. If no profile matches, skip the item and
         // post a clarifying comment so typos are visible on the board.
         // A missing repo: tag is treated as not-eligible (skip silently).
-        if (!await ValidateRepoKeyAsync(
-            candidate, workSource, repoConfig, ct))
+        var resolvedProfiles = await ResolveProfilesAsync(
+            candidate,
+            workSource,
+            profileResolver,
+            ct
+        );
+        if (resolvedProfiles is null)
         {
             return;
         }
+
+        var environmentProvider = executionProviderResolver.ResolveEnvironmentProvider(
+            resolvedProfiles.RuntimeEnvironment
+        );
+        var agentRuntime = executionProviderResolver.ResolveAgentRuntime(
+            resolvedProfiles.RuntimeEnvironment
+        );
 
         // ── Run clone preflight before claiming ────────────────────
         // Validate clone-readiness before committing to a claim so
         // misconfiguration surfaces early instead of as a silent hang.
         // The preflight checks: URL parseable, transport prerequisites,
         // and a non-interactive git ls-remote probe.
-        var repoKey = candidate.RepoKey!; // non-null: validated above
-        var preflightSpec = await BuildPreflightSpecAsync(
-            repoKey, repositoryStore, repoConfig, ct);
+        var preflightSpec = BuildPreflightSpec(resolvedProfiles.Repository);
+        var preflightResult = await sourceControlProvider.CheckClonePreflightAsync(
+            preflightSpec,
+            ct
+        );
 
-        if (preflightSpec is not null)
+        if (!preflightResult.Success)
         {
-            var preflightResult = await sourceControlProvider.CheckClonePreflightAsync(
-                preflightSpec, ct);
+            Log.CandidateSkippedPreflight(
+                _logger,
+                candidate.Id,
+                candidate.Title,
+                preflightResult.Transport,
+                preflightResult.Reason
+            );
 
-            if (!preflightResult.Success)
+            // Post a clarifying comment for remote sources so the board
+            // owner sees the concrete failure reason.
+            if (candidate.Source != "LocalFake" && candidate.Source != "LocalFile")
             {
-                Log.CandidateSkippedPreflight(
-                    _logger, candidate.Id, candidate.Title,
-                    preflightResult.Transport, preflightResult.Reason);
-
-                // Post a clarifying comment for remote sources so the board
-                // owner sees the concrete failure reason.
-                if (candidate.Source != "LocalFake" && candidate.Source != "LocalFile")
-                {
-                    await PostRepoKeyCommentAsync(workSource, candidate,
-                        $"Skipped: clone preflight failed (transport: {preflightResult.Transport}). " +
-                        $"{preflightResult.Reason}", ct);
-                }
-
-                return;
+                await PostRepoKeyCommentAsync(
+                    workSource,
+                    candidate,
+                    $"Skipped: clone preflight failed (transport: {preflightResult.Transport}). "
+                        + $"{preflightResult.Reason}",
+                    ct
+                );
             }
 
-            Log.CandidatePreflightPassed(
-                _logger, candidate.Id, preflightResult.Transport);
+            return;
         }
+
+        Log.CandidatePreflightPassed(_logger, candidate.Id, preflightResult.Transport);
 
         // Claim the work item for exclusive execution
         var claim = new ClaimRequest
@@ -323,24 +341,17 @@ public sealed partial class PollingWorker : BackgroundService
 
         if (!claimResult.Success)
         {
-            Log.ClaimFailed(
-                _logger,
-                candidate.Id,
-                claimResult.FailureReason ?? "unknown");
+            Log.ClaimFailed(_logger, candidate.Id, claimResult.FailureReason ?? "unknown");
             return;
         }
 
         Log.CandidateClaimed(_logger, candidate.Id, candidate.Title);
 
         // Lifecycle log: claim acquired with full context (before run creation)
-        Log.ClaimAcquired(
-            _logger, options.WorkerId, candidate.Id, candidate.Title);
+        Log.ClaimAcquired(_logger, options.WorkerId, candidate.Id, candidate.Title);
 
         // Create the agent run (starts in Claimed state, records controller.claimed event)
-        var run = await lifecycle.CreateRunForWorkItemAsync(
-            candidate.Id,
-            options.WorkerId,
-            ct);
+        var run = await lifecycle.CreateRunForWorkItemAsync(candidate.Id, options.WorkerId, ct);
 
         Log.RunCreated(_logger, run.RunId, candidate.Id);
 
@@ -350,14 +361,14 @@ public sealed partial class PollingWorker : BackgroundService
         // build a ReworkContext to thread through the happy path.
         // If null, the happy path is completely untouched.
         ReworkContext? reworkContext = null;
-        var pendingCycle = await reworkCycleStore.GetPendingForWorkItemAsync(
-            candidate.Id, ct);
+        var pendingCycle = await reworkCycleStore.GetPendingForWorkItemAsync(candidate.Id, ct);
 
         if (pendingCycle is not null)
         {
             var feedbackBundle = JsonSerializer.Deserialize<IReadOnlyList<ReviewThread>>(
                 pendingCycle.FeedbackBundleJson,
-                JsonReadOptions);
+                JsonReadOptions
+            );
 
             reworkContext = new ReworkContext
             {
@@ -370,9 +381,13 @@ public sealed partial class PollingWorker : BackgroundService
             };
 
             Log.ReworkCycleFound(
-                _logger, run.RunId, candidate.Id,
-                pendingCycle.Id, pendingCycle.CycleNumber,
-                reworkContext.FeedbackBundle.Count);
+                _logger,
+                run.RunId,
+                candidate.Id,
+                pendingCycle.Id,
+                pendingCycle.CycleNumber,
+                reworkContext.FeedbackBundle.Count
+            );
         }
 
         // ── Advance through controller-owned lifecycle states ──────
@@ -383,67 +398,115 @@ public sealed partial class PollingWorker : BackgroundService
         RepositoryCheckout? checkout = null;
         EnvironmentHandle? envHandle = null;
 
-        if (ct.IsCancellationRequested) return;
+        if (ct.IsCancellationRequested)
+            return;
 
         // ── 1. EnvironmentProvisioning ─────────────────────────────
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.EnvironmentProvisioning, ct);
-        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.EnvironmentProvisioning,
-            "Environment provisioning started.", RunLifecycleState.EnvironmentProvisioning, ct);
+        await AppendMilestoneEvent(
+            lifecycle,
+            run.RunId,
+            ControllerEventTypes.EnvironmentProvisioning,
+            "Environment provisioning started.",
+            RunLifecycleState.EnvironmentProvisioning,
+            ct
+        );
 
         envHandle = await ProvisionEnvironmentAsync(
-            run, candidate, environmentProvider, environmentStore, runStore, lifecycle, ct);
+            run,
+            resolvedProfiles.RuntimeEnvironment,
+            environmentProvider,
+            environmentStore,
+            runStore,
+            lifecycle,
+            ct
+        );
 
         if (envHandle is null)
         {
             // Environment provisioning failed — run is already transitioned to Failed.
             // Release the ADO claim and destroy the workspace to free concurrency.
             await ReleaseClaimAndCleanupAsync(
-                run, candidate, workSource, environmentProvider, envHandle,
-                "Environment provisioning failed.", lifecycle, ct);
+                run,
+                candidate,
+                workSource,
+                environmentProvider,
+                envHandle,
+                "Environment provisioning failed.",
+                lifecycle,
+                ct
+            );
             return;
         }
 
         // ── 2. EnvironmentReady ────────────────────────────────────
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.EnvironmentReady, ct);
-        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.EnvironmentReady,
-            "Environment provisioned and ready.", RunLifecycleState.EnvironmentReady, ct);
+        await AppendMilestoneEvent(
+            lifecycle,
+            run.RunId,
+            ControllerEventTypes.EnvironmentReady,
+            "Environment provisioned and ready.",
+            RunLifecycleState.EnvironmentReady,
+            ct
+        );
 
-        if (ct.IsCancellationRequested) return;
+        if (ct.IsCancellationRequested)
+            return;
 
         // ── 3. RepositoryCloning ───────────────────────────────────
-        // Resolve transport for lifecycle logging before the clone begins.
-        var transportForLog = CloneTransport.Unspecified;
-        if (!string.IsNullOrWhiteSpace(candidate.RepoKey) &&
-            repoConfig.TryGetValue(candidate.RepoKey!, out var transportProfile))
-        {
-            transportForLog = transportProfile.Transport;
-        }
+        var transportForLog = resolvedProfiles.Repository.Transport;
 
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.RepositoryCloning, ct);
-        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.RepositoryCloning,
-            "Repository cloning started.", RunLifecycleState.RepositoryCloning, ct);
+        await AppendMilestoneEvent(
+            lifecycle,
+            run.RunId,
+            ControllerEventTypes.RepositoryCloning,
+            "Repository cloning started.",
+            RunLifecycleState.RepositoryCloning,
+            ct
+        );
 
         Log.CloneStarting(_logger, run.RunId, candidate.RepoKey ?? "(unknown)", transportForLog);
 
         checkout = await CloneRepositoryAsync(
-            run, candidate, envHandle, sourceControlProvider, repositoryStore, repoConfig, runStore, lifecycle,
-            reworkContext, ct);
+            run,
+            candidate,
+            resolvedProfiles.Repository,
+            envHandle,
+            sourceControlProvider,
+            runStore,
+            lifecycle,
+            reworkContext,
+            ct
+        );
 
         if (checkout is null)
         {
             // Repository clone failed — run is already transitioned to Failed.
             // Release the ADO claim and destroy the workspace to free concurrency.
             await ReleaseClaimAndCleanupAsync(
-                run, candidate, workSource, environmentProvider, envHandle,
-                "Repository clone failed.", lifecycle, ct);
+                run,
+                candidate,
+                workSource,
+                environmentProvider,
+                envHandle,
+                "Repository clone failed.",
+                lifecycle,
+                ct
+            );
             return;
         }
 
         // ── 4. RepositoryReady ─────────────────────────────────────
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.RepositoryReady, ct);
-        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.RepositoryReady,
+        await AppendMilestoneEvent(
+            lifecycle,
+            run.RunId,
+            ControllerEventTypes.RepositoryReady,
             $"Repository cloned and ready at '{checkout.LocalPath}'.",
-            RunLifecycleState.RepositoryReady, ct);
+            RunLifecycleState.RepositoryReady,
+            ct
+        );
 
         // Persist the HEAD commit SHA from the clone so ReworkCycle.BaseCommitSha
         // can be sourced from the prior run later.
@@ -454,7 +517,8 @@ public sealed partial class PollingWorker : BackgroundService
                 await runStore.UpdateRuntimeFieldsAsync(
                     run.RunId,
                     new RuntimeFieldUpdate { CommitSha = checkout.CommitSha },
-                    ct);
+                    ct
+                );
             }
             catch
             {
@@ -462,10 +526,10 @@ public sealed partial class PollingWorker : BackgroundService
             }
         }
 
-        Log.WorkspaceReady(
-            _logger, run.RunId, envHandle.RootPath, checkout.LocalPath);
+        Log.WorkspaceReady(_logger, run.RunId, envHandle.RootPath, checkout.LocalPath);
 
-        if (ct.IsCancellationRequested) return;
+        if (ct.IsCancellationRequested)
+            return;
 
         // ── 5. ContextInjected ─────────────────────────────────────
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.ContextInjected, ct);
@@ -475,149 +539,147 @@ public sealed partial class PollingWorker : BackgroundService
         var comments = await FetchCommentsAsync(workSource, candidate, ct);
 
         await InjectContextAsync(
-            run, candidate, envHandle, checkout, lifecycle, comments, reworkContext, ct);
+            run,
+            candidate,
+            envHandle,
+            checkout,
+            lifecycle,
+            comments,
+            reworkContext,
+            ct
+        );
 
         // Mark the pending ReworkCycle as Consumed after successful context injection.
         // This closes the audit chain and prevents re-injection of the same bundle on retry.
         if (pendingCycle is not null)
         {
             await reworkCycleStore.MarkConsumedAsync(pendingCycle.Id, run.RunId, ct);
-            Log.ReworkCycleConsumed(
-                _logger, run.RunId, pendingCycle.Id, pendingCycle.CycleNumber);
+            Log.ReworkCycleConsumed(_logger, run.RunId, pendingCycle.Id, pendingCycle.CycleNumber);
         }
 
-        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.ContextInjected,
-            "Context injected into run workspace.", RunLifecycleState.ContextInjected, ct);
+        await AppendMilestoneEvent(
+            lifecycle,
+            run.RunId,
+            ControllerEventTypes.ContextInjected,
+            "Context injected into run workspace.",
+            RunLifecycleState.ContextInjected,
+            ct
+        );
 
-        if (ct.IsCancellationRequested) return;
+        if (ct.IsCancellationRequested)
+            return;
 
         // Lifecycle log: runtime dispatch to agent starting
-        Log.RuntimeDispatchStarting(
-            _logger, run.RunId, candidate.Id, agentRuntime.GetType().Name);
+        Log.RuntimeDispatchStarting(_logger, run.RunId, candidate.Id, agentRuntime.GetType().Name);
 
         // ── 6. AgentStarting ───────────────────────────────────────
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.AgentStarting, ct);
-        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.AgentStarting,
-            "Agent runtime start requested.", RunLifecycleState.AgentStarting, ct);
+        await AppendMilestoneEvent(
+            lifecycle,
+            run.RunId,
+            ControllerEventTypes.AgentStarting,
+            "Agent runtime start requested.",
+            RunLifecycleState.AgentStarting,
+            ct
+        );
 
-        await HandOffToRuntimeAsync(run, candidate, envHandle, checkout, agentRuntime, lifecycle, reworkContext, ct);
+        await HandOffToRuntimeAsync(
+            run,
+            candidate,
+            resolvedProfiles.RuntimeEnvironment,
+            envHandle,
+            checkout,
+            agentRuntime,
+            lifecycle,
+            reworkContext,
+            ct
+        );
 
         // ── 7. AgentRunning ────────────────────────────────────────
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.AgentRunning, ct);
-        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.AgentRunning,
-            "Agent runtime is executing.", RunLifecycleState.AgentRunning, ct);
+        await AppendMilestoneEvent(
+            lifecycle,
+            run.RunId,
+            ControllerEventTypes.AgentRunning,
+            "Agent runtime is executing.",
+            RunLifecycleState.AgentRunning,
+            ct
+        );
 
         // ── 8. AwaitingResult ──────────────────────────────────────
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.AwaitingResult, ct);
-        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.AwaitingResult,
-            "Run handed off to runtime, awaiting result.", RunLifecycleState.AwaitingResult, ct);
+        await AppendMilestoneEvent(
+            lifecycle,
+            run.RunId,
+            ControllerEventTypes.AwaitingResult,
+            "Run handed off to runtime, awaiting result.",
+            RunLifecycleState.AwaitingResult,
+            ct
+        );
 
         Log.RunAdvanced(_logger, run.RunId, candidate.Id);
     }
 
     /// <summary>
-    /// Validate the <c>repo:{key}</c> tag on a work candidate against configured
-    /// repository profiles before claiming.
-    ///
-    /// <list type="bullet">
-    ///   <item><b>Missing repo: tag (empty RepoKey):</b> treat as not-eligible.
-    ///   Skip silently for local sources, post a clarifying comment for remote sources.</item>
-    ///   <item><b>repo: tag present but no matching profile:</b> skip the item and
-    ///   post a clarifying comment (e.g. "Skipped: no repository profile matches
-    ///   the `repo:xxx` tag") so typos are visible on the board.</item>
-    ///   <item><b>repo: tag matches a profile:</b> return true to allow the
-    ///   candidate to proceed to claim.</item>
-    /// </list>
-    ///
-    /// This validation runs <b>before</b> the claim attempt so we don't waste
-    /// a claim on an item that can't be processed.
+    /// Resolves a candidate's repository and associated environments before claiming it.
+    /// Managed profiles are considered alongside appsettings fallback profiles.
     /// </summary>
-    private async Task<bool> ValidateRepoKeyAsync(
+    private async Task<ResolvedControllerProfiles?> ResolveProfilesAsync(
         WorkCandidate candidate,
         IWorkSource workSource,
-        IReadOnlyDictionary<string, RepositoryProfileOptions> repoConfig,
-        CancellationToken ct)
+        IManagedProfileResolver profileResolver,
+        CancellationToken ct
+    )
     {
         var repoKey = candidate.RepoKey;
 
-        // No repo: tag at all — not eligible
         if (string.IsNullOrWhiteSpace(repoKey))
         {
-            // Remote sources get a clarifying comment so the board owner sees
-            // the item was discovered but skipped due to missing association.
             if (candidate.Source != "LocalFake" && candidate.Source != "LocalFile")
             {
-                await PostRepoKeyCommentAsync(workSource, candidate,
-                    "Skipped: work item has no `repo:` tag. Add a tag like `repo:example-service` " +
-                    "to associate this item with a configured repository profile.", ct);
+                await PostRepoKeyCommentAsync(
+                    workSource,
+                    candidate,
+                    "Skipped: work item has no `repo:` tag. Add a tag like `repo:example-service` "
+                        + "to associate this item with a configured repository profile.",
+                    ct
+                );
             }
 
             Log.CandidateSkippedNoRepoTag(_logger, candidate.Id, candidate.Title);
-            return false;
+            return null;
         }
 
-        // repo: tag present — check against configured profiles
-        if (repoConfig.TryGetValue(repoKey, out _))
+        var resolved = await profileResolver.ResolveForRepositoryAsync(repoKey, ct);
+        if (resolved is not null)
         {
-            return true; // Profile found — proceed to claim
+            return resolved;
         }
 
-        // No matching profile — post clarifying comment for remote sources
         if (candidate.Source != "LocalFake" && candidate.Source != "LocalFile")
         {
-            await PostRepoKeyCommentAsync(workSource, candidate,
-                $"Skipped: no repository profile matches the `repo:{repoKey}` tag. " +
-                "Check for typos or add a matching profile to the 'repositories' configuration.", ct);
+            await PostRepoKeyCommentAsync(
+                workSource,
+                candidate,
+                $"Skipped: no repository profile matches the `repo:{repoKey}` tag. "
+                    + "Check for typos or add a matching managed or appsettings profile.",
+                ct
+            );
         }
 
         Log.CandidateSkippedNoProfile(_logger, candidate.Id, repoKey);
-        return false;
+        return null;
     }
 
-    /// <summary>
-    /// Build a <see cref="RepositorySpec"/> for the clone preflight check.
-    /// Resolves clone URL, branch, and transport from the persistent store
-    /// first, then falls back to configuration options.
-    /// Returns null if no profile can be resolved (should not happen after
-    /// ValidateRepoKeyAsync succeeds, but be defensive).
-    /// </summary>
-    private static async Task<RepositorySpec?> BuildPreflightSpecAsync(
-        string repoKey,
-        IRepositoryStore repositoryStore,
-        IReadOnlyDictionary<string, RepositoryProfileOptions> repoConfig,
-        CancellationToken ct)
+    private static RepositorySpec BuildPreflightSpec(RepositoryProfile repository)
     {
-        // Try the persistent store first (may contain cached profiles),
-        // then fall back to configuration options.
-        var repoProfile = await repositoryStore.GetByKeyAsync(repoKey, ct);
-
-        string? cloneUrl;
-        string defaultBranch;
-        var transport = CloneTransport.Unspecified;
-
-        if (repoProfile is not null)
-        {
-            cloneUrl = repoProfile.CloneUrl;
-            defaultBranch = repoProfile.DefaultBranch;
-            transport = repoProfile.Transport;
-        }
-        else if (repoConfig.TryGetValue(repoKey, out var configured))
-        {
-            cloneUrl = configured.CloneUrl;
-            defaultBranch = configured.DefaultBranch;
-            transport = configured.Transport;
-        }
-        else
-        {
-            return null; // No profile found — should not reach here after ValidateRepoKeyAsync.
-        }
-
         return new RepositorySpec
         {
-            RepoKey = repoKey,
-            CloneUrl = cloneUrl,
-            DefaultBranch = defaultBranch,
-            Transport = transport,
+            RepoKey = repository.Key,
+            CloneUrl = repository.CloneUrl,
+            DefaultBranch = repository.DefaultBranch,
+            Transport = repository.Transport,
+            Profile = repository,
         };
     }
 
@@ -629,11 +691,11 @@ public sealed partial class PollingWorker : BackgroundService
         IWorkSource workSource,
         WorkCandidate candidate,
         string comment,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
-        var revision = candidate.SourceMetadata?.TryGetValue("revision", out var rev) == true
-            ? rev
-            : null;
+        var revision =
+            candidate.SourceMetadata?.TryGetValue("revision", out var rev) == true ? rev : null;
 
         var workRef = new ExternalWorkRef
         {
@@ -641,6 +703,7 @@ public sealed partial class PollingWorker : BackgroundService
             ExternalId = candidate.ExternalId,
             Url = candidate.ExternalUrl,
             Revision = revision,
+            EnvironmentKey = GetAzureDevOpsEnvironmentKey(candidate.SourceMetadata),
         };
 
         try
@@ -661,19 +724,22 @@ public sealed partial class PollingWorker : BackgroundService
     /// </summary>
     private async Task<EnvironmentHandle?> ProvisionEnvironmentAsync(
         AgentRunHandle run,
-        WorkCandidate candidate,
+        RuntimeEnvironmentProfile runtimeEnvironment,
         IEnvironmentProvider environmentProvider,
         IEnvironmentStore environmentStore,
         IAgentRunStore runStore,
         IRunLifecycleService lifecycle,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         try
         {
             var spec = new EnvironmentSpec
             {
                 RunId = run.RunId,
-                Profile = "default",
+                Profile = runtimeEnvironment.Key,
+                RootPath = runtimeEnvironment.EnvironmentSettings.WorkspaceRoot,
+                RuntimeEnvironmentProfile = runtimeEnvironment,
             };
 
             var envHandle = await environmentProvider.CreateAsync(spec, ct);
@@ -690,7 +756,11 @@ public sealed partial class PollingWorker : BackgroundService
             await environmentStore.CreateAsync(createEnvRequest, ct);
 
             Log.EnvironmentProvisioned(
-                _logger, run.RunId, envHandle.RootPath, envHandle.ProviderType);
+                _logger,
+                run.RunId,
+                envHandle.RootPath,
+                envHandle.ProviderType
+            );
 
             return envHandle;
         }
@@ -698,95 +768,38 @@ public sealed partial class PollingWorker : BackgroundService
         {
             Log.EnvironmentProvisioningFailed(_logger, run.RunId, ex);
 
-            await FailRunAsync(run, runStore, lifecycle,
-                $"[environment_provisioning_failed] Environment provisioning failed: {ex.Message}", ct);
+            await FailRunAsync(
+                run,
+                runStore,
+                lifecycle,
+                $"[environment_provisioning_failed] Environment provisioning failed: {ex.Message}",
+                ct
+            );
             return null;
         }
     }
 
     /// <summary>
-    /// Clone the target repository into the provisioned environment by calling
-    /// <see cref="ISourceControlProvider.CloneAsync"/>. Resolves the clone URL
-    /// from the repository store first, then falls back to configuration options.
+    /// Clones the already-resolved repository into the provisioned environment.
     /// On failure, transitions the run to <see cref="RunLifecycleState.Failed"/> and returns null.
     /// </summary>
     private async Task<RepositoryCheckout?> CloneRepositoryAsync(
         AgentRunHandle run,
         WorkCandidate candidate,
+        RepositoryProfile repository,
         EnvironmentHandle envHandle,
         ISourceControlProvider sourceControlProvider,
-        IRepositoryStore repositoryStore,
-        IReadOnlyDictionary<string, RepositoryProfileOptions> repoConfig,
         IAgentRunStore runStore,
         IRunLifecycleService lifecycle,
         ReworkContext? reworkContext,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         try
         {
-            var repoKey = candidate.RepoKey;
-            if (string.IsNullOrWhiteSpace(repoKey))
-            {
-                throw new InvalidOperationException(
-                    $"Cannot clone repository: work item '{candidate.Id}' has no repoKey.");
-            }
-
-            // Try the persistent store first (may contain cached profiles),
-            // then fall back to configuration options.
-            var repoProfile = await repositoryStore.GetByKeyAsync(repoKey, ct);
-
-            string? cloneUrl;
-            string defaultBranch;
-            var transport = CloneTransport.Unspecified;
-
-            if (repoProfile is not null)
-            {
-                cloneUrl = repoProfile.CloneUrl;
-                defaultBranch = repoProfile.DefaultBranch;
-                transport = repoProfile.Transport;
-            }
-            else if (repoConfig.TryGetValue(repoKey, out var configured))
-            {
-                cloneUrl = configured.CloneUrl;
-                defaultBranch = configured.DefaultBranch;
-                transport = configured.Transport;
-
-                // Seed the profile into the store for future lookups
-                try
-                {
-                    await repositoryStore.UpsertAsync(new RepositoryProfile
-                    {
-                        Key = repoKey,
-                        CloneUrl = cloneUrl,
-                        DefaultBranch = defaultBranch,
-                        Transport = transport,
-                        EnvironmentProfile = configured.EnvironmentProfile,
-                        RuntimeProfile = configured.RuntimeProfile,
-                        AllowedPaths = configured.AllowedPaths,
-                    }, ct);
-                }
-                catch
-                {
-                    // Seeding is best-effort.
-                }
-
-                repoProfile = new RepositoryProfile
-                {
-                    Key = repoKey,
-                    CloneUrl = cloneUrl,
-                    DefaultBranch = defaultBranch,
-                    Transport = transport,
-                    EnvironmentProfile = configured.EnvironmentProfile,
-                    RuntimeProfile = configured.RuntimeProfile,
-                    AllowedPaths = configured.AllowedPaths,
-                };
-            }
-            else
-            {
-                throw new InvalidOperationException(
-                    $"Cannot clone repository '{repoKey}': no repository profile found. " +
-                    "Ensure a matching key exists in the 'repositories' configuration section.");
-            }
+            var repoKey = repository.Key;
+            var cloneUrl = repository.CloneUrl;
+            var defaultBranch = repository.DefaultBranch;
 
             // Override default branch when rework context specifies the prior PR branch.
             var effectiveBranch = reworkContext?.BranchName ?? defaultBranch;
@@ -795,15 +808,18 @@ public sealed partial class PollingWorker : BackgroundService
             // Fail loud with [rework_branch_missing] — no silent fallback to main.
             if (reworkContext?.BranchName is not null && reworkContext.BranchName != defaultBranch)
             {
-                var (exitCode, stdErr) = await CheckBranchExistsOnRemoteAsync(cloneUrl, reworkContext.BranchName, ct);
+                var (exitCode, stdErr) = await CheckBranchExistsOnRemoteAsync(
+                    cloneUrl,
+                    reworkContext.BranchName,
+                    ct
+                );
                 if (exitCode != 0)
                 {
-                    var errorDetail = stdErr.Length > 0
-                        ? $"\n{stdErr.Trim()}"
-                        : string.Empty;
+                    var errorDetail = stdErr.Length > 0 ? $"\n{stdErr.Trim()}" : string.Empty;
                     throw new InvalidOperationException(
-                        $"[rework_branch_missing] Branch '{reworkContext.BranchName}' does not exist on remote " +
-                        $"for repository '{repoKey}'. Cannot proceed with rework clone.{errorDetail}");
+                        $"[rework_branch_missing] Branch '{reworkContext.BranchName}' does not exist on remote "
+                            + $"for repository '{repoKey}'. Cannot proceed with rework clone.{errorDetail}"
+                    );
                 }
 
                 Log.ReworkBranchVerified(_logger, run.RunId, reworkContext.BranchName);
@@ -814,14 +830,13 @@ public sealed partial class PollingWorker : BackgroundService
                 RepoKey = repoKey,
                 CloneUrl = cloneUrl,
                 DefaultBranch = effectiveBranch,
-                Transport = transport,
-                Profile = repoProfile,
+                Transport = repository.Transport,
+                Profile = repository,
             };
 
             var checkout = await sourceControlProvider.CloneAsync(spec, envHandle, ct);
 
-            Log.RepositoryCloned(
-                _logger, run.RunId, repoKey, checkout.LocalPath, checkout.Branch);
+            Log.RepositoryCloned(_logger, run.RunId, repoKey, checkout.LocalPath, checkout.Branch);
 
             return checkout;
         }
@@ -829,8 +844,13 @@ public sealed partial class PollingWorker : BackgroundService
         {
             Log.RepositoryCloneFailed(_logger, run.RunId, candidate.RepoKey, ex);
 
-            await FailRunAsync(run, runStore, lifecycle,
-                $"[repository_clone_failed] Repository clone failed: {ex.Message}", ct);
+            await FailRunAsync(
+                run,
+                runStore,
+                lifecycle,
+                $"[repository_clone_failed] Repository clone failed: {ex.Message}",
+                ct
+            );
             return null;
         }
     }
@@ -843,7 +863,8 @@ public sealed partial class PollingWorker : BackgroundService
     private static async Task<(int ExitCode, string StdErr)> CheckBranchExistsOnRemoteAsync(
         string cloneUrl,
         string branchName,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
         // Expand ~ for local paths (git ls-remote won't expand shell globs).
         if (cloneUrl.StartsWith("~/", StringComparison.Ordinal))
@@ -873,7 +894,8 @@ public sealed partial class PollingWorker : BackgroundService
 
         // Harden against interactive prompts (mirrors LocalGitSourceControlProvider).
         process.StartInfo.EnvironmentVariables["GIT_TERMINAL_PROMPT"] = "0";
-        process.StartInfo.EnvironmentVariables["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes -o StrictHostKeyChecking=no";
+        process.StartInfo.EnvironmentVariables["GIT_SSH_COMMAND"] =
+            "ssh -o BatchMode=yes -o StrictHostKeyChecking=no";
 
         process.Start();
 
@@ -886,9 +908,16 @@ public sealed partial class PollingWorker : BackgroundService
             var stdErr = await process.StandardError.ReadToEndAsync(CancellationToken.None);
             return (process.ExitCode, stdErr ?? string.Empty);
         }
-        catch (OperationCanceledException) when (cts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException)
+            when (cts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
-            try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch
+            { /* best effort */
+            }
             return (-1, $"git ls-remote timed out after 30s.");
         }
         catch (Exception ex)
@@ -919,7 +948,8 @@ public sealed partial class PollingWorker : BackgroundService
         IRunLifecycleService lifecycle,
         IReadOnlyList<WorkItemComment> comments,
         ReworkContext? reworkContext,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         var contextDir = Path.Combine(envHandle.RootPath, "context");
 
@@ -929,15 +959,17 @@ public sealed partial class PollingWorker : BackgroundService
 
             // ── work-item.md ───────────────────────────────────────
             var workItemMd = BuildWorkItemMarkdown(candidate);
-            await File.WriteAllTextAsync(
-                Path.Combine(contextDir, "work-item.md"), workItemMd, ct);
+            await File.WriteAllTextAsync(Path.Combine(contextDir, "work-item.md"), workItemMd, ct);
 
             // ── acceptance-criteria.md ─────────────────────────────
             if (candidate.AcceptanceCriteria is { Count: > 0 })
             {
                 var acMd = BuildAcceptanceCriteriaMarkdown(candidate.AcceptanceCriteria);
                 await File.WriteAllTextAsync(
-                    Path.Combine(contextDir, "acceptance-criteria.md"), acMd, ct);
+                    Path.Combine(contextDir, "acceptance-criteria.md"),
+                    acMd,
+                    ct
+                );
             }
 
             // ── comments.md ────────────────────────────────────────
@@ -945,7 +977,10 @@ public sealed partial class PollingWorker : BackgroundService
             {
                 var commentsMd = BuildCommentsMarkdown(comments);
                 await File.WriteAllTextAsync(
-                    Path.Combine(contextDir, "comments.md"), commentsMd, ct);
+                    Path.Combine(contextDir, "comments.md"),
+                    commentsMd,
+                    ct
+                );
             }
 
             // ── rework-context.md ──────────────────────────────────
@@ -953,13 +988,19 @@ public sealed partial class PollingWorker : BackgroundService
             {
                 var reworkMd = BuildReworkContextMarkdown(reworkContext);
                 await File.WriteAllTextAsync(
-                    Path.Combine(contextDir, "rework-context.md"), reworkMd, ct);
+                    Path.Combine(contextDir, "rework-context.md"),
+                    reworkMd,
+                    ct
+                );
             }
 
             // ── controller-run.json ────────────────────────────────
             var runJson = BuildControllerRunJson(run, candidate, checkout, reworkContext);
             await File.WriteAllTextAsync(
-                Path.Combine(contextDir, "controller-run.json"), runJson, ct);
+                Path.Combine(contextDir, "controller-run.json"),
+                runJson,
+                ct
+            );
 
             // ── repository.json ────────────────────────────────────
             var repoJson = JsonSerializer.Serialize(
@@ -971,9 +1012,9 @@ public sealed partial class PollingWorker : BackgroundService
                     defaultBranch = checkout.Branch,
                     commitSha = checkout.CommitSha,
                 },
-                JsonWriteOptions);
-            await File.WriteAllTextAsync(
-                Path.Combine(contextDir, "repository.json"), repoJson, ct);
+                JsonWriteOptions
+            );
+            await File.WriteAllTextAsync(Path.Combine(contextDir, "repository.json"), repoJson, ct);
 
             Log.ContextInjected(_logger, run.RunId, contextDir);
         }
@@ -993,12 +1034,14 @@ public sealed partial class PollingWorker : BackgroundService
     private async Task HandOffToRuntimeAsync(
         AgentRunHandle run,
         WorkCandidate candidate,
+        RuntimeEnvironmentProfile runtimeEnvironment,
         EnvironmentHandle envHandle,
         RepositoryCheckout checkout,
         IAgentRuntime agentRuntime,
         IRunLifecycleService lifecycle,
         ReworkContext? reworkContext,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         try
         {
@@ -1010,10 +1053,12 @@ public sealed partial class PollingWorker : BackgroundService
                     Source = candidate.Source,
                     ExternalId = candidate.ExternalId,
                     Url = candidate.ExternalUrl,
+                    EnvironmentKey = GetAzureDevOpsEnvironmentKey(candidate.SourceMetadata),
                 },
                 RepoCheckout = checkout,
                 EnvironmentHandle = envHandle,
-                RuntimeProfile = "default",
+                RuntimeProfile = runtimeEnvironment.Key,
+                RuntimeEnvironmentProfile = runtimeEnvironment,
                 ExecutionKind = reworkContext is not null
                     ? ExecutionKind.Rework
                     : ExecutionKind.NewWork,
@@ -1031,8 +1076,11 @@ public sealed partial class PollingWorker : BackgroundService
                     {
                         ["runtimeRunId"] = handle.RuntimeRunId,
                         ["runtimeStatus"] = handle.Status.ToString(),
+                        ["runtimeProfile"] = runtimeEnvironment.Key,
+                        ["runtimeProvider"] = runtimeEnvironment.RuntimeProvider,
                     },
-                    ct);
+                    ct
+                );
 
                 Log.RuntimeHandoffComplete(_logger, run.RunId, handle.RuntimeRunId);
             }
@@ -1055,7 +1103,8 @@ public sealed partial class PollingWorker : BackgroundService
                     ["runtimeType"] = agentRuntime.GetType().Name,
                 },
                 EventSeverity.Error,
-                ct);
+                ct
+            );
         }
     }
 
@@ -1070,7 +1119,8 @@ public sealed partial class PollingWorker : BackgroundService
         IAgentRunStore runStore,
         IRunLifecycleService lifecycle,
         string reason,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         try
         {
@@ -1086,12 +1136,9 @@ public sealed partial class PollingWorker : BackgroundService
         {
             await runStore.UpdateRuntimeFieldsAsync(
                 run.RunId,
-                new RuntimeFieldUpdate
-                {
-                    Error = reason,
-                    FinishedAt = DateTimeOffset.UtcNow,
-                },
-                ct);
+                new RuntimeFieldUpdate { Error = reason, FinishedAt = DateTimeOffset.UtcNow },
+                ct
+            );
         }
         catch
         {
@@ -1110,7 +1157,8 @@ public sealed partial class PollingWorker : BackgroundService
                     ["state"] = RunLifecycleState.Failed.ToString(),
                 },
                 EventSeverity.Error,
-                ct);
+                ct
+            );
         }
         catch
         {
@@ -1141,19 +1189,22 @@ public sealed partial class PollingWorker : BackgroundService
         EnvironmentHandle? envHandle,
         string reason,
         IRunLifecycleService lifecycle,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         // 1. Strip agent-controlled tags WITHOUT reverting the ADO state.
         // TargetState = null means "leave state unchanged" — the work item
         // stays in its claimed state so it is NOT re-discovered by FindEligibleAsync.
         // The Failed run will be evaluated by EvaluateFailedRunsForRetryAsync
         // which handles retry (with RunAttempt increment) or escalation.
-        if (candidate.Source != "LocalFake" && candidate.Source != "LocalFile"
-            && !string.IsNullOrWhiteSpace(candidate.ExternalId))
+        if (
+            candidate.Source != "LocalFake"
+            && candidate.Source != "LocalFile"
+            && !string.IsNullOrWhiteSpace(candidate.ExternalId)
+        )
         {
-            var revision = candidate.SourceMetadata?.TryGetValue("revision", out var rev) == true
-                ? rev
-                : null;
+            var revision =
+                candidate.SourceMetadata?.TryGetValue("revision", out var rev) == true ? rev : null;
 
             var releaseRequest = new ReleaseClaimRequest
             {
@@ -1163,6 +1214,7 @@ public sealed partial class PollingWorker : BackgroundService
                     ExternalId = candidate.ExternalId,
                     Url = candidate.ExternalUrl,
                     Revision = revision,
+                    EnvironmentKey = GetAzureDevOpsEnvironmentKey(candidate.SourceMetadata),
                 },
                 WorkerId = _options.CurrentValue.WorkerId,
                 TargetState = null, // Do NOT revert state — let retry/escalation handle it
@@ -1203,13 +1255,10 @@ public sealed partial class PollingWorker : BackgroundService
                 run.RunId,
                 ControllerEventTypes.ClaimReleased,
                 $"Claim tags stripped due to setup failure (state preserved for retry/escalation): {reason}",
-                new Dictionary<string, object?>
-                {
-                    ["reason"] = reason,
-                    ["stateReverted"] = false,
-                },
+                new Dictionary<string, object?> { ["reason"] = reason, ["stateReverted"] = false },
                 EventSeverity.Warning,
-                ct);
+                ct
+            );
         }
         catch
         {
@@ -1226,17 +1275,16 @@ public sealed partial class PollingWorker : BackgroundService
         string eventType,
         string message,
         RunLifecycleState state,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         await lifecycle.AppendControllerEventAsync(
             runId,
             eventType,
             message,
-            new Dictionary<string, object?>
-            {
-                ["state"] = state.ToString(),
-            },
-            ct);
+            new Dictionary<string, object?> { ["state"] = state.ToString() },
+            ct
+        );
     }
 
     /// <summary>
@@ -1294,7 +1342,8 @@ public sealed partial class PollingWorker : BackgroundService
     /// Build a Markdown representation of acceptance criteria for the context directory.
     /// </summary>
     private static string BuildAcceptanceCriteriaMarkdown(
-        IReadOnlyDictionary<string, string> acceptanceCriteria)
+        IReadOnlyDictionary<string, string> acceptanceCriteria
+    )
     {
         var sb = new System.Text.StringBuilder();
         sb.AppendLine("# Acceptance Criteria");
@@ -1320,7 +1369,8 @@ public sealed partial class PollingWorker : BackgroundService
     private static async Task<IReadOnlyList<WorkItemComment>> FetchCommentsAsync(
         IWorkSource workSource,
         WorkCandidate candidate,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         // Only fetch comments for remote sources that support it.
         if (candidate.Source == "LocalFake" || candidate.Source == "LocalFile")
@@ -1328,9 +1378,8 @@ public sealed partial class PollingWorker : BackgroundService
             return Array.Empty<WorkItemComment>();
         }
 
-        var revision = candidate.SourceMetadata?.TryGetValue("revision", out var rev) == true
-            ? rev
-            : null;
+        var revision =
+            candidate.SourceMetadata?.TryGetValue("revision", out var rev) == true ? rev : null;
 
         var workRef = new ExternalWorkRef
         {
@@ -1338,6 +1387,7 @@ public sealed partial class PollingWorker : BackgroundService
             ExternalId = candidate.ExternalId,
             Url = candidate.ExternalUrl,
             Revision = revision,
+            EnvironmentKey = GetAzureDevOpsEnvironmentKey(candidate.SourceMetadata),
         };
 
         // Use a reasonable default for max comments.
@@ -1353,6 +1403,13 @@ public sealed partial class PollingWorker : BackgroundService
             // Best-effort: missing comments do not block the run.
             return Array.Empty<WorkItemComment>();
         }
+    }
+
+    private static string? GetAzureDevOpsEnvironmentKey(
+        IReadOnlyDictionary<string, string>? metadata
+    )
+    {
+        return metadata?.TryGetValue("azureDevOpsEnvironmentKey", out var key) == true ? key : null;
     }
 
     /// <summary>
@@ -1377,8 +1434,12 @@ public sealed partial class PollingWorker : BackgroundService
             }
             if (comment.PostedAt.HasValue)
             {
-                headerParts.Add(comment.PostedAt.Value.ToString(
-                    "yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture));
+                headerParts.Add(
+                    comment.PostedAt.Value.ToString(
+                        "yyyy-MM-dd HH:mm",
+                        System.Globalization.CultureInfo.InvariantCulture
+                    )
+                );
             }
 
             if (headerParts.Count > 0)
@@ -1416,7 +1477,9 @@ public sealed partial class PollingWorker : BackgroundService
         sb.AppendLine("# Rework Context");
         sb.AppendLine();
         sb.AppendLine("**You are continuing an EXISTING PR. Do not open a new one.**");
-        sb.AppendLine("Address the review feedback below, then push your changes to the existing branch.");
+        sb.AppendLine(
+            "Address the review feedback below, then push your changes to the existing branch."
+        );
         sb.AppendLine();
 
         // ── Prior run metadata ─────────────────────────────────────
@@ -1438,8 +1501,8 @@ public sealed partial class PollingWorker : BackgroundService
         sb.AppendLine("## Review Threads");
         sb.AppendLine();
 
-        var sorted = rework.FeedbackBundle
-            .OrderBy(t => t.FilePath ?? string.Empty)
+        var sorted = rework
+            .FeedbackBundle.OrderBy(t => t.FilePath ?? string.Empty)
             .ThenBy(t => t.StartLine)
             .ToList();
 
@@ -1526,7 +1589,8 @@ public sealed partial class PollingWorker : BackgroundService
         AgentRunHandle run,
         WorkCandidate candidate,
         RepositoryCheckout checkout,
-        ReworkContext? rework)
+        ReworkContext? rework
+    )
     {
         var reworkBlock = rework is not null
             ? new
@@ -1536,24 +1600,28 @@ public sealed partial class PollingWorker : BackgroundService
                 branchName = rework.BranchName,
                 pullRequestUrl = rework.PullRequestUrl,
                 baseCommitSha = rework.BaseCommitSha,
-                feedbackBundle = rework.FeedbackBundle.Select(t => new
-                {
-                    threadId = t.ThreadId,
-                    author = t.Author,
-                    createdAt = t.CreatedAt,
-                    status = t.Status,
-                    filePath = t.FilePath,
-                    startLine = t.StartLine,
-                    endLine = t.EndLine,
-                    isFileLevel = t.IsFileLevel,
-                    comments = t.Comments.Select(c => new
+                feedbackBundle = rework
+                    .FeedbackBundle.Select(t => new
                     {
-                        author = c.Author,
-                        body = c.Body,
-                        createdAt = c.CreatedAt,
-                        isReply = c.IsReply,
-                    }).ToArray(),
-                }).ToArray(),
+                        threadId = t.ThreadId,
+                        author = t.Author,
+                        createdAt = t.CreatedAt,
+                        status = t.Status,
+                        filePath = t.FilePath,
+                        startLine = t.StartLine,
+                        endLine = t.EndLine,
+                        isFileLevel = t.IsFileLevel,
+                        comments = t
+                            .Comments.Select(c => new
+                            {
+                                author = c.Author,
+                                body = c.Body,
+                                createdAt = c.CreatedAt,
+                                isReply = c.IsReply,
+                            })
+                            .ToArray(),
+                    })
+                    .ToArray(),
             }
             : null;
 
@@ -1573,7 +1641,8 @@ public sealed partial class PollingWorker : BackgroundService
                 startedAt = run.StartedAt,
                 rework = reworkBlock,
             },
-            JsonWriteOptions);
+            JsonWriteOptions
+        );
     }
 
     /// <summary>
@@ -1584,7 +1653,8 @@ public sealed partial class PollingWorker : BackgroundService
     private async Task RecoverStaleRunsAsync(
         IRunLifecycleService lifecycle,
         AgentControllerOptions options,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         var staleTimeout = TimeSpan.FromSeconds(options.StaleTimeoutSeconds);
         var staleRuns = await lifecycle.FindStaleRunsAsync(staleTimeout, ct);
@@ -1599,7 +1669,11 @@ public sealed partial class PollingWorker : BackgroundService
                 // StaleTimeout is a non-retryable failure — goes straight to NeedsHuman.
                 // The RecoverStaleRunWithRetryAsync method handles the classification.
                 var retryRun = await lifecycle.RecoverStaleRunWithRetryAsync(
-                    staleRun.RunId, options.WorkerId, options.MaxRunAttempts, ct);
+                    staleRun.RunId,
+                    options.WorkerId,
+                    options.MaxRunAttempts,
+                    ct
+                );
 
                 if (retryRun is not null)
                 {
@@ -1608,15 +1682,13 @@ public sealed partial class PollingWorker : BackgroundService
                         _logger,
                         retryRun.RunId,
                         staleRun.RunId,
-                        retryRun.RunAttempt);
+                        retryRun.RunAttempt
+                    );
                 }
                 else
                 {
                     // Escalated to NeedsHuman.
-                    Log.StaleRunRecovered(
-                        _logger,
-                        staleRun.RunId,
-                        staleRun.LastHeartbeatAt);
+                    Log.StaleRunRecovered(_logger, staleRun.RunId, staleRun.LastHeartbeatAt);
                 }
             }
             catch (Exception ex)
@@ -1641,12 +1713,15 @@ public sealed partial class PollingWorker : BackgroundService
         IRunLifecycleService lifecycle,
         IAgentRunStore runStore,
         AgentControllerOptions options,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         // Find recently failed runs that haven't been evaluated for retry yet.
         // We look for runs in Failed state that were updated within the last poll cycle.
         var allRuns = await runStore.ListAsync(
-            new ListRunsQuery { Status = RunLifecycleState.Failed, MaxResults = 100 }, ct);
+            new ListRunsQuery { Status = RunLifecycleState.Failed, MaxResults = 100 },
+            ct
+        );
 
         foreach (var failedRun in allRuns)
         {
@@ -1657,8 +1732,7 @@ public sealed partial class PollingWorker : BackgroundService
             // A run is considered evaluated if a retry run was created for it
             // (i.e., another run exists with PreviousRunId == this run's ID)
             // or if it has been escalated to NeedsHuman.
-            var retryRuns = await runStore.ListAsync(
-                new ListRunsQuery { MaxResults = 100 }, ct);
+            var retryRuns = await runStore.ListAsync(new ListRunsQuery { MaxResults = 100 }, ct);
             var hasRetryRun = retryRuns.Any(r => r.PreviousRunId == failedRun.RunId);
             if (hasRetryRun)
             {
@@ -1678,7 +1752,11 @@ public sealed partial class PollingWorker : BackgroundService
             try
             {
                 var retryRun = await lifecycle.EvaluateRetryAsync(
-                    failedRun.RunId, options.WorkerId, options.MaxRunAttempts, ct);
+                    failedRun.RunId,
+                    options.WorkerId,
+                    options.MaxRunAttempts,
+                    ct
+                );
 
                 if (retryRun is not null)
                 {
@@ -1687,7 +1765,8 @@ public sealed partial class PollingWorker : BackgroundService
                         retryRun.RunId,
                         failedRun.RunId,
                         retryRun.RunAttempt,
-                        options.MaxRunAttempts);
+                        options.MaxRunAttempts
+                    );
                 }
             }
             catch (Exception ex)
@@ -1710,18 +1789,19 @@ public sealed partial class PollingWorker : BackgroundService
         IRunLifecycleService lifecycle,
         IAgentRunStore runStore,
         IWorkItemStore workItemStore,
-        IAgentRuntime agentRuntime,
-        IEnvironmentProvider environmentProvider,
+        IExecutionProviderResolver executionProviderResolver,
         ISourceControlProvider sourceControlProvider,
         IEnvironmentStore environmentStore,
-        IRepositoryStore repositoryStore,
-        IReadOnlyDictionary<string, RepositoryProfileOptions> repoConfig,
+        IManagedProfileResolver profileResolver,
         AgentControllerOptions options,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         // Find runs stuck in Claimed state (retry runs from EvaluateFailedRunsForRetryAsync).
         var claimedRuns = await runStore.ListAsync(
-            new ListRunsQuery { Status = RunLifecycleState.Claimed, MaxResults = 10 }, ct);
+            new ListRunsQuery { Status = RunLifecycleState.Claimed, MaxResults = 10 },
+            ct
+        );
 
         if (claimedRuns.Count == 0)
             return;
@@ -1736,9 +1816,16 @@ public sealed partial class PollingWorker : BackgroundService
             try
             {
                 await AdvanceRunThroughLifecycleAsync(
-                    run, workItemStore, runStore, agentRuntime,
-                    environmentProvider, sourceControlProvider,
-                    environmentStore, repositoryStore, repoConfig, lifecycle, ct);
+                    run,
+                    workItemStore,
+                    runStore,
+                    executionProviderResolver,
+                    sourceControlProvider,
+                    environmentStore,
+                    profileResolver,
+                    lifecycle,
+                    ct
+                );
             }
             catch (Exception ex)
             {
@@ -1755,14 +1842,13 @@ public sealed partial class PollingWorker : BackgroundService
         AgentRunHandle run,
         IWorkItemStore workItemStore,
         IAgentRunStore runStore,
-        IAgentRuntime agentRuntime,
-        IEnvironmentProvider environmentProvider,
+        IExecutionProviderResolver executionProviderResolver,
         ISourceControlProvider sourceControlProvider,
         IEnvironmentStore environmentStore,
-        IRepositoryStore repositoryStore,
-        IReadOnlyDictionary<string, RepositoryProfileOptions> repoConfig,
+        IManagedProfileResolver profileResolver,
         IRunLifecycleService lifecycle,
-        CancellationToken ct)
+        CancellationToken ct
+    )
     {
         // Look up the work item to build a WorkCandidate for the lifecycle steps.
         var workItem = await workItemStore.GetByIdAsync(run.WorkItemId!, ct);
@@ -1784,18 +1870,49 @@ public sealed partial class PollingWorker : BackgroundService
             SourceMetadata = workItem.SourceMetadata,
         };
 
+        var resolvedProfiles = await profileResolver.ResolveForRepositoryAsync(
+            candidate.RepoKey,
+            ct
+        );
+        if (resolvedProfiles is null)
+        {
+            Log.CandidateSkippedNoProfile(_logger, candidate.Id, candidate.RepoKey ?? "(unknown)");
+            return;
+        }
+
+        var environmentProvider = executionProviderResolver.ResolveEnvironmentProvider(
+            resolvedProfiles.RuntimeEnvironment
+        );
+        var agentRuntime = executionProviderResolver.ResolveAgentRuntime(
+            resolvedProfiles.RuntimeEnvironment
+        );
+
         RepositoryCheckout? checkout = null;
         EnvironmentHandle? envHandle = null;
 
-        if (ct.IsCancellationRequested) return;
+        if (ct.IsCancellationRequested)
+            return;
 
         // ── 1. EnvironmentProvisioning ─────────────────────────────
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.EnvironmentProvisioning, ct);
-        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.EnvironmentProvisioning,
-            "Environment provisioning started.", RunLifecycleState.EnvironmentProvisioning, ct);
+        await AppendMilestoneEvent(
+            lifecycle,
+            run.RunId,
+            ControllerEventTypes.EnvironmentProvisioning,
+            "Environment provisioning started.",
+            RunLifecycleState.EnvironmentProvisioning,
+            ct
+        );
 
         envHandle = await ProvisionEnvironmentAsync(
-            run, candidate, environmentProvider, environmentStore, runStore, lifecycle, ct);
+            run,
+            resolvedProfiles.RuntimeEnvironment,
+            environmentProvider,
+            environmentStore,
+            runStore,
+            lifecycle,
+            ct
+        );
 
         if (envHandle is null)
         {
@@ -1807,45 +1924,71 @@ public sealed partial class PollingWorker : BackgroundService
 
         // ── 2. EnvironmentReady ────────────────────────────────────
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.EnvironmentReady, ct);
-        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.EnvironmentReady,
-            "Environment provisioned and ready.", RunLifecycleState.EnvironmentReady, ct);
+        await AppendMilestoneEvent(
+            lifecycle,
+            run.RunId,
+            ControllerEventTypes.EnvironmentReady,
+            "Environment provisioned and ready.",
+            RunLifecycleState.EnvironmentReady,
+            ct
+        );
 
-        if (ct.IsCancellationRequested) return;
+        if (ct.IsCancellationRequested)
+            return;
 
         // ── 3. RepositoryCloning ───────────────────────────────────
-        var transportForLog = CloneTransport.Unspecified;
-        if (!string.IsNullOrWhiteSpace(candidate.RepoKey) &&
-            repoConfig.TryGetValue(candidate.RepoKey!, out var transportProfile))
-        {
-            transportForLog = transportProfile.Transport;
-        }
+        var transportForLog = resolvedProfiles.Repository.Transport;
 
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.RepositoryCloning, ct);
-        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.RepositoryCloning,
-            "Repository cloning started.", RunLifecycleState.RepositoryCloning, ct);
+        await AppendMilestoneEvent(
+            lifecycle,
+            run.RunId,
+            ControllerEventTypes.RepositoryCloning,
+            "Repository cloning started.",
+            RunLifecycleState.RepositoryCloning,
+            ct
+        );
 
         Log.CloneStarting(_logger, run.RunId, candidate.RepoKey ?? "(unknown)", transportForLog);
 
         checkout = await CloneRepositoryAsync(
-            run, candidate, envHandle, sourceControlProvider, repositoryStore, repoConfig,
-            runStore, lifecycle, null, ct);
+            run,
+            candidate,
+            resolvedProfiles.Repository,
+            envHandle,
+            sourceControlProvider,
+            runStore,
+            lifecycle,
+            null,
+            ct
+        );
 
         if (checkout is null)
         {
             // Repository clone failed — run is already transitioned to Failed.
             if (!string.IsNullOrWhiteSpace(envHandle.RootPath))
             {
-                try { await environmentProvider.DestroyAsync(envHandle, ct); }
-                catch { /* best-effort */ }
+                try
+                {
+                    await environmentProvider.DestroyAsync(envHandle, ct);
+                }
+                catch
+                { /* best-effort */
+                }
             }
             return;
         }
 
         // ── 4. RepositoryReady ─────────────────────────────────────
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.RepositoryReady, ct);
-        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.RepositoryReady,
+        await AppendMilestoneEvent(
+            lifecycle,
+            run.RunId,
+            ControllerEventTypes.RepositoryReady,
             $"Repository cloned and ready at '{checkout.LocalPath}'.",
-            RunLifecycleState.RepositoryReady, ct);
+            RunLifecycleState.RepositoryReady,
+            ct
+        );
 
         // Persist the HEAD commit SHA from the clone so ReworkCycle.BaseCommitSha
         // can be sourced from the prior run later.
@@ -1856,7 +1999,8 @@ public sealed partial class PollingWorker : BackgroundService
                 await runStore.UpdateRuntimeFieldsAsync(
                     run.RunId,
                     new RuntimeFieldUpdate { CommitSha = checkout.CommitSha },
-                    ct);
+                    ct
+                );
             }
             catch
             {
@@ -1866,34 +2010,79 @@ public sealed partial class PollingWorker : BackgroundService
 
         Log.WorkspaceReady(_logger, run.RunId, envHandle.RootPath, checkout.LocalPath);
 
-        if (ct.IsCancellationRequested) return;
+        if (ct.IsCancellationRequested)
+            return;
 
         // ── 5. ContextInjected ─────────────────────────────────────
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.ContextInjected, ct);
 
-        await InjectContextAsync(run, candidate, envHandle, checkout, lifecycle, Array.Empty<WorkItemComment>(), null, ct);
-        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.ContextInjected,
-            "Context injected into run workspace.", RunLifecycleState.ContextInjected, ct);
+        await InjectContextAsync(
+            run,
+            candidate,
+            envHandle,
+            checkout,
+            lifecycle,
+            Array.Empty<WorkItemComment>(),
+            null,
+            ct
+        );
+        await AppendMilestoneEvent(
+            lifecycle,
+            run.RunId,
+            ControllerEventTypes.ContextInjected,
+            "Context injected into run workspace.",
+            RunLifecycleState.ContextInjected,
+            ct
+        );
 
-        if (ct.IsCancellationRequested) return;
+        if (ct.IsCancellationRequested)
+            return;
 
         // ── 6. AgentStarting ───────────────────────────────────────
         Log.RuntimeDispatchStarting(_logger, run.RunId, candidate.Id, agentRuntime.GetType().Name);
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.AgentStarting, ct);
-        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.AgentStarting,
-            "Agent runtime start requested.", RunLifecycleState.AgentStarting, ct);
+        await AppendMilestoneEvent(
+            lifecycle,
+            run.RunId,
+            ControllerEventTypes.AgentStarting,
+            "Agent runtime start requested.",
+            RunLifecycleState.AgentStarting,
+            ct
+        );
 
-        await HandOffToRuntimeAsync(run, candidate, envHandle, checkout, agentRuntime, lifecycle, null, ct);
+        await HandOffToRuntimeAsync(
+            run,
+            candidate,
+            resolvedProfiles.RuntimeEnvironment,
+            envHandle,
+            checkout,
+            agentRuntime,
+            lifecycle,
+            null,
+            ct
+        );
 
         // ── 7. AgentRunning ────────────────────────────────────────
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.AgentRunning, ct);
-        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.AgentRunning,
-            "Agent runtime is executing.", RunLifecycleState.AgentRunning, ct);
+        await AppendMilestoneEvent(
+            lifecycle,
+            run.RunId,
+            ControllerEventTypes.AgentRunning,
+            "Agent runtime is executing.",
+            RunLifecycleState.AgentRunning,
+            ct
+        );
 
         // ── 8. AwaitingResult ──────────────────────────────────────
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.AwaitingResult, ct);
-        await AppendMilestoneEvent(lifecycle, run.RunId, ControllerEventTypes.AwaitingResult,
-            "Run handed off to runtime, awaiting result.", RunLifecycleState.AwaitingResult, ct);
+        await AppendMilestoneEvent(
+            lifecycle,
+            run.RunId,
+            ControllerEventTypes.AwaitingResult,
+            "Run handed off to runtime, awaiting result.",
+            RunLifecycleState.AwaitingResult,
+            ct
+        );
 
         Log.RunAdvanced(_logger, run.RunId, candidate.Id);
     }
@@ -1916,280 +2105,442 @@ public sealed partial class PollingWorker : BackgroundService
         [LoggerMessage(
             Level = LogLevel.Information,
             Message = "Polling worker is disabled (WorkerEnabled=false). No Azure DevOps, source control, "
-                + "environment, or pi-materia work will be performed.")]
+                + "environment, or pi-materia work will be performed."
+        )]
         public static partial void WorkerDisabled(ILogger logger);
 
         [LoggerMessage(
             Level = LogLevel.Information,
             Message = "Polling worker started. WorkerId={WorkerId}, PollInterval={PollInterval}s, "
-                + "MaxConcurrency={MaxConcurrency}, StaleTimeout={StaleTimeout}s")]
+                + "MaxConcurrency={MaxConcurrency}, StaleTimeout={StaleTimeout}s"
+        )]
         public static partial void WorkerStarted(
-            ILogger logger, string workerId, int pollInterval, int maxConcurrency, int staleTimeout);
+            ILogger logger,
+            string workerId,
+            int pollInterval,
+            int maxConcurrency,
+            int staleTimeout
+        );
 
         [LoggerMessage(
             Level = LogLevel.Error,
-            Message = "Unhandled exception in polling cycle. Worker will retry after delay.")]
+            Message = "Unhandled exception in polling cycle. Worker will retry after delay."
+        )]
         public static partial void PollCycleError(ILogger logger, Exception ex);
 
-        [LoggerMessage(
-            Level = LogLevel.Information,
-            Message = "Polling worker stopped.")]
+        [LoggerMessage(Level = LogLevel.Information, Message = "Polling worker stopped.")]
         public static partial void WorkerStopped(ILogger logger);
 
         [LoggerMessage(
             Level = LogLevel.Debug,
             Message = "Concurrency limit reached (active={ActiveCount}, max={MaxConcurrency}). "
-                + "Skipping work discovery.")]
+                + "Skipping work discovery."
+        )]
         public static partial void ConcurrencyLimitReached(
-            ILogger logger, int activeCount, int maxConcurrency);
+            ILogger logger,
+            int activeCount,
+            int maxConcurrency
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Discovered {CandidateCount} eligible work candidate(s).")]
+            Message = "Discovered {CandidateCount} eligible work candidate(s)."
+        )]
         public static partial void CandidatesDiscovered(ILogger logger, int candidateCount);
 
         [LoggerMessage(
             Level = LogLevel.Debug,
-            Message = "Skipping candidate {CandidateId} ({Title}): no `repo:` tag found.")]
+            Message = "Skipping candidate {CandidateId} ({Title}): no `repo:` tag found."
+        )]
         public static partial void CandidateSkippedNoRepoTag(
-            ILogger logger, string candidateId, string title);
+            ILogger logger,
+            string candidateId,
+            string title
+        );
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "Skipping candidate {CandidateId}: no repository profile matches `repo:{RepoKey}`.")]
+            Message = "Skipping candidate {CandidateId}: no repository profile matches `repo:{RepoKey}`."
+        )]
         public static partial void CandidateSkippedNoProfile(
-            ILogger logger, string candidateId, string repoKey);
+            ILogger logger,
+            string candidateId,
+            string repoKey
+        );
 
         [LoggerMessage(
             Level = LogLevel.Error,
-            Message = "Failed to process work candidate {CandidateId} ({Title}).")]
+            Message = "Failed to process work candidate {CandidateId} ({Title})."
+        )]
         public static partial void CandidateProcessingFailed(
-            ILogger logger, Exception ex, string candidateId, string title);
+            ILogger logger,
+            Exception ex,
+            string candidateId,
+            string title
+        );
 
         [LoggerMessage(
             Level = LogLevel.Debug,
-            Message = "Could not claim candidate {CandidateId}: {Reason}")]
+            Message = "Could not claim candidate {CandidateId}: {Reason}"
+        )]
         public static partial void ClaimFailed(ILogger logger, string candidateId, string reason);
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Claimed work candidate {CandidateId} ({Title}).")]
-        public static partial void CandidateClaimed(ILogger logger, string candidateId, string title);
+            Message = "Claimed work candidate {CandidateId} ({Title})."
+        )]
+        public static partial void CandidateClaimed(
+            ILogger logger,
+            string candidateId,
+            string title
+        );
 
         [LoggerMessage(
             Level = LogLevel.Debug,
-            Message = "Upserted work candidate {CandidateId} from source {Source} into local persistence.")]
-        public static partial void CandidateUpserted(ILogger logger, string candidateId, string source);
+            Message = "Upserted work candidate {CandidateId} from source {Source} into local persistence."
+        )]
+        public static partial void CandidateUpserted(
+            ILogger logger,
+            string candidateId,
+            string source
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Created agent run {RunId} for work item {WorkItemId}.")]
+            Message = "Created agent run {RunId} for work item {WorkItemId}."
+        )]
         public static partial void RunCreated(ILogger logger, string runId, string workItemId);
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "[rework] Pending ReworkCycle found — runId={RunId}, workItemId={WorkItemId}, " +
-                      "cycleId={CycleId}, cycleNumber={CycleNumber}, threadCount={ThreadCount}")] 
+            Message = "[rework] Pending ReworkCycle found — runId={RunId}, workItemId={WorkItemId}, "
+                + "cycleId={CycleId}, cycleNumber={CycleNumber}, threadCount={ThreadCount}"
+        )]
         public static partial void ReworkCycleFound(
-            ILogger logger, string runId, string workItemId,
-            string cycleId, int cycleNumber, int threadCount);
+            ILogger logger,
+            string runId,
+            string workItemId,
+            string cycleId,
+            int cycleNumber,
+            int threadCount
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "[rework] ReworkCycle consumed — runId={RunId}, cycleId={CycleId}, cycleNumber={CycleNumber}")] 
+            Message = "[rework] ReworkCycle consumed — runId={RunId}, cycleId={CycleId}, cycleNumber={CycleNumber}"
+        )]
         public static partial void ReworkCycleConsumed(
-            ILogger logger, string runId, string cycleId, int cycleNumber);
+            ILogger logger,
+            string runId,
+            string cycleId,
+            int cycleNumber
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "[rework] Branch '{BranchName}' verified on remote for run {RunId}.")] 
+            Message = "[rework] Branch '{BranchName}' verified on remote for run {RunId}."
+        )]
         public static partial void ReworkBranchVerified(
-            ILogger logger, string runId, string branchName);
+            ILogger logger,
+            string runId,
+            string branchName
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Run {RunId} advanced to AwaitingResult for work item {WorkItemId}.")]
+            Message = "Run {RunId} advanced to AwaitingResult for work item {WorkItemId}."
+        )]
         public static partial void RunAdvanced(ILogger logger, string runId, string workItemId);
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Runtime handoff complete for run {RunId}. Runtime ID: {RuntimeRunId}.")]
+            Message = "Runtime handoff complete for run {RunId}. Runtime ID: {RuntimeRunId}."
+        )]
         public static partial void RuntimeHandoffComplete(
-            ILogger logger, string runId, string runtimeRunId);
+            ILogger logger,
+            string runId,
+            string runtimeRunId
+        );
 
-        [LoggerMessage(
-            Level = LogLevel.Error,
-            Message = "Runtime handoff failed for run {RunId}.")]
-        public static partial void RuntimeHandoffFailed(
-            ILogger logger, string runId, Exception ex);
+        [LoggerMessage(Level = LogLevel.Error, Message = "Runtime handoff failed for run {RunId}.")]
+        public static partial void RuntimeHandoffFailed(ILogger logger, string runId, Exception ex);
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Environment provisioned for run {RunId} at '{EnvPath}' (provider: {ProviderType}).")]
+            Message = "Environment provisioned for run {RunId} at '{EnvPath}' (provider: {ProviderType})."
+        )]
         public static partial void EnvironmentProvisioned(
-            ILogger logger, string runId, string envPath, string providerType);
+            ILogger logger,
+            string runId,
+            string envPath,
+            string providerType
+        );
 
         [LoggerMessage(
             Level = LogLevel.Error,
-            Message = "Environment provisioning failed for run {RunId}.")]
+            Message = "Environment provisioning failed for run {RunId}."
+        )]
         public static partial void EnvironmentProvisioningFailed(
-            ILogger logger, string runId, Exception ex);
+            ILogger logger,
+            string runId,
+            Exception ex
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Repository cloned for run {RunId}: '{RepoKey}' → '{LocalPath}' (branch: {Branch}).")]
+            Message = "Repository cloned for run {RunId}: '{RepoKey}' → '{LocalPath}' (branch: {Branch})."
+        )]
         public static partial void RepositoryCloned(
-            ILogger logger, string runId, string repoKey, string localPath, string branch);
+            ILogger logger,
+            string runId,
+            string repoKey,
+            string localPath,
+            string branch
+        );
 
         [LoggerMessage(
             Level = LogLevel.Error,
-            Message = "Repository clone failed for run {RunId} (repo: {RepoKey}).")]
+            Message = "Repository clone failed for run {RunId} (repo: {RepoKey})."
+        )]
         public static partial void RepositoryCloneFailed(
-            ILogger logger, string runId, string repoKey, Exception ex);
+            ILogger logger,
+            string runId,
+            string repoKey,
+            Exception ex
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Context files written for run {RunId} in '{ContextDir}'.")]
-        public static partial void ContextInjected(
-            ILogger logger, string runId, string contextDir);
+            Message = "Context files written for run {RunId} in '{ContextDir}'."
+        )]
+        public static partial void ContextInjected(ILogger logger, string runId, string contextDir);
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "Context injection failed for run {RunId} in '{ContextDir}'. Run will continue.")]
+            Message = "Context injection failed for run {RunId} in '{ContextDir}'. Run will continue."
+        )]
         public static partial void ContextInjectionFailed(
-            ILogger logger, string runId, string contextDir, Exception ex);
+            ILogger logger,
+            string runId,
+            string contextDir,
+            Exception ex
+        );
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "Recovered stale run {RunId} (last heartbeat: {LastHeartbeat}).")]
+            Message = "Recovered stale run {RunId} (last heartbeat: {LastHeartbeat})."
+        )]
         public static partial void StaleRunRecovered(
-            ILogger logger, string runId, DateTimeOffset? lastHeartbeat);
+            ILogger logger,
+            string runId,
+            DateTimeOffset? lastHeartbeat
+        );
 
-        [LoggerMessage(
-            Level = LogLevel.Error,
-            Message = "Failed to recover stale run {RunId}.")]
+        [LoggerMessage(Level = LogLevel.Error, Message = "Failed to recover stale run {RunId}.")]
         public static partial void StaleRecoveryFailed(ILogger logger, Exception ex, string runId);
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Recovered {StaleCount} stale run(s).")]
+            Message = "Recovered {StaleCount} stale run(s)."
+        )]
         public static partial void StaleRecoverySummary(ILogger logger, int staleCount);
 
         [LoggerMessage(
             Level = LogLevel.Information,
             Message = "Released ADO claim for run {RunId} (work item {WorkItemId}). "
-                + "Stripped agent-active/agent-worker tags, reverted to '{TargetState}'.")]
+                + "Stripped agent-active/agent-worker tags, reverted to '{TargetState}'."
+        )]
         public static partial void ClaimReleased(
-            ILogger logger, string runId, string workItemId, string targetState);
+            ILogger logger,
+            string runId,
+            string workItemId,
+            string targetState
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
             Message = "Stripped agent tags for run {RunId} (work item {WorkItemId}). "
-                + "ADO state preserved for retry/escalation evaluation.")]
+                + "ADO state preserved for retry/escalation evaluation."
+        )]
         public static partial void ClaimTagsStripped(
-            ILogger logger, string runId, string workItemId);
+            ILogger logger,
+            string runId,
+            string workItemId
+        );
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "Failed to release ADO claim for run {RunId} (work item {WorkItemId}).")]
+            Message = "Failed to release ADO claim for run {RunId} (work item {WorkItemId})."
+        )]
         public static partial void ClaimReleaseFailed(
-            ILogger logger, string runId, string workItemId, Exception ex);
+            ILogger logger,
+            string runId,
+            string workItemId,
+            Exception ex
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Destroyed workspace for run {RunId} at '{WorkspacePath}'.")]
+            Message = "Destroyed workspace for run {RunId} at '{WorkspacePath}'."
+        )]
         public static partial void WorkspaceDestroyed(
-            ILogger logger, string runId, string workspacePath);
+            ILogger logger,
+            string runId,
+            string workspacePath
+        );
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "Failed to destroy workspace for run {RunId} at '{WorkspacePath}'.")]
+            Message = "Failed to destroy workspace for run {RunId} at '{WorkspacePath}'."
+        )]
         public static partial void WorkspaceDestroyFailed(
-            ILogger logger, string runId, string workspacePath, Exception ex);
+            ILogger logger,
+            string runId,
+            string workspacePath,
+            Exception ex
+        );
 
         // ── Lifecycle logging (Claimed → AgentStarting gap) ────────
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "[lifecycle] Claim acquired — workerId={WorkerId}, workItemId={WorkItemId}, title='{Title}'.")]
+            Message = "[lifecycle] Claim acquired — workerId={WorkerId}, workItemId={WorkItemId}, title='{Title}'."
+        )]
         public static partial void ClaimAcquired(
-            ILogger logger, string workerId, string workItemId, string title);
+            ILogger logger,
+            string workerId,
+            string workItemId,
+            string title
+        );
 
         [LoggerMessage(
             Level = LogLevel.Warning,
             Message = "Skipping candidate {CandidateId} ({Title}): clone preflight failed "
-                + "(transport={Transport}): {Reason}")]
+                + "(transport={Transport}): {Reason}"
+        )]
         public static partial void CandidateSkippedPreflight(
-            ILogger logger, string candidateId, string title, CloneTransport transport, string reason);
+            ILogger logger,
+            string candidateId,
+            string title,
+            CloneTransport transport,
+            string reason
+        );
 
         [LoggerMessage(
             Level = LogLevel.Debug,
-            Message = "Clone preflight passed for candidate {CandidateId} (transport={Transport}).")]
+            Message = "Clone preflight passed for candidate {CandidateId} (transport={Transport})."
+        )]
         public static partial void CandidatePreflightPassed(
-            ILogger logger, string candidateId, CloneTransport transport);
+            ILogger logger,
+            string candidateId,
+            CloneTransport transport
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "[lifecycle] Source-control clone starting — runId={RunId}, repoKey={RepoKey}, transport={Transport}.")]
+            Message = "[lifecycle] Source-control clone starting — runId={RunId}, repoKey={RepoKey}, transport={Transport}."
+        )]
         public static partial void CloneStarting(
-            ILogger logger, string runId, string repoKey, CloneTransport transport);
+            ILogger logger,
+            string runId,
+            string repoKey,
+            CloneTransport transport
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "[lifecycle] Workspace ready — runId={RunId}, envRoot='{EnvRoot}', repoPath='{RepoPath}'.")]
+            Message = "[lifecycle] Workspace ready — runId={RunId}, envRoot='{EnvRoot}', repoPath='{RepoPath}'."
+        )]
         public static partial void WorkspaceReady(
-            ILogger logger, string runId, string envRoot, string repoPath);
+            ILogger logger,
+            string runId,
+            string envRoot,
+            string repoPath
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "[lifecycle] Runtime dispatch to agent starting — runId={RunId}, workItemId={WorkItemId}, runtimeType={RuntimeType}.")]
+            Message = "[lifecycle] Runtime dispatch to agent starting — runId={RunId}, workItemId={WorkItemId}, runtimeType={RuntimeType}."
+        )]
         public static partial void RuntimeDispatchStarting(
-            ILogger logger, string runId, string workItemId, string runtimeType);
+            ILogger logger,
+            string runId,
+            string workItemId,
+            string runtimeType
+        );
 
         [LoggerMessage(
             Level = LogLevel.Error,
-            Message = "[lifecycle] Runtime dispatch FAILED — runId={RunId}, workItemId={WorkItemId}, reason='{Reason}'.")]
+            Message = "[lifecycle] Runtime dispatch FAILED — runId={RunId}, workItemId={WorkItemId}, reason='{Reason}'."
+        )]
         public static partial void RuntimeDispatchFailed(
-            ILogger logger, string runId, string workItemId, string reason);
+            ILogger logger,
+            string runId,
+            string workItemId,
+            string reason
+        );
 
         // ── Run-level retry logging ─────────────────────────────────
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Stale run recovered with retry — retryRunId={RetryRunId}, " +
-                      "staleRunId={StaleRunId}, attempt={Attempt}")]
+            Message = "Stale run recovered with retry — retryRunId={RetryRunId}, "
+                + "staleRunId={StaleRunId}, attempt={Attempt}"
+        )]
         public static partial void StaleRunRetried(
-            ILogger logger, string retryRunId, string staleRunId, int attempt);
+            ILogger logger,
+            string retryRunId,
+            string staleRunId,
+            int attempt
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Retry run scheduled — retryRunId={RetryRunId}, " +
-                      "previousRunId={PreviousRunId}, attempt={Attempt}/{MaxAttempts}")]
+            Message = "Retry run scheduled — retryRunId={RetryRunId}, "
+                + "previousRunId={PreviousRunId}, attempt={Attempt}/{MaxAttempts}"
+        )]
         public static partial void RetryRunScheduled(
-            ILogger logger, string retryRunId, string previousRunId, int attempt, int maxAttempts);
+            ILogger logger,
+            string retryRunId,
+            string previousRunId,
+            int attempt,
+            int maxAttempts
+        );
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "Failed to evaluate retry for run {RunId}.")]
+            Message = "Failed to evaluate retry for run {RunId}."
+        )]
         public static partial void RetryEvaluationFailed(
-            ILogger logger, Exception ex, string runId);
+            ILogger logger,
+            Exception ex,
+            string runId
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Discovered {Count} run(s) in Claimed state awaiting lifecycle advance.")]
-        public static partial void ClaimedRunsDiscovered(
-            ILogger logger, int count);
+            Message = "Discovered {Count} run(s) in Claimed state awaiting lifecycle advance."
+        )]
+        public static partial void ClaimedRunsDiscovered(ILogger logger, int count);
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "Failed to advance Claimed run {RunId} through lifecycle.")]
+            Message = "Failed to advance Claimed run {RunId} through lifecycle."
+        )]
         public static partial void ClaimedRunAdvanceFailed(
-            ILogger logger, Exception ex, string runId);
+            ILogger logger,
+            Exception ex,
+            string runId
+        );
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "Work item {WorkItemId} not found for Claimed run {RunId}.")]
+            Message = "Work item {WorkItemId} not found for Claimed run {RunId}."
+        )]
         public static partial void WorkItemNotFoundForRun(
-            ILogger logger, string runId, string? workItemId);
+            ILogger logger,
+            string runId,
+            string? workItemId
+        );
     }
 }

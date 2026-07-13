@@ -8,6 +8,7 @@ using AgentController.Infrastructure.Options;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -106,6 +107,8 @@ public static class AgentControllerServiceCollectionExtensions
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
+        services.AddSingleton<IConfiguredProfileSource, ConfiguredProfileSource>();
+
         return services;
     }
 
@@ -183,6 +186,7 @@ public static class AgentControllerServiceCollectionExtensions
     {
         services.AddScoped<IRunLifecycleService, RunLifecycleService>();
         services.AddScoped<IAzureDevOpsDiagnosticConfig, AzureDevOpsDiagnosticConfig>();
+        services.TryAddSingleton<IAzureDevOpsBoardsClientFactory, AzureDevOpsBoardsClientFactory>();
 
         return services;
     }
@@ -241,8 +245,20 @@ public static class AgentControllerServiceCollectionExtensions
     {
         services.AddSingleton<IWorkSource, NoOpWorkSource>();
         services.AddSingleton<ISourceControlProvider, NoOpSourceControlProvider>();
-        services.AddSingleton<IEnvironmentProvider, NoOpEnvironmentProvider>();
-        services.AddSingleton<IAgentRuntime, NoOpAgentRuntime>();
+
+        services.TryAddSingleton<NoOpEnvironmentProvider>();
+        services.TryAddSingleton<LocalWorkspaceEnvironmentProvider>();
+        services.TryAddSingleton<NoOpAgentRuntime>();
+        services.TryAddSingleton<PiMateriaRuntime>();
+        services.TryAddSingleton<MockPiMateriaRuntime>();
+        services.TryAddSingleton<IExecutionProviderResolver, ExecutionProviderResolver>();
+
+        services.AddSingleton<IEnvironmentProvider>(serviceProvider =>
+            serviceProvider.GetRequiredService<NoOpEnvironmentProvider>()
+        );
+        services.AddSingleton<IAgentRuntime>(serviceProvider =>
+            serviceProvider.GetRequiredService<NoOpAgentRuntime>()
+        );
 
         return services;
     }
@@ -278,7 +294,10 @@ public static class AgentControllerServiceCollectionExtensions
         this IServiceCollection services
     )
     {
-        services.AddSingleton<IEnvironmentProvider, LocalWorkspaceEnvironmentProvider>();
+        services.TryAddSingleton<LocalWorkspaceEnvironmentProvider>();
+        services.AddSingleton<IEnvironmentProvider>(serviceProvider =>
+            serviceProvider.GetRequiredService<LocalWorkspaceEnvironmentProvider>()
+        );
 
         return services;
     }
@@ -306,7 +325,10 @@ public static class AgentControllerServiceCollectionExtensions
         this IServiceCollection services
     )
     {
-        services.AddSingleton<IAgentRuntime, PiMateriaRuntime>();
+        services.TryAddSingleton<PiMateriaRuntime>();
+        services.AddSingleton<IAgentRuntime>(serviceProvider =>
+            serviceProvider.GetRequiredService<PiMateriaRuntime>()
+        );
 
         return services;
     }
@@ -332,7 +354,10 @@ public static class AgentControllerServiceCollectionExtensions
         this IServiceCollection services
     )
     {
-        services.AddSingleton<IAgentRuntime, MockPiMateriaRuntime>();
+        services.TryAddSingleton<MockPiMateriaRuntime>();
+        services.AddSingleton<IAgentRuntime>(serviceProvider =>
+            serviceProvider.GetRequiredService<MockPiMateriaRuntime>()
+        );
 
         return services;
     }
@@ -396,8 +421,10 @@ public static class AgentControllerServiceCollectionExtensions
             return new AzureDevOpsBoardsClient(http, boardsOptions, logger);
         });
 
+        services.TryAddSingleton<IAzureDevOpsBoardsClientFactory, AzureDevOpsBoardsClientFactory>();
+
         // Register the work source implementation as singleton.
-        // It uses IServiceScopeFactory to resolve scoped IAzureDevOpsBoardsClient
+        // It uses IServiceScopeFactory to resolve scoped profile/client services
         // per operation.
         services.AddSingleton<IWorkSource, AzureDevOpsBoardsWorkSource>();
 

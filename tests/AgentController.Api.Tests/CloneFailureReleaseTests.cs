@@ -59,7 +59,9 @@ public class CloneFailureReleaseTests : IAsyncLifetime
                 Directory.Delete(_tempRoot, recursive: true);
             }
         }
-        catch { /* best-effort */ }
+        catch
+        { /* best-effort */
+        }
         return Task.CompletedTask;
     }
 
@@ -78,7 +80,8 @@ public class CloneFailureReleaseTests : IAsyncLifetime
             _tempDbPath,
             _tempRunRoot,
             repoCloneUrl: "https://this-host-does-not-exist-12345.example.com/repo.git",
-            repoTransport: "HttpsPat");
+            repoTransport: "HttpsPat"
+        );
 
         var (scopeFactory, worker) = BuildWorkerAndScope(config);
 
@@ -88,7 +91,9 @@ public class CloneFailureReleaseTests : IAsyncLifetime
         await using var verifyScope = scopeFactory.CreateAsyncScope();
         var runStore = verifyScope.ServiceProvider.GetRequiredService<IAgentRunStore>();
         var runs = await runStore.ListAsync(
-            new ListRunsQuery { MaxResults = 10 }, CancellationToken.None);
+            new ListRunsQuery { MaxResults = 10 },
+            CancellationToken.None
+        );
 
         Assert.Empty(runs);
     }
@@ -103,7 +108,8 @@ public class CloneFailureReleaseTests : IAsyncLifetime
             _tempDbPath,
             _tempRunRoot,
             repoCloneUrl: Path.Combine(_tempRoot, "does-not-exist-for-preflight"),
-            repoTransport: "Local");
+            repoTransport: "Local"
+        );
 
         var (scopeFactory, worker) = BuildWorkerAndScope(config);
 
@@ -113,7 +119,9 @@ public class CloneFailureReleaseTests : IAsyncLifetime
         await using var verifyScope = scopeFactory.CreateAsyncScope();
         var runStore = verifyScope.ServiceProvider.GetRequiredService<IAgentRunStore>();
         var runs = await runStore.ListAsync(
-            new ListRunsQuery { MaxResults = 10 }, CancellationToken.None);
+            new ListRunsQuery { MaxResults = 10 },
+            CancellationToken.None
+        );
 
         Assert.Empty(runs);
     }
@@ -128,7 +136,8 @@ public class CloneFailureReleaseTests : IAsyncLifetime
             _tempDbPath,
             _tempRunRoot,
             repoCloneUrl: "",
-            repoTransport: "Local");
+            repoTransport: "Local"
+        );
 
         var (scopeFactory, worker) = BuildWorkerAndScope(config);
 
@@ -138,7 +147,9 @@ public class CloneFailureReleaseTests : IAsyncLifetime
         await using var verifyScope = scopeFactory.CreateAsyncScope();
         var runStore = verifyScope.ServiceProvider.GetRequiredService<IAgentRunStore>();
         var runs = await runStore.ListAsync(
-            new ListRunsQuery { MaxResults = 10 }, CancellationToken.None);
+            new ListRunsQuery { MaxResults = 10 },
+            CancellationToken.None
+        );
 
         Assert.Empty(runs);
     }
@@ -160,7 +171,8 @@ public class CloneFailureReleaseTests : IAsyncLifetime
             _tempDbPath,
             _tempRunRoot,
             repoCloneUrl: fakeRepoPath,
-            repoTransport: "Local");
+            repoTransport: "Local"
+        );
 
         var (scopeFactory, worker) = BuildWorkerAndScope(config);
 
@@ -170,7 +182,9 @@ public class CloneFailureReleaseTests : IAsyncLifetime
         await using var verifyScope = scopeFactory.CreateAsyncScope();
         var runStore = verifyScope.ServiceProvider.GetRequiredService<IAgentRunStore>();
         var runs = await runStore.ListAsync(
-            new ListRunsQuery { MaxResults = 10 }, CancellationToken.None);
+            new ListRunsQuery { MaxResults = 10 },
+            CancellationToken.None
+        );
 
         // Preflight's git ls-remote catches non-git directories before claim.
         Assert.Empty(runs);
@@ -191,7 +205,11 @@ public class CloneFailureReleaseTests : IAsyncLifetime
         var validRepo = Path.Combine(_tempRoot, "valid-repo-pipeline");
         Directory.CreateDirectory(validRepo);
         await RunGitAsync(validRepo, ["init", "--initial-branch=main"], TimeSpan.FromSeconds(10));
-        await RunGitAsync(validRepo, ["config", "user.email", "test@example.com"], TimeSpan.FromSeconds(5));
+        await RunGitAsync(
+            validRepo,
+            ["config", "user.email", "test@example.com"],
+            TimeSpan.FromSeconds(5)
+        );
         await RunGitAsync(validRepo, ["config", "user.name", "Test User"], TimeSpan.FromSeconds(5));
         await File.WriteAllTextAsync(Path.Combine(validRepo, "README.md"), "# Valid Repo");
         await RunGitAsync(validRepo, ["add", "README.md"], TimeSpan.FromSeconds(5));
@@ -201,7 +219,8 @@ public class CloneFailureReleaseTests : IAsyncLifetime
             _tempDbPath,
             _tempRunRoot,
             repoCloneUrl: validRepo,
-            repoTransport: "Local");
+            repoTransport: "Local"
+        );
 
         var (scopeFactory, worker) = BuildWorkerAndScope(config);
 
@@ -211,7 +230,9 @@ public class CloneFailureReleaseTests : IAsyncLifetime
         await using var verifyScope = scopeFactory.CreateAsyncScope();
         var runStore = verifyScope.ServiceProvider.GetRequiredService<IAgentRunStore>();
         var runs = await runStore.ListAsync(
-            new ListRunsQuery { MaxResults = 10 }, CancellationToken.None);
+            new ListRunsQuery { MaxResults = 10 },
+            CancellationToken.None
+        );
 
         Assert.NotEmpty(runs);
         var run = runs[0];
@@ -219,7 +240,8 @@ public class CloneFailureReleaseTests : IAsyncLifetime
         // The run should have progressed past clone (preflight passed, clone succeeded)
         Assert.True(
             run.Status >= RunLifecycleState.RepositoryReady,
-            $"Run should have progressed past clone, but is in state: {run.Status}. Error: {run.Error}");
+            $"Run should have progressed past clone, but is in state: {run.Status}. Error: {run.Error}"
+        );
 
         // Verify lifecycle events show the full pipeline
         var eventStore = verifyScope.ServiceProvider.GetRequiredService<ILifecycleEventStore>();
@@ -246,7 +268,11 @@ public class CloneFailureReleaseTests : IAsyncLifetime
         var validRepo = Path.Combine(_tempRoot, "valid-repo-concurrency");
         Directory.CreateDirectory(validRepo);
         await RunGitAsync(validRepo, ["init", "--initial-branch=main"], TimeSpan.FromSeconds(10));
-        await RunGitAsync(validRepo, ["config", "user.email", "test@example.com"], TimeSpan.FromSeconds(5));
+        await RunGitAsync(
+            validRepo,
+            ["config", "user.email", "test@example.com"],
+            TimeSpan.FromSeconds(5)
+        );
         await RunGitAsync(validRepo, ["config", "user.name", "Test User"], TimeSpan.FromSeconds(5));
         await File.WriteAllTextAsync(Path.Combine(validRepo, "README.md"), "# Valid Repo");
         await RunGitAsync(validRepo, ["add", "README.md"], TimeSpan.FromSeconds(5));
@@ -257,7 +283,8 @@ public class CloneFailureReleaseTests : IAsyncLifetime
             _tempRunRoot,
             repoCloneUrl: validRepo,
             repoTransport: "Local",
-            maxConcurrentRuns: 1);
+            maxConcurrentRuns: 1
+        );
 
         var (scopeFactory, worker) = BuildWorkerAndScope(config);
 
@@ -268,20 +295,30 @@ public class CloneFailureReleaseTests : IAsyncLifetime
         await using var verifyScope = scopeFactory.CreateAsyncScope();
         var runStore = verifyScope.ServiceProvider.GetRequiredService<IAgentRunStore>();
         var runs = await runStore.ListAsync(
-            new ListRunsQuery { MaxResults = 10 }, CancellationToken.None);
+            new ListRunsQuery { MaxResults = 10 },
+            CancellationToken.None
+        );
 
         Assert.NotEmpty(runs);
         var run = runs[0];
 
         // Force the run to a terminal state to test concurrency slot freeing
-        await runStore.UpdateRuntimeFieldsAsync(run.RunId, new RuntimeFieldUpdate
-        {
-            Error = "Simulated failure for concurrency test",
-            FinishedAt = DateTimeOffset.UtcNow,
-        }, CancellationToken.None);
+        await runStore.UpdateRuntimeFieldsAsync(
+            run.RunId,
+            new RuntimeFieldUpdate
+            {
+                Error = "Simulated failure for concurrency test",
+                FinishedAt = DateTimeOffset.UtcNow,
+            },
+            CancellationToken.None
+        );
 
         var lifecycle = verifyScope.ServiceProvider.GetRequiredService<IRunLifecycleService>();
-        await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.Failed, CancellationToken.None);
+        await lifecycle.TransitionAsync(
+            run.RunId,
+            RunLifecycleState.Failed,
+            CancellationToken.None
+        );
 
         // The Failed state is terminal, so CountActiveAsync should not count it
         var activeCount = await runStore.CountActiveAsync(CancellationToken.None);
@@ -305,11 +342,13 @@ public class CloneFailureReleaseTests : IAsyncLifetime
         services.AddSilentLogging();
 
         var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["persistence:provider"] = "Sqlite",
-                ["persistence:connectionString"] = $"Data Source={_tempDbPath}",
-            })
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["persistence:provider"] = "Sqlite",
+                    ["persistence:connectionString"] = $"Data Source={_tempDbPath}",
+                }
+            )
             .Build();
 
         services.AddAgentControllerOptions(config);
@@ -322,13 +361,17 @@ public class CloneFailureReleaseTests : IAsyncLifetime
         var provider = services.BuildServiceProvider();
 
         // Ensure database is created
-        await using (var initScope = provider.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope())
+        await using (
+            var initScope = provider.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope()
+        )
         {
             var db = initScope.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
             await db.Database.EnsureCreatedAsync();
         }
 
-        await using var scope = provider.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
+        await using var scope = provider
+            .GetRequiredService<IServiceScopeFactory>()
+            .CreateAsyncScope();
         var workItemStore = scope.ServiceProvider.GetRequiredService<IWorkItemStore>();
         var lifecycle = scope.ServiceProvider.GetRequiredService<IRunLifecycleService>();
         var runStore = scope.ServiceProvider.GetRequiredService<IAgentRunStore>();
@@ -336,19 +379,39 @@ public class CloneFailureReleaseTests : IAsyncLifetime
         // Create a work item
         var wi = await workItemStore.CreateAsync(
             new CreateWorkItemRequest { RepoKey = "test-repo", Title = "Test" },
-            CancellationToken.None);
+            CancellationToken.None
+        );
 
         // Create a run
         var run = await lifecycle.CreateRunForWorkItemAsync(
-            wi.Id, "test-worker", CancellationToken.None);
+            wi.Id,
+            "test-worker",
+            CancellationToken.None
+        );
 
         // Advance through states to RepositoryCloning
-        await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.EnvironmentProvisioning, CancellationToken.None);
-        await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.EnvironmentReady, CancellationToken.None);
-        await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.RepositoryCloning, CancellationToken.None);
+        await lifecycle.TransitionAsync(
+            run.RunId,
+            RunLifecycleState.EnvironmentProvisioning,
+            CancellationToken.None
+        );
+        await lifecycle.TransitionAsync(
+            run.RunId,
+            RunLifecycleState.EnvironmentReady,
+            CancellationToken.None
+        );
+        await lifecycle.TransitionAsync(
+            run.RunId,
+            RunLifecycleState.RepositoryCloning,
+            CancellationToken.None
+        );
 
         // Simulate clone failure: transition to Failed
-        await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.Failed, CancellationToken.None);
+        await lifecycle.TransitionAsync(
+            run.RunId,
+            RunLifecycleState.Failed,
+            CancellationToken.None
+        );
 
         // Record the failure event
         await lifecycle.AppendControllerEventAsync(
@@ -361,7 +424,8 @@ public class CloneFailureReleaseTests : IAsyncLifetime
                 ["state"] = RunLifecycleState.Failed.ToString(),
             },
             EventSeverity.Error,
-            CancellationToken.None);
+            CancellationToken.None
+        );
 
         // Verify the run is in Failed state
         var updatedRun = await runStore.GetByIdAsync(run.RunId, CancellationToken.None);
@@ -381,42 +445,49 @@ public class CloneFailureReleaseTests : IAsyncLifetime
         string runRoot,
         string repoCloneUrl,
         string repoTransport,
-        int maxConcurrentRuns = 2)
+        int maxConcurrentRuns = 2
+    )
     {
         return new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["agentController:workerId"] = "test-clone-fail-worker",
-                ["agentController:pollIntervalSeconds"] = "10",
-                ["agentController:maxConcurrentRuns"] = maxConcurrentRuns.ToString(CultureInfo.InvariantCulture),
-                ["agentController:staleTimeoutSeconds"] = "300",
-                ["agentController:runRoot"] = runRoot,
-                ["agentController:retainSuccessfulRuns"] = "true",
-                ["agentController:retainFailedRuns"] = "true",
-                ["agentController:workerEnabled"] = "true",
-                ["persistence:provider"] = "Sqlite",
-                ["persistence:connectionString"] = $"Data Source={dbPath}",
-                ["workSource:provider"] = "LocalFile",
-                ["sourceControl:provider"] = "LocalGit",
-                ["environmentProvider:provider"] = "LocalWorkspace",
-                ["runtime:provider"] = "MockPiMateria",
-                ["runtime:defaultMateriaLoadout"] = "success-pr",
-                ["localWork:definitions:0:repoKey"] = "test-repo",
-                ["localWork:definitions:0:title"] = "Test: clone failure",
-                ["localWork:definitions:0:body"] = "Test work item for clone failure path.",
-                ["localWork:definitions:0:tags:0"] = "agent-ready",
-                ["localWork:definitions:0:priority"] = "1",
-                ["localWork:definitions:0:status"] = "New",
-                ["repositories:test-repo:cloneUrl"] = repoCloneUrl,
-                ["repositories:test-repo:transport"] = repoTransport,
-                ["repositories:test-repo:defaultBranch"] = "main",
-                ["repositories:test-repo:environmentProfile"] = "local-default",
-                ["repositories:test-repo:runtimeProfile"] = "pi-materia-default",
-            })
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["agentController:workerId"] = "test-clone-fail-worker",
+                    ["agentController:pollIntervalSeconds"] = "10",
+                    ["agentController:maxConcurrentRuns"] = maxConcurrentRuns.ToString(
+                        CultureInfo.InvariantCulture
+                    ),
+                    ["agentController:staleTimeoutSeconds"] = "300",
+                    ["agentController:runRoot"] = runRoot,
+                    ["agentController:retainSuccessfulRuns"] = "true",
+                    ["agentController:retainFailedRuns"] = "true",
+                    ["agentController:workerEnabled"] = "true",
+                    ["persistence:provider"] = "Sqlite",
+                    ["persistence:connectionString"] = $"Data Source={dbPath}",
+                    ["workSource:provider"] = "LocalFile",
+                    ["sourceControl:provider"] = "LocalGit",
+                    ["environmentProvider:provider"] = "LocalWorkspace",
+                    ["runtime:provider"] = "MockPiMateria",
+                    ["runtime:defaultMateriaLoadout"] = "success-pr",
+                    ["localWork:definitions:0:repoKey"] = "test-repo",
+                    ["localWork:definitions:0:title"] = "Test: clone failure",
+                    ["localWork:definitions:0:body"] = "Test work item for clone failure path.",
+                    ["localWork:definitions:0:tags:0"] = "agent-ready",
+                    ["localWork:definitions:0:priority"] = "1",
+                    ["localWork:definitions:0:status"] = "New",
+                    ["repositories:test-repo:cloneUrl"] = repoCloneUrl,
+                    ["repositories:test-repo:transport"] = repoTransport,
+                    ["repositories:test-repo:defaultBranch"] = "main",
+                    ["repositories:test-repo:environmentProfile"] = "local-default",
+                    ["repositories:test-repo:runtimeProfile"] = "pi-materia-default",
+                }
+            )
             .Build();
     }
 
-    private static (IServiceScopeFactory ScopeFactory, PollingWorker Worker) BuildWorkerAndScope(IConfiguration config)
+    private static (IServiceScopeFactory ScopeFactory, PollingWorker Worker) BuildWorkerAndScope(
+        IConfiguration config
+    )
     {
         var services = new ServiceCollection();
 
@@ -427,6 +498,8 @@ public class CloneFailureReleaseTests : IAsyncLifetime
         services.AddAgentControllerRepositories();
         services.AddAgentControllerLifecycleService();
         services.AddAgentControllerNoOpProviders();
+
+        services.AddApplicationHandlers();
 
         // Wire real providers
         services.AddAgentControllerLocalFileWorkSource();
@@ -449,7 +522,9 @@ public class CloneFailureReleaseTests : IAsyncLifetime
 
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
         var optionsMonitor = provider.GetRequiredService<IOptionsMonitor<AgentControllerOptions>>();
-        var workSourceMonitor = provider.GetRequiredService<IOptionsMonitor<WorkSourceOptionsView>>();
+        var workSourceMonitor = provider.GetRequiredService<
+            IOptionsMonitor<WorkSourceOptionsView>
+        >();
         var logger = provider.GetRequiredService<ILogger<PollingWorker>>();
 
         var worker = new PollingWorker(scopeFactory, optionsMonitor, workSourceMonitor, logger);
@@ -485,7 +560,8 @@ public class CloneFailureReleaseTests : IAsyncLifetime
         {
             var stdErr = await stdErrTask;
             throw new InvalidOperationException(
-                $"git {string.Join(' ', args)} failed (exit {process.ExitCode}): {stdErr}");
+                $"git {string.Join(' ', args)} failed (exit {process.ExitCode}): {stdErr}"
+            );
         }
     }
 

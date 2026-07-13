@@ -19,7 +19,8 @@ public interface IAzureDevOpsBoardsClient
     /// </summary>
     Task<IReadOnlyList<WorkCandidate>> QueryWorkItemsAsync(
         BoardsQueryParameters parameters,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken
+    );
 
     /// <summary>
     /// Attempt to claim a work item for exclusive execution.
@@ -27,7 +28,8 @@ public interface IAzureDevOpsBoardsClient
     Task<ClaimResult> TryClaimWorkItemAsync(
         ExternalWorkRef workRef,
         ClaimRequest request,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken
+    );
 
     /// <summary>
     /// Update the external status, tags, or state of a work item.
@@ -36,7 +38,8 @@ public interface IAzureDevOpsBoardsClient
     Task<bool> UpdateWorkItemStatusAsync(
         ExternalWorkRef workRef,
         ExternalWorkStatus status,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken
+    );
 
     /// <summary>
     /// Append a comment to a work item.
@@ -44,7 +47,8 @@ public interface IAzureDevOpsBoardsClient
     Task AddCommentAsync(
         ExternalWorkRef workRef,
         string comment,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken
+    );
 
     /// <summary>
     /// Enumerate Git repositories in an Azure DevOps project.
@@ -53,7 +57,8 @@ public interface IAzureDevOpsBoardsClient
     /// </summary>
     Task<IReadOnlyList<RepositoryInfo>> ListRepositoriesAsync(
         string project,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken
+    );
 
     /// <summary>
     /// Verify connectivity to an Azure DevOps organization/project using a PAT.
@@ -66,7 +71,8 @@ public interface IAzureDevOpsBoardsClient
         string organizationUrl,
         string project,
         string personalAccessToken,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken
+    );
 
     /// <summary>
     /// Fetch discussion comments (thread history) for a work item.
@@ -76,7 +82,8 @@ public interface IAzureDevOpsBoardsClient
     Task<IReadOnlyList<WorkItemComment>> GetCommentsAsync(
         ExternalWorkRef workRef,
         int maxComments,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken
+    );
 
     /// <summary>
     /// Release a previously claimed work item back to the work source.
@@ -85,7 +92,8 @@ public interface IAzureDevOpsBoardsClient
     /// </summary>
     Task ReleaseClaimWorkItemAsync(
         ReleaseClaimRequest request,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken
+    );
 
     /// <summary>
     /// Enumerate the valid <c>System.State</c> values for a given project
@@ -107,7 +115,8 @@ public interface IAzureDevOpsBoardsClient
     Task<IReadOnlyList<string>> GetValidStatesAsync(
         string project,
         string workItemType,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken
+    );
 }
 
 /// <summary>
@@ -138,8 +147,14 @@ public sealed record BoardsQueryParameters
     /// <summary>Project name (required for Azure DevOps queries).</summary>
     public string Project { get; init; } = string.Empty;
 
+    /// <summary>Work item type to include.</summary>
+    public string? WorkItemType { get; init; }
+
     /// <summary>Work item states to include.</summary>
     public IReadOnlyList<string>? States { get; init; }
+
+    /// <summary>Work item states to exclude.</summary>
+    public IReadOnlyList<string>? ExcludedStates { get; init; }
 
     /// <summary>Tags that must be present on a work item.</summary>
     public IReadOnlyList<string>? Tags { get; init; }

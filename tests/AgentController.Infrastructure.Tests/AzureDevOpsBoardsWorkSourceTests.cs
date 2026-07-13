@@ -25,6 +25,73 @@ public class AzureDevOpsBoardsWorkSourceTests
     private static readonly string[] EmptyStringArray = [];
     private static readonly string[] MultiEligibleStates = ["Ready", "New", "Active"];
 
+    [Fact]
+    public async Task FindEligibleAsync_PollsAllEnabledManagedEnvironmentsWithProfileSettings()
+    {
+        var alphaProfile = ManagedEnvironment("alpha", "AlphaProject", ["Ready"], ["agent-ready"]);
+        var zetaProfile = ManagedEnvironment("zeta", "ZetaProject", ["Approved"], ["autonomous"]);
+        var alphaClient = new MockAzureDevOpsBoardsClient
+        {
+            QueryResults =
+            [
+                new WorkCandidate
+                {
+                    Id = "wi-alpha",
+                    ExternalId = "1",
+                    Source = "AzureDevOpsBoards",
+                },
+            ],
+        };
+        var zetaClient = new MockAzureDevOpsBoardsClient
+        {
+            QueryResults =
+            [
+                new WorkCandidate
+                {
+                    Id = "wi-zeta",
+                    ExternalId = "2",
+                    Source = "AzureDevOpsBoards",
+                },
+            ],
+        };
+        var services = new ServiceCollection();
+        services.AddSingleton<IAzureDevOpsBoardsClient>(new MockAzureDevOpsBoardsClient());
+        services.AddSingleton<IManagedProfileResolver>(
+            new StubManagedProfileResolver([alphaProfile, zetaProfile])
+        );
+        services.AddSingleton<IAzureDevOpsBoardsClientFactory>(
+            new StubClientFactory(
+                new Dictionary<string, IAzureDevOpsBoardsClient>
+                {
+                    ["alpha"] = alphaClient,
+                    ["zeta"] = zetaClient,
+                }
+            )
+        );
+        var provider = services.BuildServiceProvider();
+        var workSource = new AzureDevOpsBoardsWorkSource(
+            new DelegatingScopeFactory(provider),
+            new FakeOptionsMonitor<WorkSourceOptions>(
+                new WorkSourceOptions { Project = "ConfiguredProject" }
+            )
+        );
+
+        var candidates = await workSource.FindEligibleAsync(
+            new WorkQuery { MaxResults = 5 },
+            CancellationToken.None
+        );
+
+        Assert.Equal(2, candidates.Count);
+        Assert.Equal("AlphaProject", Assert.Single(alphaClient.QueryCalls).Project);
+        Assert.Equal(["Ready"], alphaClient.QueryCalls[0].States);
+        Assert.Equal(["agent-ready"], alphaClient.QueryCalls[0].Tags);
+        Assert.Equal("ZetaProject", Assert.Single(zetaClient.QueryCalls).Project);
+        Assert.Equal(["Approved"], zetaClient.QueryCalls[0].States);
+        Assert.Equal(["autonomous"], zetaClient.QueryCalls[0].Tags);
+        Assert.Equal("alpha", candidates[0].SourceMetadata?["azureDevOpsEnvironmentKey"]);
+        Assert.Equal("zeta", candidates[1].SourceMetadata?["azureDevOpsEnvironmentKey"]);
+    }
+
     // ──────────────────────────────────────────────
     // ReactivateForReworkAsync — single-PATCH success
     // ──────────────────────────────────────────────
@@ -74,7 +141,10 @@ public class AzureDevOpsBoardsWorkSourceTests
         Assert.NotNull(call.Status.RemovedTags);
         Assert.Contains(WorkSourceOptions.DefaultExcludedTagAgentActive, call.Status.RemovedTags);
         Assert.Contains(WorkSourceOptions.DefaultExcludedTagAgentFailed, call.Status.RemovedTags);
-        Assert.Contains(WorkSourceOptions.DefaultExcludedTagAgentNeedsHuman, call.Status.RemovedTags);
+        Assert.Contains(
+            WorkSourceOptions.DefaultExcludedTagAgentNeedsHuman,
+            call.Status.RemovedTags
+        );
         Assert.Contains("agent-worker:*", call.Status.RemovedTags);
 
         // Assert: Tags to add contains agent-ready
@@ -187,7 +257,11 @@ public class AzureDevOpsBoardsWorkSourceTests
         // Assert: fails with clear reason about missing eligible states
         Assert.False(result.Success);
         Assert.NotNull(result.FailureReason);
-        Assert.Contains("eligible states", result.FailureReason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "eligible states",
+            result.FailureReason,
+            StringComparison.OrdinalIgnoreCase
+        );
     }
 
     [Fact]
@@ -227,41 +301,51 @@ public class AzureDevOpsBoardsWorkSourceTests
         string? patchBody = null;
         string? ifMatchValue = null;
 
-        var handler = new CaptureHttpMessageHandler(async (req) =>
-        {
-            requestCount++;
-
-            if (req.Method == HttpMethod.Get)
+        var handler = new CaptureHttpMessageHandler(
+            async (req) =>
             {
-                // Return current work item with agent lifecycle tags
-                return new HttpResponseMessage(HttpStatusCode.OK)
+                requestCount++;
+
+                if (req.Method == HttpMethod.Get)
                 {
-                    Content = new StringContent(
-                        WorkItemGetResponse(42, 7, "Resolved",
-                            "agent-active; agent-worker:live-ado_worker; agent-ready; backend; high-priority"),
-                        Encoding.UTF8, "application/json"),
-                };
-            }
+                    // Return current work item with agent lifecycle tags
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(
+                            WorkItemGetResponse(
+                                42,
+                                7,
+                                "Resolved",
+                                "agent-active; agent-worker:live-ado_worker; agent-ready; backend; high-priority"
+                            ),
+                            Encoding.UTF8,
+                            "application/json"
+                        ),
+                    };
+                }
 
-            if (req.Method == HttpMethod.Patch)
-            {
-                if (req.Content is not null)
-                    patchBody = await req.Content.ReadAsStringAsync();
-
-                ifMatchValue = req.Headers.TryGetValues("If-Match", out var values)
-                    ? values.FirstOrDefault()
-                    : null;
-
-                return new HttpResponseMessage(HttpStatusCode.OK)
+                if (req.Method == HttpMethod.Patch)
                 {
-                    Content = new StringContent(
-                        WorkItemPatchResponse(42, 8),
-                        Encoding.UTF8, "application/json"),
-                };
-            }
+                    if (req.Content is not null)
+                        patchBody = await req.Content.ReadAsStringAsync();
 
-            return new HttpResponseMessage(HttpStatusCode.NotFound);
-        });
+                    ifMatchValue = req.Headers.TryGetValues("If-Match", out var values)
+                        ? values.FirstOrDefault()
+                        : null;
+
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(
+                            WorkItemPatchResponse(42, 8),
+                            Encoding.UTF8,
+                            "application/json"
+                        ),
+                    };
+                }
+
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+        );
 
         var client = CreateClientWithHandler(handler);
 
@@ -319,31 +403,42 @@ public class AzureDevOpsBoardsWorkSourceTests
     public async Task UpdateWorkItemStatus_RemovedTags_412ReturnsFalse()
     {
         // Arrange: fake handler returns 412 on the PATCH
-        var handler = new CaptureHttpMessageHandler(async (req) =>
-        {
-            if (req.Method == HttpMethod.Get)
+        var handler = new CaptureHttpMessageHandler(
+            async (req) =>
             {
-                return new HttpResponseMessage(HttpStatusCode.OK)
+                if (req.Method == HttpMethod.Get)
                 {
-                    Content = new StringContent(
-                        WorkItemGetResponse(42, 7, "Resolved", "agent-active; agent-worker:live-ado_worker"),
-                        Encoding.UTF8, "application/json"),
-                };
-            }
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(
+                            WorkItemGetResponse(
+                                42,
+                                7,
+                                "Resolved",
+                                "agent-active; agent-worker:live-ado_worker"
+                            ),
+                            Encoding.UTF8,
+                            "application/json"
+                        ),
+                    };
+                }
 
-            if (req.Method == HttpMethod.Patch)
-            {
-                // Simulate 412 Precondition Failed (concurrent modification)
-                return new HttpResponseMessage(HttpStatusCode.PreconditionFailed)
+                if (req.Method == HttpMethod.Patch)
                 {
-                    Content = new StringContent(
-                        """{"message":"The resource has been modified by another user."}""",
-                        Encoding.UTF8, "application/json"),
-                };
-            }
+                    // Simulate 412 Precondition Failed (concurrent modification)
+                    return new HttpResponseMessage(HttpStatusCode.PreconditionFailed)
+                    {
+                        Content = new StringContent(
+                            """{"message":"The resource has been modified by another user."}""",
+                            Encoding.UTF8,
+                            "application/json"
+                        ),
+                    };
+                }
 
-            return new HttpResponseMessage(HttpStatusCode.NotFound);
-        });
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+        );
 
         var client = CreateClientWithHandler(handler);
 
@@ -372,20 +467,24 @@ public class AzureDevOpsBoardsWorkSourceTests
     public async Task UpdateWorkItemStatus_NoRemovedTags_412ReturnsTrue_BestEffort()
     {
         // Arrange: fake handler returns 412 on the PATCH, but no RemovedTags
-        var handler = new CaptureHttpMessageHandler(async (req) =>
-        {
-            if (req.Method == HttpMethod.Patch)
+        var handler = new CaptureHttpMessageHandler(
+            async (req) =>
             {
-                return new HttpResponseMessage(HttpStatusCode.PreconditionFailed)
+                if (req.Method == HttpMethod.Patch)
                 {
-                    Content = new StringContent(
-                        """{"message":"The resource has been modified."}""",
-                        Encoding.UTF8, "application/json"),
-                };
-            }
+                    return new HttpResponseMessage(HttpStatusCode.PreconditionFailed)
+                    {
+                        Content = new StringContent(
+                            """{"message":"The resource has been modified."}""",
+                            Encoding.UTF8,
+                            "application/json"
+                        ),
+                    };
+                }
 
-            return new HttpResponseMessage(HttpStatusCode.NotFound);
-        });
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+        );
 
         var client = CreateClientWithHandler(handler);
 
@@ -413,30 +512,36 @@ public class AzureDevOpsBoardsWorkSourceTests
     public async Task UpdateWorkItemStatus_RemovedTags_NonSuccessNon412_ReturnsFalse()
     {
         // Arrange: fake handler returns 500 on the PATCH
-        var handler = new CaptureHttpMessageHandler(async (req) =>
-        {
-            if (req.Method == HttpMethod.Get)
+        var handler = new CaptureHttpMessageHandler(
+            async (req) =>
             {
-                return new HttpResponseMessage(HttpStatusCode.OK)
+                if (req.Method == HttpMethod.Get)
                 {
-                    Content = new StringContent(
-                        WorkItemGetResponse(42, 7, "Resolved", "agent-active"),
-                        Encoding.UTF8, "application/json"),
-                };
-            }
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(
+                            WorkItemGetResponse(42, 7, "Resolved", "agent-active"),
+                            Encoding.UTF8,
+                            "application/json"
+                        ),
+                    };
+                }
 
-            if (req.Method == HttpMethod.Patch)
-            {
-                return new HttpResponseMessage(HttpStatusCode.InternalServerError)
+                if (req.Method == HttpMethod.Patch)
                 {
-                    Content = new StringContent(
-                        """{"message":"Server error"}""",
-                        Encoding.UTF8, "application/json"),
-                };
-            }
+                    return new HttpResponseMessage(HttpStatusCode.InternalServerError)
+                    {
+                        Content = new StringContent(
+                            """{"message":"Server error"}""",
+                            Encoding.UTF8,
+                            "application/json"
+                        ),
+                    };
+                }
 
-            return new HttpResponseMessage(HttpStatusCode.NotFound);
-        });
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+        );
 
         var client = CreateClientWithHandler(handler);
 
@@ -466,34 +571,44 @@ public class AzureDevOpsBoardsWorkSourceTests
         // Arrange: work item has a concrete agent-worker:live-ado_worker tag
         string? patchBody = null;
 
-        var handler = new CaptureHttpMessageHandler(async (req) =>
-        {
-            if (req.Method == HttpMethod.Get)
+        var handler = new CaptureHttpMessageHandler(
+            async (req) =>
             {
-                return new HttpResponseMessage(HttpStatusCode.OK)
+                if (req.Method == HttpMethod.Get)
                 {
-                    Content = new StringContent(
-                        WorkItemGetResponse(10, 3, "Resolved",
-                            "agent-active; agent-worker:live-ado_worker; backend"),
-                        Encoding.UTF8, "application/json"),
-                };
-            }
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(
+                            WorkItemGetResponse(
+                                10,
+                                3,
+                                "Resolved",
+                                "agent-active; agent-worker:live-ado_worker; backend"
+                            ),
+                            Encoding.UTF8,
+                            "application/json"
+                        ),
+                    };
+                }
 
-            if (req.Method == HttpMethod.Patch)
-            {
-                if (req.Content is not null)
-                    patchBody = await req.Content.ReadAsStringAsync();
-
-                return new HttpResponseMessage(HttpStatusCode.OK)
+                if (req.Method == HttpMethod.Patch)
                 {
-                    Content = new StringContent(
-                        WorkItemPatchResponse(10, 4),
-                        Encoding.UTF8, "application/json"),
-                };
-            }
+                    if (req.Content is not null)
+                        patchBody = await req.Content.ReadAsStringAsync();
 
-            return new HttpResponseMessage(HttpStatusCode.NotFound);
-        });
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(
+                            WorkItemPatchResponse(10, 4),
+                            Encoding.UTF8,
+                            "application/json"
+                        ),
+                    };
+                }
+
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+        );
 
         var client = CreateClientWithHandler(handler);
 
@@ -535,19 +650,43 @@ public class AzureDevOpsBoardsWorkSourceTests
     private static AzureDevOpsBoardsWorkSource CreateWorkSource(
         IAzureDevOpsBoardsClient mockClient,
         string? project = Project,
-        string[]? eligibleStates = null)
+        string[]? eligibleStates = null
+    )
     {
         var options = new WorkSourceOptions
         {
             Project = project,
             OrganizationUrl = OrgUrl,
-            EligibleStates = eligibleStates is { Length: > 0 } ? eligibleStates : new[] { EligibleState },
+            EligibleStates = eligibleStates is { Length: > 0 }
+                ? eligibleStates
+                : new[] { EligibleState },
         };
 
         var optionsMonitor = new FakeOptionsMonitor<WorkSourceOptions>(options);
         var scopeFactory = CreateScopeFactory(mockClient);
 
         return new AzureDevOpsBoardsWorkSource(scopeFactory, optionsMonitor);
+    }
+
+    private static AzureDevOpsEnvironmentProfile ManagedEnvironment(
+        string key,
+        string project,
+        IReadOnlyList<string> states,
+        IReadOnlyList<string> tags
+    )
+    {
+        return new AzureDevOpsEnvironmentProfile
+        {
+            Key = key,
+            DisplayName = key,
+            Enabled = true,
+            OrganizationUrl = $"https://dev.azure.com/{key}",
+            Project = project,
+            WorkItemType = "User Story",
+            EligibleStates = states,
+            EligibleTags = tags,
+            PatEnvironmentVariable = "TEST_ADO_PAT",
+        };
     }
 
     private static DelegatingScopeFactory CreateScopeFactory(IAzureDevOpsBoardsClient mockClient)
@@ -564,10 +703,7 @@ public class AzureDevOpsBoardsWorkSourceTests
     /// </summary>
     private static AzureDevOpsBoardsClient CreateClientWithHandler(HttpMessageHandler handler)
     {
-        var http = new HttpClient(handler)
-        {
-            BaseAddress = new Uri(OrgUrl + "/"),
-        };
+        var http = new HttpClient(handler) { BaseAddress = new Uri(OrgUrl + "/") };
 
         var options = new AzureDevOpsBoardsOptions
         {
@@ -577,10 +713,16 @@ public class AzureDevOpsBoardsWorkSourceTests
         };
 
         var authBytes = Encoding.ASCII.GetBytes(":test-pat");
-        http.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+            "Basic",
+            Convert.ToBase64String(authBytes)
+        );
 
-        return new AzureDevOpsBoardsClient(http, options, NullLogger<AzureDevOpsBoardsClient>.Instance);
+        return new AzureDevOpsBoardsClient(
+            http,
+            options,
+            NullLogger<AzureDevOpsBoardsClient>.Instance
+        );
     }
 
     /// <summary>
@@ -614,14 +756,18 @@ public class AzureDevOpsBoardsWorkSourceTests
         }
 
         public T CurrentValue => _value;
+
         public T Get(string? name) => _value;
+
         public IDisposable OnChange(Action<T, string?> listener) => EmptyDisposable.Instance;
     }
 
     private sealed class EmptyDisposable : IDisposable
     {
         public static readonly EmptyDisposable Instance = new();
+
         private EmptyDisposable() { }
+
         public void Dispose() { }
     }
 
@@ -639,6 +785,48 @@ public class AzureDevOpsBoardsWorkSourceTests
         public void Dispose() { }
     }
 
+    private sealed class StubManagedProfileResolver(
+        IReadOnlyList<AzureDevOpsEnvironmentProfile> profiles
+    ) : IManagedProfileResolver
+    {
+        public Task<ResolvedControllerProfiles?> ResolveForRepositoryAsync(
+            string repositoryKey,
+            CancellationToken cancellationToken
+        ) => Task.FromResult<ResolvedControllerProfiles?>(null);
+
+        public Task<ResolvedAzureDevOpsEnvironment?> ResolveAzureDevOpsEnvironmentAsync(
+            string? key,
+            CancellationToken cancellationToken
+        )
+        {
+            var profile = profiles.SingleOrDefault(candidate => candidate.Key == key);
+            return Task.FromResult(
+                profile is null
+                    ? null
+                    : new ResolvedAzureDevOpsEnvironment(profile, IsManaged: true)
+            );
+        }
+
+        public Task<IReadOnlyList<ResolvedAzureDevOpsEnvironment>> ListAzureDevOpsEnvironmentsAsync(
+            CancellationToken cancellationToken
+        )
+        {
+            return Task.FromResult<IReadOnlyList<ResolvedAzureDevOpsEnvironment>>(
+                profiles
+                    .Select(profile => new ResolvedAzureDevOpsEnvironment(profile, IsManaged: true))
+                    .ToList()
+            );
+        }
+    }
+
+    private sealed class StubClientFactory(
+        IReadOnlyDictionary<string, IAzureDevOpsBoardsClient> clients
+    ) : IAzureDevOpsBoardsClientFactory
+    {
+        public IAzureDevOpsBoardsClient Create(AzureDevOpsEnvironmentProfile profile) =>
+            clients[profile.Key];
+    }
+
     /// <summary>
     /// Mock <see cref="IAzureDevOpsBoardsClient"/> that records calls and returns
     /// pre-configured results for <see cref="IAzureDevOpsBoardsClient.UpdateWorkItemStatusAsync"/>
@@ -647,50 +835,71 @@ public class AzureDevOpsBoardsWorkSourceTests
     private sealed class MockAzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
     {
         public bool UpdateWorkItemStatusAsyncReturns { get; set; } = true;
-        public List<(ExternalWorkRef WorkRef, ExternalWorkStatus Status)> UpdateWorkItemStatusCalls { get; } = new();
+        public IReadOnlyList<WorkCandidate> QueryResults { get; init; } = [];
+        public List<BoardsQueryParameters> QueryCalls { get; } = [];
+        public List<(
+            ExternalWorkRef WorkRef,
+            ExternalWorkStatus Status
+        )> UpdateWorkItemStatusCalls { get; } = new();
         public List<string> AddCommentCalls { get; } = new();
 
         public Task<IReadOnlyList<WorkCandidate>> QueryWorkItemsAsync(
-            BoardsQueryParameters parameters, CancellationToken ct)
-            => Task.FromResult<IReadOnlyList<WorkCandidate>>(Array.Empty<WorkCandidate>());
+            BoardsQueryParameters parameters,
+            CancellationToken ct
+        )
+        {
+            QueryCalls.Add(parameters);
+            return Task.FromResult(QueryResults);
+        }
 
         public Task<ClaimResult> TryClaimWorkItemAsync(
-            ExternalWorkRef workRef, ClaimRequest claim, CancellationToken ct)
-            => Task.FromResult(new ClaimResult { Success = false });
+            ExternalWorkRef workRef,
+            ClaimRequest claim,
+            CancellationToken ct
+        ) => Task.FromResult(new ClaimResult { Success = false });
 
         public Task<bool> UpdateWorkItemStatusAsync(
-            ExternalWorkRef workRef, ExternalWorkStatus status, CancellationToken ct)
+            ExternalWorkRef workRef,
+            ExternalWorkStatus status,
+            CancellationToken ct
+        )
         {
             UpdateWorkItemStatusCalls.Add((workRef, status));
             return Task.FromResult(UpdateWorkItemStatusAsyncReturns);
         }
 
-        public Task AddCommentAsync(
-            ExternalWorkRef workRef, string comment, CancellationToken ct)
+        public Task AddCommentAsync(ExternalWorkRef workRef, string comment, CancellationToken ct)
         {
             AddCommentCalls.Add(comment);
             return Task.CompletedTask;
         }
 
         public Task<IReadOnlyList<WorkItemComment>> GetCommentsAsync(
-            ExternalWorkRef workRef, int maxComments, CancellationToken ct)
-            => Task.FromResult<IReadOnlyList<WorkItemComment>>(Array.Empty<WorkItemComment>());
+            ExternalWorkRef workRef,
+            int maxComments,
+            CancellationToken ct
+        ) => Task.FromResult<IReadOnlyList<WorkItemComment>>(Array.Empty<WorkItemComment>());
 
         public Task<IReadOnlyList<RepositoryInfo>> ListRepositoriesAsync(
-            string project, CancellationToken ct)
-            => Task.FromResult<IReadOnlyList<RepositoryInfo>>(Array.Empty<RepositoryInfo>());
+            string project,
+            CancellationToken ct
+        ) => Task.FromResult<IReadOnlyList<RepositoryInfo>>(Array.Empty<RepositoryInfo>());
 
-        public Task ReleaseClaimWorkItemAsync(
-            ReleaseClaimRequest request, CancellationToken ct)
-            => Task.CompletedTask;
+        public Task ReleaseClaimWorkItemAsync(ReleaseClaimRequest request, CancellationToken ct) =>
+            Task.CompletedTask;
 
         public Task<AzureDevOpsConnectivityResult> VerifyConnectivityAsync(
-            string organizationUrl, string project, string personalAccessToken, CancellationToken ct)
-            => Task.FromResult(new AzureDevOpsConnectivityResult { Success = false });
+            string organizationUrl,
+            string project,
+            string personalAccessToken,
+            CancellationToken ct
+        ) => Task.FromResult(new AzureDevOpsConnectivityResult { Success = false });
 
         public Task<IReadOnlyList<string>> GetValidStatesAsync(
-            string project, string workItemType, CancellationToken ct)
-            => Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
+            string project,
+            string workItemType,
+            CancellationToken ct
+        ) => Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
     }
 
     /// <summary>
@@ -701,13 +910,17 @@ public class AzureDevOpsBoardsWorkSourceTests
     {
         private readonly Func<HttpRequestMessage, Task<HttpResponseMessage>> _handler;
 
-        public CaptureHttpMessageHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> handler)
+        public CaptureHttpMessageHandler(
+            Func<HttpRequestMessage, Task<HttpResponseMessage>> handler
+        )
         {
             _handler = handler;
         }
 
         protected override async Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request, CancellationToken cancellationToken)
+            HttpRequestMessage request,
+            CancellationToken cancellationToken
+        )
         {
             return await _handler(request);
         }
@@ -718,20 +931,22 @@ public class AzureDevOpsBoardsWorkSourceTests
     /// </summary>
     private static string WorkItemGetResponse(int id, int rev, string state, string tags)
     {
-        return JsonSerializer.Serialize(new
-        {
-            id,
-            rev,
-            fields = new Dictionary<string, object>
+        return JsonSerializer.Serialize(
+            new
             {
-                ["System.Id"] = id,
-                ["System.Title"] = "Test work item",
-                ["System.State"] = state,
-                ["System.Tags"] = tags,
-            },
-            _links = new { self = new { href = $"{OrgUrl}/_apis/wit/workItems/{id}" } },
-            url = $"{OrgUrl}/_apis/wit/workItems/{id}",
-        });
+                id,
+                rev,
+                fields = new Dictionary<string, object>
+                {
+                    ["System.Id"] = id,
+                    ["System.Title"] = "Test work item",
+                    ["System.State"] = state,
+                    ["System.Tags"] = tags,
+                },
+                _links = new { self = new { href = $"{OrgUrl}/_apis/wit/workItems/{id}" } },
+                url = $"{OrgUrl}/_apis/wit/workItems/{id}",
+            }
+        );
     }
 
     /// <summary>
@@ -739,17 +954,19 @@ public class AzureDevOpsBoardsWorkSourceTests
     /// </summary>
     private static string WorkItemPatchResponse(int id, int rev)
     {
-        return JsonSerializer.Serialize(new
-        {
-            id,
-            rev,
-            fields = new Dictionary<string, object>
+        return JsonSerializer.Serialize(
+            new
             {
-                ["System.Id"] = id,
-                ["System.Rev"] = rev,
-            },
-            _links = new { self = new { href = $"{OrgUrl}/_apis/wit/workItems/{id}" } },
-            url = $"{OrgUrl}/_apis/wit/workItems/{id}",
-        });
+                id,
+                rev,
+                fields = new Dictionary<string, object>
+                {
+                    ["System.Id"] = id,
+                    ["System.Rev"] = rev,
+                },
+                _links = new { self = new { href = $"{OrgUrl}/_apis/wit/workItems/{id}" } },
+                url = $"{OrgUrl}/_apis/wit/workItems/{id}",
+            }
+        );
     }
 }

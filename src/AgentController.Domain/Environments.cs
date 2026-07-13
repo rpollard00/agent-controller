@@ -11,8 +11,11 @@ public sealed record EnvironmentSpec
     /// <summary>Environment profile name from configuration.</summary>
     public string Profile { get; init; } = string.Empty;
 
-    /// <summary>Root path for the environment, if specified.</summary>
+    /// <summary>Root path under which the run environment is created, if specified.</summary>
     public string? RootPath { get; init; }
+
+    /// <summary>The resolved managed or configured runtime-environment profile.</summary>
+    public RuntimeEnvironmentProfile? RuntimeEnvironmentProfile { get; init; }
 
     /// <summary>Additional provider-specific metadata.</summary>
     public IReadOnlyDictionary<string, string>? Metadata { get; init; }

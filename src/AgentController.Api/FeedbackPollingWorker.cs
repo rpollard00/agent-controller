@@ -23,8 +23,7 @@ namespace AgentController.Api;
 /// </summary>
 public sealed partial class FeedbackPollingWorker : BackgroundService
 {
-    private static readonly JsonSerializerOptions JsonReadOptions = new(
-        JsonSerializerDefaults.Web)
+    private static readonly JsonSerializerOptions JsonReadOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true,
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
@@ -71,7 +70,8 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             options.PollIntervalSeconds,
             options.MaxConcurrentPolls,
             options.SoakMinutes,
-            options.Provider);
+            options.Provider
+        );
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -91,8 +91,7 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
 
             try
             {
-                await Task.Delay(
-                    TimeSpan.FromSeconds(options.PollIntervalSeconds), stoppingToken);
+                await Task.Delay(TimeSpan.FromSeconds(options.PollIntervalSeconds), stoppingToken);
             }
             catch (OperationCanceledException)
             {
@@ -121,10 +120,14 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
         Log.PollCycleStarted(_logger, options.PollIntervalSeconds);
 
         var runStore = scope.ServiceProvider.GetRequiredService<Application.IAgentRunStore>();
-        var reworkCycleStore = scope.ServiceProvider.GetRequiredService<Application.IReworkCycleStore>();
-        var reworkFeedbackStore = scope.ServiceProvider.GetRequiredService<Application.IReworkFeedbackStore>();
-        var feedbackSource = scope.ServiceProvider.GetRequiredService<Application.IFeedbackSource>();
-        var filterPipeline = scope.ServiceProvider.GetRequiredService<Application.ReviewFeedbackFilterPipeline>();
+        var reworkCycleStore =
+            scope.ServiceProvider.GetRequiredService<Application.IReworkCycleStore>();
+        var reworkFeedbackStore =
+            scope.ServiceProvider.GetRequiredService<Application.IReworkFeedbackStore>();
+        var feedbackSource =
+            scope.ServiceProvider.GetRequiredService<Application.IFeedbackSource>();
+        var filterPipeline =
+            scope.ServiceProvider.GetRequiredService<Application.ReviewFeedbackFilterPipeline>();
         var workItemStore = scope.ServiceProvider.GetRequiredService<Application.IWorkItemStore>();
         var workSource = scope.ServiceProvider.GetRequiredService<Application.IWorkSource>();
 
@@ -173,8 +176,11 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             {
                 blockedWorkItemIds = new HashSet<string>(
                     consumedCycles
-                        .Where(c => c.NewRunId is not null && nonTerminalNewRunIds.Contains(c.NewRunId!))
-                        .Select(c => c.WorkItemId));
+                        .Where(c =>
+                            c.NewRunId is not null && nonTerminalNewRunIds.Contains(c.NewRunId!)
+                        )
+                        .Select(c => c.WorkItemId)
+                );
 
                 Log.WorkItemsWithActiveRework(_logger, blockedWorkItemIds.Count);
             }
@@ -183,7 +189,9 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
         // ── Step 3: Filter candidate runs ─────────────────────────
         // Exclude runs whose work items have active rework in progress.
         var eligibleRuns = blockedWorkItemIds is not null
-            ? candidateRuns.Where(r => r.WorkItemId is not null && !blockedWorkItemIds.Contains(r.WorkItemId!)).ToList()
+            ? candidateRuns
+                .Where(r => r.WorkItemId is not null && !blockedWorkItemIds.Contains(r.WorkItemId!))
+                .ToList()
             : candidateRuns.ToList();
 
         if (eligibleRuns.Count == 0)
@@ -207,15 +215,17 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
 
             var repoKey = ExtractRepoKey(run.PullRequestUrl) ?? string.Empty;
 
-            prsUnderTest.Add(new Application.PrUnderTest
-            {
-                OriginatingRunId = run.RunId,
-                WorkItemId = run.WorkItemId ?? string.Empty,
-                RepoKey = repoKey,
-                PullRequestUrl = run.PullRequestUrl ?? string.Empty,
-                PullRequestId = pullRequestId,
-                BranchName = run.BranchName ?? string.Empty,
-            });
+            prsUnderTest.Add(
+                new Application.PrUnderTest
+                {
+                    OriginatingRunId = run.RunId,
+                    WorkItemId = run.WorkItemId ?? string.Empty,
+                    RepoKey = repoKey,
+                    PullRequestUrl = run.PullRequestUrl ?? string.Empty,
+                    PullRequestId = pullRequestId,
+                    BranchName = run.BranchName ?? string.Empty,
+                }
+            );
         }
 
         if (prsUnderTest.Count == 0)
@@ -293,7 +303,8 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
                     signal.FirstQualifyingCommentAt,
                     signal.LastQualifyingCommentAt,
                     ReworkFeedbackStatus.Watching,
-                    ct);
+                    ct
+                );
 
                 Log.BundleUnchangedBumpedLastComment(_logger, pullRequestId, bundleId);
             }
@@ -312,9 +323,15 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
                     signal.FirstQualifyingCommentAt,
                     signal.LastQualifyingCommentAt,
                     ReworkFeedbackStatus.Watching,
-                    ct);
+                    ct
+                );
 
-                Log.BundleChangedSuperseded(_logger, pullRequestId, currentRow.FeedbackBundleId, bundleId);
+                Log.BundleChangedSuperseded(
+                    _logger,
+                    pullRequestId,
+                    currentRow.FeedbackBundleId,
+                    bundleId
+                );
             }
             else
             {
@@ -329,7 +346,8 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
                     signal.FirstQualifyingCommentAt,
                     signal.LastQualifyingCommentAt,
                     ReworkFeedbackStatus.Watching,
-                    ct);
+                    ct
+                );
 
                 Log.NewWatchingRow(_logger, pullRequestId, bundleId);
             }
@@ -346,7 +364,12 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             if (timeSinceLastComment >= soakThreshold)
             {
                 await reworkFeedbackStore.MarkSoakedAsync(row.Id, ct);
-                Log.FeedbackSoaked(_logger, row.PullRequestId, row.FeedbackBundleId, row.ThreadCount);
+                Log.FeedbackSoaked(
+                    _logger,
+                    row.PullRequestId,
+                    row.FeedbackBundleId,
+                    row.ThreadCount
+                );
             }
         }
 
@@ -374,7 +397,11 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
                 continue;
             }
 
-            if (priorRun.BranchName is null || priorRun.PullRequestUrl is null || priorRun.CommitSha is null)
+            if (
+                priorRun.BranchName is null
+                || priorRun.PullRequestUrl is null
+                || priorRun.CommitSha is null
+            )
             {
                 Log.IncompletePriorRun(_logger, soaked.OriginatingRunId, soaked.PullRequestId);
                 continue;
@@ -401,7 +428,8 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
                 priorRun.CommitSha,
                 soaked.FeedbackBundleJson,
                 soaked.FeedbackBundleId,
-                ct);
+                ct
+            );
 
             // Transition the feedback out of Soaked so it's not
             // re-processed on the next poll cycle.
@@ -412,7 +440,8 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
                 priorRun.WorkItemId,
                 cycleNumber,
                 soaked.FeedbackBundleId,
-                soaked.ThreadCount);
+                soaked.ThreadCount
+            );
         }
 
         // ── Step 10: Reactivate work items for Pending ReworkCycles ──
@@ -441,9 +470,8 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             }
 
             // Build the external work reference from stored metadata.
-            var revision = workItem.SourceMetadata?.TryGetValue("revision", out var rev) == true
-                ? rev
-                : null;
+            var revision =
+                workItem.SourceMetadata?.TryGetValue("revision", out var rev) == true ? rev : null;
 
             var workRef = new Domain.ExternalWorkRef
             {
@@ -451,6 +479,13 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
                 ExternalId = workItem.ExternalId,
                 Url = workItem.ExternalUrl,
                 Revision = revision,
+                EnvironmentKey =
+                    workItem.SourceMetadata?.TryGetValue(
+                        "azureDevOpsEnvironmentKey",
+                        out var environmentKey
+                    ) == true
+                        ? environmentKey
+                        : null,
             };
 
             var request = new Domain.ReworkReactivateRequest
@@ -458,10 +493,16 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
                 WorkItemId = cycle.WorkItemId,
                 WorkRef = workRef,
                 CycleNumber = cycle.CycleNumber,
-                ThreadCount = cycle.FeedbackBundleJson != null
-                    ? JsonSerializer.Deserialize<Domain.ReviewThread[]>(
-                        cycle.FeedbackBundleJson, JsonReadOptions)?.Length ?? 0
-                    : 0,
+                ThreadCount =
+                    cycle.FeedbackBundleJson != null
+                        ? JsonSerializer
+                            .Deserialize<Domain.ReviewThread[]>(
+                                cycle.FeedbackBundleJson,
+                                JsonReadOptions
+                            )
+                            ?.Length
+                            ?? 0
+                        : 0,
                 PullRequestUrl = cycle.PullRequestUrl,
             };
 
@@ -473,17 +514,33 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
                 {
                     // Mark reactivated so we don't repeat on the next poll cycle.
                     await reworkCycleStore.MarkReactivatedAsync(cycle.Id, ct);
-                    Log.ReworkItemReactivated(_logger, cycle.WorkItemId, cycle.CycleNumber, cycle.Id);
+                    Log.ReworkItemReactivated(
+                        _logger,
+                        cycle.WorkItemId,
+                        cycle.CycleNumber,
+                        cycle.Id
+                    );
                 }
                 else
                 {
                     Log.ReworkItemReactivationFailed(
-                        _logger, cycle.WorkItemId, cycle.CycleNumber, cycle.Id, result.FailureReason ?? "unknown");
+                        _logger,
+                        cycle.WorkItemId,
+                        cycle.CycleNumber,
+                        cycle.Id,
+                        result.FailureReason ?? "unknown"
+                    );
                 }
             }
             catch (Exception ex)
             {
-                Log.ReworkItemReactivationError(_logger, cycle.WorkItemId, cycle.CycleNumber, cycle.Id, ex);
+                Log.ReworkItemReactivationError(
+                    _logger,
+                    cycle.WorkItemId,
+                    cycle.CycleNumber,
+                    cycle.Id,
+                    ex
+                );
             }
         }
 
@@ -510,8 +567,10 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
         // Find the "pullrequest/" segment; the next segment is the ID.
         for (int i = 0; i < segments.Length; i++)
         {
-            if (segments[i].Equals("pullrequest/", StringComparison.Ordinal)
-                && i + 1 < segments.Length)
+            if (
+                segments[i].Equals("pullrequest/", StringComparison.Ordinal)
+                && i + 1 < segments.Length
+            )
             {
                 return segments[i + 1].TrimEnd('/');
             }
@@ -537,8 +596,11 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
         // Find the "_git/" segment; project is before it, repo is after it.
         for (int i = 0; i < segments.Length; i++)
         {
-            if (segments[i].Equals("_git/", StringComparison.Ordinal)
-                && i > 0 && i + 1 < segments.Length)
+            if (
+                segments[i].Equals("_git/", StringComparison.Ordinal)
+                && i > 0
+                && i + 1 < segments.Length
+            )
             {
                 var project = segments[i - 1].TrimEnd('/');
                 var repository = segments[i + 1].TrimEnd('/');
@@ -597,164 +659,243 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
         [LoggerMessage(
             Level = LogLevel.Information,
             Message = "Feedback polling worker is disabled (feedback.enabled=false). "
-                + "No PR review comments will be polled.")]
+                + "No PR review comments will be polled."
+        )]
         public static partial void WorkerDisabled(ILogger logger);
 
         [LoggerMessage(
             Level = LogLevel.Information,
             Message = "Feedback polling worker started. PollInterval={PollInterval}s, "
-                + "MaxConcurrency={MaxConcurrency}, SoakMinutes={SoakMinutes}, Provider='{Provider}'")]
+                + "MaxConcurrency={MaxConcurrency}, SoakMinutes={SoakMinutes}, Provider='{Provider}'"
+        )]
         public static partial void WorkerStarted(
-            ILogger logger, int pollInterval, int maxConcurrency, int soakMinutes, string provider);
+            ILogger logger,
+            int pollInterval,
+            int maxConcurrency,
+            int soakMinutes,
+            string provider
+        );
 
         [LoggerMessage(
             Level = LogLevel.Error,
-            Message = "Unhandled exception in feedback polling cycle. Worker will retry after delay.")]
+            Message = "Unhandled exception in feedback polling cycle. Worker will retry after delay."
+        )]
         public static partial void PollCycleError(ILogger logger, Exception ex);
 
-        [LoggerMessage(
-            Level = LogLevel.Information,
-            Message = "Feedback polling worker stopped.")]
+        [LoggerMessage(Level = LogLevel.Information, Message = "Feedback polling worker stopped.")]
         public static partial void WorkerStopped(ILogger logger);
 
         [LoggerMessage(
             Level = LogLevel.Debug,
-            Message = "Feedback poll cycle started (interval={Interval}s).")]
+            Message = "Feedback poll cycle started (interval={Interval}s)."
+        )]
         public static partial void PollCycleStarted(ILogger logger, int interval);
 
-        [LoggerMessage(
-            Level = LogLevel.Debug,
-            Message = "Feedback poll cycle completed.")]
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Feedback poll cycle completed.")]
         public static partial void PollCycleCompleted(ILogger logger);
 
         [LoggerMessage(
             Level = LogLevel.Debug,
-            Message = "No eligible runs found for feedback polling.")]
+            Message = "No eligible runs found for feedback polling."
+        )]
         public static partial void NoEligibleRuns(ILogger logger);
 
         [LoggerMessage(
             Level = LogLevel.Debug,
-            Message = "Found {Count} eligible run(s) for feedback polling.")]
+            Message = "Found {Count} eligible run(s) for feedback polling."
+        )]
         public static partial void FoundEligibleRuns(ILogger logger, int count);
 
         [LoggerMessage(
             Level = LogLevel.Debug,
-            Message = "{Count} work item(s) have active rework in progress (non-terminal new runs).")]
+            Message = "{Count} work item(s) have active rework in progress (non-terminal new runs)."
+        )]
         public static partial void WorkItemsWithActiveRework(ILogger logger, int count);
 
         [LoggerMessage(
             Level = LogLevel.Debug,
-            Message = "All eligible runs blocked by active rework on their work items.")]
+            Message = "All eligible runs blocked by active rework on their work items."
+        )]
         public static partial void AllRunsBlockedByActiveRework(ILogger logger);
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "Skipping run {RunId}: could not extract PR ID from URL '{PullRequestUrl}'.")]
-        public static partial void SkippingRunBadPrUrl(ILogger logger, string runId, string pullRequestUrl);
+            Message = "Skipping run {RunId}: could not extract PR ID from URL '{PullRequestUrl}'."
+        )]
+        public static partial void SkippingRunBadPrUrl(
+            ILogger logger,
+            string runId,
+            string pullRequestUrl
+        );
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "No valid PR URLs among {Count} eligible run(s) — cannot build PrUnderTest list.")]
+            Message = "No valid PR URLs among {Count} eligible run(s) — cannot build PrUnderTest list."
+        )]
         public static partial void NoValidPrUrls(ILogger logger, int count);
 
         [LoggerMessage(
             Level = LogLevel.Debug,
-            Message = "Built PrUnderTest list with {Count} PR(s).")]
+            Message = "Built PrUnderTest list with {Count} PR(s)."
+        )]
         public static partial void PrUnderTestBuilt(ILogger logger, int count);
 
         [LoggerMessage(
             Level = LogLevel.Debug,
-            Message = "Feedback source returned {Count} rework signal(s).")]
+            Message = "Feedback source returned {Count} rework signal(s)."
+        )]
         public static partial void SignalsReceived(ILogger logger, int count);
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "Filter pipeline: {FilteredCount} signal(s) survived (of {OriginalCount} raw signal(s)).")]
+            Message = "Filter pipeline: {FilteredCount} signal(s) survived (of {OriginalCount} raw signal(s))."
+        )]
         public static partial void SignalsAfterFilter(
-            ILogger logger, int filteredCount, int originalCount);
+            ILogger logger,
+            int filteredCount,
+            int originalCount
+        );
 
         [LoggerMessage(
             Level = LogLevel.Debug,
-            Message = "No rework signals survived the filter pipeline.")]
+            Message = "No rework signals survived the filter pipeline."
+        )]
         public static partial void NoSignalsAfterFilter(ILogger logger);
 
         [LoggerMessage(
             Level = LogLevel.Debug,
-            Message = "PR {PullRequestId}: bundle unchanged, bumped LastQualifyingCommentAt [bundle={BundleId}].")]
+            Message = "PR {PullRequestId}: bundle unchanged, bumped LastQualifyingCommentAt [bundle={BundleId}]."
+        )]
         public static partial void BundleUnchangedBumpedLastComment(
-            ILogger logger, string pullRequestId, string bundleId);
+            ILogger logger,
+            string pullRequestId,
+            string bundleId
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "PR {PullRequestId}: bundle changed, superseded old bundle [{OldBundleId}] with new [{NewBundleId}].")]
+            Message = "PR {PullRequestId}: bundle changed, superseded old bundle [{OldBundleId}] with new [{NewBundleId}]."
+        )]
         public static partial void BundleChangedSuperseded(
-            ILogger logger, string pullRequestId, string oldBundleId, string newBundleId);
+            ILogger logger,
+            string pullRequestId,
+            string oldBundleId,
+            string newBundleId
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "PR {PullRequestId}: new feedback bundle, started Watching [{BundleId}].")]
+            Message = "PR {PullRequestId}: new feedback bundle, started Watching [{BundleId}]."
+        )]
         public static partial void NewWatchingRow(
-            ILogger logger, string pullRequestId, string bundleId);
+            ILogger logger,
+            string pullRequestId,
+            string bundleId
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "PR {PullRequestId}: feedback soaked [{BundleId}] — {ThreadCount} thread(s) eligible for materialization.")]
+            Message = "PR {PullRequestId}: feedback soaked [{BundleId}] — {ThreadCount} thread(s) eligible for materialization."
+        )]
         public static partial void FeedbackSoaked(
-            ILogger logger, string pullRequestId, string bundleId, int threadCount);
+            ILogger logger,
+            string pullRequestId,
+            string bundleId,
+            int threadCount
+        );
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "Cannot materialize rework cycle: prior run {RunId} not found for PR {PullRequestId}.")]
+            Message = "Cannot materialize rework cycle: prior run {RunId} not found for PR {PullRequestId}."
+        )]
         public static partial void MissingPriorRun(
-            ILogger logger, string runId, string pullRequestId);
+            ILogger logger,
+            string runId,
+            string pullRequestId
+        );
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "Cannot materialize rework cycle: prior run {RunId} has no WorkItemId for PR {PullRequestId}.")]
+            Message = "Cannot materialize rework cycle: prior run {RunId} has no WorkItemId for PR {PullRequestId}."
+        )]
         public static partial void MissingWorkItemId(
-            ILogger logger, string runId, string pullRequestId);
+            ILogger logger,
+            string runId,
+            string pullRequestId
+        );
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "Cannot materialize rework cycle: prior run {RunId} missing BranchName/PullRequestUrl/CommitSha for PR {PullRequestId}.")]
+            Message = "Cannot materialize rework cycle: prior run {RunId} missing BranchName/PullRequestUrl/CommitSha for PR {PullRequestId}."
+        )]
         public static partial void IncompletePriorRun(
-            ILogger logger, string runId, string pullRequestId);
+            ILogger logger,
+            string runId,
+            string pullRequestId
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
             Message = "Materialized ReworkCycle #{CycleNumber} for work item {WorkItemId} "
-                + "[bundle={BundleId}] — {ThreadCount} thread(s).")]
+                + "[bundle={BundleId}] — {ThreadCount} thread(s)."
+        )]
         public static partial void ReworkCycleMaterialized(
-            ILogger logger, string workItemId, int cycleNumber, string bundleId, int threadCount);
+            ILogger logger,
+            string workItemId,
+            int cycleNumber,
+            string bundleId,
+            int threadCount
+        );
 
         [LoggerMessage(
             Level = LogLevel.Debug,
-            Message = "ReworkCycle for bundle [{BundleId}] already materialized (unique constraint).")]
-        public static partial void ReworkCycleAlreadyMaterialized(
-            ILogger logger, string bundleId);
+            Message = "ReworkCycle for bundle [{BundleId}] already materialized (unique constraint)."
+        )]
+        public static partial void ReworkCycleAlreadyMaterialized(ILogger logger, string bundleId);
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "Cannot reactivate work item {WorkItemId} for rework cycle {CycleId}: work item not found in store.")]
+            Message = "Cannot reactivate work item {WorkItemId} for rework cycle {CycleId}: work item not found in store."
+        )]
         public static partial void MissingWorkItemForRework(
-            ILogger logger, string workItemId, string cycleId);
+            ILogger logger,
+            string workItemId,
+            string cycleId
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "[rework] Reactivated work item {WorkItemId} for cycle #{CycleNumber} (cycleId={CycleId}).")]
+            Message = "[rework] Reactivated work item {WorkItemId} for cycle #{CycleNumber} (cycleId={CycleId})."
+        )]
         public static partial void ReworkItemReactivated(
-            ILogger logger, string workItemId, int cycleNumber, string cycleId);
+            ILogger logger,
+            string workItemId,
+            int cycleNumber,
+            string cycleId
+        );
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "[rework] Failed to reactivate work item {WorkItemId} for cycle #{CycleNumber} (cycleId={CycleId}): {FailureReason}.")]
+            Message = "[rework] Failed to reactivate work item {WorkItemId} for cycle #{CycleNumber} (cycleId={CycleId}): {FailureReason}."
+        )]
         public static partial void ReworkItemReactivationFailed(
-            ILogger logger, string workItemId, int cycleNumber, string cycleId, string failureReason);
+            ILogger logger,
+            string workItemId,
+            int cycleNumber,
+            string cycleId,
+            string failureReason
+        );
 
         [LoggerMessage(
             Level = LogLevel.Error,
-            Message = "[rework] Error reactivating work item {WorkItemId} for cycle #{CycleNumber} (cycleId={CycleId}).")]
+            Message = "[rework] Error reactivating work item {WorkItemId} for cycle #{CycleNumber} (cycleId={CycleId})."
+        )]
         public static partial void ReworkItemReactivationError(
-            ILogger logger, string workItemId, int cycleNumber, string cycleId, Exception ex);
+            ILogger logger,
+            string workItemId,
+            int cycleNumber,
+            string cycleId,
+            Exception ex
+        );
     }
 }

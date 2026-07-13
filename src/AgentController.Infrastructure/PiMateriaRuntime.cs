@@ -72,15 +72,18 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
     }
 
     /// <inheritdoc />
-    public Task<AgentRunHandle> StartAsync(
-        AgentRunSpec spec,
-        CancellationToken cancellationToken
-    )
+    public Task<AgentRunHandle> StartAsync(AgentRunSpec spec, CancellationToken cancellationToken)
     {
         var options = _runtimeOptions.CurrentValue;
+        var managedSettings =
+            spec.RuntimeEnvironmentProfile
+                is { Enabled: true, RuntimeProvider: var provider } profile
+            && provider.Equals("PiMateria", StringComparison.OrdinalIgnoreCase)
+                ? profile.RuntimeSettings
+                : null;
 
         // ── 1. Resolve controller event URL ───────────────────────────
-        var baseUrl = options.ControllerBaseUrl;
+        var baseUrl = managedSettings?.ControllerBaseUrl ?? options.ControllerBaseUrl;
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
             Log.ControllerBaseUrlMissing(_logger, spec.RunId);
@@ -107,22 +110,30 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
         // configured, wrap the invocation so a pseudo-terminal is allocated and
         // the TUI initializes headlessly. When no wrapper is configured, launch
         // pi directly (non-Linux dev / future CRI sibling runtimes).
-        var piExe = string.IsNullOrWhiteSpace(options.PiExecutablePath)
+        var configuredPiExecutable = managedSettings?.PiExecutablePath ?? options.PiExecutablePath;
+        var piExe = string.IsNullOrWhiteSpace(configuredPiExecutable)
             ? "pi"
-            : options.PiExecutablePath;
+            : configuredPiExecutable;
 
-        var useWrapper = !string.IsNullOrWhiteSpace(options.PtyWrapperPath);
-        var wrapperPath = useWrapper
-            ? options.PtyWrapperPath!.Trim()
-            : null;
-        var wrapperArgs = useWrapper && !string.IsNullOrWhiteSpace(options.PtyWrapperArgs)
-            ? options.PtyWrapperArgs!.Trim()
-            : null;
+        var configuredWrapperPath = managedSettings is null
+            ? options.PtyWrapperPath
+            : managedSettings.PtyWrapperPath;
+        var configuredWrapperArgs = managedSettings is null
+            ? options.PtyWrapperArgs
+            : managedSettings.PtyWrapperArgs;
+        var useWrapper = !string.IsNullOrWhiteSpace(configuredWrapperPath);
+        var wrapperPath = useWrapper ? configuredWrapperPath!.Trim() : null;
+        var wrapperArgs =
+            useWrapper && !string.IsNullOrWhiteSpace(configuredWrapperArgs)
+                ? configuredWrapperArgs!.Trim()
+                : null;
 
-        // ── 3b. Resolve loadout from ExecutionKind via config ────────
-        var loadout = options.Loadouts.TryGetValue(spec.ExecutionKind, out var kindLoadout)
-            ? kindLoadout
-            : options.Loadouts[ExecutionKind.NewWork];
+        // ── 3b. Resolve loadout from ExecutionKind via the selected profile ────────
+        var loadouts = managedSettings?.Loadouts ?? options.Loadouts.ToDictionary();
+        var loadout =
+            loadouts.TryGetValue(spec.ExecutionKind, out var kindLoadout) ? kindLoadout
+            : loadouts.TryGetValue(ExecutionKind.NewWork, out var defaultLoadout) ? defaultLoadout
+            : "ADO-Build-NewWork";
 
         // ── 4. Prepare log directory and file writers ─────────────────
         // ── 5. Start process (fire and forget) ────────────────────────
@@ -134,7 +145,9 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
             if (Path.IsPathRooted(piExe) && !File.Exists(piExe))
             {
                 throw new FileNotFoundException(
-                    $"Pi executable not found at configured path: {piExe}", piExe);
+                    $"Pi executable not found at configured path: {piExe}",
+                    piExe
+                );
             }
 
             var psi = new ProcessStartInfo
@@ -160,7 +173,10 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
                 psi.FileName = wrapperPath;
 
                 // Parse wrapper args and add them before the inner command.
-                var argTokens = wrapperArgs?.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                var argTokens = wrapperArgs?.Split(
+                    (char[]?)null,
+                    StringSplitOptions.RemoveEmptyEntries
+                );
                 if (argTokens != null)
                 {
                     foreach (var token in argTokens)
@@ -170,7 +186,8 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
                 }
 
                 // Build the inner pi command string for the -c argument.
-                var piCommand = $"{piExe} \"/materia loadout {loadout}\" \"/materia cast {taskText}\"";
+                var piCommand =
+                    $"{piExe} \"/materia loadout {loadout}\" \"/materia cast {taskText}\"";
                 psi.ArgumentList.Add(piCommand);
                 psi.ArgumentList.Add("/dev/null");
             }
@@ -191,7 +208,10 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
             // into the pi child. Applies to both PTY-wrapper and direct-launch paths
             // since this operates on the shared ProcessStartInfo before the branch.
             // Entries with unset/empty source vars are silently skipped.
-            foreach (var kvp in options.ForwardEnvironmentVariables)
+            var forwardedEnvironmentVariables =
+                managedSettings?.ForwardEnvironmentVariables
+                ?? options.ForwardEnvironmentVariables.ToDictionary();
+            foreach (var kvp in forwardedEnvironmentVariables)
             {
                 var sourceValue = Environment.GetEnvironmentVariable(kvp.Value);
                 if (!string.IsNullOrEmpty(sourceValue))
@@ -210,24 +230,52 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
             // FileShare.Read allows external readers. Writers are fire-and-forget — they
             // live for the process lifetime and are GC'd when the process exits.
             var stdoutWriter = new StreamWriter(
-                new FileStream(stdoutPath, FileMode.Create, FileAccess.Write, FileShare.Read,
-                    bufferSize: 4096, FileOptions.WriteThrough));
+                new FileStream(
+                    stdoutPath,
+                    FileMode.Create,
+                    FileAccess.Write,
+                    FileShare.Read,
+                    bufferSize: 4096,
+                    FileOptions.WriteThrough
+                )
+            );
             var stderrWriter = new StreamWriter(
-                new FileStream(stderrPath, FileMode.Create, FileAccess.Write, FileShare.Read,
-                    bufferSize: 4096, FileOptions.WriteThrough));
+                new FileStream(
+                    stderrPath,
+                    FileMode.Create,
+                    FileAccess.Write,
+                    FileShare.Read,
+                    bufferSize: 4096,
+                    FileOptions.WriteThrough
+                )
+            );
 
             var process = new Process { StartInfo = psi };
 
             // Wire up drain handlers — fire-and-forget background work on framework read threads.
             process.OutputDataReceived += (sender, e) =>
             {
-                if (e.Data == null) return; // EndOfEvent
-                try { stdoutWriter.WriteLine(e.Data); } catch { /* swallow — never kill the run */ }
+                if (e.Data == null)
+                    return; // EndOfEvent
+                try
+                {
+                    stdoutWriter.WriteLine(e.Data);
+                }
+                catch
+                { /* swallow — never kill the run */
+                }
             };
             process.ErrorDataReceived += (sender, e) =>
             {
-                if (e.Data == null) return; // EndOfEvent
-                try { stderrWriter.WriteLine(e.Data); } catch { /* swallow — never kill the run */ }
+                if (e.Data == null)
+                    return; // EndOfEvent
+                try
+                {
+                    stderrWriter.WriteLine(e.Data);
+                }
+                catch
+                { /* swallow — never kill the run */
+                }
             };
 
             process.Start();
@@ -263,13 +311,15 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
             return Task.FromResult(DegenerateHandle(spec.RunId));
         }
 
-        return Task.FromResult(new AgentRunHandle
-        {
-            RunId = spec.RunId,
-            RuntimeRunId = $"pi-{spec.RunId}",
-            Status = RunLifecycleState.AgentRunning,
-            StartedAt = DateTimeOffset.UtcNow,
-        });
+        return Task.FromResult(
+            new AgentRunHandle
+            {
+                RunId = spec.RunId,
+                RuntimeRunId = $"pi-{spec.RunId}",
+                Status = RunLifecycleState.AgentRunning,
+                StartedAt = DateTimeOffset.UtcNow,
+            }
+        );
     }
 
     /// <inheritdoc />
@@ -280,14 +330,16 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
     {
         // Fire-and-forget runtime: status is driven by webhook events.
         // Return the handle's persisted state.
-        return Task.FromResult(new AgentRuntimeStatus
-        {
-            Status = handle.Status,
-            RuntimeRunId = handle.RuntimeRunId,
-            StartedAt = handle.StartedAt,
-            LastHeartbeatAt = handle.LastHeartbeatAt,
-            Error = handle.Error,
-        });
+        return Task.FromResult(
+            new AgentRuntimeStatus
+            {
+                Status = handle.Status,
+                RuntimeRunId = handle.RuntimeRunId,
+                StartedAt = handle.StartedAt,
+                LastHeartbeatAt = handle.LastHeartbeatAt,
+                Error = handle.Error,
+            }
+        );
     }
 
     /// <inheritdoc />
@@ -355,8 +407,20 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
         }
 
         // Dispose the log writers.
-        try { handle.StdoutWriter?.Dispose(); } catch { /* best-effort */ }
-        try { handle.StderrWriter?.Dispose(); } catch { /* best-effort */ }
+        try
+        {
+            handle.StdoutWriter?.Dispose();
+        }
+        catch
+        { /* best-effort */
+        }
+        try
+        {
+            handle.StderrWriter?.Dispose();
+        }
+        catch
+        { /* best-effort */
+        }
     }
 
     // ── Task reading helper ─────────────────────────────────────────

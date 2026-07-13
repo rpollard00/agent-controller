@@ -102,6 +102,9 @@ public sealed record ExternalWorkRef
     /// header to detect conflicting modifications.
     /// </summary>
     public string? Revision { get; init; }
+
+    /// <summary>Managed external-environment key used to route follow-up operations.</summary>
+    public string? EnvironmentKey { get; init; }
 }
 
 /// <summary>

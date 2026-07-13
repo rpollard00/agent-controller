@@ -20,7 +20,7 @@ namespace AgentController.Infrastructure;
 ///
 /// API version used: 7.1 (Azure DevOps Services).
 /// </summary>
-internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
+internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient, IDisposable
 {
     private readonly HttpClient _http;
     private readonly AzureDevOpsBoardsOptions _options;
@@ -47,7 +47,11 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         "System.WorkItemType",
     ];
 
-    public AzureDevOpsBoardsClient(HttpClient http, AzureDevOpsBoardsOptions options, ILogger<AzureDevOpsBoardsClient> logger)
+    public AzureDevOpsBoardsClient(
+        HttpClient http,
+        AzureDevOpsBoardsOptions options,
+        ILogger<AzureDevOpsBoardsClient> logger
+    )
     {
         _http = http;
         _options = options;
@@ -64,8 +68,10 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         if (!string.IsNullOrWhiteSpace(pat))
         {
             var authBytes = Encoding.ASCII.GetBytes($":{pat}");
-            _http.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+            _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+                "Basic",
+                Convert.ToBase64String(authBytes)
+            );
         }
 
         // Ensure JSON responses for all ADO REST API calls.
@@ -73,12 +79,14 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         // non-JSON or omit fields depending on field selection rules.
         _http.DefaultRequestHeaders.Accept.Clear();
         _http.DefaultRequestHeaders.Accept.Add(
-            new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
+            new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json")
+        );
     }
 
     public async Task<IReadOnlyList<WorkCandidate>> QueryWorkItemsAsync(
         BoardsQueryParameters parameters,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
         var project = string.IsNullOrWhiteSpace(parameters.Project)
             ? _options.Project
@@ -87,8 +95,9 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         if (string.IsNullOrWhiteSpace(project))
         {
             throw new InvalidOperationException(
-                "Azure DevOps project name is required for work item queries. " +
-                "Configure 'workSource:project' or supply it in the query parameters.");
+                "Azure DevOps project name is required for work item queries. "
+                    + "Configure 'workSource:project' or supply it in the query parameters."
+            );
         }
 
         // Build WIQL query
@@ -100,38 +109,29 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         var wiqlResponse = await _http.PostAsync(
             $"{project}/_apis/wit/wiql?api-version=7.1",
             content,
-            cancellationToken);
+            cancellationToken
+        );
 
         wiqlResponse.EnsureSuccessStatusCode();
 
         var wiqlJson = await wiqlResponse.Content.ReadAsStringAsync(cancellationToken);
         using var wiqlDoc = JsonDocument.Parse(wiqlJson);
-        var workItemRefs = wiqlDoc.RootElement
-            .GetProperty("workItems")
-            .EnumerateArray()
-            .ToList();
+        var workItemRefs = wiqlDoc.RootElement.GetProperty("workItems").EnumerateArray().ToList();
 
         if (workItemRefs.Count == 0)
             return [];
 
         // Batch fetch work item details
-        var ids = workItemRefs
-            .Select(r => r.GetProperty("id").GetInt32())
-            .ToList();
+        var ids = workItemRefs.Select(r => r.GetProperty("id").GetInt32()).ToList();
 
-        var batchBody = JsonSerializer.Serialize(
-            new
-            {
-                ids,
-                fields = WorkItemFields,
-            },
-            JsonOptions);
+        var batchBody = JsonSerializer.Serialize(new { ids, fields = WorkItemFields }, JsonOptions);
 
         var batchContent = new StringContent(batchBody, Encoding.UTF8, "application/json");
         var batchResponse = await _http.PostAsync(
             $"{project}/_apis/wit/workitemsbatch?api-version=7.1",
             batchContent,
-            cancellationToken);
+            cancellationToken
+        );
 
         batchResponse.EnsureSuccessStatusCode();
 
@@ -145,26 +145,35 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             var itemId = item.GetProperty("id").GetInt32();
 
             // Extract revision for optimistic concurrency on later updates
-            var revision = item.TryGetProperty("rev", out var revEl)
-                           && revEl.ValueKind == JsonValueKind.Number
-                           && revEl.TryGetInt32(out var rev)
-                ? rev.ToString(CultureInfo.InvariantCulture)
-                : null;
+            var revision =
+                item.TryGetProperty("rev", out var revEl)
+                && revEl.ValueKind == JsonValueKind.Number
+                && revEl.TryGetInt32(out var rev)
+                    ? rev.ToString(CultureInfo.InvariantCulture)
+                    : null;
 
             // Require the fields object for mapping
-            if (!item.TryGetProperty("fields", out var fields)
-                || fields.ValueKind != JsonValueKind.Object)
+            if (
+                !item.TryGetProperty("fields", out var fields)
+                || fields.ValueKind != JsonValueKind.Object
+            )
             {
                 // Malformed: work item returned without fields — skip with warning
                 continue;
             }
 
             // Parse tags
-            var tags = fields.TryGetProperty("System.Tags", out var tagsElement)
-                        && tagsElement.ValueKind == JsonValueKind.String
-                ? tagsElement.GetString()?.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                    ?? Array.Empty<string>()
-                : Array.Empty<string>();
+            var tags =
+                fields.TryGetProperty("System.Tags", out var tagsElement)
+                && tagsElement.ValueKind == JsonValueKind.String
+                    ? tagsElement
+                        .GetString()
+                        ?.Split(
+                            ';',
+                            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries
+                        )
+                        ?? Array.Empty<string>()
+                    : Array.Empty<string>();
 
             // Resolve RepoKey from tags
             var repoKey = ResolveRepoKeyFromTags(tags);
@@ -190,13 +199,15 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             {
                 Id = $"wi_{itemId}",
                 ExternalId = itemId.ToString(CultureInfo.InvariantCulture),
-                ExternalUrl = $"{_options.BaseUrl?.TrimEnd('/')}/{project}/_workitems/edit/{itemId}",
+                ExternalUrl =
+                    $"{_options.BaseUrl?.TrimEnd('/')}/{project}/_workitems/edit/{itemId}",
                 RepoKey = repoKey,
                 Title = GetStringField(fields, "System.Title") ?? string.Empty,
                 Description = GetStringField(fields, "System.Description"),
                 AcceptanceCriteria = ParseAcceptanceCriteria(
                     fields,
-                    GetStringField(fields, "System.Description")),
+                    GetStringField(fields, "System.Description")
+                ),
                 Priority = GetIntField(fields, "Microsoft.VSTS.Common.Priority"),
                 Status = GetStringField(fields, "System.State"),
                 Tags = tags,
@@ -214,7 +225,8 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
     public async Task<ClaimResult> TryClaimWorkItemAsync(
         ExternalWorkRef workRef,
         ClaimRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
         var project = _options.Project;
         if (string.IsNullOrWhiteSpace(project))
@@ -243,32 +255,37 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             //     trigger field-selection rules that omit System.Tags.
             var getResponse = await _http.GetAsync(
                 $"{project}/_apis/wit/workitems/{workRef.ExternalId}?api-version=7.1",
-                cancellationToken);
+                cancellationToken
+            );
 
             if (!getResponse.IsSuccessStatusCode)
             {
                 return new ClaimResult
                 {
                     Success = false,
-                    FailureReason = $"Failed to read work item {workRef.ExternalId}: " +
-                                    $"HTTP {(int)getResponse.StatusCode} {getResponse.ReasonPhrase}.",
+                    FailureReason =
+                        $"Failed to read work item {workRef.ExternalId}: "
+                        + $"HTTP {(int)getResponse.StatusCode} {getResponse.ReasonPhrase}.",
                 };
             }
 
             var getJson = await getResponse.Content.ReadAsStringAsync(cancellationToken);
             using var getDoc = JsonDocument.Parse(getJson);
 
-            var currentRev = getDoc.RootElement.TryGetProperty("rev", out var revEl)
-                             && revEl.ValueKind == JsonValueKind.Number
-                             && revEl.TryGetInt32(out var rev)
-                ? rev
-                : (int?)null;
+            var currentRev =
+                getDoc.RootElement.TryGetProperty("rev", out var revEl)
+                && revEl.ValueKind == JsonValueKind.Number
+                && revEl.TryGetInt32(out var rev)
+                    ? rev
+                    : (int?)null;
 
             // 2. Check if already claimed — look for agent-active or agent-worker: tags
             var currentTags = string.Empty;
-            if (getDoc.RootElement.TryGetProperty("fields", out var fields)
+            if (
+                getDoc.RootElement.TryGetProperty("fields", out var fields)
                 && fields.TryGetProperty("System.Tags", out var tagsEl)
-                && tagsEl.ValueKind == JsonValueKind.String)
+                && tagsEl.ValueKind == JsonValueKind.String
+            )
             {
                 currentTags = tagsEl.GetString() ?? string.Empty;
             }
@@ -282,21 +299,24 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                 return new ClaimResult
                 {
                     Success = false,
-                    FailureReason = $"Work item {workRef.ExternalId} is already claimed " +
-                                    "(has 'agent-active' tag).",
+                    FailureReason =
+                        $"Work item {workRef.ExternalId} is already claimed "
+                        + "(has 'agent-active' tag).",
                 };
             }
 
             // Also check for any agent-worker: tag to detect re-claim attempts
             var workerTag = existingTags.FirstOrDefault(t =>
-                t.StartsWith("agent-worker:", StringComparison.OrdinalIgnoreCase));
+                t.StartsWith("agent-worker:", StringComparison.OrdinalIgnoreCase)
+            );
             if (workerTag is not null)
             {
                 return new ClaimResult
                 {
                     Success = false,
-                    FailureReason = $"Work item {workRef.ExternalId} is already claimed " +
-                                    $"by worker '{workerTag}'.",
+                    FailureReason =
+                        $"Work item {workRef.ExternalId} is already claimed "
+                        + $"by worker '{workerTag}'.",
                 };
             }
 
@@ -306,8 +326,10 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                 ? $"agent-active; agent-worker:{request.WorkerId}"
                 : $"{currentTags.TrimEnd(';')}; agent-active; agent-worker:{request.WorkerId}";
 
-            var claimedAt = request.ClaimedAt.ToString("yyyy-MM-dd HH:mm:ss UTC",
-                System.Globalization.CultureInfo.InvariantCulture);
+            var claimedAt = request.ClaimedAt.ToString(
+                "yyyy-MM-dd HH:mm:ss UTC",
+                System.Globalization.CultureInfo.InvariantCulture
+            );
 
             var patchOps = new[]
             {
@@ -326,12 +348,17 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             };
 
             var patchBody = JsonSerializer.Serialize(patchOps, JsonOptions);
-            var patchContent = new StringContent(patchBody, Encoding.UTF8,
-                "application/json-patch+json");
+            var patchContent = new StringContent(
+                patchBody,
+                Encoding.UTF8,
+                "application/json-patch+json"
+            );
 
             // 4. Use If-Match with the current revision for optimistic concurrency
-            var patchRequest = new HttpRequestMessage(HttpMethod.Patch,
-                $"{project}/_apis/wit/workitems/{workRef.ExternalId}?api-version=7.1")
+            var patchRequest = new HttpRequestMessage(
+                HttpMethod.Patch,
+                $"{project}/_apis/wit/workitems/{workRef.ExternalId}?api-version=7.1"
+            )
             {
                 Content = patchContent,
             };
@@ -339,7 +366,9 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             if (currentRev.HasValue)
             {
                 patchRequest.Headers.TryAddWithoutValidation(
-                    "If-Match", currentRev.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    "If-Match",
+                    currentRev.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                );
             }
 
             var patchResponse = await _http.SendAsync(patchRequest, cancellationToken);
@@ -353,9 +382,15 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                 return new ClaimResult
                 {
                     Success = true,
-                    WorkRef = workRef with { Revision = newRev?.ToString(System.Globalization.CultureInfo.InvariantCulture) },
-                    LeaseToken = $"lease_{workRef.ExternalId}_" +
-                                 $"{newRev}_{DateTimeOffset.UtcNow:yyyyMMddHHmmss}",
+                    WorkRef = workRef with
+                    {
+                        Revision = newRev?.ToString(
+                            System.Globalization.CultureInfo.InvariantCulture
+                        ),
+                    },
+                    LeaseToken =
+                        $"lease_{workRef.ExternalId}_"
+                        + $"{newRev}_{DateTimeOffset.UtcNow:yyyyMMddHHmmss}",
                 };
             }
 
@@ -364,8 +399,9 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                 return new ClaimResult
                 {
                     Success = false,
-                    FailureReason = $"Work item {workRef.ExternalId} was modified " +
-                                    "by another process (412 Precondition Failed).",
+                    FailureReason =
+                        $"Work item {workRef.ExternalId} was modified "
+                        + "by another process (412 Precondition Failed).",
                 };
             }
 
@@ -373,9 +409,10 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             return new ClaimResult
             {
                 Success = false,
-                FailureReason = $"Failed to claim work item {workRef.ExternalId}: " +
-                                $"HTTP {(int)patchResponse.StatusCode} {patchResponse.ReasonPhrase}. " +
-                                $"Details: {Truncate(errorBody, 200)}",
+                FailureReason =
+                    $"Failed to claim work item {workRef.ExternalId}: "
+                    + $"HTTP {(int)patchResponse.StatusCode} {patchResponse.ReasonPhrase}. "
+                    + $"Details: {Truncate(errorBody, 200)}",
             };
         }
         catch (HttpRequestException ex)
@@ -383,7 +420,8 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             return new ClaimResult
             {
                 Success = false,
-                FailureReason = $"Network error claiming work item {workRef.ExternalId}: {ex.Message}",
+                FailureReason =
+                    $"Network error claiming work item {workRef.ExternalId}: {ex.Message}",
             };
         }
     }
@@ -391,7 +429,8 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
     public async Task<bool> UpdateWorkItemStatusAsync(
         ExternalWorkRef workRef,
         ExternalWorkStatus status,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
         var project = _options.Project;
         if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(workRef.ExternalId))
@@ -402,23 +441,27 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
 
         if (!string.IsNullOrWhiteSpace(status.Status))
         {
-            patchOps.Add(new
-            {
-                op = "add",
-                path = "/fields/System.State",
-                value = status.Status,
-            });
+            patchOps.Add(
+                new
+                {
+                    op = "add",
+                    path = "/fields/System.State",
+                    value = status.Status,
+                }
+            );
         }
 
         if (status.Tags is { Count: > 0 } && status.RemovedTags is null or [])
         {
             // Simple tag addition — no removals needed.
-            patchOps.Add(new
-            {
-                op = "add",
-                path = "/fields/System.Tags",
-                value = string.Join("; ", status.Tags),
-            });
+            patchOps.Add(
+                new
+                {
+                    op = "add",
+                    path = "/fields/System.Tags",
+                    value = string.Join("; ", status.Tags),
+                }
+            );
         }
 
         // Track fresh revision from the tag-read GET (when RemovedTags path is taken).
@@ -437,7 +480,8 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             //     rules that omit System.Tags in the live ADO environment.
             var getResponse = await _http.GetAsync(
                 $"{project}/_apis/wit/workitems/{workRef.ExternalId}?api-version=7.1",
-                cancellationToken);
+                cancellationToken
+            );
 
             // [rework_reactivate_get] — structured log for the tag-read GET.
             // Lets an operator confirm whether the GET is succeeding and whether
@@ -452,7 +496,8 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                     _logger,
                     workRef.ExternalId,
                     (int)getResponse.StatusCode,
-                    getResponse.ReasonPhrase ?? "(no reason phrase)");
+                    getResponse.ReasonPhrase ?? "(no reason phrase)"
+                );
 
                 // Load-bearing GET failed — abort the PATCH entirely.
                 // Returning false so the caller (e.g. reactivation) knows the
@@ -466,18 +511,21 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             // Capture the freshly-read revision from this GET so the PATCH
             // uses the current rev, not a possibly-stale workRef.Revision.
             // This prevents 412 Precondition Failed on the tag-strip PATCH.
-            freshRev = getDoc.RootElement.TryGetProperty("rev", out var freshRevEl)
-                           && freshRevEl.ValueKind == JsonValueKind.Number
-                           && freshRevEl.TryGetInt32(out var freshRevInt)
-                ? freshRevInt.ToString(CultureInfo.InvariantCulture)
-                : null;
+            freshRev =
+                getDoc.RootElement.TryGetProperty("rev", out var freshRevEl)
+                && freshRevEl.ValueKind == JsonValueKind.Number
+                && freshRevEl.TryGetInt32(out var freshRevInt)
+                    ? freshRevInt.ToString(CultureInfo.InvariantCulture)
+                    : null;
             if (!string.IsNullOrWhiteSpace(freshRev))
                 getRev = int.Parse(freshRev, CultureInfo.InvariantCulture);
 
             var currentTags = string.Empty;
-            if (getDoc.RootElement.TryGetProperty("fields", out var fields)
+            if (
+                getDoc.RootElement.TryGetProperty("fields", out var fields)
                 && fields.TryGetProperty("System.Tags", out var tagsEl)
-                && tagsEl.ValueKind == JsonValueKind.String)
+                && tagsEl.ValueKind == JsonValueKind.String
+            )
             {
                 currentTags = tagsEl.GetString() ?? string.Empty;
                 tagsPresent = true;
@@ -494,7 +542,8 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                 (int)getResponse.StatusCode,
                 tagsPresent,
                 getRev,
-                tagCount);
+                tagCount
+            );
 
             // Remove matching tags (supports exact match and prefix:* wildcard).
             foreach (var tagToRemove in status.RemovedTags)
@@ -507,12 +556,14 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                 {
                     var prefix = trimmed[..^1]; // strip the '*', keep the ':'
                     existingTags.RemoveWhere(t =>
-                        t.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+                        t.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                    );
                 }
                 else
                 {
                     existingTags.RemoveWhere(t =>
-                        t.Equals(trimmed, StringComparison.OrdinalIgnoreCase));
+                        t.Equals(trimmed, StringComparison.OrdinalIgnoreCase)
+                    );
                 }
             }
 
@@ -525,16 +576,22 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                 }
             }
 
-            var newTags = existingTags.Count > 0
-                ? string.Join("; ", existingTags.OrderBy(t => t, StringComparer.OrdinalIgnoreCase))
-                : string.Empty;
+            var newTags =
+                existingTags.Count > 0
+                    ? string.Join(
+                        "; ",
+                        existingTags.OrderBy(t => t, StringComparer.OrdinalIgnoreCase)
+                    )
+                    : string.Empty;
 
-            patchOps.Add(new
-            {
-                op = "add",
-                path = "/fields/System.Tags",
-                value = newTags,
-            });
+            patchOps.Add(
+                new
+                {
+                    op = "add",
+                    path = "/fields/System.Tags",
+                    value = newTags,
+                }
+            );
         }
 
         if (patchOps.Count == 0)
@@ -543,8 +600,10 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         var body = JsonSerializer.Serialize(patchOps, JsonOptions);
         var content = new StringContent(body, Encoding.UTF8, "application/json-patch+json");
 
-        var request = new HttpRequestMessage(HttpMethod.Patch,
-            $"{project}/_apis/wit/workitems/{workRef.ExternalId}?api-version=7.1")
+        var request = new HttpRequestMessage(
+            HttpMethod.Patch,
+            $"{project}/_apis/wit/workitems/{workRef.ExternalId}?api-version=7.1"
+        )
         {
             Content = content,
         };
@@ -553,9 +612,7 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         // Prefer freshRev (captured from the tag-read GET) over workRef.Revision
         // to prevent 412 Precondition Failed from stale revision tokens on
         // RemovedTags-bearing PATCHes.
-        var ifMatchRev = !string.IsNullOrWhiteSpace(freshRev)
-            ? freshRev
-            : workRef.Revision;
+        var ifMatchRev = !string.IsNullOrWhiteSpace(freshRev) ? freshRev : workRef.Revision;
         if (!string.IsNullOrWhiteSpace(ifMatchRev))
         {
             request.Headers.TryAddWithoutValidation("If-Match", ifMatchRev);
@@ -572,7 +629,8 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                 ifMatchRev,
                 status.RemovedTags,
                 status.Tags,
-                status.Status);
+                status.Status
+            );
         }
 
         var response = await _http.SendAsync(request, cancellationToken);
@@ -590,7 +648,8 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                     _logger,
                     workRef.ExternalId,
                     (int)response.StatusCode,
-                    Truncate(errorBody, 200));
+                    Truncate(errorBody, 200)
+                );
                 return false;
             }
             // Best-effort status projection: concurrent modification is not fatal.
@@ -606,7 +665,8 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                     _logger,
                     workRef.ExternalId,
                     (int)response.StatusCode,
-                    Truncate(errorBody, 200));
+                    Truncate(errorBody, 200)
+                );
             }
             return false;
         }
@@ -617,7 +677,8 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
     public async Task AddCommentAsync(
         ExternalWorkRef workRef,
         string comment,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
         var project = _options.Project;
         if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(workRef.ExternalId))
@@ -638,8 +699,10 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         var body = JsonSerializer.Serialize(patchOps, JsonOptions);
         var content = new StringContent(body, Encoding.UTF8, "application/json-patch+json");
 
-        var request = new HttpRequestMessage(HttpMethod.Patch,
-            $"{project}/_apis/wit/workitems/{workRef.ExternalId}?api-version=7.1")
+        var request = new HttpRequestMessage(
+            HttpMethod.Patch,
+            $"{project}/_apis/wit/workitems/{workRef.ExternalId}?api-version=7.1"
+        )
         {
             Content = content,
         };
@@ -665,7 +728,8 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
     public async Task<IReadOnlyList<WorkItemComment>> GetCommentsAsync(
         ExternalWorkRef workRef,
         int maxComments,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
         var project = _options.Project;
         if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(workRef.ExternalId))
@@ -675,7 +739,8 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         // ADO threads API: GET {project}/_apis/wit/workitems/{id}/threads?api-version=7.1
         var response = await _http.GetAsync(
             $"{project}/_apis/wit/workitems/{workRef.ExternalId}/threads?api-version=7.1",
-            cancellationToken);
+            cancellationToken
+        );
 
         if (!response.IsSuccessStatusCode)
         {
@@ -688,14 +753,18 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
 
         var comments = new List<WorkItemComment>();
 
-        if (doc.RootElement.TryGetProperty("value", out var valueArray)
-            && valueArray.ValueKind == JsonValueKind.Array)
+        if (
+            doc.RootElement.TryGetProperty("value", out var valueArray)
+            && valueArray.ValueKind == JsonValueKind.Array
+        )
         {
             foreach (var thread in valueArray.EnumerateArray())
             {
                 // Each thread contains a "comments" array.
-                if (!thread.TryGetProperty("comments", out var commentsArray)
-                    || commentsArray.ValueKind != JsonValueKind.Array)
+                if (
+                    !thread.TryGetProperty("comments", out var commentsArray)
+                    || commentsArray.ValueKind != JsonValueKind.Array
+                )
                 {
                     continue;
                 }
@@ -706,37 +775,44 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                         break;
 
                     // Extract comment text
-                    var text = comment.TryGetProperty("comment", out var commentEl)
-                               && commentEl.ValueKind == JsonValueKind.String
-                        ? commentEl.GetString() ?? string.Empty
-                        : string.Empty;
+                    var text =
+                        comment.TryGetProperty("comment", out var commentEl)
+                        && commentEl.ValueKind == JsonValueKind.String
+                            ? commentEl.GetString() ?? string.Empty
+                            : string.Empty;
 
                     // Extract author display name
                     string? author = null;
-                    if (comment.TryGetProperty("author", out var authorEl)
+                    if (
+                        comment.TryGetProperty("author", out var authorEl)
                         && authorEl.ValueKind == JsonValueKind.Object
-                        && authorEl.TryGetProperty("displayName", out var displayNameEl))
+                        && authorEl.TryGetProperty("displayName", out var displayNameEl)
+                    )
                     {
                         author = displayNameEl.GetString();
                     }
 
                     // Extract posted date
                     DateTimeOffset? postedAt = null;
-                    if (comment.TryGetProperty("publishedDate", out var dateEl)
+                    if (
+                        comment.TryGetProperty("publishedDate", out var dateEl)
                         && dateEl.ValueKind == JsonValueKind.String
-                        && DateTimeOffset.TryParse(dateEl.GetString(), out var parsedDate))
+                        && DateTimeOffset.TryParse(dateEl.GetString(), out var parsedDate)
+                    )
                     {
                         postedAt = parsedDate;
                     }
 
                     if (!string.IsNullOrWhiteSpace(text))
                     {
-                        comments.Add(new WorkItemComment
-                        {
-                            Author = author,
-                            Text = text.Trim(),
-                            PostedAt = postedAt,
-                        });
+                        comments.Add(
+                            new WorkItemComment
+                            {
+                                Author = author,
+                                Text = text.Trim(),
+                                PostedAt = postedAt,
+                            }
+                        );
                     }
                 }
 
@@ -750,17 +826,20 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
 
     public async Task<IReadOnlyList<RepositoryInfo>> ListRepositoriesAsync(
         string project,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
         if (string.IsNullOrWhiteSpace(project))
         {
             throw new InvalidOperationException(
-                "Azure DevOps project name is required for repository listing.");
+                "Azure DevOps project name is required for repository listing."
+            );
         }
 
         var response = await _http.GetAsync(
             $"{project}/_apis/git/repositories?api-version=7.1",
-            cancellationToken);
+            cancellationToken
+        );
 
         response.EnsureSuccessStatusCode();
 
@@ -769,48 +848,60 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
 
         var repositories = new List<RepositoryInfo>();
 
-        if (doc.RootElement.TryGetProperty("value", out var valueArray)
-            && valueArray.ValueKind == JsonValueKind.Array)
+        if (
+            doc.RootElement.TryGetProperty("value", out var valueArray)
+            && valueArray.ValueKind == JsonValueKind.Array
+        )
         {
             foreach (var repo in valueArray.EnumerateArray())
             {
-                var id = repo.TryGetProperty("id", out var idEl)
-                         && idEl.ValueKind == JsonValueKind.String
-                    ? idEl.GetString() ?? string.Empty
-                    : string.Empty;
+                var id =
+                    repo.TryGetProperty("id", out var idEl)
+                    && idEl.ValueKind == JsonValueKind.String
+                        ? idEl.GetString() ?? string.Empty
+                        : string.Empty;
 
-                var name = repo.TryGetProperty("name", out var nameEl)
-                           && nameEl.ValueKind == JsonValueKind.String
-                    ? nameEl.GetString() ?? string.Empty
-                    : string.Empty;
+                var name =
+                    repo.TryGetProperty("name", out var nameEl)
+                    && nameEl.ValueKind == JsonValueKind.String
+                        ? nameEl.GetString() ?? string.Empty
+                        : string.Empty;
 
                 string? defaultBranch = null;
-                if (repo.TryGetProperty("defaultBranch", out var dbEl)
-                    && dbEl.ValueKind == JsonValueKind.String)
+                if (
+                    repo.TryGetProperty("defaultBranch", out var dbEl)
+                    && dbEl.ValueKind == JsonValueKind.String
+                )
                 {
                     defaultBranch = dbEl.GetString();
                 }
 
                 string? remoteUrl = null;
-                if (repo.TryGetProperty("remoteUrl", out var ruEl)
-                    && ruEl.ValueKind == JsonValueKind.String)
+                if (
+                    repo.TryGetProperty("remoteUrl", out var ruEl)
+                    && ruEl.ValueKind == JsonValueKind.String
+                )
                 {
                     remoteUrl = ruEl.GetString();
                 }
-                else if (repo.TryGetProperty("webUrl", out var wuEl)
-                         && wuEl.ValueKind == JsonValueKind.String)
+                else if (
+                    repo.TryGetProperty("webUrl", out var wuEl)
+                    && wuEl.ValueKind == JsonValueKind.String
+                )
                 {
                     // Fallback: use webUrl if remoteUrl is not present
                     remoteUrl = wuEl.GetString();
                 }
 
-                repositories.Add(new RepositoryInfo
-                {
-                    Id = id,
-                    Name = name,
-                    DefaultBranch = defaultBranch,
-                    RemoteUrl = remoteUrl,
-                });
+                repositories.Add(
+                    new RepositoryInfo
+                    {
+                        Id = id,
+                        Name = name,
+                        DefaultBranch = defaultBranch,
+                        RemoteUrl = remoteUrl,
+                    }
+                );
             }
         }
 
@@ -819,10 +910,14 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
 
     public async Task ReleaseClaimWorkItemAsync(
         ReleaseClaimRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
         var project = _options.Project;
-        if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(request.WorkRef.ExternalId))
+        if (
+            string.IsNullOrWhiteSpace(project)
+            || string.IsNullOrWhiteSpace(request.WorkRef.ExternalId)
+        )
             return;
 
         try
@@ -831,7 +926,8 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             //     Plain GET without $expand — ADO returns all fields by default.
             var getResponse = await _http.GetAsync(
                 $"{project}/_apis/wit/workitems/{request.WorkRef.ExternalId}?api-version=7.1",
-                cancellationToken);
+                cancellationToken
+            );
 
             if (!getResponse.IsSuccessStatusCode)
             {
@@ -842,17 +938,20 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             var getJson = await getResponse.Content.ReadAsStringAsync(cancellationToken);
             using var getDoc = JsonDocument.Parse(getJson);
 
-            var currentRev = getDoc.RootElement.TryGetProperty("rev", out var revEl)
-                             && revEl.ValueKind == JsonValueKind.Number
-                             && revEl.TryGetInt32(out var rev)
-                ? rev
-                : (int?)null;
+            var currentRev =
+                getDoc.RootElement.TryGetProperty("rev", out var revEl)
+                && revEl.ValueKind == JsonValueKind.Number
+                && revEl.TryGetInt32(out var rev)
+                    ? rev
+                    : (int?)null;
 
             // 2. Read current tags and strip agent-controlled tags
             var currentTags = string.Empty;
-            if (getDoc.RootElement.TryGetProperty("fields", out var fields)
+            if (
+                getDoc.RootElement.TryGetProperty("fields", out var fields)
                 && fields.TryGetProperty("System.Tags", out var tagsEl)
-                && tagsEl.ValueKind == JsonValueKind.String)
+                && tagsEl.ValueKind == JsonValueKind.String
+            )
             {
                 currentTags = tagsEl.GetString() ?? string.Empty;
             }
@@ -863,12 +962,11 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
 
             // Strip agent-active and any agent-worker:* tags
             existingTags.RemoveAll(t =>
-                t.Equals("agent-active", StringComparison.OrdinalIgnoreCase) ||
-                t.StartsWith("agent-worker:", StringComparison.OrdinalIgnoreCase));
+                t.Equals("agent-active", StringComparison.OrdinalIgnoreCase)
+                || t.StartsWith("agent-worker:", StringComparison.OrdinalIgnoreCase)
+            );
 
-            var newTags = existingTags.Count > 0
-                ? string.Join("; ", existingTags)
-                : string.Empty;
+            var newTags = existingTags.Count > 0 ? string.Join("; ", existingTags) : string.Empty;
 
             // 3. Build PATCH operations: update tags, optionally revert state, add history
             var patchOps = new List<object>
@@ -884,33 +982,41 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             // Optionally revert to target state (e.g. "New")
             if (!string.IsNullOrWhiteSpace(request.TargetState))
             {
-                patchOps.Add(new
-                {
-                    op = "add",
-                    path = "/fields/System.State",
-                    value = request.TargetState,
-                });
+                patchOps.Add(
+                    new
+                    {
+                        op = "add",
+                        path = "/fields/System.State",
+                        value = request.TargetState,
+                    }
+                );
             }
 
             // Add a history entry explaining the release
-            var releasedAt = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd HH:mm:ss UTC",
-                System.Globalization.CultureInfo.InvariantCulture);
+            var releasedAt = DateTimeOffset.UtcNow.ToString(
+                "yyyy-MM-dd HH:mm:ss UTC",
+                System.Globalization.CultureInfo.InvariantCulture
+            );
             var reason = string.IsNullOrWhiteSpace(request.Reason)
                 ? "Claim released by agent controller."
                 : $"Claim released by agent controller: {request.Reason}";
 
-            patchOps.Add(new
-            {
-                op = "add",
-                path = "/fields/System.History",
-                value = $"[{releasedAt}] {reason}",
-            });
+            patchOps.Add(
+                new
+                {
+                    op = "add",
+                    path = "/fields/System.History",
+                    value = $"[{releasedAt}] {reason}",
+                }
+            );
 
             var body = JsonSerializer.Serialize(patchOps, JsonOptions);
             var content = new StringContent(body, Encoding.UTF8, "application/json-patch+json");
 
-            var patchRequest = new HttpRequestMessage(HttpMethod.Patch,
-                $"{project}/_apis/wit/workitems/{request.WorkRef.ExternalId}?api-version=7.1")
+            var patchRequest = new HttpRequestMessage(
+                HttpMethod.Patch,
+                $"{project}/_apis/wit/workitems/{request.WorkRef.ExternalId}?api-version=7.1"
+            )
             {
                 Content = content,
             };
@@ -918,7 +1024,9 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             if (currentRev.HasValue)
             {
                 patchRequest.Headers.TryAddWithoutValidation(
-                    "If-Match", currentRev.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    "If-Match",
+                    currentRev.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                );
             }
 
             var patchResponse = await _http.SendAsync(patchRequest, cancellationToken);
@@ -938,13 +1046,29 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         }
     }
 
+    public void Dispose()
+    {
+        _http.Dispose();
+    }
+
     // ─── WIQL builder ────────────────────────────────────
 
     private static string BuildWiql(string project, BoardsQueryParameters parameters)
     {
         var sb = new StringBuilder();
         sb.Append(CultureInfo.InvariantCulture, $"SELECT [System.Id] FROM WorkItems");
-        sb.Append(CultureInfo.InvariantCulture, $" WHERE [System.TeamProject] = '{EscapeWiql(project)}'");
+        sb.Append(
+            CultureInfo.InvariantCulture,
+            $" WHERE [System.TeamProject] = '{EscapeWiql(project)}'"
+        );
+
+        if (!string.IsNullOrWhiteSpace(parameters.WorkItemType))
+        {
+            sb.Append(
+                CultureInfo.InvariantCulture,
+                $" AND [System.WorkItemType] = '{EscapeWiql(parameters.WorkItemType)}'"
+            );
+        }
 
         if (parameters.States is { Count: > 0 })
         {
@@ -952,11 +1076,26 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             sb.Append(CultureInfo.InvariantCulture, $" AND [System.State] IN ({states})");
         }
 
+        if (parameters.ExcludedStates is { Count: > 0 })
+        {
+            var excludedStates = string.Join(
+                ", ",
+                parameters.ExcludedStates.Select(state => $"'{EscapeWiql(state)}'")
+            );
+            sb.Append(
+                CultureInfo.InvariantCulture,
+                $" AND [System.State] NOT IN ({excludedStates})"
+            );
+        }
+
         if (parameters.Tags is { Count: > 0 })
         {
             foreach (var tag in parameters.Tags)
             {
-                sb.Append(CultureInfo.InvariantCulture, $" AND [System.Tags] CONTAINS '{EscapeWiql(tag)}'");
+                sb.Append(
+                    CultureInfo.InvariantCulture,
+                    $" AND [System.Tags] CONTAINS '{EscapeWiql(tag)}'"
+                );
             }
         }
 
@@ -964,17 +1103,22 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         {
             foreach (var tag in parameters.ExcludedTags)
             {
-                sb.Append(CultureInfo.InvariantCulture, $" AND [System.Tags] NOT CONTAINS '{EscapeWiql(tag)}'");
+                sb.Append(
+                    CultureInfo.InvariantCulture,
+                    $" AND [System.Tags] NOT CONTAINS '{EscapeWiql(tag)}'"
+                );
             }
         }
 
-        sb.Append(CultureInfo.InvariantCulture, $" ORDER BY [Microsoft.VSTS.Common.Priority] ASC, [System.CreatedDate] DESC");
+        sb.Append(
+            CultureInfo.InvariantCulture,
+            $" ORDER BY [Microsoft.VSTS.Common.Priority] ASC, [System.CreatedDate] DESC"
+        );
 
         return sb.ToString();
     }
 
-    private static string EscapeWiql(string value) =>
-        value.Replace("'", "''");
+    private static string EscapeWiql(string value) => value.Replace("'", "''");
 
     // ─── Concurrency helpers ────────────────────────────
 
@@ -987,9 +1131,11 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         try
         {
             using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("rev", out var revEl)
+            if (
+                doc.RootElement.TryGetProperty("rev", out var revEl)
                 && revEl.ValueKind == JsonValueKind.Number
-                && revEl.TryGetInt32(out var rev))
+                && revEl.TryGetInt32(out var rev)
+            )
             {
                 return rev;
             }
@@ -1040,7 +1186,8 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         string organizationUrl,
         string project,
         string personalAccessToken,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
         // Build a dedicated HttpClient for this one-off connectivity check.
         // The injected _http is scoped to the configured org/PAT from options;
@@ -1049,23 +1196,27 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         http.BaseAddress = new Uri(organizationUrl.TrimEnd('/') + "/");
 
         var authBytes = Encoding.ASCII.GetBytes($":{personalAccessToken}");
-        http.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+            "Basic",
+            Convert.ToBase64String(authBytes)
+        );
 
         try
         {
             // (1) Lightweight test: GET project info (validates org URL + PAT + project)
             using var result = await http.GetAsync(
                 $"_apis/projects/{project}?api-version=7.1",
-                cancellationToken);
+                cancellationToken
+            );
 
             var statusCode = result.StatusCode;
 
             if (!result.IsSuccessStatusCode)
             {
                 var errorBody = await result.Content.ReadAsStringAsync(cancellationToken);
-                var error = $"HTTP {(int)result.StatusCode} {result.ReasonPhrase}: " +
-                            (errorBody.Length > 200 ? errorBody[..200] + "..." : errorBody);
+                var error =
+                    $"HTTP {(int)result.StatusCode} {result.ReasonPhrase}: "
+                    + (errorBody.Length > 200 ? errorBody[..200] + "..." : errorBody);
                 return new AzureDevOpsConnectivityResult
                 {
                     Success = false,
@@ -1113,7 +1264,8 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
     public async Task<IReadOnlyList<string>> GetValidStatesAsync(
         string project,
         string workItemType,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
         if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(workItemType))
         {
@@ -1126,7 +1278,8 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             //     The project response includes a "processId" GUID.
             var projectResponse = await _http.GetAsync(
                 $"_apis/projects/{Uri.EscapeDataString(project)}?api-version=7.1&includeProcessSettings=true",
-                cancellationToken);
+                cancellationToken
+            );
 
             if (!projectResponse.IsSuccessStatusCode)
             {
@@ -1137,8 +1290,8 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             using var projectDoc = JsonDocument.Parse(projectJson);
 
             // Extract processId from the project response.
-            var processId = projectDoc.RootElement
-                .TryGetProperty("processSettings", out var processSettings)
+            var processId =
+                projectDoc.RootElement.TryGetProperty("processSettings", out var processSettings)
                 && processSettings.TryGetProperty("processId", out var processIdEl)
                 && processIdEl.ValueKind == JsonValueKind.String
                     ? processIdEl.GetString()
@@ -1147,8 +1300,8 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             if (string.IsNullOrWhiteSpace(processId))
             {
                 // Fallback: try top-level processId (some API versions place it there).
-                processId = projectDoc.RootElement
-                    .TryGetProperty("processId", out var topProcessIdEl)
+                processId =
+                    projectDoc.RootElement.TryGetProperty("processId", out var topProcessIdEl)
                     && topProcessIdEl.ValueKind == JsonValueKind.String
                         ? topProcessIdEl.GetString()
                         : null;
@@ -1159,37 +1312,50 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                 // Cannot determine process — enumerate processes and find the one for this project.
                 var processesResponse = await _http.GetAsync(
                     "_apis/work/processes?api-version=7.1-preview.3",
-                    cancellationToken);
+                    cancellationToken
+                );
 
                 if (!processesResponse.IsSuccessStatusCode)
                 {
                     return Array.Empty<string>();
                 }
 
-                var processesJson = await processesResponse.Content.ReadAsStringAsync(cancellationToken);
+                var processesJson = await processesResponse.Content.ReadAsStringAsync(
+                    cancellationToken
+                );
                 using var processesDoc = JsonDocument.Parse(processesJson);
 
                 // Find the process associated with this project.
-                if (processesDoc.RootElement.TryGetProperty("value", out var processesArray)
-                    && processesArray.ValueKind == JsonValueKind.Array)
+                if (
+                    processesDoc.RootElement.TryGetProperty("value", out var processesArray)
+                    && processesArray.ValueKind == JsonValueKind.Array
+                )
                 {
                     foreach (var process in processesArray.EnumerateArray())
                     {
-                        if (process.TryGetProperty("id", out var pidEl)
-                            && pidEl.ValueKind == JsonValueKind.String)
+                        if (
+                            process.TryGetProperty("id", out var pidEl)
+                            && pidEl.ValueKind == JsonValueKind.String
+                        )
                         {
                             var pid = pidEl.GetString();
                             // Check if this process has the project.
-                            if (process.TryGetProperty("defaultTemplate", out var templateEl)
+                            if (
+                                process.TryGetProperty("defaultTemplate", out var templateEl)
                                 && templateEl.ValueKind == JsonValueKind.Object
                                 && templateEl.TryGetProperty("projectPools", out var poolsEl)
-                                && poolsEl.ValueKind == JsonValueKind.Array)
+                                && poolsEl.ValueKind == JsonValueKind.Array
+                            )
                             {
                                 foreach (var pool in poolsEl.EnumerateArray())
                                 {
-                                    if (pool.TryGetProperty("name", out var poolNameEl)
+                                    if (
+                                        pool.TryGetProperty("name", out var poolNameEl)
                                         && poolNameEl.ValueKind == JsonValueKind.String
-                                        && poolNameEl.GetString()!.Equals(project, StringComparison.OrdinalIgnoreCase))
+                                        && poolNameEl
+                                            .GetString()!
+                                            .Equals(project, StringComparison.OrdinalIgnoreCase)
+                                    )
                                     {
                                         processId = pid;
                                         break;
@@ -1212,7 +1378,8 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             // (2) Get the work item type definition to find System.State allowed values.
             var witResponse = await _http.GetAsync(
                 $"_apis/work/processes/{Uri.EscapeDataString(processId)}/workItemTypes/{Uri.EscapeDataString(workItemType)}?api-version=7.1-preview.3&fields=System.State",
-                cancellationToken);
+                cancellationToken
+            );
 
             if (!witResponse.IsSuccessStatusCode)
             {
@@ -1225,14 +1392,16 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             // Navigate to fields -> System.State -> name -> allowedValues
             var allowedValues = new List<string>();
 
-            if (witDoc.RootElement.TryGetProperty("fields", out var fields)
+            if (
+                witDoc.RootElement.TryGetProperty("fields", out var fields)
                 && fields.ValueKind == JsonValueKind.Object
                 && fields.TryGetProperty("System.State", out var stateField)
                 && stateField.ValueKind == JsonValueKind.Object
                 && stateField.TryGetProperty("name", out var nameField)
                 && nameField.ValueKind == JsonValueKind.Object
                 && nameField.TryGetProperty("allowedValues", out var allowedValuesEl)
-                && allowedValuesEl.ValueKind == JsonValueKind.Array)
+                && allowedValuesEl.ValueKind == JsonValueKind.Array
+            )
             {
                 foreach (var value in allowedValuesEl.EnumerateArray())
                 {
@@ -1274,13 +1443,15 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
     private static async Task<IReadOnlyList<RepositoryInfo>> FetchRepositoriesAsync(
         HttpClient http,
         string project,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
         try
         {
             using var reposResult = await http.GetAsync(
                 $"{project}/_apis/git/repositories?api-version=7.1",
-                cancellationToken);
+                cancellationToken
+            );
 
             if (!reposResult.IsSuccessStatusCode)
             {
@@ -1294,42 +1465,52 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
 
             var repositories = new List<RepositoryInfo>();
 
-            if (doc.RootElement.TryGetProperty("value", out var valueArray)
-                && valueArray.ValueKind == JsonValueKind.Array)
+            if (
+                doc.RootElement.TryGetProperty("value", out var valueArray)
+                && valueArray.ValueKind == JsonValueKind.Array
+            )
             {
                 foreach (var repo in valueArray.EnumerateArray())
                 {
-                    var id = repo.TryGetProperty("id", out var idEl)
-                             && idEl.ValueKind == JsonValueKind.String
-                        ? idEl.GetString() ?? string.Empty
-                        : string.Empty;
+                    var id =
+                        repo.TryGetProperty("id", out var idEl)
+                        && idEl.ValueKind == JsonValueKind.String
+                            ? idEl.GetString() ?? string.Empty
+                            : string.Empty;
 
-                    var name = repo.TryGetProperty("name", out var nameEl)
-                               && nameEl.ValueKind == JsonValueKind.String
-                        ? nameEl.GetString() ?? string.Empty
-                        : string.Empty;
+                    var name =
+                        repo.TryGetProperty("name", out var nameEl)
+                        && nameEl.ValueKind == JsonValueKind.String
+                            ? nameEl.GetString() ?? string.Empty
+                            : string.Empty;
 
                     string? defaultBranch = null;
-                    if (repo.TryGetProperty("defaultBranch", out var dbEl)
-                        && dbEl.ValueKind == JsonValueKind.String)
+                    if (
+                        repo.TryGetProperty("defaultBranch", out var dbEl)
+                        && dbEl.ValueKind == JsonValueKind.String
+                    )
                     {
                         defaultBranch = dbEl.GetString();
                     }
 
                     string? remoteUrl = null;
-                    if (repo.TryGetProperty("remoteUrl", out var ruEl)
-                        && ruEl.ValueKind == JsonValueKind.String)
+                    if (
+                        repo.TryGetProperty("remoteUrl", out var ruEl)
+                        && ruEl.ValueKind == JsonValueKind.String
+                    )
                     {
                         remoteUrl = ruEl.GetString();
                     }
 
-                    repositories.Add(new RepositoryInfo
-                    {
-                        Id = id,
-                        Name = name,
-                        DefaultBranch = defaultBranch,
-                        RemoteUrl = remoteUrl,
-                    });
+                    repositories.Add(
+                        new RepositoryInfo
+                        {
+                            Id = id,
+                            Name = name,
+                            DefaultBranch = defaultBranch,
+                            RemoteUrl = remoteUrl,
+                        }
+                    );
                 }
             }
 
@@ -1364,7 +1545,8 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
     /// </summary>
     private static Dictionary<string, string>? ParseAcceptanceCriteria(
         JsonElement fields,
-        string? description)
+        string? description
+    )
     {
         // (1) Try the dedicated AcceptanceCriteria field first.
         //     This field exists in the Agile process template and some others.
@@ -1399,8 +1581,10 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             return checklistItems;
 
         // Fall back to newline-separated non-empty lines
-        var lines = text
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        var lines = text.Split(
+                '\n',
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries
+            )
             .Where(l => !string.IsNullOrWhiteSpace(l))
             .ToList();
 
@@ -1431,7 +1615,8 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         // [xX]? makes the checkmark optional; \s*? minimizes whitespace before ].
         var markdownPattern = new Regex(
             "^\\s*-\\s*\\[[xX]?\\s*?\\]\\s+(.+)$",
-            RegexOptions.Multiline | RegexOptions.Compiled);
+            RegexOptions.Multiline | RegexOptions.Compiled
+        );
 
         foreach (Match match in markdownPattern.Matches(text))
         {
@@ -1444,7 +1629,8 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         {
             var htmlPattern = new Regex(
                 "<input[^>]*type=[\"']checkbox[\"'][^>]*>\\s*(.+?)?(?:</li>|<br[^>]*>|$)",
-                RegexOptions.IgnoreCase | RegexOptions.Compiled);
+                RegexOptions.IgnoreCase | RegexOptions.Compiled
+            );
 
             foreach (Match match in htmlPattern.Matches(text))
             {
@@ -1474,8 +1660,9 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
 
     private static string? GetStringField(JsonElement fields, string name)
     {
-        return fields.TryGetProperty(name, out var element)
-               && element.ValueKind == JsonValueKind.String
+        return
+            fields.TryGetProperty(name, out var element)
+            && element.ValueKind == JsonValueKind.String
             ? element.GetString()
             : null;
     }
@@ -1486,8 +1673,10 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         {
             if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var val))
                 return val;
-            if (element.ValueKind == JsonValueKind.String
-                && int.TryParse(element.GetString(), out var strVal))
+            if (
+                element.ValueKind == JsonValueKind.String
+                && int.TryParse(element.GetString(), out var strVal)
+            )
                 return strVal;
         }
 
@@ -1498,8 +1687,10 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
     {
         if (fields.TryGetProperty("System.AssignedTo", out var assignedTo))
         {
-            if (assignedTo.ValueKind == JsonValueKind.Object
-                && assignedTo.TryGetProperty("displayName", out var displayName))
+            if (
+                assignedTo.ValueKind == JsonValueKind.Object
+                && assignedTo.TryGetProperty("displayName", out var displayName)
+            )
             {
                 return displayName.GetString();
             }
@@ -1522,47 +1713,55 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
     {
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "[rework_reactivate_get] WorkItem={WorkItemId} Status={StatusCode} " +
-                      "TagsPresent={TagsPresent} Rev={Rev} TagCount={TagCount}")]
+            Message = "[rework_reactivate_get] WorkItem={WorkItemId} Status={StatusCode} "
+                + "TagsPresent={TagsPresent} Rev={Rev} TagCount={TagCount}"
+        )]
         public static partial void ReworkReactivateGet(
             ILogger logger,
             string workItemId,
             int statusCode,
             bool tagsPresent,
             int? rev,
-            int tagCount);
+            int tagCount
+        );
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "[rework_reactivate_get_failed] WorkItem={WorkItemId} " +
-                      "Status={StatusCode} Reason={Reason} — aborting PATCH (load-bearing GET failed)")]
+            Message = "[rework_reactivate_get_failed] WorkItem={WorkItemId} "
+                + "Status={StatusCode} Reason={Reason} — aborting PATCH (load-bearing GET failed)"
+        )]
         public static partial void ReworkReactivateGetFailed(
             ILogger logger,
             string workItemId,
             int statusCode,
-            string reason);
+            string reason
+        );
 
         [LoggerMessage(
             Level = LogLevel.Information,
-            Message = "[rework_reactivate_patch] WorkItem={WorkItemId} " +
-                      "IfMatchRev={IfMatchRev} RemovedTags={RemovedTags} " +
-                      "Tags={Tags} State={State}")]
+            Message = "[rework_reactivate_patch] WorkItem={WorkItemId} "
+                + "IfMatchRev={IfMatchRev} RemovedTags={RemovedTags} "
+                + "Tags={Tags} State={State}"
+        )]
         public static partial void ReworkReactivatePatch(
             ILogger logger,
             string workItemId,
             string? ifMatchRev,
             IReadOnlyList<string>? removedTags,
             IReadOnlyList<string>? tags,
-            string? state);
+            string? state
+        );
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "[rework_reactivate_patch_failed] WorkItem={WorkItemId} " +
-                      "Status={StatusCode} Error={Error}")]
+            Message = "[rework_reactivate_patch_failed] WorkItem={WorkItemId} "
+                + "Status={StatusCode} Error={Error}"
+        )]
         public static partial void ReworkReactivatePatchFailed(
             ILogger logger,
             string workItemId,
             int statusCode,
-            string error);
+            string error
+        );
     }
 }

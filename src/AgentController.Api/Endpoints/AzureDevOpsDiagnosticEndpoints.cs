@@ -12,16 +12,22 @@ namespace AgentController.Api.Endpoints;
 /// </summary>
 public static class AzureDevOpsDiagnosticEndpoints
 {
-    public static IEndpointRouteBuilder MapAzureDevOpsDiagnosticEndpoints(this IEndpointRouteBuilder app)
+    public static IEndpointRouteBuilder MapAzureDevOpsDiagnosticEndpoints(
+        this IEndpointRouteBuilder app
+    )
     {
         app.MapGet(
             "/azure-devops/diagnostic",
             async (
+                string? environmentKey,
                 IQueryHandler<RunAzureDevOpsDiagnosticQuery, AzureDevOpsDiagnosticResult> handler,
                 CancellationToken ct
             ) =>
             {
-                var result = await handler.ExecuteAsync(new RunAzureDevOpsDiagnosticQuery(), ct);
+                var result = await handler.ExecuteAsync(
+                    new RunAzureDevOpsDiagnosticQuery(environmentKey),
+                    ct
+                );
                 return Results.Ok(result);
             }
         );

@@ -45,23 +45,45 @@ public class ReworkConsumptionTests : IAsyncLifetime
 
         // Initialize a git repository with main and a feature branch
         // (simulating the prior PR branch that rework should clone onto).
-        await RunGitAsync(_tempRepoPath, ["init", "--initial-branch=main"], TimeSpan.FromSeconds(10));
-        await RunGitAsync(_tempRepoPath, ["config", "user.email", "test@example.com"], TimeSpan.FromSeconds(5));
-        await RunGitAsync(_tempRepoPath, ["config", "user.name", "Test User"], TimeSpan.FromSeconds(5));
+        await RunGitAsync(
+            _tempRepoPath,
+            ["init", "--initial-branch=main"],
+            TimeSpan.FromSeconds(10)
+        );
+        await RunGitAsync(
+            _tempRepoPath,
+            ["config", "user.email", "test@example.com"],
+            TimeSpan.FromSeconds(5)
+        );
+        await RunGitAsync(
+            _tempRepoPath,
+            ["config", "user.name", "Test User"],
+            TimeSpan.FromSeconds(5)
+        );
 
         // Initial commit on main
         await File.WriteAllTextAsync(Path.Combine(_tempRepoPath, "README.md"), "# Test Repo");
         await RunGitAsync(_tempRepoPath, ["add", "README.md"], TimeSpan.FromSeconds(5));
-        await RunGitAsync(_tempRepoPath, ["commit", "-m", "Initial commit"], TimeSpan.FromSeconds(5));
+        await RunGitAsync(
+            _tempRepoPath,
+            ["commit", "-m", "Initial commit"],
+            TimeSpan.FromSeconds(5)
+        );
 
         // Create the feature branch (simulating the prior PR branch)
-        await RunGitAsync(_tempRepoPath, ["checkout", "-b", _reworkBranch], TimeSpan.FromSeconds(5));
+        await RunGitAsync(
+            _tempRepoPath,
+            ["checkout", "-b", _reworkBranch],
+            TimeSpan.FromSeconds(5)
+        );
         await File.WriteAllTextAsync(Path.Combine(_tempRepoPath, "feature.txt"), "Feature content");
         await RunGitAsync(_tempRepoPath, ["add", "feature.txt"], TimeSpan.FromSeconds(5));
         await RunGitAsync(_tempRepoPath, ["commit", "-m", "Add feature"], TimeSpan.FromSeconds(5));
 
         // Get the commit SHA for the rework branch
-        _reworkBranchSha = (await RunGitAsyncCapture(_tempRepoPath, ["rev-parse", "HEAD"], TimeSpan.FromSeconds(5))).Trim();
+        _reworkBranchSha = (
+            await RunGitAsyncCapture(_tempRepoPath, ["rev-parse", "HEAD"], TimeSpan.FromSeconds(5))
+        ).Trim();
     }
 
     public Task DisposeAsync()
@@ -73,7 +95,9 @@ public class ReworkConsumptionTests : IAsyncLifetime
                 Directory.Delete(_tempRoot, recursive: true);
             }
         }
-        catch { /* best-effort */ }
+        catch
+        { /* best-effort */
+        }
 
         return Task.CompletedTask;
     }
@@ -92,34 +116,36 @@ public class ReworkConsumptionTests : IAsyncLifetime
 
         // ── 1. Build configuration ──────────────────────────────────
         var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["agentController:workerId"] = "test-rework-worker",
-                ["agentController:pollIntervalSeconds"] = "10",
-                ["agentController:maxConcurrentRuns"] = "1",
-                ["agentController:staleTimeoutSeconds"] = "300",
-                ["agentController:runRoot"] = _tempRunRoot,
-                ["agentController:retainSuccessfulRuns"] = "true",
-                ["agentController:retainFailedRuns"] = "true",
-                ["agentController:workerEnabled"] = "true",
-                ["persistence:provider"] = "Sqlite",
-                ["persistence:connectionString"] = $"Data Source={dbPath}",
-                ["workSource:provider"] = "LocalFile",
-                ["sourceControl:provider"] = "LocalGit",
-                ["environmentProvider:provider"] = "LocalWorkspace",
-                ["runtime:provider"] = "MockPiMateria",
-                ["runtime:defaultMateriaLoadout"] = "success-pr",
-                ["localWork:definitions:0:repoKey"] = "test-repo",
-                ["localWork:definitions:0:title"] = "Rework Test: Fix review feedback",
-                ["localWork:definitions:0:body"] = "Address review feedback from the prior PR.",
-                ["localWork:definitions:0:tags:0"] = "agent-ready",
-                ["localWork:definitions:0:priority"] = "1",
-                ["localWork:definitions:0:status"] = "New",
-                ["repositories:test-repo:cloneUrl"] = _tempRepoPath,
-                ["repositories:test-repo:defaultBranch"] = "main",
-                ["repositories:test-repo:environmentProfile"] = "local-default",
-                ["repositories:test-repo:runtimeProfile"] = "pi-materia-default",
-            })
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["agentController:workerId"] = "test-rework-worker",
+                    ["agentController:pollIntervalSeconds"] = "10",
+                    ["agentController:maxConcurrentRuns"] = "1",
+                    ["agentController:staleTimeoutSeconds"] = "300",
+                    ["agentController:runRoot"] = _tempRunRoot,
+                    ["agentController:retainSuccessfulRuns"] = "true",
+                    ["agentController:retainFailedRuns"] = "true",
+                    ["agentController:workerEnabled"] = "true",
+                    ["persistence:provider"] = "Sqlite",
+                    ["persistence:connectionString"] = $"Data Source={dbPath}",
+                    ["workSource:provider"] = "LocalFile",
+                    ["sourceControl:provider"] = "LocalGit",
+                    ["environmentProvider:provider"] = "LocalWorkspace",
+                    ["runtime:provider"] = "MockPiMateria",
+                    ["runtime:defaultMateriaLoadout"] = "success-pr",
+                    ["localWork:definitions:0:repoKey"] = "test-repo",
+                    ["localWork:definitions:0:title"] = "Rework Test: Fix review feedback",
+                    ["localWork:definitions:0:body"] = "Address review feedback from the prior PR.",
+                    ["localWork:definitions:0:tags:0"] = "agent-ready",
+                    ["localWork:definitions:0:priority"] = "1",
+                    ["localWork:definitions:0:status"] = "New",
+                    ["repositories:test-repo:cloneUrl"] = _tempRepoPath,
+                    ["repositories:test-repo:defaultBranch"] = "main",
+                    ["repositories:test-repo:environmentProfile"] = "local-default",
+                    ["repositories:test-repo:runtimeProfile"] = "pi-materia-default",
+                }
+            )
             .Build();
 
         // ── 2. Build the DI container ───────────────────────────────
@@ -131,6 +157,7 @@ public class ReworkConsumptionTests : IAsyncLifetime
         services.AddAgentControllerDbContext(config);
         services.AddAgentControllerRepositories();
         services.AddAgentControllerLifecycleService();
+        services.AddApplicationHandlers();
         services.AddAgentControllerNoOpProviders();
 
         // Wire real providers (last-registered wins over no-ops)
@@ -161,7 +188,9 @@ public class ReworkConsumptionTests : IAsyncLifetime
 
             // Trigger EnsureInitializedAsync which upserts configured work items into the store
             var eligibleCandidates = await workSource.FindEligibleAsync(
-                new WorkQuery { MaxResults = 10 }, CancellationToken.None);
+                new WorkQuery { MaxResults = 10 },
+                CancellationToken.None
+            );
 
             Assert.NotEmpty(eligibleCandidates);
             var workItemId = eligibleCandidates[0].Id;
@@ -203,7 +232,8 @@ public class ReworkConsumptionTests : IAsyncLifetime
                 baseCommitSha: _reworkBranchSha,
                 feedbackBundleJson: feedbackBundleJson,
                 feedbackBundleId: feedbackBundleId,
-                cancellationToken: CancellationToken.None);
+                cancellationToken: CancellationToken.None
+            );
 
             Assert.NotNull(cycle);
             Assert.Equal(ReworkCycleStatus.Pending, cycle.Status);
@@ -213,7 +243,9 @@ public class ReworkConsumptionTests : IAsyncLifetime
 
         // ── 5. Create PollingWorker and run a poll cycle ────────────
         var optionsMonitor = provider.GetRequiredService<IOptionsMonitor<AgentControllerOptions>>();
-        var workSourceMonitor = provider.GetRequiredService<IOptionsMonitor<WorkSourceOptionsView>>();
+        var workSourceMonitor = provider.GetRequiredService<
+            IOptionsMonitor<WorkSourceOptionsView>
+        >();
         var logger = provider.GetRequiredService<ILogger<PollingWorker>>();
 
         var worker = new PollingWorker(scopeFactory, optionsMonitor, workSourceMonitor, logger);
@@ -232,12 +264,16 @@ public class ReworkConsumptionTests : IAsyncLifetime
         var workItemStore = verifyScope.ServiceProvider.GetRequiredService<IWorkItemStore>();
 
         var workItems = await workItemStore.ListAsync(
-            new ListWorkItemsQuery { MaxResults = 10 }, CancellationToken.None);
+            new ListWorkItemsQuery { MaxResults = 10 },
+            CancellationToken.None
+        );
         Assert.NotEmpty(workItems);
         var workItem = workItems[0];
 
         var runs = await runStore.ListAsync(
-            new ListRunsQuery { MaxResults = 10 }, CancellationToken.None);
+            new ListRunsQuery { MaxResults = 10 },
+            CancellationToken.None
+        );
         Assert.NotEmpty(runs);
         var run = runs[0];
         Assert.Equal(workItem.Id, run.WorkItemId);
@@ -245,10 +281,14 @@ public class ReworkConsumptionTests : IAsyncLifetime
         // The run should have progressed past context injection
         Assert.True(
             run.Status >= RunLifecycleState.ContextInjected,
-            $"Run should have progressed past context injection, but was: {run.Status}. Error: {run.Error}");
+            $"Run should have progressed past context injection, but was: {run.Status}. Error: {run.Error}"
+        );
 
         // ── 7. Verify ReworkCycle was marked Consumed ───────────────
-        var pendingAfter = await cycleStore.GetPendingForWorkItemAsync(workItem.Id, CancellationToken.None);
+        var pendingAfter = await cycleStore.GetPendingForWorkItemAsync(
+            workItem.Id,
+            CancellationToken.None
+        );
         Assert.Null(pendingAfter);
 
         var consumedCycles = await cycleStore.ListConsumedAsync(CancellationToken.None);
@@ -261,42 +301,66 @@ public class ReworkConsumptionTests : IAsyncLifetime
 
         // ── 8. Verify rework-context.md was written ─────────────────
         // AgentRunHandle.EnvironmentId is not set by the worker; look up via DbContext.
-        var envEntity = await verifyDb.Environments
-            .FirstOrDefaultAsync(e => e.RunId == run.RunId);
+        var envEntity = await verifyDb.Environments.FirstOrDefaultAsync(e => e.RunId == run.RunId);
         Assert.NotNull(envEntity);
 
         var contextDir = Path.Combine(envEntity!.RootPath, "context");
         var reworkContextPath = Path.Combine(contextDir, "rework-context.md");
 
-        Assert.True(File.Exists(reworkContextPath),
-            $"rework-context.md should exist at {reworkContextPath}");
+        Assert.True(
+            File.Exists(reworkContextPath),
+            $"rework-context.md should exist at {reworkContextPath}"
+        );
 
         var reworkContextContent = await File.ReadAllTextAsync(reworkContextPath);
 
         // Verify the markdown schema
-        Assert.True(reworkContextContent.Contains("# Rework Context"), "Missing '# Rework Context' header");
-        Assert.True(reworkContextContent.Contains("You are continuing an EXISTING PR. Do not open a new one."),
-            "Missing preamble instruction");
-        Assert.True(reworkContextContent.Contains("## Prior Run"), "Missing '## Prior Run' section");
-        Assert.True(reworkContextContent.Contains(_reworkBranch),
-            $"Missing branch reference '{_reworkBranch}'");
+        Assert.True(
+            reworkContextContent.Contains("# Rework Context"),
+            "Missing '# Rework Context' header"
+        );
+        Assert.True(
+            reworkContextContent.Contains(
+                "You are continuing an EXISTING PR. Do not open a new one."
+            ),
+            "Missing preamble instruction"
+        );
+        Assert.True(
+            reworkContextContent.Contains("## Prior Run"),
+            "Missing '## Prior Run' section"
+        );
+        Assert.True(
+            reworkContextContent.Contains(_reworkBranch),
+            $"Missing branch reference '{_reworkBranch}'"
+        );
         Assert.True(reworkContextContent.Contains("run-prior-001"), "Missing prior run ID");
         Assert.True(reworkContextContent.Contains("Cycle"), "Missing cycle section");
-        Assert.True(reworkContextContent.Contains("## Review Threads"), "Missing '## Review Threads' section");
+        Assert.True(
+            reworkContextContent.Contains("## Review Threads"),
+            "Missing '## Review Threads' section"
+        );
         Assert.True(reworkContextContent.Contains("feature.txt"), "Missing file path from thread");
-        Assert.True(reworkContextContent.Contains("Please add more detail to this feature."),
-            "Missing comment body from thread");
+        Assert.True(
+            reworkContextContent.Contains("Please add more detail to this feature."),
+            "Missing comment body from thread"
+        );
 
         // ── 9. Verify controller-run.json contains the rework block ─
         var controllerRunPath = Path.Combine(contextDir, "controller-run.json");
-        Assert.True(File.Exists(controllerRunPath),
-            $"controller-run.json should exist at {controllerRunPath}");
+        Assert.True(
+            File.Exists(controllerRunPath),
+            $"controller-run.json should exist at {controllerRunPath}"
+        );
 
         var controllerRunContent = await File.ReadAllTextAsync(controllerRunPath);
-        var controllerRunJson = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(controllerRunContent);
+        var controllerRunJson = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+            controllerRunContent
+        );
         Assert.NotNull(controllerRunJson);
-        Assert.True(controllerRunJson!.ContainsKey("rework"),
-            "controller-run.json should contain a 'rework' block");
+        Assert.True(
+            controllerRunJson!.ContainsKey("rework"),
+            "controller-run.json should contain a 'rework' block"
+        );
 
         var reworkBlock = controllerRunJson!["rework"];
         Assert.Equal(1, reworkBlock.GetProperty("cycleNumber").GetInt32());
@@ -305,8 +369,7 @@ public class ReworkConsumptionTests : IAsyncLifetime
 
         // ── 10. Verify the repository was cloned onto the rework branch ─
         var repoJsonPath = Path.Combine(contextDir, "repository.json");
-        Assert.True(File.Exists(repoJsonPath),
-            $"repository.json should exist at {repoJsonPath}");
+        Assert.True(File.Exists(repoJsonPath), $"repository.json should exist at {repoJsonPath}");
 
         var repoJsonContent = await File.ReadAllTextAsync(repoJsonPath);
         var repoJson = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(repoJsonContent);
@@ -325,34 +388,36 @@ public class ReworkConsumptionTests : IAsyncLifetime
         var dbPath = Path.Combine(_tempRoot, $"test-no-rework-{Guid.NewGuid():N}.db");
 
         var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["agentController:workerId"] = "test-no-rework-worker",
-                ["agentController:pollIntervalSeconds"] = "10",
-                ["agentController:maxConcurrentRuns"] = "1",
-                ["agentController:staleTimeoutSeconds"] = "300",
-                ["agentController:runRoot"] = _tempRunRoot,
-                ["agentController:retainSuccessfulRuns"] = "true",
-                ["agentController:retainFailedRuns"] = "true",
-                ["agentController:workerEnabled"] = "true",
-                ["persistence:provider"] = "Sqlite",
-                ["persistence:connectionString"] = $"Data Source={dbPath}",
-                ["workSource:provider"] = "LocalFile",
-                ["sourceControl:provider"] = "LocalGit",
-                ["environmentProvider:provider"] = "LocalWorkspace",
-                ["runtime:provider"] = "MockPiMateria",
-                ["runtime:defaultMateriaLoadout"] = "success-pr",
-                ["localWork:definitions:0:repoKey"] = "test-repo",
-                ["localWork:definitions:0:title"] = "Happy Path: No rework needed",
-                ["localWork:definitions:0:body"] = "This work item has no rework cycle.",
-                ["localWork:definitions:0:tags:0"] = "agent-ready",
-                ["localWork:definitions:0:priority"] = "1",
-                ["localWork:definitions:0:status"] = "New",
-                ["repositories:test-repo:cloneUrl"] = _tempRepoPath,
-                ["repositories:test-repo:defaultBranch"] = "main",
-                ["repositories:test-repo:environmentProfile"] = "local-default",
-                ["repositories:test-repo:runtimeProfile"] = "pi-materia-default",
-            })
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["agentController:workerId"] = "test-no-rework-worker",
+                    ["agentController:pollIntervalSeconds"] = "10",
+                    ["agentController:maxConcurrentRuns"] = "1",
+                    ["agentController:staleTimeoutSeconds"] = "300",
+                    ["agentController:runRoot"] = _tempRunRoot,
+                    ["agentController:retainSuccessfulRuns"] = "true",
+                    ["agentController:retainFailedRuns"] = "true",
+                    ["agentController:workerEnabled"] = "true",
+                    ["persistence:provider"] = "Sqlite",
+                    ["persistence:connectionString"] = $"Data Source={dbPath}",
+                    ["workSource:provider"] = "LocalFile",
+                    ["sourceControl:provider"] = "LocalGit",
+                    ["environmentProvider:provider"] = "LocalWorkspace",
+                    ["runtime:provider"] = "MockPiMateria",
+                    ["runtime:defaultMateriaLoadout"] = "success-pr",
+                    ["localWork:definitions:0:repoKey"] = "test-repo",
+                    ["localWork:definitions:0:title"] = "Happy Path: No rework needed",
+                    ["localWork:definitions:0:body"] = "This work item has no rework cycle.",
+                    ["localWork:definitions:0:tags:0"] = "agent-ready",
+                    ["localWork:definitions:0:priority"] = "1",
+                    ["localWork:definitions:0:status"] = "New",
+                    ["repositories:test-repo:cloneUrl"] = _tempRepoPath,
+                    ["repositories:test-repo:defaultBranch"] = "main",
+                    ["repositories:test-repo:environmentProfile"] = "local-default",
+                    ["repositories:test-repo:runtimeProfile"] = "pi-materia-default",
+                }
+            )
             .Build();
 
         var services = new ServiceCollection();
@@ -361,6 +426,7 @@ public class ReworkConsumptionTests : IAsyncLifetime
         services.AddAgentControllerDbContext(config);
         services.AddAgentControllerRepositories();
         services.AddAgentControllerLifecycleService();
+        services.AddApplicationHandlers();
         services.AddAgentControllerNoOpProviders();
         services.AddAgentControllerLocalFileWorkSource();
         services.AddAgentControllerLocalGitSourceControl();
@@ -380,7 +446,9 @@ public class ReworkConsumptionTests : IAsyncLifetime
         // Do NOT seed any ReworkCycle
 
         var optionsMonitor = provider.GetRequiredService<IOptionsMonitor<AgentControllerOptions>>();
-        var workSourceMonitor = provider.GetRequiredService<IOptionsMonitor<WorkSourceOptionsView>>();
+        var workSourceMonitor = provider.GetRequiredService<
+            IOptionsMonitor<WorkSourceOptionsView>
+        >();
         var logger = provider.GetRequiredService<ILogger<PollingWorker>>();
 
         var worker = new PollingWorker(scopeFactory, optionsMonitor, workSourceMonitor, logger);
@@ -396,27 +464,31 @@ public class ReworkConsumptionTests : IAsyncLifetime
         var cycleStore = verifyScope.ServiceProvider.GetRequiredService<IReworkCycleStore>();
 
         var runs = await runStore.ListAsync(
-            new ListRunsQuery { MaxResults = 10 }, CancellationToken.None);
+            new ListRunsQuery { MaxResults = 10 },
+            CancellationToken.None
+        );
 
         Assert.NotEmpty(runs);
         var run = runs[0];
         Assert.True(
             run.Status >= RunLifecycleState.ContextInjected,
-            $"Run should have progressed past context injection, but was: {run.Status}. Error: {run.Error}");
+            $"Run should have progressed past context injection, but was: {run.Status}. Error: {run.Error}"
+        );
 
         // Verify no rework cycle was consumed
         var consumedCycles = await cycleStore.ListConsumedAsync(CancellationToken.None);
         Assert.Empty(consumedCycles);
 
         // Verify no rework-context.md was written
-        var envEntity = await verifyDb.Environments
-            .FirstOrDefaultAsync(e => e.RunId == run.RunId);
+        var envEntity = await verifyDb.Environments.FirstOrDefaultAsync(e => e.RunId == run.RunId);
         Assert.NotNull(envEntity);
 
         var contextDir = Path.Combine(envEntity!.RootPath, "context");
         var reworkContextPath = Path.Combine(contextDir, "rework-context.md");
-        Assert.False(File.Exists(reworkContextPath),
-            "rework-context.md should NOT exist when there is no rework cycle.");
+        Assert.False(
+            File.Exists(reworkContextPath),
+            "rework-context.md should NOT exist when there is no rework cycle."
+        );
 
         // Verify the repository was cloned onto main (default branch)
         var repoJsonPath = Path.Combine(contextDir, "repository.json");
@@ -438,34 +510,37 @@ public class ReworkConsumptionTests : IAsyncLifetime
         var dbPath = Path.Combine(_tempRoot, $"test-rework-events-{Guid.NewGuid():N}.db");
 
         var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["agentController:workerId"] = "test-rework-events-worker",
-                ["agentController:pollIntervalSeconds"] = "10",
-                ["agentController:maxConcurrentRuns"] = "1",
-                ["agentController:staleTimeoutSeconds"] = "300",
-                ["agentController:runRoot"] = _tempRunRoot,
-                ["agentController:retainSuccessfulRuns"] = "true",
-                ["agentController:retainFailedRuns"] = "true",
-                ["agentController:workerEnabled"] = "true",
-                ["persistence:provider"] = "Sqlite",
-                ["persistence:connectionString"] = $"Data Source={dbPath}",
-                ["workSource:provider"] = "LocalFile",
-                ["sourceControl:provider"] = "LocalGit",
-                ["environmentProvider:provider"] = "LocalWorkspace",
-                ["runtime:provider"] = "MockPiMateria",
-                ["runtime:defaultMateriaLoadout"] = "success-pr",
-                ["localWork:definitions:0:repoKey"] = "test-repo",
-                ["localWork:definitions:0:title"] = "Rework Events Test",
-                ["localWork:definitions:0:body"] = "Verify lifecycle events for rework consumption.",
-                ["localWork:definitions:0:tags:0"] = "agent-ready",
-                ["localWork:definitions:0:priority"] = "1",
-                ["localWork:definitions:0:status"] = "New",
-                ["repositories:test-repo:cloneUrl"] = _tempRepoPath,
-                ["repositories:test-repo:defaultBranch"] = "main",
-                ["repositories:test-repo:environmentProfile"] = "local-default",
-                ["repositories:test-repo:runtimeProfile"] = "pi-materia-default",
-            })
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["agentController:workerId"] = "test-rework-events-worker",
+                    ["agentController:pollIntervalSeconds"] = "10",
+                    ["agentController:maxConcurrentRuns"] = "1",
+                    ["agentController:staleTimeoutSeconds"] = "300",
+                    ["agentController:runRoot"] = _tempRunRoot,
+                    ["agentController:retainSuccessfulRuns"] = "true",
+                    ["agentController:retainFailedRuns"] = "true",
+                    ["agentController:workerEnabled"] = "true",
+                    ["persistence:provider"] = "Sqlite",
+                    ["persistence:connectionString"] = $"Data Source={dbPath}",
+                    ["workSource:provider"] = "LocalFile",
+                    ["sourceControl:provider"] = "LocalGit",
+                    ["environmentProvider:provider"] = "LocalWorkspace",
+                    ["runtime:provider"] = "MockPiMateria",
+                    ["runtime:defaultMateriaLoadout"] = "success-pr",
+                    ["localWork:definitions:0:repoKey"] = "test-repo",
+                    ["localWork:definitions:0:title"] = "Rework Events Test",
+                    ["localWork:definitions:0:body"] =
+                        "Verify lifecycle events for rework consumption.",
+                    ["localWork:definitions:0:tags:0"] = "agent-ready",
+                    ["localWork:definitions:0:priority"] = "1",
+                    ["localWork:definitions:0:status"] = "New",
+                    ["repositories:test-repo:cloneUrl"] = _tempRepoPath,
+                    ["repositories:test-repo:defaultBranch"] = "main",
+                    ["repositories:test-repo:environmentProfile"] = "local-default",
+                    ["repositories:test-repo:runtimeProfile"] = "pi-materia-default",
+                }
+            )
             .Build();
 
         var services = new ServiceCollection();
@@ -474,6 +549,7 @@ public class ReworkConsumptionTests : IAsyncLifetime
         services.AddAgentControllerDbContext(config);
         services.AddAgentControllerRepositories();
         services.AddAgentControllerLifecycleService();
+        services.AddApplicationHandlers();
         services.AddAgentControllerNoOpProviders();
         services.AddAgentControllerLocalFileWorkSource();
         services.AddAgentControllerLocalGitSourceControl();
@@ -497,7 +573,9 @@ public class ReworkConsumptionTests : IAsyncLifetime
             var cycleStore = seedScope.ServiceProvider.GetRequiredService<IReworkCycleStore>();
 
             var eligibleCandidates = await workSource.FindEligibleAsync(
-                new WorkQuery { MaxResults = 10 }, CancellationToken.None);
+                new WorkQuery { MaxResults = 10 },
+                CancellationToken.None
+            );
             var workItemId = eligibleCandidates[0].Id;
 
             var feedbackBundle = new List<ReviewThread>
@@ -526,15 +604,22 @@ public class ReworkConsumptionTests : IAsyncLifetime
             };
 
             await cycleStore.CreateAsync(
-                workItemId, 1, "run-prior-events", _reworkBranch,
-                "https://example.com/pr/99", _reworkBranchSha,
+                workItemId,
+                1,
+                "run-prior-events",
+                _reworkBranch,
+                "https://example.com/pr/99",
+                _reworkBranchSha,
                 JsonSerializer.Serialize(feedbackBundle),
                 "test-bundle-events-" + Guid.NewGuid().ToString("N")[..8],
-                CancellationToken.None);
+                CancellationToken.None
+            );
         }
 
         var optionsMonitor = provider.GetRequiredService<IOptionsMonitor<AgentControllerOptions>>();
-        var workSourceMonitor = provider.GetRequiredService<IOptionsMonitor<WorkSourceOptionsView>>();
+        var workSourceMonitor = provider.GetRequiredService<
+            IOptionsMonitor<WorkSourceOptionsView>
+        >();
         var logger = provider.GetRequiredService<ILogger<PollingWorker>>();
 
         var worker = new PollingWorker(scopeFactory, optionsMonitor, workSourceMonitor, logger);
@@ -549,7 +634,9 @@ public class ReworkConsumptionTests : IAsyncLifetime
         var eventStore = verifyScope.ServiceProvider.GetRequiredService<ILifecycleEventStore>();
 
         var runs = await runStore.ListAsync(
-            new ListRunsQuery { MaxResults = 10 }, CancellationToken.None);
+            new ListRunsQuery { MaxResults = 10 },
+            CancellationToken.None
+        );
         Assert.NotEmpty(runs);
         var run = runs[0];
 
@@ -595,11 +682,16 @@ public class ReworkConsumptionTests : IAsyncLifetime
         {
             var stdErr = await stdErrTask;
             throw new InvalidOperationException(
-                $"git {string.Join(' ', args)} failed (exit {process.ExitCode}): {stdErr}");
+                $"git {string.Join(' ', args)} failed (exit {process.ExitCode}): {stdErr}"
+            );
         }
     }
 
-    private static async Task<string> RunGitAsyncCapture(string workingDir, string[] args, TimeSpan timeout)
+    private static async Task<string> RunGitAsyncCapture(
+        string workingDir,
+        string[] args,
+        TimeSpan timeout
+    )
     {
         using var process = new Process
         {
@@ -627,7 +719,8 @@ public class ReworkConsumptionTests : IAsyncLifetime
         {
             var stdErr = await stdErrTask;
             throw new InvalidOperationException(
-                $"git {string.Join(' ', args)} failed (exit {process.ExitCode}): {stdErr}");
+                $"git {string.Join(' ', args)} failed (exit {process.ExitCode}): {stdErr}"
+            );
         }
 
         return await stdOutTask;

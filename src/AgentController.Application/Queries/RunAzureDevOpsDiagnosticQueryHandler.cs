@@ -4,76 +4,106 @@ using AgentController.Application.Results;
 namespace AgentController.Application.Queries;
 
 /// <summary>
-/// Handles <see cref="RunAzureDevOpsDiagnosticQuery"/> by validating configuration,
-/// resolving the PAT, and delegating connectivity verification to
-/// <see cref="IAzureDevOpsBoardsClient"/>.
+/// Validates the effective Azure DevOps profile, resolves its PAT at the last responsible
+/// moment, and delegates connectivity verification to <see cref="IAzureDevOpsBoardsClient"/>.
 /// </summary>
 public sealed class RunAzureDevOpsDiagnosticQueryHandler(
-        IAzureDevOpsDiagnosticConfig diagnosticConfig,
-        IAzureDevOpsBoardsClient boardsClient)
-    : IQueryHandler<RunAzureDevOpsDiagnosticQuery, AzureDevOpsDiagnosticResult>
+    IAzureDevOpsDiagnosticConfig diagnosticConfig,
+    IAzureDevOpsBoardsClientFactory boardsClientFactory,
+    IManagedProfileResolver profileResolver
+) : IQueryHandler<RunAzureDevOpsDiagnosticQuery, AzureDevOpsDiagnosticResult>
 {
     public async Task<AzureDevOpsDiagnosticResult> ExecuteAsync(
         RunAzureDevOpsDiagnosticQuery query,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
+        var resolvedEnvironment = await profileResolver.ResolveAzureDevOpsEnvironmentAsync(
+            query.EnvironmentKey,
+            cancellationToken
+        );
+
+        var organizationUrl =
+            resolvedEnvironment?.IsManaged == true
+                ? resolvedEnvironment.Profile.OrganizationUrl
+                : diagnosticConfig.OrganizationUrl;
+        var project =
+            resolvedEnvironment?.IsManaged == true
+                ? resolvedEnvironment.Profile.Project
+                : diagnosticConfig.Project;
+
         var errors = new List<string>();
-
-        // (1) Validate required configuration fields
-        if (string.IsNullOrWhiteSpace(diagnosticConfig.OrganizationUrl))
+        if (string.IsNullOrWhiteSpace(organizationUrl))
         {
-            errors.Add("workSource:organizationUrl is not configured.");
+            errors.Add("Azure DevOps organization URL is not configured.");
         }
-        if (string.IsNullOrWhiteSpace(diagnosticConfig.Project))
+        if (string.IsNullOrWhiteSpace(project))
         {
-            errors.Add("workSource:project is not configured.");
+            errors.Add("Azure DevOps project is not configured.");
         }
 
-        // Resolve the PAT (may throw if ENV: reference is missing)
         string? resolvedPat = null;
         try
         {
-            resolvedPat = diagnosticConfig.ResolvePersonalAccessToken();
+            resolvedPat =
+                resolvedEnvironment?.IsManaged == true
+                    ? ResolveManagedPat(resolvedEnvironment.Profile.PatEnvironmentVariable)
+                    : diagnosticConfig.ResolvePersonalAccessToken();
         }
         catch (InvalidOperationException ex)
         {
             errors.Add($"PAT resolution failed: {ex.Message}");
         }
 
-        if (string.IsNullOrWhiteSpace(resolvedPat) && errors.TrueForAll(e => !e.StartsWith("PAT resolution failed:", StringComparison.Ordinal)))
+        if (
+            string.IsNullOrWhiteSpace(resolvedPat)
+            && errors.TrueForAll(error =>
+                !error.StartsWith("PAT resolution failed:", StringComparison.Ordinal)
+            )
+        )
         {
-            errors.Add("azureDevOps:personalAccessToken is not configured.");
+            errors.Add("Azure DevOps PAT is not configured.");
         }
 
-        // If config validation failed, return early without making API calls
         if (errors.Count > 0)
         {
             return new AzureDevOpsDiagnosticResult
             {
                 Status = "ConfigurationError",
-                OrganizationUrl = diagnosticConfig.OrganizationUrl,
-                Project = diagnosticConfig.Project,
+                OrganizationUrl = organizationUrl,
+                Project = project,
                 PatConfigured = !string.IsNullOrWhiteSpace(resolvedPat),
                 Errors = errors,
                 Timestamp = DateTimeOffset.UtcNow,
             };
         }
 
-        // (2) Verify connectivity via the client abstraction
-        var connectivityResult = await boardsClient.VerifyConnectivityAsync(
-            diagnosticConfig.OrganizationUrl!,
-            diagnosticConfig.Project!,
-            resolvedPat!,
-            cancellationToken);
-
-        // Map repositories from the connectivity result
-        var repositories = connectivityResult.Repositories
-            .Select(r => new AzureDevOpsDiagnosticRepository
+        var clientProfile =
+            resolvedEnvironment?.Profile
+            ?? new AgentController.Domain.AzureDevOpsEnvironmentProfile
             {
-                Id = r.Id,
-                Name = r.Name,
-                DefaultBranch = r.DefaultBranch,
-                RemoteUrl = r.RemoteUrl,
+                Key = "diagnostic",
+                DisplayName = "Diagnostic Azure DevOps environment",
+                Enabled = true,
+                OrganizationUrl = organizationUrl!,
+                Project = project!,
+            };
+        var boardsClient = boardsClientFactory.Create(clientProfile);
+        using var disposableClient = boardsClient as IDisposable;
+        var connectivityResult = await boardsClient.VerifyConnectivityAsync(
+            organizationUrl!,
+            project!,
+            resolvedPat!,
+            cancellationToken
+        );
+
+        var repositories = connectivityResult
+            .Repositories.Select(repository => new AzureDevOpsDiagnosticRepository
+            {
+                Id = repository.Id,
+                Name = repository.Name,
+                DefaultBranch = repository.DefaultBranch,
+                RemoteUrl = repository.RemoteUrl,
             })
             .ToList();
 
@@ -82,17 +112,18 @@ public sealed class RunAzureDevOpsDiagnosticQueryHandler(
             return new AzureDevOpsDiagnosticResult
             {
                 Status = "Connected",
-                OrganizationUrl = diagnosticConfig.OrganizationUrl,
-                Project = diagnosticConfig.Project,
+                OrganizationUrl = organizationUrl,
+                Project = project,
                 PatConfigured = true,
-                HttpStatusCode = connectivityResult.Status is { } statusCode ? (int)statusCode : null,
+                HttpStatusCode = connectivityResult.Status is { } statusCode
+                    ? (int)statusCode
+                    : null,
                 Repositories = repositories,
                 Errors = errors,
                 Timestamp = DateTimeOffset.UtcNow,
             };
         }
 
-        // Connection failed — include the error from the client
         if (!string.IsNullOrEmpty(connectivityResult.Error))
         {
             errors.Add(connectivityResult.Error);
@@ -101,14 +132,36 @@ public sealed class RunAzureDevOpsDiagnosticQueryHandler(
         return new AzureDevOpsDiagnosticResult
         {
             Status = "ConnectionFailed",
-            OrganizationUrl = diagnosticConfig.OrganizationUrl,
-            Project = diagnosticConfig.Project,
+            OrganizationUrl = organizationUrl,
+            Project = project,
             PatConfigured = true,
-            HttpStatusCode = connectivityResult.Status is { } statusCode2 ? (int)statusCode2 : null,
+            HttpStatusCode = connectivityResult.Status is { } failedStatusCode
+                ? (int)failedStatusCode
+                : null,
             ApiError = connectivityResult.Error,
             Repositories = repositories,
             Errors = errors,
             Timestamp = DateTimeOffset.UtcNow,
         };
+    }
+
+    private static string ResolveManagedPat(string environmentVariable)
+    {
+        if (string.IsNullOrWhiteSpace(environmentVariable))
+        {
+            throw new InvalidOperationException(
+                "The managed profile has no PAT environment-variable reference."
+            );
+        }
+
+        var value = Environment.GetEnvironmentVariable(environmentVariable);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new InvalidOperationException(
+                $"PAT environment variable '{environmentVariable}' is missing or empty."
+            );
+        }
+
+        return value;
     }
 }

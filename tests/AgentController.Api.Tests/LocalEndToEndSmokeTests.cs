@@ -41,14 +41,30 @@ public class LocalEndToEndSmokeTests : IAsyncLifetime
 
         // Initialize a minimal git repository so LocalGitSourceControlProvider
         // can clone it during the poll cycle.
-        await RunGitAsync(_tempRepoPath, ["init", "--initial-branch=main"], TimeSpan.FromSeconds(10));
-        await RunGitAsync(_tempRepoPath, ["config", "user.email", "test@example.com"], TimeSpan.FromSeconds(5));
-        await RunGitAsync(_tempRepoPath, ["config", "user.name", "Test User"], TimeSpan.FromSeconds(5));
+        await RunGitAsync(
+            _tempRepoPath,
+            ["init", "--initial-branch=main"],
+            TimeSpan.FromSeconds(10)
+        );
+        await RunGitAsync(
+            _tempRepoPath,
+            ["config", "user.email", "test@example.com"],
+            TimeSpan.FromSeconds(5)
+        );
+        await RunGitAsync(
+            _tempRepoPath,
+            ["config", "user.name", "Test User"],
+            TimeSpan.FromSeconds(5)
+        );
 
         // Add a minimal file so there's something to clone
         await File.WriteAllTextAsync(Path.Combine(_tempRepoPath, "README.md"), "# Test Repo");
         await RunGitAsync(_tempRepoPath, ["add", "README.md"], TimeSpan.FromSeconds(5));
-        await RunGitAsync(_tempRepoPath, ["commit", "-m", "Initial commit"], TimeSpan.FromSeconds(5));
+        await RunGitAsync(
+            _tempRepoPath,
+            ["commit", "-m", "Initial commit"],
+            TimeSpan.FromSeconds(5)
+        );
     }
 
     public Task DisposeAsync()
@@ -73,35 +89,38 @@ public class LocalEndToEndSmokeTests : IAsyncLifetime
     {
         // ── 1. Build configuration ──────────────────────────────────
         var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["agentController:workerId"] = "test-e2e-worker",
-                ["agentController:pollIntervalSeconds"] = "10",
-                ["agentController:maxConcurrentRuns"] = "1",
-                ["agentController:staleTimeoutSeconds"] = "300",
-                ["agentController:runRoot"] = _tempRunRoot,
-                ["agentController:retainSuccessfulRuns"] = "true",
-                ["agentController:retainFailedRuns"] = "true",
-                ["agentController:workerEnabled"] = "true",
-                ["persistence:provider"] = "Sqlite",
-                ["persistence:connectionString"] = $"Data Source={_tempDbPath}",
-                ["workSource:provider"] = "LocalFile",
-                ["sourceControl:provider"] = "LocalGit",
-                ["environmentProvider:provider"] = "LocalWorkspace",
-                ["runtime:provider"] = "MockPiMateria",
-                ["runtime:defaultMateriaLoadout"] = "success-pr",
-                ["localWork:definitions:0:repoKey"] = "test-repo",
-                ["localWork:definitions:0:title"] = "E2E Test: Implement demo feature",
-                ["localWork:definitions:0:body"] = "This is an end-to-end test work item for verifying the local-only controller path.",
-                ["localWork:definitions:0:tags:0"] = "agent-ready",
-                ["localWork:definitions:0:tags:1"] = "test",
-                ["localWork:definitions:0:priority"] = "1",
-                ["localWork:definitions:0:status"] = "New",
-                ["repositories:test-repo:cloneUrl"] = _tempRepoPath,
-                ["repositories:test-repo:defaultBranch"] = "main",
-                ["repositories:test-repo:environmentProfile"] = "local-default",
-                ["repositories:test-repo:runtimeProfile"] = "pi-materia-default",
-            })
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["agentController:workerId"] = "test-e2e-worker",
+                    ["agentController:pollIntervalSeconds"] = "10",
+                    ["agentController:maxConcurrentRuns"] = "1",
+                    ["agentController:staleTimeoutSeconds"] = "300",
+                    ["agentController:runRoot"] = _tempRunRoot,
+                    ["agentController:retainSuccessfulRuns"] = "true",
+                    ["agentController:retainFailedRuns"] = "true",
+                    ["agentController:workerEnabled"] = "true",
+                    ["persistence:provider"] = "Sqlite",
+                    ["persistence:connectionString"] = $"Data Source={_tempDbPath}",
+                    ["workSource:provider"] = "LocalFile",
+                    ["sourceControl:provider"] = "LocalGit",
+                    ["environmentProvider:provider"] = "NoOp",
+                    ["runtime:provider"] = "NoOp",
+                    ["runtime:defaultMateriaLoadout"] = "success-pr",
+                    ["localWork:definitions:0:repoKey"] = "test-repo",
+                    ["localWork:definitions:0:title"] = "E2E Test: Implement demo feature",
+                    ["localWork:definitions:0:body"] =
+                        "This is an end-to-end test work item for verifying the local-only controller path.",
+                    ["localWork:definitions:0:tags:0"] = "agent-ready",
+                    ["localWork:definitions:0:tags:1"] = "test",
+                    ["localWork:definitions:0:priority"] = "1",
+                    ["localWork:definitions:0:status"] = "New",
+                    ["repositories:test-repo:cloneUrl"] = _tempRepoPath,
+                    ["repositories:test-repo:defaultBranch"] = "main",
+                    ["repositories:test-repo:environmentProfile"] = "local-default",
+                    ["repositories:test-repo:runtimeProfile"] = "pi-materia-default",
+                }
+            )
             .Build();
 
         // ── 2. Build the DI container ───────────────────────────────
@@ -113,13 +132,14 @@ public class LocalEndToEndSmokeTests : IAsyncLifetime
         services.AddAgentControllerDbContext(config);
         services.AddAgentControllerRepositories();
         services.AddAgentControllerLifecycleService();
+        services.AddApplicationHandlers();
         services.AddAgentControllerNoOpProviders();
 
-        // Wire real providers (last-registered wins over no-ops)
+        // Work discovery and cloning remain statically selected. Execution providers
+        // are intentionally not selected in appsettings; the managed runtime profile
+        // must choose LocalWorkspace + MockPiMateria for this run.
         services.AddAgentControllerLocalFileWorkSource();
         services.AddAgentControllerLocalGitSourceControl();
-        services.AddAgentControllerLocalWorkspaceEnvironment();
-        services.AddAgentControllerMockPiMateriaRuntime();
 
         // Register a scope factory that wraps the root provider.
         services.AddSingleton<IServiceScopeFactory, SimpleScopeFactory>();
@@ -129,16 +149,52 @@ public class LocalEndToEndSmokeTests : IAsyncLifetime
         // Resolve IServiceScopeFactory from the container.
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
 
-        // ── 3. Run database migrations ──────────────────────────────
+        // ── 3. Create the database and managed execution profiles ──
+        var managedRunRoot = Path.Combine(_tempRoot, "managed-runs");
         await using (var scope = scopeFactory.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
             await db.Database.EnsureCreatedAsync();
+
+            var runtimeStore = scope.ServiceProvider.GetRequiredService<IRuntimeEnvironmentStore>();
+            var repositoryStore = scope.ServiceProvider.GetRequiredService<IRepositoryStore>();
+            Assert.True(
+                await runtimeStore.CreateAsync(
+                    new RuntimeEnvironmentProfile
+                    {
+                        Key = "managed-local",
+                        DisplayName = "Managed local runtime",
+                        Enabled = true,
+                        EnvironmentProvider = "LocalWorkspace",
+                        EnvironmentSettings = new EnvironmentProviderSettings
+                        {
+                            WorkspaceRoot = managedRunRoot,
+                        },
+                        RuntimeProvider = "MockPiMateria",
+                    },
+                    CancellationToken.None
+                )
+            );
+            Assert.True(
+                await repositoryStore.CreateAsync(
+                    new RepositoryProfile
+                    {
+                        Key = "test-repo",
+                        CloneUrl = _tempRepoPath,
+                        DefaultBranch = "main",
+                        Transport = CloneTransport.Local,
+                        RuntimeEnvironmentKey = "managed-local",
+                    },
+                    CancellationToken.None
+                )
+            );
         }
 
         // ── 4. Create PollingWorker and run a poll cycle ────────────
         var optionsMonitor = provider.GetRequiredService<IOptionsMonitor<AgentControllerOptions>>();
-        var workSourceMonitor = provider.GetRequiredService<IOptionsMonitor<WorkSourceOptionsView>>();
+        var workSourceMonitor = provider.GetRequiredService<
+            IOptionsMonitor<WorkSourceOptionsView>
+        >();
         var logger = provider.GetRequiredService<ILogger<PollingWorker>>();
 
         var worker = new PollingWorker(scopeFactory, optionsMonitor, workSourceMonitor, logger);
@@ -164,7 +220,8 @@ public class LocalEndToEndSmokeTests : IAsyncLifetime
         // Find the work item that was seeded
         var workItems = await workItemStore.ListAsync(
             new ListWorkItemsQuery { MaxResults = 10 },
-            CancellationToken.None);
+            CancellationToken.None
+        );
 
         Assert.NotEmpty(workItems);
         var workItem = workItems[0];
@@ -174,7 +231,8 @@ public class LocalEndToEndSmokeTests : IAsyncLifetime
         // Find the run created for this work item
         var runs = await runStore.ListAsync(
             new ListRunsQuery { MaxResults = 10 },
-            CancellationToken.None);
+            CancellationToken.None
+        );
 
         Assert.NotEmpty(runs);
         var run = runs[0];
@@ -183,9 +241,10 @@ public class LocalEndToEndSmokeTests : IAsyncLifetime
         // The run should be in a terminal or near-terminal state (PrOpened for success-pr loadout)
         Assert.True(
             run.Status == RunLifecycleState.PrOpened
-            || run.Status == RunLifecycleState.Completed
-            || run.Status == RunLifecycleState.AwaitingResult, // may still be processing
-            $"Expected run to be PrOpened/Completed, but was: {run.Status}. Error: {run.Error}");
+                || run.Status == RunLifecycleState.Completed
+                || run.Status == RunLifecycleState.AwaitingResult, // may still be processing
+            $"Expected run to be PrOpened/Completed, but was: {run.Status}. Error: {run.Error}"
+        );
 
         // Verify lifecycle events were recorded
         var events = await eventStore.ListByRunIdAsync(run.RunId, CancellationToken.None);
@@ -200,8 +259,25 @@ public class LocalEndToEndSmokeTests : IAsyncLifetime
         Assert.Contains(events, e => e.EventType == "controller.agent_running");
         Assert.Contains(events, e => e.EventType == "controller.awaiting_result");
 
+        // The worker must apply the managed workspace and runtime profile rather
+        // than the appsettings fallback values configured above.
+        Assert.True(Directory.Exists(Path.Combine(managedRunRoot, run.RunId)));
+        Assert.Contains(
+            events,
+            e =>
+                e.EventType == "controller.agent_starting"
+                && e.Payload?.TryGetValue("runtimeProfile", out var runtimeProfile) == true
+                && string.Equals(
+                    runtimeProfile?.ToString(),
+                    "managed-local",
+                    StringComparison.Ordinal
+                )
+        );
+
         // Verify the runtime events were ingested
-        var runtimeEvents = events.Where(e => e.EventType.StartsWith("runtime.", StringComparison.Ordinal)).ToList();
+        var runtimeEvents = events
+            .Where(e => e.EventType.StartsWith("runtime.", StringComparison.Ordinal))
+            .ToList();
         Assert.NotEmpty(runtimeEvents);
         Assert.Contains(runtimeEvents, e => e.EventType == "runtime.accepted");
         Assert.Contains(runtimeEvents, e => e.EventType == "runtime.heartbeat");
@@ -223,17 +299,19 @@ public class LocalEndToEndSmokeTests : IAsyncLifetime
         // Prove the DI container can resolve all local-only provider interfaces
         // after registering them through the canonical extension methods.
         var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["agentController:workerId"] = "test-worker",
-                ["agentController:runRoot"] = "/tmp/test-runs",
-                ["persistence:provider"] = "Sqlite",
-                ["persistence:connectionString"] = "Data Source=test.db",
-                ["workSource:provider"] = "LocalFile",
-                ["sourceControl:provider"] = "LocalGit",
-                ["environmentProvider:provider"] = "LocalWorkspace",
-                ["runtime:provider"] = "MockPiMateria",
-            })
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["agentController:workerId"] = "test-worker",
+                    ["agentController:runRoot"] = "/tmp/test-runs",
+                    ["persistence:provider"] = "Sqlite",
+                    ["persistence:connectionString"] = "Data Source=test.db",
+                    ["workSource:provider"] = "LocalFile",
+                    ["sourceControl:provider"] = "LocalGit",
+                    ["environmentProvider:provider"] = "LocalWorkspace",
+                    ["runtime:provider"] = "MockPiMateria",
+                }
+            )
             .Build();
 
         var services = new ServiceCollection();
@@ -269,7 +347,8 @@ public class LocalEndToEndSmokeTests : IAsyncLifetime
     private static async Task<(int ExitCode, string StdErr)> RunGitAsync(
         string workingDirectory,
         string[] arguments,
-        TimeSpan timeout)
+        TimeSpan timeout
+    )
     {
         using var process = new Process
         {
@@ -304,7 +383,8 @@ public class LocalEndToEndSmokeTests : IAsyncLifetime
         {
             var stdOut = await stdOutTask;
             throw new InvalidOperationException(
-                $"git {string.Join(" ", arguments)} failed (exit {process.ExitCode}):\n{stdOut}\n{stdErr}");
+                $"git {string.Join(" ", arguments)} failed (exit {process.ExitCode}):\n{stdOut}\n{stdErr}"
+            );
         }
 
         return (process.ExitCode, stdErr);
