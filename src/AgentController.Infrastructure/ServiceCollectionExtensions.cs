@@ -48,22 +48,21 @@ public static class AgentControllerServiceCollectionExtensions
         // This allows the Application layer to read ActiveState/CompletedState
         // via IOptionsMonitor<IWorkSourceOptions> without depending on the
         // Infrastructure WorkSourceOptions type directly.
-        services
-            .Configure<WorkSourceOptionsView>(wsOptionsView =>
-            {
-                var wsOptions = configuration
-                    .GetSection(WorkSourceOptions.SectionName)
-                    .Get<WorkSourceOptions>();
+        services.Configure<WorkSourceOptionsView>(wsOptionsView =>
+        {
+            var wsOptions = configuration
+                .GetSection(WorkSourceOptions.SectionName)
+                .Get<WorkSourceOptions>();
 
-                if (wsOptions is not null)
-                {
-                    wsOptionsView.OrganizationUrl = wsOptions.OrganizationUrl;
-                    wsOptionsView.Project = wsOptions.Project;
-                    wsOptionsView.ActiveState = wsOptions.ActiveState;
-                    wsOptionsView.CompletedState = wsOptions.CompletedState;
-                    wsOptionsView.EligibleStates = wsOptions.EligibleStates;
-                }
-            });
+            if (wsOptions is not null)
+            {
+                wsOptionsView.OrganizationUrl = wsOptions.OrganizationUrl;
+                wsOptionsView.Project = wsOptions.Project;
+                wsOptionsView.ActiveState = wsOptions.ActiveState;
+                wsOptionsView.CompletedState = wsOptions.CompletedState;
+                wsOptionsView.EligibleStates = wsOptions.EligibleStates;
+            }
+        });
 
         services
             .AddOptions<SourceControlOptions>()
@@ -124,13 +123,11 @@ public static class AgentControllerServiceCollectionExtensions
         IConfiguration configuration
     )
     {
-        var persistenceOptions = configuration
-            .GetSection(PersistenceOptions.SectionName)
-            .Get<PersistenceOptions>()
+        var persistenceOptions =
+            configuration.GetSection(PersistenceOptions.SectionName).Get<PersistenceOptions>()
             ?? new PersistenceOptions();
 
-        var connectionString =
-            PersistenceConnectionResolver.Resolve(persistenceOptions);
+        var connectionString = PersistenceConnectionResolver.Resolve(persistenceOptions);
 
         services.AddDbContext<AgentControllerDbContext>(options =>
         {
@@ -148,7 +145,8 @@ public static class AgentControllerServiceCollectionExtensions
     /// persistence contracts (<see cref="IWorkItemStore"/>, <see cref="IAgentRunStore"/>,
     /// <see cref="ILifecycleEventStore"/>, <see cref="IEnvironmentStore"/>,
     /// <see cref="IRepositoryStore"/>, <see cref="IAzureDevOpsEnvironmentStore"/>,
-    /// <see cref="IReworkCycleStore"/>, <see cref="IReworkFeedbackStore"/>).
+    /// <see cref="IRuntimeEnvironmentStore"/>, <see cref="IReworkCycleStore"/>,
+    /// <see cref="IReworkFeedbackStore"/>).
     ///
     /// Repositories are registered as scoped so each request or worker poll cycle
     /// gets a fresh unit-of-work backed by the same <see cref="AgentControllerDbContext"/>.
@@ -165,6 +163,7 @@ public static class AgentControllerServiceCollectionExtensions
         services.AddScoped<IEnvironmentStore, EfEnvironmentStore>();
         services.AddScoped<IRepositoryStore, EfRepositoryStore>();
         services.AddScoped<IAzureDevOpsEnvironmentStore, EfAzureDevOpsEnvironmentStore>();
+        services.AddScoped<IRuntimeEnvironmentStore, EfRuntimeEnvironmentStore>();
         services.AddScoped<IReworkCycleStore, EfReworkCycleStore>();
         services.AddScoped<IReworkFeedbackStore, EfReworkFeedbackStore>();
 
@@ -179,7 +178,8 @@ public static class AgentControllerServiceCollectionExtensions
     /// Requires <see cref="AddAgentControllerRepositories"/> to be called first.
     /// </summary>
     public static IServiceCollection AddAgentControllerLifecycleService(
-        this IServiceCollection services)
+        this IServiceCollection services
+    )
     {
         services.AddScoped<IRunLifecycleService, RunLifecycleService>();
         services.AddScoped<IAzureDevOpsDiagnosticConfig, AzureDevOpsDiagnosticConfig>();
@@ -257,7 +257,8 @@ public static class AgentControllerServiceCollectionExtensions
     /// <see cref="ISourceControlProvider"/> wins.
     /// </summary>
     public static IServiceCollection AddAgentControllerLocalGitSourceControl(
-        this IServiceCollection services)
+        this IServiceCollection services
+    )
     {
         services.AddSingleton<ISourceControlProvider, LocalGitSourceControlProvider>();
 
@@ -274,7 +275,8 @@ public static class AgentControllerServiceCollectionExtensions
     /// <see cref="IEnvironmentProvider"/> wins.
     /// </summary>
     public static IServiceCollection AddAgentControllerLocalWorkspaceEnvironment(
-        this IServiceCollection services)
+        this IServiceCollection services
+    )
     {
         services.AddSingleton<IEnvironmentProvider, LocalWorkspaceEnvironmentProvider>();
 
@@ -301,7 +303,8 @@ public static class AgentControllerServiceCollectionExtensions
     /// <see cref="IAgentRuntime"/> wins.
     /// </summary>
     public static IServiceCollection AddAgentControllerPiMateriaRuntime(
-        this IServiceCollection services)
+        this IServiceCollection services
+    )
     {
         services.AddSingleton<IAgentRuntime, PiMateriaRuntime>();
 
@@ -326,7 +329,8 @@ public static class AgentControllerServiceCollectionExtensions
     /// <see cref="IAgentRuntime"/> wins.
     /// </summary>
     public static IServiceCollection AddAgentControllerMockPiMateriaRuntime(
-        this IServiceCollection services)
+        this IServiceCollection services
+    )
     {
         services.AddSingleton<IAgentRuntime, MockPiMateriaRuntime>();
 
@@ -368,7 +372,8 @@ public static class AgentControllerServiceCollectionExtensions
     /// </param>
     public static IServiceCollection AddAgentControllerAzureDevOpsBoardsWorkSource(
         this IServiceCollection services,
-        bool validateConnection = true)
+        bool validateConnection = true
+    )
     {
         // Register the Azure DevOps Boards HTTP client as scoped.
         // Each operation (poll cycle, request) gets a fresh client.
@@ -423,7 +428,8 @@ public static class AgentControllerServiceCollectionExtensions
     /// (for <see cref="LocalFeedbackOptions"/> binding).
     /// </summary>
     public static IServiceCollection AddAgentControllerLocalFeedbackSource(
-        this IServiceCollection services)
+        this IServiceCollection services
+    )
     {
         services.AddSingleton<IFeedbackSource, LocalFeedbackSource>();
         services.AddSingleton<IPrLabelSource, LocalPrLabelSource>();
@@ -443,7 +449,8 @@ public static class AgentControllerServiceCollectionExtensions
     /// (for <see cref="AzureDevOpsBoardsOptions"/> and <see cref="WorkSourceOptions"/>).
     /// </summary>
     public static IServiceCollection AddAgentControllerAzureDevOpsReposFeedbackSource(
-        this IServiceCollection services)
+        this IServiceCollection services
+    )
     {
         // Register the feedback source (thread fetcher) as scoped.
         services.AddScoped<IFeedbackSource>(sp =>
@@ -488,7 +495,8 @@ public static class AgentControllerServiceCollectionExtensions
     /// override this with real implementations.
     /// </summary>
     public static IServiceCollection AddAgentControllerFeedbackFilterPipeline(
-        this IServiceCollection services)
+        this IServiceCollection services
+    )
     {
         // No-op label source: marker gate fails-closed for all PRs.
         // Provider-specific registrations override this.
@@ -531,10 +539,11 @@ public static class AgentControllerServiceCollectionExtensions
     /// </param>
     public static IServiceCollection AddAgentControllerFeedback(
         this IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration
+    )
     {
-        var feedbackProvider = configuration.GetValue<string>(
-            $"{FeedbackOptions.SectionName}:provider") ?? "None";
+        var feedbackProvider =
+            configuration.GetValue<string>($"{FeedbackOptions.SectionName}:provider") ?? "None";
 
         // ── Filter pipeline (always registered, must come first) ──
         // The filter pipeline registers a no-op IPrLabelSource as the default.
@@ -574,7 +583,8 @@ public static class AgentControllerServiceCollectionExtensions
     /// or hanging at clone time.
     /// </summary>
     private static bool ValidateRepositoryProfiles(
-        Dictionary<string, RepositoryProfileOptions> profiles)
+        Dictionary<string, RepositoryProfileOptions> profiles
+    )
     {
         if (profiles is null || profiles.Count == 0)
         {
