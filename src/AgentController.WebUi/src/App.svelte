@@ -4,6 +4,7 @@
   import CollectionPage from './lib/pages/CollectionPage.svelte';
   import NotFoundPage from './lib/pages/NotFoundPage.svelte';
   import OverviewPage from './lib/pages/OverviewPage.svelte';
+  import RepositoryPage from './lib/pages/repositories/RepositoryPage.svelte';
   import { matchRoute, routes } from './lib/routing/routes';
 
   let { client = webUiApi }: { client?: WebUiApiClient } = $props();
@@ -168,12 +169,10 @@
     {:else if currentRoute.id === 'overview'}
       <OverviewPage />
     {:else if currentRoute.id === 'repositories'}
-      <CollectionPage
-        title={currentRoute.title}
-        description={currentRoute.description}
-        singularName="repository"
-        pluralName="repositories"
-        load={client.repositories.list}
+      <RepositoryPage
+        {pathname}
+        {client}
+        navigate={(path) => showPath(path, true)}
       />
     {:else if currentRoute.id === 'ado-environments'}
       <CollectionPage

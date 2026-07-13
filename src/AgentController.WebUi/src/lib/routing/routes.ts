@@ -46,7 +46,14 @@ export const routes: readonly AppRoute[] = [
 
 export function matchRoute(pathname: string): AppRoute | undefined {
   const normalizedPath = normalizePath(pathname);
-  return routes.find((route) => route.path === normalizedPath);
+  const exactRoute = routes.find((route) => route.path === normalizedPath);
+  if (exactRoute) return exactRoute;
+
+  if (/^\/repositories\/(?:new|[^/]+(?:\/edit)?)$/.test(normalizedPath)) {
+    return routes.find((route) => route.id === 'repositories');
+  }
+
+  return undefined;
 }
 
 function normalizePath(pathname: string): string {
