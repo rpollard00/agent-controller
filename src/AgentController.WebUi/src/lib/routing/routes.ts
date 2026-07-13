@@ -53,6 +53,10 @@ export function matchRoute(pathname: string): AppRoute | undefined {
     return routes.find((route) => route.id === 'repositories');
   }
 
+  if (/^\/ado-environments\/(?:new|[^/]+(?:\/edit)?)$/.test(normalizedPath)) {
+    return routes.find((route) => route.id === 'ado-environments');
+  }
+
   return undefined;
 }
 

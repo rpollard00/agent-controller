@@ -4,6 +4,7 @@
   import CollectionPage from './lib/pages/CollectionPage.svelte';
   import NotFoundPage from './lib/pages/NotFoundPage.svelte';
   import OverviewPage from './lib/pages/OverviewPage.svelte';
+  import AzureDevOpsEnvironmentPage from './lib/pages/azureDevOpsEnvironments/AzureDevOpsEnvironmentPage.svelte';
   import RepositoryPage from './lib/pages/repositories/RepositoryPage.svelte';
   import { matchRoute, routes } from './lib/routing/routes';
 
@@ -175,12 +176,10 @@
         navigate={(path) => showPath(path, true)}
       />
     {:else if currentRoute.id === 'ado-environments'}
-      <CollectionPage
-        title={currentRoute.title}
-        description={currentRoute.description}
-        singularName="Azure DevOps environment"
-        pluralName="Azure DevOps environments"
-        load={client.azureDevOpsEnvironments.list}
+      <AzureDevOpsEnvironmentPage
+        {pathname}
+        {client}
+        navigate={(path) => showPath(path, true)}
       />
     {:else}
       <CollectionPage

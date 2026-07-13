@@ -1,0 +1,127 @@
+<script lang="ts">
+  import type { AzureDevOpsEnvironmentProfile } from '../../api/types';
+  import Button from '../../components/ui/Button.svelte';
+  import Card from '../../components/ui/Card.svelte';
+  import DataTable from '../../components/ui/DataTable.svelte';
+  import {
+    azureDevOpsEnvironmentDetailPath,
+    azureDevOpsEnvironmentEditPath,
+  } from './azureDevOpsEnvironmentRoutes';
+
+  let {
+    environments,
+    empty,
+    updatingKey,
+    onrefresh,
+    ontoggle,
+    ondelete,
+  }: {
+    environments: AzureDevOpsEnvironmentProfile[];
+    empty: boolean;
+    updatingKey?: string;
+    onrefresh: () => void;
+    ontoggle: (profile: AzureDevOpsEnvironmentProfile) => void;
+    ondelete: (profile: AzureDevOpsEnvironmentProfile) => void;
+  } = $props();
+</script>
+
+<Card
+  title="Managed Azure DevOps environments"
+  description="Board connections and work-selection policies configured through Agent Controller."
+>
+  {#snippet actions()}
+    <Button variant="secondary" onclick={onrefresh}>Refresh</Button>
+  {/snippet}
+
+  {#if empty}
+    <div class="rounded-xl border border-dashed border-slate-700 px-5 py-12 text-center">
+      <h2 class="font-semibold text-white">No Azure DevOps environments yet</h2>
+      <p class="mx-auto mt-2 max-w-lg text-sm leading-6 text-slate-400">
+        Add an environment to connect an Azure DevOps project and define its board policy.
+      </p>
+      <a
+        href="/ado-environments/new"
+        class="mt-5 inline-flex min-h-11 items-center justify-center rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-300"
+      >
+        Add your first environment
+      </a>
+    </div>
+  {:else}
+    <DataTable caption="Managed Azure DevOps environments">
+      <thead class="bg-slate-950/60 text-xs tracking-wide text-slate-400 uppercase">
+        <tr>
+          <th class="px-4 py-3 font-medium" scope="col">Environment</th>
+          <th class="px-4 py-3 font-medium" scope="col">Project</th>
+          <th class="px-4 py-3 font-medium" scope="col">Work-item type</th>
+          <th class="px-4 py-3 font-medium" scope="col">Status</th>
+          <th class="px-4 py-3 text-right font-medium" scope="col">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-800">
+        {#each environments as profile (profile.key)}
+          <tr class="align-top">
+            <th class="px-4 py-4 font-medium" scope="row">
+              <a
+                class="text-cyan-300 hover:text-cyan-200 hover:underline"
+                href={azureDevOpsEnvironmentDetailPath(profile.key)}
+              >
+                {profile.displayName}
+              </a>
+              <span class="mt-1 block break-all text-xs font-normal text-slate-500">
+                {profile.key}
+              </span>
+            </th>
+            <td class="px-4 py-4 text-slate-300">
+              <span class="block">{profile.project}</span>
+              <span class="mt-1 block max-w-xs break-all text-xs text-slate-500">
+                {profile.organizationUrl}
+              </span>
+            </td>
+            <td class="px-4 py-4 text-slate-300">{profile.workItemType}</td>
+            <td class="px-4 py-4">
+              <span
+                class={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                  profile.enabled
+                    ? 'bg-emerald-950 text-emerald-300'
+                    : 'bg-slate-800 text-slate-300'
+                }`}
+              >
+                {profile.enabled ? 'Enabled' : 'Disabled'}
+              </span>
+            </td>
+            <td class="px-4 py-3">
+              <div class="flex min-w-max justify-end gap-1">
+                <Button
+                  variant="ghost"
+                  disabled={Boolean(updatingKey)}
+                  ariaLabel={`${profile.enabled ? 'Disable' : 'Enable'} ${profile.displayName}`}
+                  onclick={() => ontoggle(profile)}
+                >
+                  {updatingKey === profile.key
+                    ? 'Saving…'
+                    : profile.enabled
+                      ? 'Disable'
+                      : 'Enable'}
+                </Button>
+                <a
+                  href={azureDevOpsEnvironmentEditPath(profile.key)}
+                  class="inline-flex min-h-10 items-center rounded-lg px-3 py-2 text-sm font-semibold text-slate-300 hover:bg-slate-800 hover:text-white"
+                >
+                  Edit
+                </a>
+                <Button
+                  variant="ghost"
+                  disabled={Boolean(updatingKey)}
+                  ariaLabel={`Delete ${profile.displayName}`}
+                  onclick={() => ondelete(profile)}
+                >
+                  Delete
+                </Button>
+              </div>
+            </td>
+          </tr>
+        {/each}
+      </tbody>
+    </DataTable>
+  {/if}
+</Card>
