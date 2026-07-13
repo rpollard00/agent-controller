@@ -2,13 +2,13 @@ using System.Text.Json;
 using AgentController.Application;
 using AgentController.Domain;
 using AgentController.Infrastructure.Data.Entities;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
 namespace AgentController.Infrastructure.Data.Repositories;
 
 /// <summary>
-/// EF Core implementation of <see cref="IRepositoryStore"/> using SQLite.
-/// Supports reading and upserting cached repository profiles.
+/// SQLite-backed persistence for managed repository profiles.
 /// </summary>
 internal sealed class EfRepositoryStore : IRepositoryStore
 {
@@ -24,49 +24,129 @@ internal sealed class EfRepositoryStore : IRepositoryStore
         _db = db;
     }
 
+    public async Task<IReadOnlyList<RepositoryProfile>> ListAsync(
+        CancellationToken cancellationToken
+    )
+    {
+        var entities = await _db
+            .Repositories.AsNoTracking()
+            .OrderBy(x => x.Key)
+            .ToListAsync(cancellationToken);
+
+        return entities.Select(MapToProfile).ToList();
+    }
+
     public async Task<RepositoryProfile?> GetByKeyAsync(
         string key,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
-        var entity = await _db.Repositories.FindAsync([key], cancellationToken);
+        var entity = await _db
+            .Repositories.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Key == key, cancellationToken);
+
         return entity is null ? null : MapToProfile(entity);
     }
 
-    public async Task UpsertAsync(
+    public async Task<bool> CreateAsync(
         RepositoryProfile profile,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
+    {
+        if (await _db.Repositories.AnyAsync(x => x.Key == profile.Key, cancellationToken))
+        {
+            return false;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var entity = MapToEntity(profile, now);
+        _db.Repositories.Add(entity);
+
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+            return true;
+        }
+        catch (DbUpdateException exception) when (IsUniqueConstraintViolation(exception))
+        {
+            _db.Entry(entity).State = EntityState.Detached;
+            return false;
+        }
+    }
+
+    public async Task<bool> UpdateAsync(
+        RepositoryProfile profile,
+        CancellationToken cancellationToken
+    )
+    {
+        var entity = await _db.Repositories.FindAsync([profile.Key], cancellationToken);
+
+        if (entity is null)
+        {
+            return false;
+        }
+
+        ApplyProfile(entity, profile);
+        entity.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await _db.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
+    public async Task<bool> DeleteAsync(string key, CancellationToken cancellationToken)
+    {
+        var entity = await _db.Repositories.FindAsync([key], cancellationToken);
+
+        if (entity is null)
+        {
+            return false;
+        }
+
+        _db.Repositories.Remove(entity);
+        await _db.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
+    public async Task UpsertAsync(RepositoryProfile profile, CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
-        var existing = await _db.Repositories.FindAsync([profile.Key], cancellationToken);
+        var entity = await _db.Repositories.FindAsync([profile.Key], cancellationToken);
 
-        if (existing is not null)
+        if (entity is null)
         {
-            existing.CloneUrl = profile.CloneUrl;
-            existing.DefaultBranch = profile.DefaultBranch;
-            existing.Transport = profile.Transport;
-            existing.EnvironmentProfile = profile.EnvironmentProfile;
-            existing.RuntimeProfile = profile.RuntimeProfile;
-            existing.AllowedPathsJson = SerializeList(profile.AllowedPaths);
-            existing.UpdatedAt = now;
+            _db.Repositories.Add(MapToEntity(profile, now));
         }
         else
         {
-            var entity = new RepositoryEntity
-            {
-                Key = profile.Key,
-                CloneUrl = profile.CloneUrl,
-                DefaultBranch = profile.DefaultBranch,
-                Transport = profile.Transport,
-                EnvironmentProfile = profile.EnvironmentProfile,
-                RuntimeProfile = profile.RuntimeProfile,
-                AllowedPathsJson = SerializeList(profile.AllowedPaths),
-                CreatedAt = now,
-                UpdatedAt = now,
-            };
-            _db.Repositories.Add(entity);
+            ApplyProfile(entity, profile);
+            entity.UpdatedAt = now;
         }
 
         await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    private static RepositoryEntity MapToEntity(RepositoryProfile profile, DateTimeOffset timestamp)
+    {
+        var entity = new RepositoryEntity
+        {
+            Key = profile.Key,
+            CreatedAt = timestamp,
+            UpdatedAt = timestamp,
+        };
+        ApplyProfile(entity, profile);
+        return entity;
+    }
+
+    private static void ApplyProfile(RepositoryEntity entity, RepositoryProfile profile)
+    {
+        entity.CloneUrl = profile.CloneUrl;
+        entity.DefaultBranch = profile.DefaultBranch;
+        entity.Transport = profile.Transport;
+        entity.EnvironmentProfile = profile.EnvironmentProfile;
+        entity.RuntimeProfile = profile.RuntimeProfile;
+        entity.AzureDevOpsEnvironmentKey = profile.AzureDevOpsEnvironmentKey;
+        entity.RuntimeEnvironmentKey = profile.RuntimeEnvironmentKey;
+        entity.AllowedPathsJson = SerializeList(profile.AllowedPaths);
     }
 
     private static RepositoryProfile MapToProfile(RepositoryEntity entity)
@@ -79,13 +159,19 @@ internal sealed class EfRepositoryStore : IRepositoryStore
             Transport = entity.Transport,
             EnvironmentProfile = entity.EnvironmentProfile,
             RuntimeProfile = entity.RuntimeProfile,
+            AzureDevOpsEnvironmentKey = entity.AzureDevOpsEnvironmentKey,
+            RuntimeEnvironmentKey = entity.RuntimeEnvironmentKey,
             AllowedPaths = DeserializeList(entity.AllowedPathsJson),
         };
     }
 
     private static string? SerializeList(IReadOnlyList<string>? list)
     {
-        if (list is not { Count: > 0 }) return null;
+        if (list is not { Count: > 0 })
+        {
+            return null;
+        }
+
         try
         {
             return JsonSerializer.Serialize(list, JsonOptions);
@@ -98,7 +184,11 @@ internal sealed class EfRepositoryStore : IRepositoryStore
 
     private static List<string> DeserializeList(string? json)
     {
-        if (string.IsNullOrWhiteSpace(json)) return [];
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return [];
+        }
+
         try
         {
             return JsonSerializer.Deserialize<List<string>>(json, JsonOptions) ?? [];
@@ -107,5 +197,11 @@ internal sealed class EfRepositoryStore : IRepositoryStore
         {
             return [];
         }
+    }
+
+    private static bool IsUniqueConstraintViolation(DbUpdateException exception)
+    {
+        return exception.InnerException
+            is SqliteException { SqliteErrorCode: 19, SqliteExtendedErrorCode: 1555 or 2067 };
     }
 }

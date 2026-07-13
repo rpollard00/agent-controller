@@ -27,6 +27,12 @@ internal sealed class RepositoryEntity
     /// <summary>Name of the runtime profile to use for this repository.</summary>
     public string RuntimeProfile { get; set; } = string.Empty;
 
+    /// <summary>Optional key of the managed Azure DevOps environment profile.</summary>
+    public string? AzureDevOpsEnvironmentKey { get; set; }
+
+    /// <summary>Optional key of the managed runtime environment profile.</summary>
+    public string? RuntimeEnvironmentKey { get; set; }
+
     /// <summary>Allowed paths serialized as a JSON array.</summary>
     public string? AllowedPathsJson { get; set; }
 
