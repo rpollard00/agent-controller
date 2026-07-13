@@ -60,3 +60,6 @@ Thumbs.db
 # Pi artifacts (keep ignored)
 .pi/pi-materia/
 .pi/pi-materia.json
+
+# Added by Blackbelt-Bootstrap: build artifacts
+*.egg-info/

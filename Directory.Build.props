@@ -20,11 +20,7 @@
         <IsTestProject Condition="$(MSBuildProjectDirectory.Contains('\\tests')) Or $(MSBuildProjectDirectory.Contains('/tests'))">true</IsTestProject>
     </PropertyGroup>
 
-    <ItemGroup>
-        <!-- GHSA-hv8m-jj95-wg3x: MessagePack unsafe deserialization (transitive via Aspire) -->
-        <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-hv8m-jj95-wg3x" />
 
-    </ItemGroup>
 
     <!-- Test projects: default VSTest console verbosity to minimal so the xUnit
          adapter's [xUnit.net ...] Discovering/Discovered/Starting/Finished and
@@ -41,10 +37,14 @@
         </Content>
     </ItemGroup>
 
-    <!-- Force newer SQLitePCLRaw versions to resolve GHSA-2m69-gcr7-jv3q (CVE-2025-6965)
-         SQLitePCLRaw 3.0.3 bundles SQLite >= 3.50.2, addressing the vulnerability.
-         This overrides the 2.1.11 transitive dependencies from EFCore.Sqlite. -->
+    <!-- Force newer transitive dependency versions to resolve known vulnerabilities -->
     <ItemGroup>
+        <!-- MessagePack 2.5.301: fixes multiple CVEs in 2.5.192 (transitive via Aspire) -->
+        <PackageReference Include="MessagePack" Version="2.5.301" />
+
+        <!-- SQLitePCLRaw 3.0.3: resolves GHSA-2m69-gcr7-jv3q (CVE-2025-6965)
+             SQLitePCLRaw 3.0.3 bundles SQLite >= 3.50.2, addressing the vulnerability.
+             This overrides the 2.1.11 transitive dependencies from EFCore.Sqlite. -->
         <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
         <PackageReference Include="SQLitePCLRaw.core" Version="3.0.3" />
         <PackageReference Include="SQLitePCLRaw.provider.e_sqlite3" Version="3.0.3" />

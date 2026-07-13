@@ -3,7 +3,6 @@ using System.Text.Json.Serialization;
 using AgentController.Api;
 using AgentController.Api.Endpoints;
 using AgentController.Application;
-using AgentController.Domain;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -59,7 +58,6 @@ switch (workSourceProvider)
     case "AzureDevOpsBoards":
         builder.Services.AddAgentControllerAzureDevOpsBoardsWorkSource();
         break;
-    case "LocalFake":
     default:
         builder.Services.AddAgentControllerLocalFakeWorkSource();
         break;
