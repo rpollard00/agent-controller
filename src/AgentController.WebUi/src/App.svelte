@@ -1,11 +1,11 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { webUiApi, type WebUiApiClient } from './lib/api/client';
-  import CollectionPage from './lib/pages/CollectionPage.svelte';
   import NotFoundPage from './lib/pages/NotFoundPage.svelte';
   import OverviewPage from './lib/pages/OverviewPage.svelte';
   import AzureDevOpsEnvironmentPage from './lib/pages/azureDevOpsEnvironments/AzureDevOpsEnvironmentPage.svelte';
   import RepositoryPage from './lib/pages/repositories/RepositoryPage.svelte';
+  import RuntimeEnvironmentPage from './lib/pages/runtimeEnvironments/RuntimeEnvironmentPage.svelte';
   import { matchRoute, routes } from './lib/routing/routes';
 
   let { client = webUiApi }: { client?: WebUiApiClient } = $props();
@@ -182,12 +182,10 @@
         navigate={(path) => showPath(path, true)}
       />
     {:else}
-      <CollectionPage
-        title={currentRoute.title}
-        description={currentRoute.description}
-        singularName="runtime environment"
-        pluralName="runtime environments"
-        load={client.runtimeEnvironments.list}
+      <RuntimeEnvironmentPage
+        {pathname}
+        {client}
+        navigate={(path) => showPath(path, true)}
       />
     {/if}
   </main>
