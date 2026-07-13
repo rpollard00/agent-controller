@@ -63,11 +63,23 @@ public sealed record RepositoryProfile
     /// <summary>Clone transport type (SSH, HTTPS+PAT, Local, or inferred).</summary>
     public CloneTransport Transport { get; init; } = CloneTransport.Unspecified;
 
-    /// <summary>Name of the environment profile to use for this repository.</summary>
+    /// <summary>
+    /// Legacy environment profile name loaded from appsettings.
+    /// Retained for backward compatibility with existing repository configuration.
+    /// </summary>
     public string EnvironmentProfile { get; init; } = string.Empty;
 
-    /// <summary>Name of the runtime profile to use for this repository.</summary>
+    /// <summary>
+    /// Legacy runtime profile name loaded from appsettings.
+    /// Retained for backward compatibility with existing repository configuration.
+    /// </summary>
     public string RuntimeProfile { get; init; } = string.Empty;
+
+    /// <summary>Optional key of the managed Azure DevOps environment profile.</summary>
+    public string? AzureDevOpsEnvironmentKey { get; init; }
+
+    /// <summary>Optional key of the managed runtime environment profile.</summary>
+    public string? RuntimeEnvironmentKey { get; init; }
 
     /// <summary>
     /// Allowed paths within the repository that the agent may modify.

@@ -1,0 +1,223 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace AgentController.Domain.Tests;
+
+public class ManagedOnboardingProfileTests
+{
+    private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
+
+    [Fact]
+    public void AzureDevOpsEnvironmentProfile_HasSafeDefaults()
+    {
+        var before = DateTimeOffset.UtcNow;
+        var profile = new AzureDevOpsEnvironmentProfile();
+        var after = DateTimeOffset.UtcNow;
+
+        Assert.True(profile.Enabled);
+        Assert.Equal("User Story", profile.WorkItemType);
+        Assert.Empty(profile.EligibleTags);
+        Assert.Empty(profile.ExcludedTags);
+        Assert.Empty(profile.EligibleStates);
+        Assert.Empty(profile.ExcludedStates);
+        Assert.Null(profile.ActiveState);
+        Assert.Null(profile.CompletedState);
+        Assert.Empty(profile.PatEnvironmentVariable);
+        Assert.InRange(profile.CreatedAt, before, after);
+        Assert.InRange(profile.UpdatedAt, profile.CreatedAt, after);
+    }
+
+    [Fact]
+    public void RuntimeEnvironmentProfile_HasProviderDefaultsWithoutCredentialValues()
+    {
+        var profile = new RuntimeEnvironmentProfile();
+
+        Assert.True(profile.Enabled);
+        Assert.Empty(profile.EnvironmentProvider);
+        Assert.Empty(profile.RuntimeProvider);
+        Assert.Null(profile.EnvironmentSettings.WorkspaceRoot);
+        Assert.Equal("pi", profile.RuntimeSettings.PiExecutablePath);
+        Assert.Equal("script", profile.RuntimeSettings.PtyWrapperPath);
+        Assert.Equal("-qfc", profile.RuntimeSettings.PtyWrapperArgs);
+        Assert.Equal("ADO-Build-NewWork", profile.RuntimeSettings.Loadouts[ExecutionKind.NewWork]);
+        Assert.Equal("ADO-Build-Rework", profile.RuntimeSettings.Loadouts[ExecutionKind.Rework]);
+        Assert.Equal(
+            "AZURE_DEVOPS_PAT",
+            profile.RuntimeSettings.ForwardEnvironmentVariables["AZURE_DEVOPS_EXT_PAT"]);
+        Assert.Equal(
+            "AZURE_DEVOPS_PAT",
+            profile.RuntimeSettings.ForwardEnvironmentVariables["AZURE_DEVOPS_PAT"]);
+    }
+
+    [Fact]
+    public void RepositoryProfile_ManagedAssociationsAreOptionalAndLegacyNamesRemainAvailable()
+    {
+        var profile = new RepositoryProfile
+        {
+            Key = "example",
+            CloneUrl = "https://example.test/example.git",
+            EnvironmentProfile = "legacy-environment",
+            RuntimeProfile = "legacy-runtime",
+        };
+
+        Assert.Equal("legacy-environment", profile.EnvironmentProfile);
+        Assert.Equal("legacy-runtime", profile.RuntimeProfile);
+        Assert.Null(profile.AzureDevOpsEnvironmentKey);
+        Assert.Null(profile.RuntimeEnvironmentKey);
+    }
+
+    [Fact]
+    public void AzureDevOpsEnvironmentProfile_SerializesCredentialAsEnvironmentVariableReference()
+    {
+        var createdAt = new DateTimeOffset(2026, 7, 13, 12, 0, 0, TimeSpan.Zero);
+        var profile = new AzureDevOpsEnvironmentProfile
+        {
+            Key = "primary-ado",
+            DisplayName = "Primary Azure DevOps",
+            Enabled = false,
+            OrganizationUrl = "https://dev.azure.com/example",
+            Project = "Agent Controller",
+            WorkItemType = "Task",
+            EligibleTags = ["agent-ready"],
+            ExcludedTags = ["agent-blocked"],
+            EligibleStates = ["New", "Approved"],
+            ExcludedStates = ["Removed"],
+            ActiveState = "Active",
+            CompletedState = "Closed",
+            PatEnvironmentVariable = "AZURE_DEVOPS_PAT_PRIMARY",
+            CreatedAt = createdAt,
+            UpdatedAt = createdAt.AddHours(1),
+        };
+
+        var json = JsonSerializer.Serialize(profile, JsonOptions);
+
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        Assert.Equal("AZURE_DEVOPS_PAT_PRIMARY", root.GetProperty("patEnvironmentVariable").GetString());
+        Assert.False(root.TryGetProperty("personalAccessToken", out _));
+        Assert.False(root.TryGetProperty("pat", out _));
+
+        var roundTripped = JsonSerializer.Deserialize<AzureDevOpsEnvironmentProfile>(json, JsonOptions);
+
+        Assert.NotNull(roundTripped);
+        Assert.Equal(profile.Key, roundTripped.Key);
+        Assert.Equal(profile.DisplayName, roundTripped.DisplayName);
+        Assert.Equal(profile.Enabled, roundTripped.Enabled);
+        Assert.Equal(profile.OrganizationUrl, roundTripped.OrganizationUrl);
+        Assert.Equal(profile.Project, roundTripped.Project);
+        Assert.Equal(profile.EligibleTags, roundTripped.EligibleTags);
+        Assert.Equal(profile.ExcludedTags, roundTripped.ExcludedTags);
+        Assert.Equal(profile.EligibleStates, roundTripped.EligibleStates);
+        Assert.Equal(profile.ExcludedStates, roundTripped.ExcludedStates);
+        Assert.Equal(profile.PatEnvironmentVariable, roundTripped.PatEnvironmentVariable);
+        Assert.Equal(profile.CreatedAt, roundTripped.CreatedAt);
+        Assert.Equal(profile.UpdatedAt, roundTripped.UpdatedAt);
+    }
+
+    [Fact]
+    public void RuntimeEnvironmentProfile_SerializesStructuredProviderSettings()
+    {
+        var timestamp = new DateTimeOffset(2026, 7, 13, 12, 0, 0, TimeSpan.Zero);
+        var profile = new RuntimeEnvironmentProfile
+        {
+            Key = "local-pi",
+            DisplayName = "Local pi-materia",
+            EnvironmentProvider = "LocalWorkspace",
+            EnvironmentSettings = new EnvironmentProviderSettings
+            {
+                WorkspaceRoot = "/var/lib/agent-controller/runs",
+            },
+            RuntimeProvider = "PiMateria",
+            RuntimeSettings = new RuntimeProviderSettings
+            {
+                PiExecutablePath = "/usr/local/bin/pi",
+                ControllerBaseUrl = "https://controller.example.test",
+                PtyWrapperPath = "script",
+                PtyWrapperArgs = "-qfc",
+                Loadouts = new Dictionary<ExecutionKind, string>
+                {
+                    [ExecutionKind.NewWork] = "new-work",
+                    [ExecutionKind.Rework] = "rework",
+                },
+                ForwardEnvironmentVariables = new Dictionary<string, string>
+                {
+                    ["AZURE_DEVOPS_EXT_PAT"] = "CONTROLLER_ADO_PAT",
+                },
+            },
+            CreatedAt = timestamp,
+            UpdatedAt = timestamp.AddMinutes(5),
+        };
+
+        var json = JsonSerializer.Serialize(profile, JsonOptions);
+        var roundTripped = JsonSerializer.Deserialize<RuntimeEnvironmentProfile>(json, JsonOptions);
+
+        using var document = JsonDocument.Parse(json);
+        var runtimeSettings = document.RootElement.GetProperty("runtimeSettings");
+        Assert.Equal(
+            "CONTROLLER_ADO_PAT",
+            runtimeSettings
+                .GetProperty("forwardEnvironmentVariables")
+                .GetProperty("AZURE_DEVOPS_EXT_PAT")
+                .GetString());
+        Assert.DoesNotContain("secret-value", json, StringComparison.Ordinal);
+
+        Assert.NotNull(roundTripped);
+        Assert.Equal(profile.Key, roundTripped.Key);
+        Assert.Equal(profile.EnvironmentProvider, roundTripped.EnvironmentProvider);
+        Assert.Equal(profile.EnvironmentSettings.WorkspaceRoot, roundTripped.EnvironmentSettings.WorkspaceRoot);
+        Assert.Equal(profile.RuntimeProvider, roundTripped.RuntimeProvider);
+        Assert.Equal(profile.RuntimeSettings.PiExecutablePath, roundTripped.RuntimeSettings.PiExecutablePath);
+        Assert.Equal(profile.RuntimeSettings.ControllerBaseUrl, roundTripped.RuntimeSettings.ControllerBaseUrl);
+        Assert.Equal("new-work", roundTripped.RuntimeSettings.Loadouts[ExecutionKind.NewWork]);
+        Assert.Equal(
+            "CONTROLLER_ADO_PAT",
+            roundTripped.RuntimeSettings.ForwardEnvironmentVariables["AZURE_DEVOPS_EXT_PAT"]);
+        Assert.Equal(profile.CreatedAt, roundTripped.CreatedAt);
+        Assert.Equal(profile.UpdatedAt, roundTripped.UpdatedAt);
+    }
+
+    [Fact]
+    public void RepositoryProfile_DeserializesLegacyPayloadAndRoundTripsManagedAssociations()
+    {
+        const string legacyJson = """
+            {
+              "key": "example",
+              "cloneUrl": "https://example.test/example.git",
+              "defaultBranch": "main",
+              "transport": "httpsPat",
+              "environmentProfile": "legacy-environment",
+              "runtimeProfile": "legacy-runtime",
+              "allowedPaths": ["src/", "tests/"]
+            }
+            """;
+
+        var legacy = JsonSerializer.Deserialize<RepositoryProfile>(legacyJson, JsonOptions);
+
+        Assert.NotNull(legacy);
+        Assert.Equal("legacy-environment", legacy.EnvironmentProfile);
+        Assert.Equal("legacy-runtime", legacy.RuntimeProfile);
+        Assert.Null(legacy.AzureDevOpsEnvironmentKey);
+        Assert.Null(legacy.RuntimeEnvironmentKey);
+
+        var managed = legacy with
+        {
+            AzureDevOpsEnvironmentKey = "primary-ado",
+            RuntimeEnvironmentKey = "local-pi",
+        };
+        var json = JsonSerializer.Serialize(managed, JsonOptions);
+        var roundTripped = JsonSerializer.Deserialize<RepositoryProfile>(json, JsonOptions);
+
+        Assert.NotNull(roundTripped);
+        Assert.Equal("primary-ado", roundTripped.AzureDevOpsEnvironmentKey);
+        Assert.Equal("local-pi", roundTripped.RuntimeEnvironmentKey);
+        Assert.Equal("legacy-environment", roundTripped.EnvironmentProfile);
+        Assert.Equal("legacy-runtime", roundTripped.RuntimeProfile);
+    }
+
+    private static JsonSerializerOptions CreateJsonOptions()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
+        return options;
+    }
+}
