@@ -29,7 +29,7 @@ public sealed class AzureDevOpsEnvironmentStoreTests
             AssertProfile(profile, Assert.IsType<AzureDevOpsEnvironmentProfile>(persisted));
 
             await using var command = fixture.Connection.CreateCommand();
-            command.CommandText = "SELECT PatEnvironmentVariable FROM AzureDevOpsEnvironments WHERE Key = $key";
+            command.CommandText = "SELECT PatEnvironmentVariable FROM WorkSourceEnvironments WHERE Key = $key";
             command.Parameters.AddWithValue("$key", profile.Key);
             var storedReference = Assert.IsType<string>(await command.ExecuteScalarAsync());
             Assert.Equal("ADO_PRODUCTION_PAT", storedReference);
@@ -133,11 +133,11 @@ public sealed class AzureDevOpsEnvironmentStoreTests
         Assert.Contains(
             appliedMigrations,
             migration => migration.EndsWith(
-                "_PersistAzureDevOpsEnvironmentProfiles",
+                "_RenameToWorkSourceEnvironments",
                 StringComparison.Ordinal));
 
         await using var command = fixture.Connection.CreateCommand();
-        command.CommandText = "PRAGMA table_info('AzureDevOpsEnvironments')";
+        command.CommandText = "PRAGMA table_info('WorkSourceEnvironments')";
         await using var reader = await command.ExecuteReaderAsync();
         var columns = new List<string>();
         while (await reader.ReadAsync())
@@ -148,6 +148,14 @@ public sealed class AzureDevOpsEnvironmentStoreTests
         Assert.Contains("PatEnvironmentVariable", columns);
         Assert.DoesNotContain("PersonalAccessToken", columns);
         Assert.DoesNotContain("Pat", columns);
+        Assert.Contains("Provider", columns);
+        Assert.Contains("TagPrefix", columns);
+        Assert.Contains("CompletedStatesJson", columns);
+        Assert.DoesNotContain("WorkItemType", columns);
+        Assert.DoesNotContain("EligibleTagsJson", columns);
+        Assert.DoesNotContain("ExcludedTagsJson", columns);
+        Assert.DoesNotContain("EligibleStatesJson", columns);
+        Assert.DoesNotContain("ExcludedStatesJson", columns);
     }
 
     [Fact]
