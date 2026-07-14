@@ -89,7 +89,7 @@ describe('runtime environment screens', () => {
     window.history.replaceState({}, '', '/runtime-environments');
   });
 
-  it('lists environments and shows provider-specific details without secret values', async () => {
+  it('lists environments and shows loadout readouts without internal process or variable settings', async () => {
     const responseWithUnexpectedSecret = {
       ...environment,
       runtimeSettings: {
@@ -107,11 +107,22 @@ describe('runtime environment screens', () => {
     await fireEvent.click(environmentLink);
 
     expect(await screen.findByRole('heading', { level: 1, name: 'runtime-main' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Pi process settings' })).toBeVisible();
-    expect(screen.getByText('/usr/local/bin/pi')).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Loadout mappings' })).toBeVisible();
     expect(screen.getByText('ADO-Build-NewWork')).toBeVisible();
-    expect(screen.getAllByText('AZURE_DEVOPS_PAT').length).toBeGreaterThan(0);
-    expect(screen.getByText('Secret values are never shown')).toBeVisible();
+    // Internal Pi-process and environment-variable settings are never surfaced.
+    expect(screen.queryByRole('heading', { name: 'Pi process settings' })).not.toBeInTheDocument();
+    expect(screen.queryByText('/usr/local/bin/pi')).not.toBeInTheDocument();
+    expect(screen.queryByText('https://controller.example.test')).not.toBeInTheDocument();
+    expect(screen.queryByText('Controller base URL')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', { name: 'Environment-variable forwarding' }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText('Secret values are never shown')).not.toBeInTheDocument();
+    // The page description avoids internal process/variable copy.
+    expect(
+      screen.queryByText(/runtime process settings|variable references/),
+    ).not.toBeInTheDocument();
+    // Resolved secret values are never surfaced, even when present in the response.
     expect(screen.queryByText('super-secret-value')).not.toBeInTheDocument();
     expect(window.location.pathname).toBe('/runtime-environments/runtime-main');
   });

@@ -247,7 +247,7 @@
     if (currentRoute.view === 'edit') {
       return 'Update workspace, runtime provider, and loadout mapping settings.';
     }
-    return 'Review workspace provisioning, runtime process settings, and variable references.';
+    return 'Review workspace configuration, the selected runtime, and loadout mappings.';
   }
 </script>
 

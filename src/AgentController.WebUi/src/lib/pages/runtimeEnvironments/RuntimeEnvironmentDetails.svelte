@@ -18,9 +18,6 @@
   } = $props();
 
   const loadouts = $derived(Object.entries(environment.runtimeSettings.loadouts));
-  const forwardedVariables = $derived(
-    Object.entries(environment.runtimeSettings.forwardEnvironmentVariables),
-  );
 
   function formatTimestamp(value: string): string {
     const date = new Date(value);
@@ -92,35 +89,6 @@
   </Card>
 
   {#if environment.runtimeProvider === 'PiMateria'}
-    <Card title="Pi process settings" description="Executable, callback, and pseudo-terminal configuration.">
-      <dl class="grid gap-x-8 gap-y-6 sm:grid-cols-2">
-        <div>
-          <dt class="text-sm font-medium text-slate-400">Pi executable</dt>
-          <dd class="mt-1 break-all font-mono text-sm text-slate-100">
-            {environment.runtimeSettings.piExecutablePath ?? 'Not configured'}
-          </dd>
-        </div>
-        <div>
-          <dt class="text-sm font-medium text-slate-400">Controller base URL</dt>
-          <dd class="mt-1 break-all text-slate-100">
-            {environment.runtimeSettings.controllerBaseUrl ?? 'Not configured'}
-          </dd>
-        </div>
-        <div>
-          <dt class="text-sm font-medium text-slate-400">PTY wrapper executable</dt>
-          <dd class="mt-1 break-all font-mono text-sm text-slate-100">
-            {environment.runtimeSettings.ptyWrapperPath ?? 'Direct launch'}
-          </dd>
-        </div>
-        <div>
-          <dt class="text-sm font-medium text-slate-400">PTY wrapper arguments</dt>
-          <dd class="mt-1 break-all font-mono text-sm text-slate-100">
-            {environment.runtimeSettings.ptyWrapperArgs ?? 'None'}
-          </dd>
-        </div>
-      </dl>
-    </Card>
-
     <Card title="Loadout mappings" description="Pi-materia loadout selected by execution kind.">
       {#if loadouts.length > 0}
         <dl class="grid gap-4 sm:grid-cols-2">
@@ -137,42 +105,11 @@
         <p class="text-sm text-slate-400">No loadouts configured.</p>
       {/if}
     </Card>
-
-    <Card
-      title="Environment-variable forwarding"
-      description="Target-to-source references passed to the Pi process."
-    >
-      <div class="mb-5">
-        <Alert
-          variant="info"
-          title="Secret values are never shown"
-          message="Both columns contain environment-variable names only. Their resolved values are not stored in this profile."
-        />
-      </div>
-      {#if forwardedVariables.length > 0}
-        <dl class="space-y-3">
-          {#each forwardedVariables as [target, source]}
-            <div class="grid gap-1 rounded-lg border border-slate-800 bg-slate-950/40 p-4 sm:grid-cols-2 sm:gap-4">
-              <div>
-                <dt class="text-xs font-medium tracking-wide text-slate-500 uppercase">Target</dt>
-                <dd class="mt-1 break-all font-mono text-sm text-cyan-200">{target}</dd>
-              </div>
-              <div>
-                <dt class="text-xs font-medium tracking-wide text-slate-500 uppercase">Source reference</dt>
-                <dd class="mt-1 break-all font-mono text-sm text-slate-100">{source}</dd>
-              </div>
-            </div>
-          {/each}
-        </dl>
-      {:else}
-        <p class="text-sm text-slate-400">No environment variables are forwarded.</p>
-      {/if}
-    </Card>
   {:else}
     <Alert
       variant="info"
       title="Simulated runtime"
-      message="Mock Pi Materia does not launch a Pi process, so executable, PTY, loadout, and forwarding settings do not apply."
+      message="Mock Pi Materia simulates execution without launching a Pi process, so no loadout mapping applies."
     />
   {/if}
 
