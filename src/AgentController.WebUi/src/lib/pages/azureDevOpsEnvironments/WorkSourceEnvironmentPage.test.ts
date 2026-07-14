@@ -45,6 +45,7 @@ function createApi(initialEnvironments: WorkSourceEnvironmentProfile[] = [enviro
     delete: vi.fn(async (key: string) => {
       profiles = profiles.filter((candidate) => candidate.key !== key);
     }),
+    getBoardStates: vi.fn(async () => ['New', 'Active', 'Resolved', 'Removed']),
   };
 
   const client: WebUiApiClient = {
@@ -67,7 +68,7 @@ function staticResource<T>(profiles: T[]): ResourceClient<T> {
 }
 
 async function completeRequiredCreateFields(): Promise<void> {
-  await fireEvent.input(await screen.findByLabelText(/Environment key/), {
+  await fireEvent.input(await screen.findByLabelText(/Environment name/), {
     target: { value: 'ado-secondary' },
   });
   await fireEvent.input(screen.getByLabelText(/Display name/), {
@@ -95,9 +96,12 @@ describe('work source environment screens', () => {
     render(App, { client: api.client });
 
     expect(
-      await screen.findByRole('heading', { level: 1, name: 'Add Azure DevOps environment' }),
+      await screen.findByRole('heading', { level: 1, name: 'Add work source environment' }),
     ).toBeVisible();
     expect(screen.getByText('Secret values are not stored')).toBeVisible();
+
+    // Verify provider selector defaults to Azure DevOps
+    expect(screen.getByLabelText(/Work source provider/)).toHaveValue('AzureDevOpsBoards');
 
     await completeRequiredCreateFields();
     await fireEvent.input(screen.getByLabelText(/Active state/), {
@@ -124,7 +128,7 @@ describe('work source environment screens', () => {
       expect.any(AbortSignal),
     );
     expect(
-      await screen.findByText(/Azure DevOps environment .*Secondary boards.* was created/),
+      await screen.findByText(/Work source environment .*Secondary boards.* was created/),
     ).toBeVisible();
     expect(window.location.pathname).toBe('/work-source-environments/ado-secondary');
   });
@@ -148,7 +152,7 @@ describe('work source environment screens', () => {
     const api = createApi();
     render(App, { client: api.client });
 
-    const keyInput = await screen.findByLabelText(/Environment key/);
+    const keyInput = await screen.findByLabelText(/Environment name/);
     expect(keyInput).toHaveAttribute('readonly');
 
     await fireEvent.input(screen.getByLabelText(/Display name/), {
@@ -169,7 +173,7 @@ describe('work source environment screens', () => {
       expect.any(AbortSignal),
     );
     expect(
-      await screen.findByText(/Azure DevOps environment .*Updated boards.* was updated/),
+      await screen.findByText(/Work source environment .*Updated boards.* was updated/),
     ).toBeVisible();
   });
 
@@ -237,7 +241,7 @@ describe('work source environment screens', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Delete Primary boards' }));
 
     const dialog = await screen.findByRole('dialog', {
-      name: 'Delete Azure DevOps environment?',
+      name: 'Delete work source environment?',
     });
     expect(api.environments.delete).not.toHaveBeenCalled();
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Delete environment' }));
@@ -246,9 +250,9 @@ describe('work source environment screens', () => {
       expect(api.environments.delete).toHaveBeenCalledWith('ado-main', expect.any(AbortSignal)),
     );
     expect(
-      await screen.findByRole('heading', { name: 'No Azure DevOps environments yet' }),
+      await screen.findByRole('heading', { name: 'No work source environments yet' }),
     ).toBeVisible();
-    expect(screen.getByText(/Azure DevOps environment .*Primary boards.* was deleted/)).toBeVisible();
+    expect(screen.getByText(/Work source environment .*Primary boards.* was deleted/)).toBeVisible();
   });
 
   it('requires confirmation and explains repository reference conflicts on delete', async () => {
@@ -265,7 +269,7 @@ describe('work source environment screens', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Delete Primary boards' }));
 
     const dialog = await screen.findByRole('dialog', {
-      name: 'Delete Azure DevOps environment?',
+      name: 'Delete work source environment?',
     });
     expect(api.environments.delete).not.toHaveBeenCalled();
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Delete environment' }));
@@ -277,5 +281,43 @@ describe('work source environment screens', () => {
     ).toBeVisible();
     expect(api.environments.delete).toHaveBeenCalledWith('ado-main', expect.any(AbortSignal));
     expect(screen.getByRole('link', { name: 'Primary boards' })).toBeVisible();
+  });
+
+  it('submits provider, completedStates and tagPrefix in create flow', async () => {
+    window.history.replaceState({}, '', '/work-source-environments/new');
+    const api = createApi([]);
+    render(App, { client: api.client });
+
+    // Provider select is present and defaults to Azure DevOps
+    const providerSelect = screen.getByLabelText(/Work source provider/);
+    expect(providerSelect).toHaveValue('AzureDevOpsBoards');
+
+    // Tag prefix field is present with placeholder
+    const tagPrefixInput = screen.getByLabelText(/Tag prefix/);
+    expect(tagPrefixInput).toHaveAttribute('placeholder', 'agent');
+
+    await completeRequiredCreateFields();
+    await fireEvent.input(screen.getByLabelText(/Tag prefix/), {
+      target: { value: 'ac' },
+    });
+    await fireEvent.input(screen.getByLabelText(/Active state/), {
+      target: { value: 'Active' },
+    });
+    await fireEvent.input(screen.getByLabelText(/^Completed state$/), {
+      target: { value: 'Resolved' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create environment' }));
+
+    await waitFor(() => expect(api.environments.create).toHaveBeenCalledOnce());
+    expect(api.environments.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'AzureDevOpsBoards',
+        tagPrefix: 'ac',
+        completedStates: [],
+        activeState: 'Active',
+        completedState: 'Resolved',
+      }),
+      expect.any(AbortSignal),
+    );
   });
 });
