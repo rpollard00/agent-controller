@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentController.Application;
 using AgentController.Application.Abstractions;
 using AgentController.Application.Commands;
 using AgentController.Application.Queries;
@@ -10,6 +11,9 @@ namespace AgentController.Application.Tests;
 
 public sealed class WorkSourceEnvironmentHandlerTests
 {
+    private static readonly string[] TestBoardStates = ["New", "Active", "Resolved", "Closed"];
+    private static readonly string[] EmptyStates = [];
+
     [Fact]
     public async Task ListAndGet_ReturnStoredProfilesAndNormalizeLookupKeyWithoutResolvingPat()
     {
@@ -344,6 +348,99 @@ public sealed class WorkSourceEnvironmentHandlerTests
             >,
             GetWorkSourceEnvironmentByKeyQueryHandler
         >(services);
+        AssertRegistration<
+            IQueryHandler<Queries.GetBoardStatesQuery, Results.BoardStatesResult>,
+            Queries.GetBoardStatesQueryHandler
+        >(services);
+    }
+
+    [Fact]
+    public async Task GetBoardStates_ReturnsStatesForAzureDevOpsBoardsProvider()
+    {
+        var profile = CreateProfile("ado-dev");
+        var store = new FakeWorkSourceEnvironmentStore(profile);
+        var factory = new FakeBoardsClientFactory(TestBoardStates);
+        var handler = new Queries.GetBoardStatesQueryHandler(store, factory);
+
+        var result = await handler.ExecuteAsync(
+            new Queries.GetBoardStatesQuery("  ADO-DEV  "),
+            CancellationToken.None
+        );
+
+        Assert.Equal(Results.BoardStatesStatus.Succeeded, result.Status);
+        Assert.Equal(["New", "Active", "Resolved", "Closed"], result.States);
+        Assert.Null(result.Error);
+        Assert.Equal("ado-dev", store.LastReadKey);
+    }
+
+    [Fact]
+    public async Task GetBoardStates_ReturnsNotFoundForMissingEnvironment()
+    {
+        var store = new FakeWorkSourceEnvironmentStore();
+        var factory = new FakeBoardsClientFactory(EmptyStates);
+        var handler = new Queries.GetBoardStatesQueryHandler(store, factory);
+
+        var result = await handler.ExecuteAsync(
+            new Queries.GetBoardStatesQuery("missing"),
+            CancellationToken.None
+        );
+
+        Assert.Equal(Results.BoardStatesStatus.NotFound, result.Status);
+        Assert.Empty(result.States);
+        Assert.Contains("not found", result.Error!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GetBoardStates_ReturnsNotFoundForInvalidKey()
+    {
+        var store = new FakeWorkSourceEnvironmentStore();
+        var factory = new FakeBoardsClientFactory(EmptyStates);
+        var handler = new Queries.GetBoardStatesQueryHandler(store, factory);
+
+        var result = await handler.ExecuteAsync(
+            new Queries.GetBoardStatesQuery("not valid"),
+            CancellationToken.None
+        );
+
+        Assert.Equal(Results.BoardStatesStatus.NotFound, result.Status);
+        Assert.Empty(result.States);
+        Assert.Contains("Invalid", result.Error!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GetBoardStates_ReturnsUnsupportedProviderForNonAdoEnvironment()
+    {
+        var profile = CreateProfile("other") with { Provider = "GitHub" };
+        var store = new FakeWorkSourceEnvironmentStore(profile);
+        var factory = new FakeBoardsClientFactory(EmptyStates);
+        var handler = new Queries.GetBoardStatesQueryHandler(store, factory);
+
+        var result = await handler.ExecuteAsync(
+            new Queries.GetBoardStatesQuery("other"),
+            CancellationToken.None
+        );
+
+        Assert.Equal(Results.BoardStatesStatus.UnsupportedProvider, result.Status);
+        Assert.Empty(result.States);
+        Assert.Contains("GitHub", result.Error!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GetBoardStates_ReturnsConnectivityErrorWhenNoStatesDiscovered()
+    {
+        var profile = CreateProfile("ado-dev");
+        var store = new FakeWorkSourceEnvironmentStore(profile);
+        var factory = new FakeBoardsClientFactory(EmptyStates); // empty = connectivity failure
+        var handler = new Queries.GetBoardStatesQueryHandler(store, factory);
+
+        var result = await handler.ExecuteAsync(
+            new Queries.GetBoardStatesQuery("ado-dev"),
+            CancellationToken.None
+        );
+
+        Assert.Equal(Results.BoardStatesStatus.ConnectivityError, result.Status);
+        Assert.Empty(result.States);
+        Assert.NotNull(result.Error);
     }
 
     private static WorkSourceEnvironmentProfile CreateProfile(string key) =>
@@ -469,5 +566,59 @@ public sealed class WorkSourceEnvironmentHandlerTests
 
         public Task UpsertAsync(RepositoryProfile profile, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+    }
+
+    private sealed class FakeBoardsClientFactory(IReadOnlyList<string> states)
+        : IAzureDevOpsBoardsClientFactory
+    {
+        private readonly IReadOnlyList<string> _states = states;
+
+        public IAzureDevOpsBoardsClient Create(WorkSourceEnvironmentProfile profile)
+        {
+            return new FakeBoardsClient(_states);
+        }
+    }
+
+    private sealed class FakeBoardsClient(IReadOnlyList<string> states)
+        : IAzureDevOpsBoardsClient
+    {
+        private readonly IReadOnlyList<string> _states = states;
+
+        public Task<IReadOnlyList<WorkCandidate>> QueryWorkItemsAsync(
+            BoardsQueryParameters parameters, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<ClaimResult> TryClaimWorkItemAsync(
+            ExternalWorkRef workRef, ClaimRequest request, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<bool> UpdateWorkItemStatusAsync(
+            ExternalWorkRef workRef, ExternalWorkStatus status, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task AddCommentAsync(
+            ExternalWorkRef workRef, string comment, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<RepositoryInfo>> ListRepositoriesAsync(
+            string project, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<AzureDevOpsConnectivityResult> VerifyConnectivityAsync(
+            string organizationUrl, string project, string personalAccessToken,
+            CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<WorkItemComment>> GetCommentsAsync(
+            ExternalWorkRef workRef, int maxComments, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task ReleaseClaimWorkItemAsync(
+            ReleaseClaimRequest request, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<string>> GetValidStatesAsync(
+            string project, CancellationToken cancellationToken)
+            => Task.FromResult(_states);
     }
 }
