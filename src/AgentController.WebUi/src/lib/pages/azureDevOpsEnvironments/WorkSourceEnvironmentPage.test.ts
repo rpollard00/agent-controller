@@ -158,7 +158,7 @@ describe('work source environment screens', () => {
     await fireEvent.input(screen.getByLabelText(/Display name/), {
       target: { value: 'Updated boards' },
     });
-    await fireEvent.click(screen.getByLabelText('Enabled for new work'));
+    await fireEvent.click(screen.getByLabelText('Enabled'));
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(api.environments.update).toHaveBeenCalledOnce());
