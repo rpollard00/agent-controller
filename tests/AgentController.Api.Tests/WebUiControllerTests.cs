@@ -133,7 +133,7 @@ public sealed class WebUiControllerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AzureDevOpsEnvironmentEndpoints_SupportEveryVerbAndRedactCredentials()
+    public async Task WorkSourceEnvironmentEndpoints_SupportEveryVerbAndRedactCredentials()
     {
         const string credentialValue = "ado-secret-that-must-never-be-returned";
         const string credentialVariable = "WEBUI_TEST_ADO_PAT";
@@ -145,13 +145,11 @@ public sealed class WebUiControllerTests : IAsyncLifetime
                 key = " ADO.Main ",
                 displayName = " Main Azure DevOps ",
                 enabled = true,
+                provider = "AzureDevOpsBoards",
                 organizationUrl = "https://dev.azure.com/example/",
                 project = "Agent Controller",
-                workItemType = "User Story",
-                eligibleTags = new[] { "agent-ready" },
-                excludedTags = new[] { "agent-active" },
-                eligibleStates = new[] { "New" },
-                excludedStates = new[] { "Closed" },
+                completedStates = new[] { "Resolved", "Removed" },
+                tagPrefix = "agent",
                 activeState = "Active",
                 completedState = "Resolved",
                 patEnvironmentVariable = credentialVariable,
@@ -159,18 +157,18 @@ public sealed class WebUiControllerTests : IAsyncLifetime
             };
 
             using var createResponse = await _client.PostAsJsonAsync(
-                "/api/webui/ado-environments",
+                "/api/webui/work-source-environments",
                 profile
             );
             Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
             Assert.Equal(
-                "/api/webui/ado-environments/ado.main",
+                "/api/webui/work-source-environments/ado.main",
                 createResponse.Headers.Location?.ToString()
             );
             await AssertCredentialRedactedAsync(createResponse, credentialValue);
 
             using var duplicateResponse = await _client.PostAsJsonAsync(
-                "/api/webui/ado-environments",
+                "/api/webui/work-source-environments",
                 profile
             );
             await AssertProblemAsync(
@@ -180,7 +178,7 @@ public sealed class WebUiControllerTests : IAsyncLifetime
             );
             await AssertCredentialRedactedAsync(duplicateResponse, credentialValue);
 
-            using var listResponse = await _client.GetAsync("/api/webui/ado-environments");
+            using var listResponse = await _client.GetAsync("/api/webui/work-source-environments");
             Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
             var listBody = await AssertCredentialRedactedAsync(listResponse, credentialValue);
             using var listJson = JsonDocument.Parse(listBody);
@@ -189,7 +187,9 @@ public sealed class WebUiControllerTests : IAsyncLifetime
                 environment => environment.GetProperty("key").GetString() == "ado.main"
             );
 
-            using var getResponse = await _client.GetAsync("/api/webui/ado-environments/ADO.MAIN");
+            using var getResponse = await _client.GetAsync(
+                "/api/webui/work-source-environments/ADO.MAIN"
+            );
             Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
             var getBody = await AssertCredentialRedactedAsync(getResponse, credentialValue);
             using var getJson = JsonDocument.Parse(getBody);
@@ -204,20 +204,18 @@ public sealed class WebUiControllerTests : IAsyncLifetime
                 key = "ado.main",
                 displayName = "Updated Azure DevOps",
                 enabled = false,
+                provider = "AzureDevOpsBoards",
                 organizationUrl = "https://dev.azure.com/example",
                 project = "Agent Controller",
-                workItemType = "Bug",
-                eligibleTags = new[] { "agent-ready" },
-                excludedTags = Array.Empty<string>(),
-                eligibleStates = new[] { "New" },
-                excludedStates = new[] { "Closed" },
+                completedStates = new[] { "Resolved" },
+                tagPrefix = "agent",
                 activeState = "Active",
-                completedState = "Resolved",
+                completedState = "Done",
                 patEnvironmentVariable = credentialVariable,
                 personalAccessToken = credentialValue,
             };
             using var updateResponse = await _client.PutAsJsonAsync(
-                "/api/webui/ado-environments/ado.main",
+                "/api/webui/work-source-environments/ado.main",
                 update
             );
             Assert.Equal(HttpStatusCode.OK, updateResponse.StatusCode);
@@ -230,12 +228,12 @@ public sealed class WebUiControllerTests : IAsyncLifetime
             Assert.False(updateJson.RootElement.GetProperty("enabled").GetBoolean());
 
             using var deleteResponse = await _client.DeleteAsync(
-                "/api/webui/ado-environments/ado.main"
+                "/api/webui/work-source-environments/ado.main"
             );
             Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
 
             using var missingResponse = await _client.GetAsync(
-                "/api/webui/ado-environments/ado.main"
+                "/api/webui/work-source-environments/ado.main"
             );
             await AssertProblemAsync(
                 missingResponse,

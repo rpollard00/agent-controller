@@ -7,19 +7,19 @@ using AgentController.Domain;
 namespace AgentController.Api;
 
 /// <summary>
-/// Maps the web UI API for managed repository, Azure DevOps, and runtime environment profiles.
+/// Maps the web UI API for managed repository, work source, and runtime environment profiles.
 /// Endpoints delegate all validation and relationship behavior to application handlers.
 /// </summary>
 public static class WebUiControllers
 {
     private const string RepositoriesPath = "/api/webui/repositories";
-    private const string AzureDevOpsEnvironmentsPath = "/api/webui/ado-environments";
+    private const string WorkSourceEnvironmentsPath = "/api/webui/work-source-environments";
     private const string RuntimeEnvironmentsPath = "/api/webui/runtime-environments";
 
     public static IEndpointRouteBuilder MapWebUiControllers(this IEndpointRouteBuilder app)
     {
         MapRepositoryControllers(app.MapGroup(RepositoriesPath));
-        MapAzureDevOpsEnvironmentControllers(app.MapGroup(AzureDevOpsEnvironmentsPath));
+        MapWorkSourceEnvironmentControllers(app.MapGroup(WorkSourceEnvironmentsPath));
         MapRuntimeEnvironmentControllers(app.MapGroup(RuntimeEnvironmentsPath));
         return app;
     }
@@ -110,7 +110,7 @@ public static class WebUiControllers
         );
     }
 
-    private static void MapAzureDevOpsEnvironmentControllers(RouteGroupBuilder group)
+    private static void MapWorkSourceEnvironmentControllers(RouteGroupBuilder group)
     {
         group.MapPost(
             "",
@@ -131,7 +131,7 @@ public static class WebUiControllers
                     result,
                     environment =>
                         Results.Created(
-                            $"{AzureDevOpsEnvironmentsPath}/{Uri.EscapeDataString(environment!.Key)}",
+                            $"{WorkSourceEnvironmentsPath}/{Uri.EscapeDataString(environment!.Key)}",
                             environment
                         )
                 );
