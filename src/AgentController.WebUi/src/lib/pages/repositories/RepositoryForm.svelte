@@ -1,9 +1,9 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import type {
-    AzureDevOpsEnvironmentProfile,
     RepositoryProfile,
     RuntimeEnvironmentProfile,
+    WorkSourceEnvironmentProfile,
   } from '../../api/types';
   import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
@@ -18,7 +18,7 @@
   let {
     mode,
     profile,
-    azureDevOpsEnvironments,
+    workSourceEnvironments,
     runtimeEnvironments,
     submitting = false,
     serverErrors = {},
@@ -27,7 +27,7 @@
   }: {
     mode: 'create' | 'edit';
     profile?: RepositoryProfile;
-    azureDevOpsEnvironments: AzureDevOpsEnvironmentProfile[];
+    workSourceEnvironments: WorkSourceEnvironmentProfile[];
     runtimeEnvironments: RuntimeEnvironmentProfile[];
     submitting?: boolean;
     serverErrors?: Readonly<Record<string, string[]>>;
@@ -72,7 +72,7 @@
   }
 
   function hasAzureDevOpsEnvironment(key: string): boolean {
-    return azureDevOpsEnvironments.some((environment) => environment.key === key);
+    return workSourceEnvironments.some((environment) => environment.key === key);
   }
 
   function hasRuntimeEnvironment(key: string): boolean {
@@ -232,7 +232,7 @@
               {values.azureDevOpsEnvironmentKey} (unavailable)
             </option>
           {/if}
-          {#each azureDevOpsEnvironments as environment (environment.key)}
+          {#each workSourceEnvironments as environment (environment.key)}
             <option value={environment.key}>{environmentLabel(environment)}</option>
           {/each}
         </select>

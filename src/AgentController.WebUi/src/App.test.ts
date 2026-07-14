@@ -3,9 +3,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import App from './App.svelte';
 import { ApiError, type ResourceClient, type WebUiApiClient } from './lib/api/client';
 import type {
-  AzureDevOpsEnvironmentProfile,
   RepositoryProfile,
   RuntimeEnvironmentProfile,
+  WorkSourceEnvironmentProfile,
 } from './lib/api/types';
 
 function resourceClient<T>(list: (signal?: AbortSignal) => Promise<T[]>): ResourceClient<T> {
@@ -27,7 +27,7 @@ function createClient(
 ): WebUiApiClient {
   return {
     repositories: resourceClient(repositoryList),
-    azureDevOpsEnvironments: resourceClient<AzureDevOpsEnvironmentProfile>(async () => []),
+    workSourceEnvironments: resourceClient<WorkSourceEnvironmentProfile>(async () => []),
     runtimeEnvironments: resourceClient<RuntimeEnvironmentProfile>(async () => []),
   };
 }

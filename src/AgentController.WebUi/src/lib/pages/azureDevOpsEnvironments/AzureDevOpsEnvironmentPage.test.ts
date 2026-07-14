@@ -3,22 +3,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../../../App.svelte';
 import { ApiError, type ResourceClient, type WebUiApiClient } from '../../api/client';
 import type {
-  AzureDevOpsEnvironmentProfile,
   RepositoryProfile,
   RuntimeEnvironmentProfile,
+  WorkSourceEnvironmentProfile,
 } from '../../api/types';
 
-const environment: AzureDevOpsEnvironmentProfile = {
+const environment: WorkSourceEnvironmentProfile = {
   key: 'ado-main',
   displayName: 'Primary boards',
   enabled: true,
+  provider: 'AzureDevOpsBoards',
   organizationUrl: 'https://dev.azure.com/example',
   project: 'Agent Controller',
-  workItemType: 'User Story',
-  eligibleTags: ['agent-ready'],
-  excludedTags: ['manual-only'],
-  eligibleStates: ['New'],
-  excludedStates: ['Closed'],
+  completedStates: ['Resolved', 'Removed'],
+  tagPrefix: 'agent',
   activeState: 'Active',
   completedState: 'Resolved',
   patEnvironmentVariable: 'ADO_PAT',
@@ -26,21 +24,21 @@ const environment: AzureDevOpsEnvironmentProfile = {
   updatedAt: '2026-07-13T00:00:00Z',
 };
 
-function createApi(initialEnvironments: AzureDevOpsEnvironmentProfile[] = [environment]) {
+function createApi(initialEnvironments: WorkSourceEnvironmentProfile[] = [environment]) {
   let profiles = [...initialEnvironments];
 
-  const azureDevOpsEnvironments = {
+  const workSourceEnvironments = {
     list: vi.fn(async () => [...profiles]),
     get: vi.fn(async (key: string) => {
       const profile = profiles.find((candidate) => candidate.key === key);
-      if (!profile) throw new Error(`Missing Azure DevOps environment ${key}.`);
+      if (!profile) throw new Error(`Missing work source environment ${key}.`);
       return profile;
     }),
-    create: vi.fn(async (profile: AzureDevOpsEnvironmentProfile) => {
+    create: vi.fn(async (profile: WorkSourceEnvironmentProfile) => {
       profiles.push(profile);
       return profile;
     }),
-    update: vi.fn(async (_key: string, profile: AzureDevOpsEnvironmentProfile) => {
+    update: vi.fn(async (_key: string, profile: WorkSourceEnvironmentProfile) => {
       profiles = profiles.map((candidate) => (candidate.key === profile.key ? profile : candidate));
       return profile;
     }),
@@ -51,11 +49,11 @@ function createApi(initialEnvironments: AzureDevOpsEnvironmentProfile[] = [envir
 
   const client: WebUiApiClient = {
     repositories: staticResource<RepositoryProfile>([]),
-    azureDevOpsEnvironments,
+    workSourceEnvironments,
     runtimeEnvironments: staticResource<RuntimeEnvironmentProfile>([]),
   };
 
-  return { client, environments: azureDevOpsEnvironments };
+  return { client, environments: workSourceEnvironments };
 }
 
 function staticResource<T>(profiles: T[]): ResourceClient<T> {
@@ -86,7 +84,7 @@ async function completeRequiredCreateFields(): Promise<void> {
   });
 }
 
-describe('Azure DevOps environment screens', () => {
+describe('work source environment screens', () => {
   beforeEach(() => {
     window.history.replaceState({}, '', '/work-source-environments');
   });
@@ -102,22 +100,10 @@ describe('Azure DevOps environment screens', () => {
     expect(screen.getByText('Secret values are not stored')).toBeVisible();
 
     await completeRequiredCreateFields();
-    await fireEvent.input(screen.getByLabelText(/Eligible tags/), {
-      target: { value: 'agent-ready\nautonomous' },
-    });
-    await fireEvent.input(screen.getByLabelText(/Excluded tags/), {
-      target: { value: 'manual-only' },
-    });
-    await fireEvent.input(screen.getByLabelText(/Eligible states/), {
-      target: { value: 'New\nApproved' },
-    });
-    await fireEvent.input(screen.getByLabelText(/Excluded states/), {
-      target: { value: 'Closed' },
-    });
     await fireEvent.input(screen.getByLabelText(/Active state/), {
       target: { value: 'Active' },
     });
-    await fireEvent.input(screen.getByLabelText(/Completed state/), {
+    await fireEvent.input(screen.getByLabelText(/^Completed state$/), {
       target: { value: 'Resolved' },
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Create environment' }));
@@ -128,19 +114,17 @@ describe('Azure DevOps environment screens', () => {
         key: 'ado-secondary',
         displayName: 'Secondary boards',
         enabled: true,
+        provider: 'AzureDevOpsBoards',
         organizationUrl: 'https://dev.azure.com/example',
         project: 'Secondary Project',
-        workItemType: 'User Story',
-        eligibleTags: ['agent-ready', 'autonomous'],
-        excludedTags: ['manual-only'],
-        eligibleStates: ['New', 'Approved'],
-        excludedStates: ['Closed'],
+        completedStates: [],
+        tagPrefix: 'agent',
         patEnvironmentVariable: 'SECONDARY_ADO_PAT',
       }),
       expect.any(AbortSignal),
     );
     expect(
-      await screen.findByText('Azure DevOps environment “Secondary boards” was created.'),
+      await screen.findByText(/Azure DevOps environment .*Secondary boards.* was created/),
     ).toBeVisible();
     expect(window.location.pathname).toBe('/work-source-environments/ado-secondary');
   });
@@ -166,13 +150,9 @@ describe('Azure DevOps environment screens', () => {
 
     const keyInput = await screen.findByLabelText(/Environment key/);
     expect(keyInput).toHaveAttribute('readonly');
-    expect(screen.getByText(/Keys are immutable/)).toBeVisible();
 
     await fireEvent.input(screen.getByLabelText(/Display name/), {
       target: { value: 'Updated boards' },
-    });
-    await fireEvent.input(screen.getByLabelText(/Eligible states/), {
-      target: { value: 'New\nCommitted' },
     });
     await fireEvent.click(screen.getByLabelText('Enabled for new work'));
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
@@ -184,13 +164,12 @@ describe('Azure DevOps environment screens', () => {
         key: 'ado-main',
         displayName: 'Updated boards',
         enabled: false,
-        eligibleStates: ['New', 'Committed'],
         createdAt: environment.createdAt,
       }),
       expect.any(AbortSignal),
     );
     expect(
-      await screen.findByText('Azure DevOps environment “Updated boards” was updated.'),
+      await screen.findByText(/Azure DevOps environment .*Updated boards.* was updated/),
     ).toBeVisible();
   });
 
@@ -201,7 +180,7 @@ describe('Azure DevOps environment screens', () => {
       new ApiError({
         title: 'Validation failed.',
         status: 400,
-        detail: 'Correct the highlighted Azure DevOps fields.',
+        detail: 'Correct the highlighted work source fields.',
         errors: {
           organizationUrl: ['The organization URL must not include a collection path.'],
         },
@@ -214,7 +193,7 @@ describe('Azure DevOps environment screens', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Could not create environment');
-    expect(alert).toHaveTextContent('Correct the highlighted Azure DevOps fields.');
+    expect(alert).toHaveTextContent('Correct the highlighted work source fields.');
     expect(
       screen.getByText('The organization URL must not include a collection path.'),
     ).toBeVisible();
@@ -226,7 +205,7 @@ describe('Azure DevOps environment screens', () => {
     const responseWithUnexpectedSecret = {
       ...environment,
       personalAccessToken: 'super-secret-value',
-    } as AzureDevOpsEnvironmentProfile;
+    } as WorkSourceEnvironmentProfile;
     const api = createApi([responseWithUnexpectedSecret]);
     render(App, { client: api.client });
 
@@ -269,7 +248,7 @@ describe('Azure DevOps environment screens', () => {
     expect(
       await screen.findByRole('heading', { name: 'No Azure DevOps environments yet' }),
     ).toBeVisible();
-    expect(screen.getByText('Azure DevOps environment “Primary boards” was deleted.')).toBeVisible();
+    expect(screen.getByText(/Azure DevOps environment .*Primary boards.* was deleted/)).toBeVisible();
   });
 
   it('requires confirmation and explains repository reference conflicts on delete', async () => {
@@ -278,7 +257,7 @@ describe('Azure DevOps environment screens', () => {
       new ApiError({
         title: 'Resource conflict.',
         status: 409,
-        detail: "Azure DevOps environment 'ado-main' is referenced by repository 'web.repo'.",
+        detail: "Work source environment 'ado-main' is referenced by repository 'web.repo'.",
       }),
     );
     render(App, { client: api.client });
@@ -293,7 +272,7 @@ describe('Azure DevOps environment screens', () => {
 
     expect(
       await within(dialog).findByText(
-        "Azure DevOps environment 'ado-main' is referenced by repository 'web.repo'.",
+        "Work source environment 'ado-main' is referenced by repository 'web.repo'.",
       ),
     ).toBeVisible();
     expect(api.environments.delete).toHaveBeenCalledWith('ado-main', expect.any(AbortSignal));

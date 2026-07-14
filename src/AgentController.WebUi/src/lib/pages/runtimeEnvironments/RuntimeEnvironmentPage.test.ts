@@ -3,9 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../../../App.svelte';
 import { ApiError, type ResourceClient, type WebUiApiClient } from '../../api/client';
 import type {
-  AzureDevOpsEnvironmentProfile,
   RepositoryProfile,
   RuntimeEnvironmentProfile,
+  WorkSourceEnvironmentProfile,
 } from '../../api/types';
 
 const environment: RuntimeEnvironmentProfile = {
@@ -58,7 +58,7 @@ function createApi(initialEnvironments: RuntimeEnvironmentProfile[] = [environme
 
   const client: WebUiApiClient = {
     repositories: staticResource<RepositoryProfile>([]),
-    azureDevOpsEnvironments: staticResource<AzureDevOpsEnvironmentProfile>([]),
+    workSourceEnvironments: staticResource<WorkSourceEnvironmentProfile>([]),
     runtimeEnvironments,
   };
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { AzureDevOpsEnvironmentProfile } from '../../api/types';
+  import type { WorkSourceEnvironmentProfile } from '../../api/types';
   import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
   import Card from '../../components/ui/Card.svelte';
@@ -11,10 +11,10 @@
     ontoggle,
     ondelete,
   }: {
-    environment: AzureDevOpsEnvironmentProfile;
+    environment: WorkSourceEnvironmentProfile;
     updating?: boolean;
-    ontoggle: (profile: AzureDevOpsEnvironmentProfile) => void;
-    ondelete: (profile: AzureDevOpsEnvironmentProfile) => void;
+    ontoggle: (profile: WorkSourceEnvironmentProfile) => void;
+    ondelete: (profile: WorkSourceEnvironmentProfile) => void;
   } = $props();
 
   function listLabel(values: string[], emptyLabel: string): string {
@@ -72,32 +72,18 @@
         <dd class="mt-1 break-all text-slate-100">{environment.organizationUrl}</dd>
       </div>
       <div>
-        <dt class="text-sm font-medium text-slate-400">Work-item type</dt>
-        <dd class="mt-1 text-slate-100">{environment.workItemType}</dd>
+        <dt class="text-sm font-medium text-slate-400">Provider</dt>
+        <dd class="mt-1 text-slate-100">{environment.provider}</dd>
       </div>
       <div>
-        <dt class="text-sm font-medium text-slate-400">Eligible tags</dt>
+        <dt class="text-sm font-medium text-slate-400">Completed states</dt>
         <dd class="mt-1 text-slate-100">
-          {listLabel(environment.eligibleTags, 'Any tag')}
+          {listLabel(environment.completedStates, 'Any')}
         </dd>
       </div>
       <div>
-        <dt class="text-sm font-medium text-slate-400">Excluded tags</dt>
-        <dd class="mt-1 text-slate-100">
-          {listLabel(environment.excludedTags, 'None')}
-        </dd>
-      </div>
-      <div>
-        <dt class="text-sm font-medium text-slate-400">Eligible states</dt>
-        <dd class="mt-1 text-slate-100">
-          {listLabel(environment.eligibleStates, 'Any state')}
-        </dd>
-      </div>
-      <div>
-        <dt class="text-sm font-medium text-slate-400">Excluded states</dt>
-        <dd class="mt-1 text-slate-100">
-          {listLabel(environment.excludedStates, 'None')}
-        </dd>
+        <dt class="text-sm font-medium text-slate-400">Tag prefix</dt>
+        <dd class="mt-1 text-slate-100">{environment.tagPrefix || 'agent'}</dd>
       </div>
       <div>
         <dt class="text-sm font-medium text-slate-400">Active state</dt>

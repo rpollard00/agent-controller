@@ -3,9 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../../../App.svelte';
 import { ApiError, type ResourceClient, type WebUiApiClient } from '../../api/client';
 import type {
-  AzureDevOpsEnvironmentProfile,
   RepositoryProfile,
   RuntimeEnvironmentProfile,
+  WorkSourceEnvironmentProfile,
 } from '../../api/types';
 
 const repository: RepositoryProfile = {
@@ -20,17 +20,15 @@ const repository: RepositoryProfile = {
   allowedPaths: ['src'],
 };
 
-const azureDevOpsEnvironment: AzureDevOpsEnvironmentProfile = {
+const workSourceEnvironment: WorkSourceEnvironmentProfile = {
   key: 'ado-main',
   displayName: 'Primary boards',
   enabled: true,
+  provider: 'AzureDevOpsBoards',
   organizationUrl: 'https://dev.azure.com/example',
   project: 'Agent Controller',
-  workItemType: 'Product Backlog Item',
-  eligibleTags: [],
-  excludedTags: [],
-  eligibleStates: ['New'],
-  excludedStates: [],
+  completedStates: ['Done'],
+  tagPrefix: 'agent',
   activeState: 'Active',
   completedState: 'Done',
   patEnvironmentVariable: 'ADO_PAT',
@@ -92,7 +90,7 @@ function createApi(initialRepositories: RepositoryProfile[] = [repository]): Moc
   return {
     client: {
       repositories,
-      azureDevOpsEnvironments: staticResource([azureDevOpsEnvironment]),
+      workSourceEnvironments: staticResource([workSourceEnvironment]),
       runtimeEnvironments: staticResource([runtimeEnvironment]),
     },
     repositories,

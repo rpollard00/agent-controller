@@ -1,14 +1,14 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import type { AzureDevOpsEnvironmentProfile } from '../../api/types';
+  import type { WorkSourceEnvironmentProfile } from '../../api/types';
   import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
   import Field from '../../components/ui/Field.svelte';
   import {
-    createAzureDevOpsEnvironmentFormValues,
-    toAzureDevOpsEnvironmentProfile,
-    validateAzureDevOpsEnvironmentForm,
-    type AzureDevOpsEnvironmentFormErrors,
+    createWorkSourceEnvironmentFormValues,
+    toWorkSourceEnvironmentProfile,
+    validateWorkSourceEnvironmentForm,
+    type WorkSourceEnvironmentFormErrors,
   } from './azureDevOpsEnvironmentForm';
 
   let {
@@ -20,15 +20,15 @@
     oncancel,
   }: {
     mode: 'create' | 'edit';
-    profile?: AzureDevOpsEnvironmentProfile;
+    profile?: WorkSourceEnvironmentProfile;
     submitting?: boolean;
     serverErrors?: Readonly<Record<string, string[]>>;
-    onsave: (profile: AzureDevOpsEnvironmentProfile) => void;
+    onsave: (profile: WorkSourceEnvironmentProfile) => void;
     oncancel: () => void;
   } = $props();
 
-  let values = $state(untrack(() => createAzureDevOpsEnvironmentFormValues(profile)));
-  let clientErrors = $state<AzureDevOpsEnvironmentFormErrors>({});
+  let values = $state(untrack(() => createWorkSourceEnvironmentFormValues(profile)));
+  let clientErrors = $state<WorkSourceEnvironmentFormErrors>({});
 
   const inputClasses =
     'min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 placeholder:text-slate-600 disabled:cursor-not-allowed disabled:bg-slate-900 disabled:text-slate-400';
@@ -46,10 +46,10 @@
 
   function handleSubmit(event: SubmitEvent): void {
     event.preventDefault();
-    clientErrors = validateAzureDevOpsEnvironmentForm(values);
+    clientErrors = validateWorkSourceEnvironmentForm(values);
     if (Object.keys(clientErrors).length > 0) return;
 
-    onsave(toAzureDevOpsEnvironmentProfile(values, profile));
+    onsave(toWorkSourceEnvironmentProfile(values, profile));
   }
 
   function clearClientError(field: string): void {
@@ -223,108 +223,45 @@
 
   <fieldset class="space-y-6 border-t border-slate-800 pt-7">
     <legend class="text-base font-semibold text-white">Board policy</legend>
-    <p class="text-sm leading-6 text-slate-400">
-      Enter one tag or state per line. Leave an eligible list empty to avoid filtering on that value.
-    </p>
 
     <Field
-      id="ado-workItemType"
-      label="Work-item type"
-      hint="The board work-item type Agent Controller polls."
-      error={fieldError('workItemType')}
-      required
+      id="ado-tagPrefix"
+      label="Tag prefix"
+      hint="Namespace for controller-owned lifecycle tags (e.g. agent-ready, agent-active). Defaults to 'agent' when blank."
+      error={fieldError('tagPrefix')}
     >
       <input
-        id="ado-workItemType"
-        name="workItemType"
+        id="ado-tagPrefix"
+        name="tagPrefix"
         class={inputClasses}
-        bind:value={values.workItemType}
+        bind:value={values.tagPrefix}
         disabled={submitting}
-        required
         autocomplete="off"
-        aria-invalid={fieldError('workItemType') ? 'true' : undefined}
-        aria-describedby={describedBy('workItemType', true)}
-        oninput={() => clearClientError('workItemType')}
+        placeholder="agent"
+        aria-invalid={fieldError('tagPrefix') ? 'true' : undefined}
+        aria-describedby={describedBy('tagPrefix', true)}
+        oninput={() => clearClientError('tagPrefix')}
       />
     </Field>
 
-    <div class="grid gap-6 lg:grid-cols-2">
-      <Field
-        id="ado-eligibleTags"
-        label="Eligible tags"
-        hint="A work item must match the configured eligible tags."
-        error={fieldError('eligibleTags')}
-      >
-        <textarea
-          id="ado-eligibleTags"
-          name="eligibleTags"
-          class={`${inputClasses} min-h-28 resize-y`}
-          bind:value={values.eligibleTags}
-          disabled={submitting}
-          placeholder={'agent-ready\nautonomous'}
-          aria-invalid={fieldError('eligibleTags') ? 'true' : undefined}
-          aria-describedby={describedBy('eligibleTags', true)}
-          oninput={() => clearClientError('eligibleTags')}
-        ></textarea>
-      </Field>
-
-      <Field
-        id="ado-excludedTags"
-        label="Excluded tags"
-        hint="A matching excluded tag prevents execution."
-        error={fieldError('excludedTags')}
-      >
-        <textarea
-          id="ado-excludedTags"
-          name="excludedTags"
-          class={`${inputClasses} min-h-28 resize-y`}
-          bind:value={values.excludedTags}
-          disabled={submitting}
-          placeholder={'agent-active\nmanual-only'}
-          aria-invalid={fieldError('excludedTags') ? 'true' : undefined}
-          aria-describedby={describedBy('excludedTags', true)}
-          oninput={() => clearClientError('excludedTags')}
-        ></textarea>
-      </Field>
-
-      <Field
-        id="ado-eligibleStates"
-        label="Eligible states"
-        hint="Board states from which work may be selected."
-        error={fieldError('eligibleStates')}
-      >
-        <textarea
-          id="ado-eligibleStates"
-          name="eligibleStates"
-          class={`${inputClasses} min-h-28 resize-y`}
-          bind:value={values.eligibleStates}
-          disabled={submitting}
-          placeholder={'New\nApproved'}
-          aria-invalid={fieldError('eligibleStates') ? 'true' : undefined}
-          aria-describedby={describedBy('eligibleStates', true)}
-          oninput={() => clearClientError('eligibleStates')}
-        ></textarea>
-      </Field>
-
-      <Field
-        id="ado-excludedStates"
-        label="Excluded states"
-        hint="Board states that must never be selected."
-        error={fieldError('excludedStates')}
-      >
-        <textarea
-          id="ado-excludedStates"
-          name="excludedStates"
-          class={`${inputClasses} min-h-28 resize-y`}
-          bind:value={values.excludedStates}
-          disabled={submitting}
-          placeholder={'Closed\nRemoved'}
-          aria-invalid={fieldError('excludedStates') ? 'true' : undefined}
-          aria-describedby={describedBy('excludedStates', true)}
-          oninput={() => clearClientError('excludedStates')}
-        ></textarea>
-      </Field>
-    </div>
+    <Field
+      id="ado-completedStates"
+      label="Completed states"
+      hint="Work items in these states are considered finished and not picked up. Enter one state per line; leave empty for any."
+      error={fieldError('completedStates')}
+    >
+      <textarea
+        id="ado-completedStates"
+        name="completedStates"
+        class={`${inputClasses} min-h-28 resize-y`}
+        bind:value={values.completedStates}
+        disabled={submitting}
+        placeholder={'Resolved\nClosed'}
+        aria-invalid={fieldError('completedStates') ? 'true' : undefined}
+        aria-describedby={describedBy('completedStates', true)}
+        oninput={() => clearClientError('completedStates')}
+      ></textarea>
+    </Field>
 
     <div class="grid gap-6 lg:grid-cols-2">
       <Field

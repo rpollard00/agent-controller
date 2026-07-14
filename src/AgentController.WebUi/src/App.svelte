@@ -3,7 +3,7 @@
   import { webUiApi, type WebUiApiClient } from './lib/api/client';
   import NotFoundPage from './lib/pages/NotFoundPage.svelte';
   import OverviewPage from './lib/pages/OverviewPage.svelte';
-  import AzureDevOpsEnvironmentPage from './lib/pages/azureDevOpsEnvironments/AzureDevOpsEnvironmentPage.svelte';
+  import WorkSourceEnvironmentPage from './lib/pages/azureDevOpsEnvironments/AzureDevOpsEnvironmentPage.svelte';
   import RepositoryPage from './lib/pages/repositories/RepositoryPage.svelte';
   import RuntimeEnvironmentPage from './lib/pages/runtimeEnvironments/RuntimeEnvironmentPage.svelte';
   import { matchRoute, routes } from './lib/routing/routes';
@@ -176,7 +176,7 @@
         navigate={(path) => showPath(path, true)}
       />
     {:else if currentRoute.id === 'work-source-environments'}
-      <AzureDevOpsEnvironmentPage
+      <WorkSourceEnvironmentPage
         {pathname}
         {client}
         navigate={(path) => showPath(path, true)}

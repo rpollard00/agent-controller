@@ -1,47 +1,43 @@
-import type { AzureDevOpsEnvironmentProfile } from '../../api/types';
+import type { WorkSourceEnvironmentProfile } from '../../api/types';
 
-export interface AzureDevOpsEnvironmentFormValues {
+export interface WorkSourceEnvironmentFormValues {
   key: string;
   displayName: string;
   enabled: boolean;
+  provider: string;
   organizationUrl: string;
   project: string;
-  workItemType: string;
-  eligibleTags: string;
-  excludedTags: string;
-  eligibleStates: string;
-  excludedStates: string;
+  completedStates: string;
+  tagPrefix: string;
   activeState: string;
   completedState: string;
   patEnvironmentVariable: string;
 }
 
-export type AzureDevOpsEnvironmentFormErrors = Record<string, string[]>;
+export type WorkSourceEnvironmentFormErrors = Record<string, string[]>;
 
-export function createAzureDevOpsEnvironmentFormValues(
-  profile?: AzureDevOpsEnvironmentProfile,
-): AzureDevOpsEnvironmentFormValues {
+export function createWorkSourceEnvironmentFormValues(
+  profile?: WorkSourceEnvironmentProfile,
+): WorkSourceEnvironmentFormValues {
   return {
     key: profile?.key ?? '',
     displayName: profile?.displayName ?? '',
     enabled: profile?.enabled ?? true,
+    provider: profile?.provider ?? 'AzureDevOpsBoards',
     organizationUrl: profile?.organizationUrl ?? '',
     project: profile?.project ?? '',
-    workItemType: profile?.workItemType ?? 'User Story',
-    eligibleTags: profile?.eligibleTags.join('\n') ?? '',
-    excludedTags: profile?.excludedTags.join('\n') ?? '',
-    eligibleStates: profile?.eligibleStates.join('\n') ?? '',
-    excludedStates: profile?.excludedStates.join('\n') ?? '',
+    completedStates: profile?.completedStates.join('\n') ?? '',
+    tagPrefix: profile?.tagPrefix ?? '',
     activeState: profile?.activeState ?? '',
     completedState: profile?.completedState ?? '',
     patEnvironmentVariable: profile?.patEnvironmentVariable ?? '',
   };
 }
 
-export function validateAzureDevOpsEnvironmentForm(
-  values: AzureDevOpsEnvironmentFormValues,
-): AzureDevOpsEnvironmentFormErrors {
-  const errors: AzureDevOpsEnvironmentFormErrors = {};
+export function validateWorkSourceEnvironmentForm(
+  values: WorkSourceEnvironmentFormValues,
+): WorkSourceEnvironmentFormErrors {
+  const errors: WorkSourceEnvironmentFormErrors = {};
 
   addRequiredError(errors, 'key', values.key, 'A key is required.');
   addRequiredError(errors, 'displayName', values.displayName, 'A display name is required.');
@@ -52,7 +48,6 @@ export function validateAzureDevOpsEnvironmentForm(
     'An Azure DevOps organization URL is required.',
   );
   addRequiredError(errors, 'project', values.project, 'An Azure DevOps project is required.');
-  addRequiredError(errors, 'workItemType', values.workItemType, 'A work-item type is required.');
   addRequiredError(
     errors,
     'patEnvironmentVariable',
@@ -83,40 +78,23 @@ export function validateAzureDevOpsEnvironmentForm(
     errors.completedState = ['The completed state must be different from the active state.'];
   }
 
-  addOverlapErrors(
-    errors,
-    parseBoardValues(values.eligibleTags),
-    parseBoardValues(values.excludedTags),
-    'excludedTags',
-    'tag',
-  );
-  addOverlapErrors(
-    errors,
-    parseBoardValues(values.eligibleStates),
-    parseBoardValues(values.excludedStates),
-    'excludedStates',
-    'state',
-  );
-
   return errors;
 }
 
-export function toAzureDevOpsEnvironmentProfile(
-  values: AzureDevOpsEnvironmentFormValues,
-  original?: AzureDevOpsEnvironmentProfile,
-): AzureDevOpsEnvironmentProfile {
+export function toWorkSourceEnvironmentProfile(
+  values: WorkSourceEnvironmentFormValues,
+  original?: WorkSourceEnvironmentProfile,
+): WorkSourceEnvironmentProfile {
   const now = new Date().toISOString();
   return {
     key: values.key.trim(),
     displayName: values.displayName.trim(),
     enabled: values.enabled,
+    provider: values.provider.trim() || 'AzureDevOpsBoards',
     organizationUrl: values.organizationUrl.trim().replace(/\/+$/, ''),
     project: values.project.trim(),
-    workItemType: values.workItemType.trim(),
-    eligibleTags: parseBoardValues(values.eligibleTags),
-    excludedTags: parseBoardValues(values.excludedTags),
-    eligibleStates: parseBoardValues(values.eligibleStates),
-    excludedStates: parseBoardValues(values.excludedStates),
+    completedStates: parseBoardValues(values.completedStates),
+    tagPrefix: values.tagPrefix.trim() || 'agent',
     activeState: nullableText(values.activeState),
     completedState: nullableText(values.completedState),
     patEnvironmentVariable: values.patEnvironmentVariable.trim(),
@@ -126,7 +104,7 @@ export function toAzureDevOpsEnvironmentProfile(
 }
 
 function addRequiredError(
-  errors: AzureDevOpsEnvironmentFormErrors,
+  errors: WorkSourceEnvironmentFormErrors,
   field: string,
   value: string,
   message: string,
@@ -155,18 +133,6 @@ function parseBoardValues(value: string): string[] {
     .split(/\r?\n/)
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
-}
-
-function addOverlapErrors(
-  errors: AzureDevOpsEnvironmentFormErrors,
-  eligible: string[],
-  excluded: string[],
-  field: string,
-  valueKind: string,
-): void {
-  const eligibleValues = new Set(eligible.map((value) => value.toLowerCase()));
-  const overlap = excluded.find((value) => eligibleValues.has(value.toLowerCase()));
-  if (overlap) errors[field] = [`The ${valueKind} “${overlap}” cannot be both eligible and excluded.`];
 }
 
 function nullableText(value: string): string | null {

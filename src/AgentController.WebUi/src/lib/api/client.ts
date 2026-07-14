@@ -1,8 +1,8 @@
 import type {
-  AzureDevOpsEnvironmentProfile,
   ProblemDetails,
   RepositoryProfile,
   RuntimeEnvironmentProfile,
+  WorkSourceEnvironmentProfile,
 } from './types';
 
 type FetchImplementation = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -17,7 +17,7 @@ export interface ResourceClient<T> {
 
 export interface WebUiApiClient {
   repositories: ResourceClient<RepositoryProfile>;
-  azureDevOpsEnvironments: ResourceClient<AzureDevOpsEnvironmentProfile>;
+  workSourceEnvironments: ResourceClient<WorkSourceEnvironmentProfile>;
   runtimeEnvironments: ResourceClient<RuntimeEnvironmentProfile>;
 }
 
@@ -118,7 +118,7 @@ export function createWebUiApiClient(options: ApiClientOptions = {}): WebUiApiCl
 
   return {
     repositories: resource<RepositoryProfile>('/repositories'),
-    azureDevOpsEnvironments: resource<AzureDevOpsEnvironmentProfile>('/ado-environments'),
+    workSourceEnvironments: resource<WorkSourceEnvironmentProfile>('/work-source-environments'),
     runtimeEnvironments: resource<RuntimeEnvironmentProfile>('/runtime-environments'),
   };
 }

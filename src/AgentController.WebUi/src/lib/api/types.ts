@@ -12,17 +12,15 @@ export interface RepositoryProfile {
   allowedPaths: string[];
 }
 
-export interface AzureDevOpsEnvironmentProfile {
+export interface WorkSourceEnvironmentProfile {
   key: string;
   displayName: string;
   enabled: boolean;
+  provider: string;
   organizationUrl: string;
   project: string;
-  workItemType: string;
-  eligibleTags: string[];
-  excludedTags: string[];
-  eligibleStates: string[];
-  excludedStates: string[];
+  completedStates: string[];
+  tagPrefix: string;
   activeState: string | null;
   completedState: string | null;
   patEnvironmentVariable: string;

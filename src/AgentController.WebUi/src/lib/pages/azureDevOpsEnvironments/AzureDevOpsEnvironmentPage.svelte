@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { getErrorMessage, getFieldErrors, type WebUiApiClient } from '../../api/client';
-  import type { AzureDevOpsEnvironmentProfile } from '../../api/types';
+  import type { WorkSourceEnvironmentProfile } from '../../api/types';
   import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
   import Card from '../../components/ui/Card.svelte';
@@ -26,13 +26,13 @@
   } = $props();
 
   let status = $state<'loading' | 'empty' | 'ready' | 'error'>('loading');
-  let environments = $state<AzureDevOpsEnvironmentProfile[]>([]);
-  let environment = $state<AzureDevOpsEnvironmentProfile>();
+  let environments = $state<WorkSourceEnvironmentProfile[]>([]);
+  let environment = $state<WorkSourceEnvironmentProfile>();
   let requestError = $state<unknown>();
   let mutationError = $state<unknown>();
   let submitting = $state(false);
   let updatingKey = $state<string>();
-  let deleteTarget = $state<AzureDevOpsEnvironmentProfile>();
+  let deleteTarget = $state<WorkSourceEnvironmentProfile>();
   let deleteError = $state<unknown>();
   let deleting = $state(false);
   let loadController: AbortController | undefined;
@@ -79,7 +79,7 @@
 
     try {
       if (currentRoute.view === 'list') {
-        environments = await client.azureDevOpsEnvironments.list(signal);
+        environments = await client.workSourceEnvironments.list(signal);
         status = environments.length > 0 ? 'ready' : 'empty';
         return;
       }
@@ -89,7 +89,7 @@
         return;
       }
 
-      environment = await client.azureDevOpsEnvironments.get(currentRoute.key, signal);
+      environment = await client.workSourceEnvironments.get(currentRoute.key, signal);
       status = 'ready';
     } catch (error) {
       if (signal.aborted) return;
@@ -98,7 +98,7 @@
     }
   }
 
-  async function saveEnvironment(profile: AzureDevOpsEnvironmentProfile): Promise<void> {
+  async function saveEnvironment(profile: WorkSourceEnvironmentProfile): Promise<void> {
     if (!route || (route.view !== 'create' && route.view !== 'edit')) return;
 
     mutationController?.abort();
@@ -109,7 +109,7 @@
 
     try {
       if (route.view === 'create') {
-        const created = await client.azureDevOpsEnvironments.create(profile, controller.signal);
+        const created = await client.workSourceEnvironments.create(profile, controller.signal);
         const nextPath = workSourceEnvironmentDetailPath(created.key);
         successNotice = {
           path: nextPath,
@@ -118,7 +118,7 @@
         };
         navigate(nextPath);
       } else {
-        const updated = await client.azureDevOpsEnvironments.update(
+        const updated = await client.workSourceEnvironments.update(
           route.key,
           profile,
           controller.signal,
@@ -138,7 +138,7 @@
     }
   }
 
-  async function toggleEnvironment(profile: AzureDevOpsEnvironmentProfile): Promise<void> {
+  async function toggleEnvironment(profile: WorkSourceEnvironmentProfile): Promise<void> {
     mutationController?.abort();
     const controller = new AbortController();
     mutationController = controller;
@@ -146,7 +146,7 @@
     mutationError = undefined;
 
     try {
-      const updated = await client.azureDevOpsEnvironments.update(
+      const updated = await client.workSourceEnvironments.update(
         profile.key,
         { ...profile, enabled: !profile.enabled },
         controller.signal,
@@ -170,7 +170,7 @@
     }
   }
 
-  function askToDelete(profile: AzureDevOpsEnvironmentProfile): void {
+  function askToDelete(profile: WorkSourceEnvironmentProfile): void {
     deleteTarget = profile;
     deleteError = undefined;
   }
@@ -192,7 +192,7 @@
     deleteError = undefined;
 
     try {
-      await client.azureDevOpsEnvironments.delete(target.key, controller.signal);
+      await client.workSourceEnvironments.delete(target.key, controller.signal);
       deleteTarget = undefined;
 
       if (route?.view === 'detail' || route?.view === 'edit') {

@@ -2,9 +2,9 @@
   import { onDestroy } from 'svelte';
   import { getErrorMessage, getFieldErrors, type WebUiApiClient } from '../../api/client';
   import type {
-    AzureDevOpsEnvironmentProfile,
     RepositoryProfile,
     RuntimeEnvironmentProfile,
+    WorkSourceEnvironmentProfile,
   } from '../../api/types';
   import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
@@ -32,7 +32,7 @@
   let status = $state<'loading' | 'empty' | 'ready' | 'error'>('loading');
   let repositories = $state<RepositoryProfile[]>([]);
   let repository = $state<RepositoryProfile>();
-  let azureDevOpsEnvironments = $state<AzureDevOpsEnvironmentProfile[]>([]);
+  let workSourceEnvironments = $state<WorkSourceEnvironmentProfile[]>([]);
   let runtimeEnvironments = $state<RuntimeEnvironmentProfile[]>([]);
   let requestError = $state<unknown>();
   let mutationError = $state<unknown>();
@@ -87,8 +87,8 @@
       }
 
       if (currentRoute.view === 'create') {
-        [azureDevOpsEnvironments, runtimeEnvironments] = await Promise.all([
-          client.azureDevOpsEnvironments.list(signal),
+        [workSourceEnvironments, runtimeEnvironments] = await Promise.all([
+          client.workSourceEnvironments.list(signal),
           client.runtimeEnvironments.list(signal),
         ]);
         status = 'ready';
@@ -97,9 +97,9 @@
 
       const profileRequest = client.repositories.get(currentRoute.key, signal);
       if (currentRoute.view === 'edit') {
-        [repository, azureDevOpsEnvironments, runtimeEnvironments] = await Promise.all([
+        [repository, workSourceEnvironments, runtimeEnvironments] = await Promise.all([
           profileRequest,
-          client.azureDevOpsEnvironments.list(signal),
+          client.workSourceEnvironments.list(signal),
           client.runtimeEnvironments.list(signal),
         ]);
       } else {
@@ -317,7 +317,7 @@
       {/if}
       <RepositoryForm
         mode="create"
-        {azureDevOpsEnvironments}
+        {workSourceEnvironments}
         {runtimeEnvironments}
         {submitting}
         serverErrors={getFieldErrors(mutationError)}
@@ -344,7 +344,7 @@
         <RepositoryForm
           mode="edit"
           profile={repository}
-          {azureDevOpsEnvironments}
+          {workSourceEnvironments}
           {runtimeEnvironments}
           {submitting}
           serverErrors={getFieldErrors(mutationError)}

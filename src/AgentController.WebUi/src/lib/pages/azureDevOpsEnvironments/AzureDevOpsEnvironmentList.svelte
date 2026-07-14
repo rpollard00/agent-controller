@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { AzureDevOpsEnvironmentProfile } from '../../api/types';
+  import type { WorkSourceEnvironmentProfile } from '../../api/types';
   import Button from '../../components/ui/Button.svelte';
   import Card from '../../components/ui/Card.svelte';
   import DataTable from '../../components/ui/DataTable.svelte';
@@ -16,12 +16,12 @@
     ontoggle,
     ondelete,
   }: {
-    environments: AzureDevOpsEnvironmentProfile[];
+    environments: WorkSourceEnvironmentProfile[];
     empty: boolean;
     updatingKey?: string;
     onrefresh: () => void;
-    ontoggle: (profile: AzureDevOpsEnvironmentProfile) => void;
-    ondelete: (profile: AzureDevOpsEnvironmentProfile) => void;
+    ontoggle: (profile: WorkSourceEnvironmentProfile) => void;
+    ondelete: (profile: WorkSourceEnvironmentProfile) => void;
   } = $props();
 </script>
 
@@ -52,7 +52,7 @@
         <tr>
           <th class="px-4 py-3 font-medium" scope="col">Environment</th>
           <th class="px-4 py-3 font-medium" scope="col">Project</th>
-          <th class="px-4 py-3 font-medium" scope="col">Work-item type</th>
+          <th class="px-4 py-3 font-medium" scope="col">Provider</th>
           <th class="px-4 py-3 font-medium" scope="col">Status</th>
           <th class="px-4 py-3 text-right font-medium" scope="col">Actions</th>
         </tr>
@@ -77,7 +77,7 @@
                 {profile.organizationUrl}
               </span>
             </td>
-            <td class="px-4 py-4 text-slate-300">{profile.workItemType}</td>
+            <td class="px-4 py-4 text-slate-300">{profile.provider}</td>
             <td class="px-4 py-4">
               <span
                 class={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
