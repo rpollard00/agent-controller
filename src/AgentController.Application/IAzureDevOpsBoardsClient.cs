@@ -146,9 +146,6 @@ public sealed record BoardsQueryParameters
     /// <summary>Project name (required for Azure DevOps queries).</summary>
     public string Project { get; init; } = string.Empty;
 
-    /// <summary>Work item type to include.</summary>
-    public string? WorkItemType { get; init; }
-
     /// <summary>Work item states to include.</summary>
     public IReadOnlyList<string>? States { get; init; }
 

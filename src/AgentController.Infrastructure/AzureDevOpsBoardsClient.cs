@@ -1062,14 +1062,6 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             $" WHERE [System.TeamProject] = '{EscapeWiql(project)}'"
         );
 
-        if (!string.IsNullOrWhiteSpace(parameters.WorkItemType))
-        {
-            sb.Append(
-                CultureInfo.InvariantCulture,
-                $" AND [System.WorkItemType] = '{EscapeWiql(parameters.WorkItemType)}'"
-            );
-        }
-
         if (parameters.States is { Count: > 0 })
         {
             var states = string.Join(", ", parameters.States.Select(s => $"'{EscapeWiql(s)}'"));
