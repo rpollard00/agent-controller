@@ -136,6 +136,8 @@ describe('runtime environment screens', () => {
       await screen.findByRole('heading', { level: 1, name: 'Add runtime environment' }),
     ).toBeVisible();
     expect(screen.getByText('Loadout mappings')).toBeVisible();
+    expect(screen.getByPlaceholderText('contoso-dev')).toBeVisible();
+    expect(screen.getByPlaceholderText('Contoso Software Development')).toBeVisible();
 
     await completeIdentityFields();
     await fireEvent.input(screen.getByLabelText(/Workspace root/), {
@@ -231,7 +233,6 @@ describe('runtime environment screens', () => {
 
     const keyInput = await screen.findByLabelText(/Environment name/);
     expect(keyInput).toHaveAttribute('readonly');
-    expect(screen.getByText(/Environment names are immutable/)).toBeVisible();
 
     await fireEvent.input(screen.getByLabelText(/Display name/), {
       target: { value: 'Updated runtime' },

@@ -103,9 +103,6 @@
       <Field
         id="runtime-key"
         label="Environment name"
-        hint={mode === 'edit'
-          ? 'Environment names are immutable. Create a new environment to use a different name.'
-          : 'Use 1 to 32 characters starting with an ASCII letter, followed by ASCII letters, numbers, hyphens, or underscores. It cannot be changed after creation.'}
         error={fieldError('key')}
         required
       >
@@ -118,8 +115,9 @@
           disabled={submitting}
           required
           autocomplete="off"
+          placeholder="contoso-dev"
           aria-invalid={fieldError('key') ? 'true' : undefined}
-          aria-describedby={describedBy('runtime-key', 'key', true)}
+          aria-describedby={describedBy('runtime-key', 'key')}
           oninput={() => clearClientError('key')}
         />
       </Field>
@@ -127,7 +125,6 @@
       <Field
         id="runtime-displayName"
         label="Display name"
-        hint="A recognizable name for operators choosing a runtime environment."
         error={fieldError('displayName')}
         required
       >
@@ -139,8 +136,9 @@
           disabled={submitting}
           required
           autocomplete="off"
+          placeholder="Contoso Software Development"
           aria-invalid={fieldError('displayName') ? 'true' : undefined}
-          aria-describedby={describedBy('runtime-displayName', 'displayName', true)}
+          aria-describedby={describedBy('runtime-displayName', 'displayName')}
           oninput={() => clearClientError('displayName')}
         />
       </Field>
