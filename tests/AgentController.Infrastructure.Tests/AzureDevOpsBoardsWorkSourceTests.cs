@@ -87,7 +87,7 @@ public class AzureDevOpsBoardsWorkSourceTests
         Assert.Equal(["agent-ready"], alphaClient.QueryCalls[0].Tags);
         Assert.Equal("ZetaProject", Assert.Single(zetaClient.QueryCalls).Project);
         Assert.Equal(["Approved"], zetaClient.QueryCalls[0].States);
-        Assert.Equal(["autonomous"], zetaClient.QueryCalls[0].Tags);
+        Assert.Equal(["agent-ready"], zetaClient.QueryCalls[0].Tags);
         Assert.Equal("alpha", candidates[0].SourceMetadata?["azureDevOpsEnvironmentKey"]);
         Assert.Equal("zeta", candidates[1].SourceMetadata?["azureDevOpsEnvironmentKey"]);
     }
@@ -254,11 +254,11 @@ public class AzureDevOpsBoardsWorkSourceTests
         // Act
         var result = await workSource.ReactivateForReworkAsync(request, CancellationToken.None);
 
-        // Assert: fails with clear reason about missing eligible states
+        // Assert: fails with clear reason about missing active state
         Assert.False(result.Success);
         Assert.NotNull(result.FailureReason);
         Assert.Contains(
-            "eligible states",
+            "active state",
             result.FailureReason,
             StringComparison.OrdinalIgnoreCase
         );
@@ -668,23 +668,23 @@ public class AzureDevOpsBoardsWorkSourceTests
         return new AzureDevOpsBoardsWorkSource(scopeFactory, optionsMonitor);
     }
 
-    private static AzureDevOpsEnvironmentProfile ManagedEnvironment(
+    private static WorkSourceEnvironmentProfile ManagedEnvironment(
         string key,
         string project,
         IReadOnlyList<string> states,
         IReadOnlyList<string> tags
     )
     {
-        return new AzureDevOpsEnvironmentProfile
+        return new WorkSourceEnvironmentProfile
         {
             Key = key,
             DisplayName = key,
             Enabled = true,
+            Provider = "AzureDevOpsBoards",
+            TagPrefix = "agent",
             OrganizationUrl = $"https://dev.azure.com/{key}",
             Project = project,
-            WorkItemType = "User Story",
-            EligibleStates = states,
-            EligibleTags = tags,
+            CompletedStates = states,
             PatEnvironmentVariable = "TEST_ADO_PAT",
         };
     }
@@ -786,7 +786,7 @@ public class AzureDevOpsBoardsWorkSourceTests
     }
 
     private sealed class StubManagedProfileResolver(
-        IReadOnlyList<AzureDevOpsEnvironmentProfile> profiles
+        IReadOnlyList<WorkSourceEnvironmentProfile> profiles
     ) : IManagedProfileResolver
     {
         public Task<ResolvedControllerProfiles?> ResolveForRepositoryAsync(
@@ -823,7 +823,7 @@ public class AzureDevOpsBoardsWorkSourceTests
         IReadOnlyDictionary<string, IAzureDevOpsBoardsClient> clients
     ) : IAzureDevOpsBoardsClientFactory
     {
-        public IAzureDevOpsBoardsClient Create(AzureDevOpsEnvironmentProfile profile) =>
+        public IAzureDevOpsBoardsClient Create(WorkSourceEnvironmentProfile profile) =>
             clients[profile.Key];
     }
 

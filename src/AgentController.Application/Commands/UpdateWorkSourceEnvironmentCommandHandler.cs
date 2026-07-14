@@ -6,11 +6,11 @@ namespace AgentController.Application.Commands;
 /// <summary>Validates and updates mutable work source environment profile fields.</summary>
 public sealed class UpdateWorkSourceEnvironmentCommandHandler(
     IWorkSourceEnvironmentStore environmentStore
-) : ICommandHandler<UpdateWorkSourceEnvironmentCommand, AzureDevOpsEnvironmentOperationResult>
+) : ICommandHandler<UpdateWorkSourceEnvironmentCommand, WorkSourceEnvironmentOperationResult>
 {
     private readonly IWorkSourceEnvironmentStore _environmentStore = environmentStore;
 
-    public async Task<AzureDevOpsEnvironmentOperationResult> HandleAsync(
+    public async Task<WorkSourceEnvironmentOperationResult> HandleAsync(
         UpdateWorkSourceEnvironmentCommand command,
         CancellationToken cancellationToken
     )
@@ -18,12 +18,12 @@ public sealed class UpdateWorkSourceEnvironmentCommandHandler(
         var routeKey = AzureDevOpsEnvironmentProfileValidation.ValidateAndNormalizeKey(command.Key);
         if (!routeKey.IsValid)
         {
-            return AzureDevOpsEnvironmentOperationResult.ValidationFailed(routeKey.Errors);
+            return WorkSourceEnvironmentOperationResult.ValidationFailed(routeKey.Errors);
         }
 
         if (command.Profile is null)
         {
-            return AzureDevOpsEnvironmentOperationResult.ValidationFailed(
+            return WorkSourceEnvironmentOperationResult.ValidationFailed(
                 new Dictionary<string, string[]>
                 {
                     ["profile"] = ["A work source environment profile is required."],
@@ -36,12 +36,12 @@ public sealed class UpdateWorkSourceEnvironmentCommandHandler(
         );
         if (!validation.IsValid)
         {
-            return AzureDevOpsEnvironmentOperationResult.ValidationFailed(validation.Errors);
+            return WorkSourceEnvironmentOperationResult.ValidationFailed(validation.Errors);
         }
 
         if (!string.Equals(routeKey.Key, validation.Profile.Key, StringComparison.Ordinal))
         {
-            return AzureDevOpsEnvironmentOperationResult.ValidationFailed(
+            return WorkSourceEnvironmentOperationResult.ValidationFailed(
                 new Dictionary<string, string[]>
                 {
                     ["key"] =
@@ -55,7 +55,7 @@ public sealed class UpdateWorkSourceEnvironmentCommandHandler(
         var existing = await _environmentStore.GetByKeyAsync(routeKey.Key, cancellationToken);
         if (existing is null)
         {
-            return AzureDevOpsEnvironmentOperationResult.NotFound(
+            return WorkSourceEnvironmentOperationResult.NotFound(
                 $"Work source environment '{routeKey.Key}' was not found."
             );
         }
@@ -68,8 +68,8 @@ public sealed class UpdateWorkSourceEnvironmentCommandHandler(
         var updated = await _environmentStore.UpdateAsync(profile, cancellationToken);
 
         return updated
-            ? AzureDevOpsEnvironmentOperationResult.Succeeded(profile)
-            : AzureDevOpsEnvironmentOperationResult.NotFound(
+            ? WorkSourceEnvironmentOperationResult.Succeeded(profile)
+            : WorkSourceEnvironmentOperationResult.NotFound(
                 $"Work source environment '{routeKey.Key}' was not found."
             );
     }

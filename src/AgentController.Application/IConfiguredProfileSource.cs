@@ -14,6 +14,6 @@ public interface IConfiguredProfileSource
     /// <summary>Builds the configured runtime fallback for a repository.</summary>
     RuntimeEnvironmentProfile GetRuntimeEnvironment(RepositoryProfile repository);
 
-    /// <summary>Gets the configured Azure DevOps fallback, or <see langword="null"/> when absent.</summary>
-    AzureDevOpsEnvironmentProfile? GetAzureDevOpsEnvironment();
+    /// <summary>Gets the configured work source fallback, or <see langword="null"/> when absent.</summary>
+    WorkSourceEnvironmentProfile? GetAzureDevOpsEnvironment();
 }

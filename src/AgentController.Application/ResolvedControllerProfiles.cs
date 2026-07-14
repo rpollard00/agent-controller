@@ -9,7 +9,7 @@ public sealed record ResolvedControllerProfiles
 
     public RuntimeEnvironmentProfile RuntimeEnvironment { get; init; } = new();
 
-    public AzureDevOpsEnvironmentProfile? AzureDevOpsEnvironment { get; init; }
+    public WorkSourceEnvironmentProfile? AzureDevOpsEnvironment { get; init; }
 
     public bool RepositoryIsManaged { get; init; }
 
@@ -20,6 +20,6 @@ public sealed record ResolvedControllerProfiles
 
 /// <summary>An Azure DevOps profile together with its managed/configured origin.</summary>
 public sealed record ResolvedAzureDevOpsEnvironment(
-    AzureDevOpsEnvironmentProfile Profile,
+    WorkSourceEnvironmentProfile Profile,
     bool IsManaged
 );

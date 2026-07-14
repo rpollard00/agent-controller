@@ -82,7 +82,7 @@ internal sealed class ConfiguredProfileSource : IConfiguredProfileSource
         };
     }
 
-    public AzureDevOpsEnvironmentProfile? GetAzureDevOpsEnvironment()
+    public WorkSourceEnvironmentProfile? GetAzureDevOpsEnvironment()
     {
         var workSource = _workSource.CurrentValue;
         var azureDevOps = _azureDevOps.CurrentValue;
@@ -95,17 +95,16 @@ internal sealed class ConfiguredProfileSource : IConfiguredProfileSource
             return null;
         }
 
-        return new AzureDevOpsEnvironmentProfile
+        return new WorkSourceEnvironmentProfile
         {
             Key = "appsettings",
             DisplayName = "Configured Azure DevOps environment",
             Enabled = true,
+            Provider = "AzureDevOpsBoards",
+            TagPrefix = "agent",
             OrganizationUrl = workSource.OrganizationUrl ?? string.Empty,
             Project = workSource.Project ?? string.Empty,
-            WorkItemType = workSource.WorkItemType,
-            EligibleTags = workSource.EligibleTags,
-            ExcludedTags = workSource.ExcludedTags,
-            EligibleStates = workSource.EligibleStates,
+            CompletedStates = [],
             ActiveState = workSource.ActiveState,
             CompletedState = workSource.CompletedState,
             PatEnvironmentVariable = GetEnvironmentVariableReference(

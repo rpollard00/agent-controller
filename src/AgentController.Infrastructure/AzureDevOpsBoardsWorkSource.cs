@@ -233,19 +233,21 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
         }
 
         // Determine target state from the selected managed profile or appsettings.
-        var eligibleStates =
-            selection.Environment?.Profile.EligibleStates ?? options.EligibleStates;
-        if (eligibleStates is null || eligibleStates.Count == 0)
+        var targetState =
+            selection.Environment?.Profile.ActiveState
+            ?? options.ActiveState
+            ?? (options.EligibleStates is { Count: > 0 } eligibleStates
+                ? eligibleStates[0]
+                : null);
+        if (string.IsNullOrWhiteSpace(targetState))
         {
             return new ReworkReactivateResult
             {
                 Success = false,
                 FailureReason =
-                    "No eligible states configured; cannot determine target state for reactivation.",
+                    "No active state configured; cannot determine target state for reactivation.",
             };
         }
-
-        var targetState = eligibleStates[0];
 
         var workRef = request.WorkRef;
 
@@ -314,21 +316,23 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
 
     private static BoardsQueryParameters BuildQueryParameters(
         WorkQuery query,
-        AzureDevOpsEnvironmentProfile profile
+        WorkSourceEnvironmentProfile profile
     )
     {
+        var tagPrefix = string.IsNullOrWhiteSpace(profile.TagPrefix)
+            ? "agent"
+            : profile.TagPrefix;
         return new BoardsQueryParameters
         {
             Project = query.Project ?? profile.Project,
-            WorkItemType = query.WorkItemType ?? profile.WorkItemType,
             States = query.States is { Count: > 0 }
                 ? query.States
-                : NullIfEmpty(profile.EligibleStates),
-            ExcludedStates = NullIfEmpty(profile.ExcludedStates),
-            Tags = query.Tags is { Count: > 0 } ? query.Tags : NullIfEmpty(profile.EligibleTags),
+                : NullIfEmpty(profile.CompletedStates),
+            ExcludedStates = NullIfEmpty(profile.CompletedStates),
+            Tags = query.Tags is { Count: > 0 } ? query.Tags : [$"{tagPrefix}-ready"],
             ExcludedTags = query.ExcludedTags is { Count: > 0 }
                 ? query.ExcludedTags
-                : NullIfEmpty(profile.ExcludedTags),
+                : [$"{tagPrefix}-active", $"{tagPrefix}-failed", $"{tagPrefix}-needs-human"],
             MaxResults = query.MaxResults,
         };
     }

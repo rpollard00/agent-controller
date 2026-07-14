@@ -90,7 +90,7 @@ public sealed class ManagedProfileResolverTests
             new StubConfiguredProfileSource(
                 repository: null,
                 runtime: Runtime("fallback", enabled: true, workspaceRoot: null),
-                azureDevOps: null
+                workSourceEnvironment: null
             )
         );
 
@@ -239,8 +239,8 @@ public sealed class ManagedProfileResolverTests
 
         public WorkSourceEnvironmentProfile? GetWorkSourceEnvironment() => workSourceEnvironment;
 
-        public AzureDevOpsEnvironmentProfile? GetAzureDevOpsEnvironment() =>
-            workSourceEnvironment as AzureDevOpsEnvironmentProfile;
+        public WorkSourceEnvironmentProfile? GetAzureDevOpsEnvironment() =>
+            workSourceEnvironment as WorkSourceEnvironmentProfile;
     }
 
     private sealed class RepositoryStore(IReadOnlyList<RepositoryProfile> profiles)

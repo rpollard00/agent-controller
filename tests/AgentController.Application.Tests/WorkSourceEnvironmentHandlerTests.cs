@@ -22,23 +22,23 @@ public sealed class WorkSourceEnvironmentHandlerTests
                 PatEnvironmentVariable = environmentVariable,
             }
         );
-        var listHandler = new ListAzureDevOpsEnvironmentsQueryHandler(environments);
-        var getHandler = new GetAzureDevOpsEnvironmentByKeyQueryHandler(environments);
+        var listHandler = new ListWorkSourceEnvironmentsQueryHandler(environments);
+        var getHandler = new GetWorkSourceEnvironmentByKeyQueryHandler(environments);
         Environment.SetEnvironmentVariable(environmentVariable, rawPat);
 
         try
         {
             var listed = await listHandler.ExecuteAsync(
-                new ListAzureDevOpsEnvironmentsQuery(),
+                new ListWorkSourceEnvironmentsQuery(),
                 CancellationToken.None
             );
             var read = await getHandler.ExecuteAsync(
-                new GetAzureDevOpsEnvironmentByKeyQuery("  ADO-PRIMARY  "),
+                new GetWorkSourceEnvironmentByKeyQuery("  ADO-PRIMARY  "),
                 CancellationToken.None
             );
 
             Assert.Equal(["ado-primary", "zulu"], listed.Select(profile => profile.Key));
-            Assert.Equal(AzureDevOpsEnvironmentOperationStatus.Succeeded, read.Status);
+            Assert.Equal(WorkSourceEnvironmentOperationStatus.Succeeded, read.Status);
             var profile = Assert.IsType<WorkSourceEnvironmentProfile>(read.Environment);
             Assert.Equal(environmentVariable, profile.PatEnvironmentVariable);
             Assert.Equal("ado-primary", environments.LastReadKey);
@@ -59,20 +59,20 @@ public sealed class WorkSourceEnvironmentHandlerTests
     public async Task Get_ReturnsTypedValidationAndNotFoundOutcomes()
     {
         var environments = new FakeWorkSourceEnvironmentStore();
-        var handler = new GetAzureDevOpsEnvironmentByKeyQueryHandler(environments);
+        var handler = new GetWorkSourceEnvironmentByKeyQueryHandler(environments);
 
         var invalid = await handler.ExecuteAsync(
-            new GetAzureDevOpsEnvironmentByKeyQuery("not valid"),
+            new GetWorkSourceEnvironmentByKeyQuery("not valid"),
             CancellationToken.None
         );
         var missing = await handler.ExecuteAsync(
-            new GetAzureDevOpsEnvironmentByKeyQuery("missing"),
+            new GetWorkSourceEnvironmentByKeyQuery("missing"),
             CancellationToken.None
         );
 
-        Assert.Equal(AzureDevOpsEnvironmentOperationStatus.ValidationFailed, invalid.Status);
+        Assert.Equal(WorkSourceEnvironmentOperationStatus.ValidationFailed, invalid.Status);
         Assert.Contains("key", invalid.ValidationErrors.Keys);
-        Assert.Equal(AzureDevOpsEnvironmentOperationStatus.NotFound, missing.Status);
+        Assert.Equal(WorkSourceEnvironmentOperationStatus.NotFound, missing.Status);
         Assert.Empty(missing.ValidationErrors);
     }
 
@@ -104,7 +104,7 @@ public sealed class WorkSourceEnvironmentHandlerTests
         );
         var after = DateTimeOffset.UtcNow;
 
-        Assert.Equal(AzureDevOpsEnvironmentOperationStatus.Succeeded, result.Status);
+        Assert.Equal(WorkSourceEnvironmentOperationStatus.Succeeded, result.Status);
         var persisted = Assert.IsType<WorkSourceEnvironmentProfile>(environments.LastCreated);
         Assert.Same(persisted, result.Environment);
         Assert.Equal("ado.primary", persisted.Key);
@@ -143,7 +143,7 @@ public sealed class WorkSourceEnvironmentHandlerTests
             CancellationToken.None
         );
 
-        Assert.Equal(AzureDevOpsEnvironmentOperationStatus.ValidationFailed, result.Status);
+        Assert.Equal(WorkSourceEnvironmentOperationStatus.ValidationFailed, result.Status);
         Assert.Contains("key", result.ValidationErrors.Keys);
         Assert.Contains("displayName", result.ValidationErrors.Keys);
         Assert.Contains("organizationUrl", result.ValidationErrors.Keys);
@@ -168,9 +168,9 @@ public sealed class WorkSourceEnvironmentHandlerTests
             CancellationToken.None
         );
 
-        Assert.Equal(AzureDevOpsEnvironmentOperationStatus.ValidationFailed, missing.Status);
+        Assert.Equal(WorkSourceEnvironmentOperationStatus.ValidationFailed, missing.Status);
         Assert.Contains("profile", missing.ValidationErrors.Keys);
-        Assert.Equal(AzureDevOpsEnvironmentOperationStatus.Conflict, duplicate.Status);
+        Assert.Equal(WorkSourceEnvironmentOperationStatus.Conflict, duplicate.Status);
         Assert.Contains(
             "shared",
             Assert.IsType<string>(duplicate.Detail),
@@ -210,7 +210,7 @@ public sealed class WorkSourceEnvironmentHandlerTests
         );
         var after = DateTimeOffset.UtcNow;
 
-        Assert.Equal(AzureDevOpsEnvironmentOperationStatus.Succeeded, result.Status);
+        Assert.Equal(WorkSourceEnvironmentOperationStatus.Succeeded, result.Status);
         var persisted = Assert.IsType<WorkSourceEnvironmentProfile>(environments.LastUpdated);
         Assert.Equal("production", persisted.Key);
         Assert.Equal("Updated Boards", persisted.DisplayName);
@@ -239,13 +239,13 @@ public sealed class WorkSourceEnvironmentHandlerTests
             CancellationToken.None
         );
 
-        Assert.Equal(AzureDevOpsEnvironmentOperationStatus.ValidationFailed, changedKey.Status);
+        Assert.Equal(WorkSourceEnvironmentOperationStatus.ValidationFailed, changedKey.Status);
         Assert.Contains(
             "immutable",
             changedKey.ValidationErrors["key"].Single(),
             StringComparison.OrdinalIgnoreCase
         );
-        Assert.Equal(AzureDevOpsEnvironmentOperationStatus.NotFound, missing.Status);
+        Assert.Equal(WorkSourceEnvironmentOperationStatus.NotFound, missing.Status);
         Assert.Null(environments.LastUpdated);
     }
 
@@ -264,7 +264,7 @@ public sealed class WorkSourceEnvironmentHandlerTests
             CancellationToken.None
         );
 
-        Assert.Equal(AzureDevOpsEnvironmentOperationStatus.Conflict, result.Status);
+        Assert.Equal(WorkSourceEnvironmentOperationStatus.Conflict, result.Status);
         Assert.Contains(
             "service-a",
             Assert.IsType<string>(result.Detail),
@@ -296,10 +296,10 @@ public sealed class WorkSourceEnvironmentHandlerTests
             CancellationToken.None
         );
 
-        Assert.Equal(AzureDevOpsEnvironmentOperationStatus.Succeeded, deleted.Status);
+        Assert.Equal(WorkSourceEnvironmentOperationStatus.Succeeded, deleted.Status);
         Assert.Equal("temporary", environments.LastDeletedKey);
-        Assert.Equal(AzureDevOpsEnvironmentOperationStatus.NotFound, missing.Status);
-        Assert.Equal(AzureDevOpsEnvironmentOperationStatus.ValidationFailed, invalid.Status);
+        Assert.Equal(WorkSourceEnvironmentOperationStatus.NotFound, missing.Status);
+        Assert.Equal(WorkSourceEnvironmentOperationStatus.ValidationFailed, invalid.Status);
     }
 
     [Fact]
@@ -312,37 +312,37 @@ public sealed class WorkSourceEnvironmentHandlerTests
         AssertRegistration<
             ICommandHandler<
                 CreateWorkSourceEnvironmentCommand,
-                AzureDevOpsEnvironmentOperationResult
+                WorkSourceEnvironmentOperationResult
             >,
             CreateWorkSourceEnvironmentCommandHandler
         >(services);
         AssertRegistration<
             ICommandHandler<
                 UpdateWorkSourceEnvironmentCommand,
-                AzureDevOpsEnvironmentOperationResult
+                WorkSourceEnvironmentOperationResult
             >,
             UpdateWorkSourceEnvironmentCommandHandler
         >(services);
         AssertRegistration<
             ICommandHandler<
                 DeleteWorkSourceEnvironmentCommand,
-                AzureDevOpsEnvironmentOperationResult
+                WorkSourceEnvironmentOperationResult
             >,
             DeleteWorkSourceEnvironmentCommandHandler
         >(services);
         AssertRegistration<
             IQueryHandler<
-                ListAzureDevOpsEnvironmentsQuery,
+                ListWorkSourceEnvironmentsQuery,
                 IReadOnlyList<WorkSourceEnvironmentProfile>
             >,
-            ListAzureDevOpsEnvironmentsQueryHandler
+            ListWorkSourceEnvironmentsQueryHandler
         >(services);
         AssertRegistration<
             IQueryHandler<
-                GetAzureDevOpsEnvironmentByKeyQuery,
-                AzureDevOpsEnvironmentOperationResult
+                GetWorkSourceEnvironmentByKeyQuery,
+                WorkSourceEnvironmentOperationResult
             >,
-            GetAzureDevOpsEnvironmentByKeyQueryHandler
+            GetWorkSourceEnvironmentByKeyQueryHandler
         >(services);
     }
 

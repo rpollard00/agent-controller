@@ -2,8 +2,8 @@ using AgentController.Domain;
 
 namespace AgentController.Application.Results;
 
-/// <summary>Identifies the outcome of a managed Azure DevOps environment operation.</summary>
-public enum AzureDevOpsEnvironmentOperationStatus
+/// <summary>Identifies the outcome of a managed work source environment operation.</summary>
+public enum WorkSourceEnvironmentOperationStatus
 {
     /// <summary>The operation completed successfully.</summary>
     Succeeded,
@@ -19,18 +19,18 @@ public enum AzureDevOpsEnvironmentOperationStatus
 }
 
 /// <summary>
-/// Application-layer result for managed Azure DevOps environment operations. Profiles contain
+/// Application-layer result for managed work source environment operations. Profiles contain
 /// only the name of the environment variable that holds a PAT; credential values are never
 /// resolved into this result.
 /// </summary>
-public sealed record AzureDevOpsEnvironmentOperationResult
+public sealed record WorkSourceEnvironmentOperationResult
 {
     private static readonly IReadOnlyDictionary<string, string[]> NoValidationErrors =
         new Dictionary<string, string[]>();
 
-    private AzureDevOpsEnvironmentOperationResult(
-        AzureDevOpsEnvironmentOperationStatus status,
-        AzureDevOpsEnvironmentProfile? environment = null,
+    private WorkSourceEnvironmentOperationResult(
+        WorkSourceEnvironmentOperationStatus status,
+        WorkSourceEnvironmentProfile? environment = null,
         IReadOnlyDictionary<string, string[]>? validationErrors = null,
         string? detail = null
     )
@@ -42,10 +42,10 @@ public sealed record AzureDevOpsEnvironmentOperationResult
     }
 
     /// <summary>The typed operation outcome.</summary>
-    public AzureDevOpsEnvironmentOperationStatus Status { get; }
+    public WorkSourceEnvironmentOperationStatus Status { get; }
 
     /// <summary>The safe managed profile for successful read or mutation operations.</summary>
-    public AzureDevOpsEnvironmentProfile? Environment { get; }
+    public WorkSourceEnvironmentProfile? Environment { get; }
 
     /// <summary>Field-keyed validation errors for invalid input.</summary>
     public IReadOnlyDictionary<string, string[]> ValidationErrors { get; }
@@ -53,17 +53,17 @@ public sealed record AzureDevOpsEnvironmentOperationResult
     /// <summary>A safe description for not-found or conflict outcomes.</summary>
     public string? Detail { get; }
 
-    public static AzureDevOpsEnvironmentOperationResult Succeeded(
-        AzureDevOpsEnvironmentProfile? environment = null
-    ) => new(AzureDevOpsEnvironmentOperationStatus.Succeeded, environment);
+    public static WorkSourceEnvironmentOperationResult Succeeded(
+        WorkSourceEnvironmentProfile? environment = null
+    ) => new(WorkSourceEnvironmentOperationStatus.Succeeded, environment);
 
-    public static AzureDevOpsEnvironmentOperationResult ValidationFailed(
+    public static WorkSourceEnvironmentOperationResult ValidationFailed(
         IReadOnlyDictionary<string, string[]> errors
-    ) => new(AzureDevOpsEnvironmentOperationStatus.ValidationFailed, validationErrors: errors);
+    ) => new(WorkSourceEnvironmentOperationStatus.ValidationFailed, validationErrors: errors);
 
-    public static AzureDevOpsEnvironmentOperationResult NotFound(string detail) =>
-        new(AzureDevOpsEnvironmentOperationStatus.NotFound, detail: detail);
+    public static WorkSourceEnvironmentOperationResult NotFound(string detail) =>
+        new(WorkSourceEnvironmentOperationStatus.NotFound, detail: detail);
 
-    public static AzureDevOpsEnvironmentOperationResult Conflict(string detail) =>
-        new(AzureDevOpsEnvironmentOperationStatus.Conflict, detail: detail);
+    public static WorkSourceEnvironmentOperationResult Conflict(string detail) =>
+        new(WorkSourceEnvironmentOperationStatus.Conflict, detail: detail);
 }

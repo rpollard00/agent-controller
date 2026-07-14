@@ -80,7 +80,7 @@ public sealed class RunAzureDevOpsDiagnosticQueryHandler(
 
         var clientProfile =
             resolvedEnvironment?.Profile
-            ?? new AgentController.Domain.AzureDevOpsEnvironmentProfile
+            ?? new AgentController.Domain.WorkSourceEnvironmentProfile
             {
                 Key = "diagnostic",
                 DisplayName = "Diagnostic Azure DevOps environment",

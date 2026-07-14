@@ -14,7 +14,7 @@ internal static class AzureDevOpsEnvironmentProfileValidation
     private const int MaximumEnvironmentVariableLength = 256;
 
     public static AzureDevOpsEnvironmentProfileValidationResult ValidateAndNormalize(
-        AzureDevOpsEnvironmentProfile profile
+        WorkSourceEnvironmentProfile profile
     )
     {
         var errors = new ValidationErrors();
@@ -42,22 +42,13 @@ internal static class AzureDevOpsEnvironmentProfileValidation
             errors
         );
 
-        var workItemType = NormalizeText(profile.WorkItemType);
-        ValidateRequiredText(
-            workItemType,
-            "workItemType",
-            "A work-item type is required.",
-            MaximumWorkItemTypeLength,
-            errors
-        );
+        var provider = NormalizeText(profile.Provider);
+        if (provider.Length == 0)
+        {
+            provider = "AzureDevOpsBoards";
+        }
 
-        var eligibleTags = NormalizeBoardValues(profile.EligibleTags, "eligibleTags", errors);
-        var excludedTags = NormalizeBoardValues(profile.ExcludedTags, "excludedTags", errors);
-        var eligibleStates = NormalizeBoardValues(profile.EligibleStates, "eligibleStates", errors);
-        var excludedStates = NormalizeBoardValues(profile.ExcludedStates, "excludedStates", errors);
-
-        ValidateNoOverlap(eligibleTags, excludedTags, "excludedTags", "tag", errors);
-        ValidateNoOverlap(eligibleStates, excludedStates, "excludedStates", "state", errors);
+        var completedStates = NormalizeBoardValues(profile.CompletedStates, "completedStates", errors);
 
         var activeState = NormalizeOptionalBoardValue(profile.ActiveState, "activeState", errors);
         var completedState = NormalizeOptionalBoardValue(
@@ -78,6 +69,8 @@ internal static class AzureDevOpsEnvironmentProfileValidation
             );
         }
 
+        var tagPrefix = NormalizeTagPrefix(profile.TagPrefix, errors);
+
         var patEnvironmentVariable = NormalizeText(profile.PatEnvironmentVariable);
         ValidateEnvironmentVariableName(patEnvironmentVariable, errors);
 
@@ -85,19 +78,47 @@ internal static class AzureDevOpsEnvironmentProfileValidation
         {
             Key = key,
             DisplayName = displayName,
+            Provider = provider,
             OrganizationUrl = organizationUrl,
             Project = project,
-            WorkItemType = workItemType,
-            EligibleTags = eligibleTags,
-            ExcludedTags = excludedTags,
-            EligibleStates = eligibleStates,
-            ExcludedStates = excludedStates,
+            CompletedStates = completedStates,
             ActiveState = activeState,
             CompletedState = completedState,
+            TagPrefix = tagPrefix,
             PatEnvironmentVariable = patEnvironmentVariable,
         };
 
         return new AzureDevOpsEnvironmentProfileValidationResult(normalized, errors.ToDictionary());
+    }
+
+    private static string NormalizeTagPrefix(string? value, ValidationErrors errors)
+    {
+        var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
+        if (normalized.Length == 0)
+        {
+            return "agent";
+        }
+
+        if (normalized.Length > 32)
+        {
+            errors.Add("tagPrefix", "The tag prefix must be 32 characters or fewer.");
+        }
+
+        if (
+            normalized.Any(character =>
+                character is not (>= 'a' and <= 'z')
+                and not (>= '0' and <= '9')
+                and not '-'
+            )
+        )
+        {
+            errors.Add(
+                "tagPrefix",
+                "The tag prefix may contain only lowercase letters, numbers, and hyphens."
+            );
+        }
+
+        return normalized;
     }
 
     public static AzureDevOpsEnvironmentKeyValidationResult ValidateAndNormalizeKey(string? value)
@@ -347,7 +368,7 @@ internal static class AzureDevOpsEnvironmentProfileValidation
 }
 
 internal sealed record AzureDevOpsEnvironmentProfileValidationResult(
-    AzureDevOpsEnvironmentProfile Profile,
+    WorkSourceEnvironmentProfile Profile,
     IReadOnlyDictionary<string, string[]> Errors
 )
 {

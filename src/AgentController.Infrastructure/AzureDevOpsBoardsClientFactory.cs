@@ -9,7 +9,7 @@ namespace AgentController.Infrastructure;
 internal sealed class AzureDevOpsBoardsClientFactory(ILoggerFactory loggerFactory)
     : IAzureDevOpsBoardsClientFactory
 {
-    public IAzureDevOpsBoardsClient Create(AzureDevOpsEnvironmentProfile profile)
+    public IAzureDevOpsBoardsClient Create(WorkSourceEnvironmentProfile profile)
     {
         if (!profile.Enabled)
         {

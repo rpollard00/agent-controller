@@ -9,12 +9,12 @@ namespace AgentController.Application.Commands;
 public sealed class DeleteWorkSourceEnvironmentCommandHandler(
     IWorkSourceEnvironmentStore environmentStore,
     IRepositoryStore repositoryStore
-) : ICommandHandler<DeleteWorkSourceEnvironmentCommand, AzureDevOpsEnvironmentOperationResult>
+) : ICommandHandler<DeleteWorkSourceEnvironmentCommand, WorkSourceEnvironmentOperationResult>
 {
     private readonly IWorkSourceEnvironmentStore _environmentStore = environmentStore;
     private readonly IRepositoryStore _repositoryStore = repositoryStore;
 
-    public async Task<AzureDevOpsEnvironmentOperationResult> HandleAsync(
+    public async Task<WorkSourceEnvironmentOperationResult> HandleAsync(
         DeleteWorkSourceEnvironmentCommand command,
         CancellationToken cancellationToken
     )
@@ -22,13 +22,13 @@ public sealed class DeleteWorkSourceEnvironmentCommandHandler(
         var key = AzureDevOpsEnvironmentProfileValidation.ValidateAndNormalizeKey(command.Key);
         if (!key.IsValid)
         {
-            return AzureDevOpsEnvironmentOperationResult.ValidationFailed(key.Errors);
+            return WorkSourceEnvironmentOperationResult.ValidationFailed(key.Errors);
         }
 
         var existing = await _environmentStore.GetByKeyAsync(key.Key, cancellationToken);
         if (existing is null)
         {
-            return AzureDevOpsEnvironmentOperationResult.NotFound(
+            return WorkSourceEnvironmentOperationResult.NotFound(
                 $"Work source environment '{key.Key}' was not found."
             );
         }
@@ -47,15 +47,15 @@ public sealed class DeleteWorkSourceEnvironmentCommandHandler(
 
         if (referencingRepository is not null)
         {
-            return AzureDevOpsEnvironmentOperationResult.Conflict(
+            return WorkSourceEnvironmentOperationResult.Conflict(
                 $"Work source environment '{key.Key}' is referenced by repository '{referencingRepository.Key}'."
             );
         }
 
         var deleted = await _environmentStore.DeleteAsync(key.Key, cancellationToken);
         return deleted
-            ? AzureDevOpsEnvironmentOperationResult.Succeeded()
-            : AzureDevOpsEnvironmentOperationResult.NotFound(
+            ? WorkSourceEnvironmentOperationResult.Succeeded()
+            : WorkSourceEnvironmentOperationResult.NotFound(
                 $"Work source environment '{key.Key}' was not found."
             );
     }

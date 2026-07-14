@@ -3,15 +3,15 @@ using AgentController.Domain;
 
 namespace AgentController.Application.Queries;
 
-/// <summary>Lists managed Azure DevOps environments in deterministic store order.</summary>
-public sealed class ListAzureDevOpsEnvironmentsQueryHandler(
+/// <summary>Lists managed work source environments in deterministic store order.</summary>
+public sealed class ListWorkSourceEnvironmentsQueryHandler(
     IWorkSourceEnvironmentStore environmentStore
-) : IQueryHandler<ListAzureDevOpsEnvironmentsQuery, IReadOnlyList<WorkSourceEnvironmentProfile>>
+) : IQueryHandler<ListWorkSourceEnvironmentsQuery, IReadOnlyList<WorkSourceEnvironmentProfile>>
 {
     private readonly IWorkSourceEnvironmentStore _environmentStore = environmentStore;
 
     public async Task<IReadOnlyList<WorkSourceEnvironmentProfile>> ExecuteAsync(
-        ListAzureDevOpsEnvironmentsQuery query,
+        ListWorkSourceEnvironmentsQuery query,
         CancellationToken cancellationToken
     )
     {

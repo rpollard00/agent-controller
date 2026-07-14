@@ -17,7 +17,7 @@ public sealed class ManagedAzureDevOpsDiagnosticTests
 
         try
         {
-            var profile = new AzureDevOpsEnvironmentProfile
+            var profile = new WorkSourceEnvironmentProfile
             {
                 Key = "managed",
                 DisplayName = "Managed",
@@ -54,7 +54,7 @@ public sealed class ManagedAzureDevOpsDiagnosticTests
         }
     }
 
-    private sealed class StubResolver(AzureDevOpsEnvironmentProfile profile)
+    private sealed class StubResolver(WorkSourceEnvironmentProfile profile)
         : IManagedProfileResolver
     {
         public Task<ResolvedControllerProfiles?> ResolveForRepositoryAsync(
@@ -89,7 +89,7 @@ public sealed class ManagedAzureDevOpsDiagnosticTests
     private sealed class RecordingBoardsClientFactory(IAzureDevOpsBoardsClient client)
         : IAzureDevOpsBoardsClientFactory
     {
-        public IAzureDevOpsBoardsClient Create(AzureDevOpsEnvironmentProfile profile) => client;
+        public IAzureDevOpsBoardsClient Create(WorkSourceEnvironmentProfile profile) => client;
     }
 
     private sealed class RecordingBoardsClient : IAzureDevOpsBoardsClient

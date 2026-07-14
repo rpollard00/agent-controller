@@ -118,7 +118,7 @@ public static class WebUiControllers
                 WorkSourceEnvironmentProfile profile,
                 ICommandHandler<
                     CreateWorkSourceEnvironmentCommand,
-                    AzureDevOpsEnvironmentOperationResult
+                    WorkSourceEnvironmentOperationResult
                 > handler,
                 CancellationToken cancellationToken
             ) =>
@@ -142,14 +142,14 @@ public static class WebUiControllers
             "",
             async (
                 IQueryHandler<
-                    ListAzureDevOpsEnvironmentsQuery,
-                    IReadOnlyList<AzureDevOpsEnvironmentProfile>
+                    ListWorkSourceEnvironmentsQuery,
+                    IReadOnlyList<WorkSourceEnvironmentProfile>
                 > handler,
                 CancellationToken cancellationToken
             ) =>
                 Results.Ok(
                     await handler.ExecuteAsync(
-                        new ListAzureDevOpsEnvironmentsQuery(),
+                        new ListWorkSourceEnvironmentsQuery(),
                         cancellationToken
                     )
                 )
@@ -160,14 +160,14 @@ public static class WebUiControllers
             async (
                 string key,
                 IQueryHandler<
-                    GetAzureDevOpsEnvironmentByKeyQuery,
-                    AzureDevOpsEnvironmentOperationResult
+                    GetWorkSourceEnvironmentByKeyQuery,
+                    WorkSourceEnvironmentOperationResult
                 > handler,
                 CancellationToken cancellationToken
             ) =>
             {
                 var result = await handler.ExecuteAsync(
-                    new GetAzureDevOpsEnvironmentByKeyQuery(key),
+                    new GetWorkSourceEnvironmentByKeyQuery(key),
                     cancellationToken
                 );
                 return MapResult(result, Results.Ok);
@@ -181,7 +181,7 @@ public static class WebUiControllers
                 WorkSourceEnvironmentProfile profile,
                 ICommandHandler<
                     UpdateWorkSourceEnvironmentCommand,
-                    AzureDevOpsEnvironmentOperationResult
+                    WorkSourceEnvironmentOperationResult
                 > handler,
                 CancellationToken cancellationToken
             ) =>
@@ -200,7 +200,7 @@ public static class WebUiControllers
                 string key,
                 ICommandHandler<
                     DeleteWorkSourceEnvironmentCommand,
-                    AzureDevOpsEnvironmentOperationResult
+                    WorkSourceEnvironmentOperationResult
                 > handler,
                 CancellationToken cancellationToken
             ) =>
@@ -336,19 +336,19 @@ public static class WebUiControllers
         };
 
     private static IResult MapResult(
-        AzureDevOpsEnvironmentOperationResult result,
-        Func<AzureDevOpsEnvironmentProfile?, IResult> onSuccess
+        WorkSourceEnvironmentOperationResult result,
+        Func<WorkSourceEnvironmentProfile?, IResult> onSuccess
     ) =>
         result.Status switch
         {
-            AzureDevOpsEnvironmentOperationStatus.Succeeded => onSuccess(result.Environment),
-            AzureDevOpsEnvironmentOperationStatus.ValidationFailed => ValidationProblem(
+            WorkSourceEnvironmentOperationStatus.Succeeded => onSuccess(result.Environment),
+            WorkSourceEnvironmentOperationStatus.ValidationFailed => ValidationProblem(
                 result.ValidationErrors
             ),
-            AzureDevOpsEnvironmentOperationStatus.NotFound => NotFoundProblem(result.Detail),
-            AzureDevOpsEnvironmentOperationStatus.Conflict => ConflictProblem(result.Detail),
+            WorkSourceEnvironmentOperationStatus.NotFound => NotFoundProblem(result.Detail),
+            WorkSourceEnvironmentOperationStatus.Conflict => ConflictProblem(result.Detail),
             _ => throw new InvalidOperationException(
-                $"Unsupported Azure DevOps environment operation status '{result.Status}'."
+                $"Unsupported work source environment operation status '{result.Status}'."
             ),
         };
 

@@ -43,21 +43,21 @@ public static class ServiceCollectionExtensions
         services.AddScoped<
             ICommandHandler<
                 CreateWorkSourceEnvironmentCommand,
-                AzureDevOpsEnvironmentOperationResult
+                WorkSourceEnvironmentOperationResult
             >,
             CreateWorkSourceEnvironmentCommandHandler
         >();
         services.AddScoped<
             ICommandHandler<
                 UpdateWorkSourceEnvironmentCommand,
-                AzureDevOpsEnvironmentOperationResult
+                WorkSourceEnvironmentOperationResult
             >,
             UpdateWorkSourceEnvironmentCommandHandler
         >();
         services.AddScoped<
             ICommandHandler<
                 DeleteWorkSourceEnvironmentCommand,
-                AzureDevOpsEnvironmentOperationResult
+                WorkSourceEnvironmentOperationResult
             >,
             DeleteWorkSourceEnvironmentCommandHandler
         >();
@@ -102,17 +102,17 @@ public static class ServiceCollectionExtensions
         >();
         services.AddScoped<
             IQueryHandler<
-                ListAzureDevOpsEnvironmentsQuery,
-                IReadOnlyList<AzureDevOpsEnvironmentProfile>
+                ListWorkSourceEnvironmentsQuery,
+                IReadOnlyList<WorkSourceEnvironmentProfile>
             >,
-            ListAzureDevOpsEnvironmentsQueryHandler
+            ListWorkSourceEnvironmentsQueryHandler
         >();
         services.AddScoped<
             IQueryHandler<
-                GetAzureDevOpsEnvironmentByKeyQuery,
-                AzureDevOpsEnvironmentOperationResult
+                GetWorkSourceEnvironmentByKeyQuery,
+                WorkSourceEnvironmentOperationResult
             >,
-            GetAzureDevOpsEnvironmentByKeyQueryHandler
+            GetWorkSourceEnvironmentByKeyQueryHandler
         >();
         services.AddScoped<
             IQueryHandler<ListRuntimeEnvironmentsQuery, IReadOnlyList<RuntimeEnvironmentProfile>>,

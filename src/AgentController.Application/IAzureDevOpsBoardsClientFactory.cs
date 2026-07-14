@@ -11,5 +11,5 @@ public interface IAzureDevOpsBoardsClientFactory
     /// Configured fallback profiles may omit the reference when a one-off operation supplies its
     /// credential directly.
     /// </summary>
-    IAzureDevOpsBoardsClient Create(AzureDevOpsEnvironmentProfile profile);
+    IAzureDevOpsBoardsClient Create(WorkSourceEnvironmentProfile profile);
 }
