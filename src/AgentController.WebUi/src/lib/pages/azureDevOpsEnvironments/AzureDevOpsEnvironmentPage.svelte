@@ -7,7 +7,7 @@
   import Card from '../../components/ui/Card.svelte';
   import Dialog from '../../components/ui/Dialog.svelte';
   import AzureDevOpsEnvironmentDetails from './AzureDevOpsEnvironmentDetails.svelte';
-  import AzureDevOpsEnvironmentForm from './AzureDevOpsEnvironmentForm.svelte';
+  import WorkSourceEnvironmentForm from './WorkSourceEnvironmentForm.svelte';
   import AzureDevOpsEnvironmentList from './AzureDevOpsEnvironmentList.svelte';
   import {
     workSourceEnvironmentDetailPath,
@@ -345,7 +345,7 @@
           />
         </div>
       {/if}
-      <AzureDevOpsEnvironmentForm
+      <WorkSourceEnvironmentForm
         mode="create"
         {submitting}
         serverErrors={getFieldErrors(mutationError)}
@@ -369,7 +369,7 @@
         </div>
       {/if}
       {#key environment.key}
-        <AzureDevOpsEnvironmentForm
+        <WorkSourceEnvironmentForm
           mode="edit"
           profile={environment}
           {submitting}

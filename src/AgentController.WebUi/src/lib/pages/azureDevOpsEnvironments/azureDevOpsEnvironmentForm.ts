@@ -41,33 +41,37 @@ export function validateWorkSourceEnvironmentForm(
 
   addRequiredError(errors, 'key', values.key, 'A key is required.');
   addRequiredError(errors, 'displayName', values.displayName, 'A display name is required.');
-  addRequiredError(
-    errors,
-    'organizationUrl',
-    values.organizationUrl,
-    'An Azure DevOps organization URL is required.',
-  );
-  addRequiredError(errors, 'project', values.project, 'An Azure DevOps project is required.');
-  addRequiredError(
-    errors,
-    'patEnvironmentVariable',
-    values.patEnvironmentVariable,
-    'The PAT environment-variable name is required.',
-  );
 
-  if (values.organizationUrl.trim() && !isValidOrganizationUrl(values.organizationUrl)) {
-    errors.organizationUrl = [
-      'Enter an absolute HTTP or HTTPS organization URL without credentials, a query, or a fragment.',
-    ];
-  }
+  // Provider-specific validation
+  if (values.provider === 'AzureDevOpsBoards') {
+    addRequiredError(
+      errors,
+      'organizationUrl',
+      values.organizationUrl,
+      'An Azure DevOps organization URL is required.',
+    );
+    addRequiredError(errors, 'project', values.project, 'An Azure DevOps project is required.');
+    addRequiredError(
+      errors,
+      'patEnvironmentVariable',
+      values.patEnvironmentVariable,
+      'The PAT environment-variable name is required.',
+    );
 
-  if (
-    values.patEnvironmentVariable.trim() &&
-    !/^[A-Za-z_][A-Za-z0-9_]*$/.test(values.patEnvironmentVariable.trim())
-  ) {
-    errors.patEnvironmentVariable = [
-      'Use an environment-variable name containing letters, numbers, and underscores that does not start with a number.',
-    ];
+    if (values.organizationUrl.trim() && !isValidOrganizationUrl(values.organizationUrl)) {
+      errors.organizationUrl = [
+        'Enter an absolute HTTP or HTTPS organization URL without credentials, a query, or a fragment.',
+      ];
+    }
+
+    if (
+      values.patEnvironmentVariable.trim() &&
+      !/^[A-Za-z_][A-Za-z0-9_]*$/.test(values.patEnvironmentVariable.trim())
+    ) {
+      errors.patEnvironmentVariable = [
+        'Use an environment-variable name containing letters, numbers, and underscores that does not start with a number.',
+      ];
+    }
   }
 
   if (

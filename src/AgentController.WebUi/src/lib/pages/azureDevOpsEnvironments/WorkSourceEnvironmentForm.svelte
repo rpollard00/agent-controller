@@ -39,8 +39,8 @@
 
   function describedBy(field: string, hasHint = false): string | undefined {
     const ids: string[] = [];
-    if (hasHint) ids.push(`ado-${field}-hint`);
-    if (fieldError(field)) ids.push(`ado-${field}-error`);
+    if (hasHint) ids.push(`wse-${field}-hint`);
+    if (fieldError(field)) ids.push(`wse-${field}-error`);
     return ids.length > 0 ? ids.join(' ') : undefined;
   }
 
@@ -65,7 +65,7 @@
     <Alert
       variant="error"
       title="Correct the highlighted fields"
-      message="Review the Azure DevOps environment configuration before saving."
+      message="Review the work source environment configuration before saving."
     />
   {/if}
 
@@ -74,16 +74,13 @@
 
     <div class="grid gap-6 lg:grid-cols-2">
       <Field
-        id="ado-key"
-        label="Environment key"
-        hint={mode === 'edit'
-          ? 'Keys are immutable. Create a new environment to use a different key.'
-          : 'Use a stable key. It cannot be changed after creation.'}
+        id="wse-key"
+        label="Environment name"
         error={fieldError('key')}
         required
       >
         <input
-          id="ado-key"
+          id="wse-key"
           name="key"
           class={inputClasses}
           bind:value={values.key}
@@ -91,48 +88,48 @@
           disabled={submitting}
           required
           autocomplete="off"
+          placeholder="ado-dev"
           aria-invalid={fieldError('key') ? 'true' : undefined}
-          aria-describedby={describedBy('key', true)}
+          aria-describedby={describedBy('key')}
           oninput={() => clearClientError('key')}
         />
       </Field>
 
       <Field
-        id="ado-displayName"
+        id="wse-displayName"
         label="Display name"
-        hint="A recognizable name for operators choosing an environment."
         error={fieldError('displayName')}
         required
       >
         <input
-          id="ado-displayName"
+          id="wse-displayName"
           name="displayName"
           class={inputClasses}
           bind:value={values.displayName}
           disabled={submitting}
           required
           autocomplete="off"
+          placeholder="Business Products Azure DevOps"
           aria-invalid={fieldError('displayName') ? 'true' : undefined}
-          aria-describedby={describedBy('displayName', true)}
+          aria-describedby={describedBy('displayName')}
           oninput={() => clearClientError('displayName')}
         />
       </Field>
     </div>
 
     <div class="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-      <label class="flex min-h-8 cursor-pointer items-start gap-3" for="ado-enabled">
+      <label class="flex min-h-8 cursor-pointer items-start gap-3" for="wse-enabled">
         <input
-          id="ado-enabled"
+          id="wse-enabled"
           name="enabled"
           type="checkbox"
           class="mt-0.5 size-5 rounded border-slate-600 bg-slate-950 text-cyan-400"
           bind:checked={values.enabled}
           disabled={submitting}
-          aria-describedby="ado-enabled-hint"
         />
         <span class="block text-sm font-medium text-slate-100">Enabled for new work</span>
       </label>
-      <p id="ado-enabled-hint" class="mt-1 ml-8 text-sm leading-6 text-slate-400">
+      <p id="wse-enabled-hint" class="mt-1 ml-8 text-sm leading-6 text-slate-400">
         Disabled environments remain configured but cannot be selected for execution.
       </p>
       {#if fieldError('enabled')}
@@ -142,96 +139,126 @@
   </fieldset>
 
   <fieldset class="space-y-6 border-t border-slate-800 pt-7">
-    <legend class="text-base font-semibold text-white">Azure DevOps connection</legend>
-
-    <div class="grid gap-6 lg:grid-cols-2">
-      <Field
-        id="ado-organizationUrl"
-        label="Organization URL"
-        hint="The Azure DevOps organization root URL, without a query or fragment."
-        error={fieldError('organizationUrl')}
-        required
-      >
-        <input
-          id="ado-organizationUrl"
-          name="organizationUrl"
-          type="url"
-          class={inputClasses}
-          bind:value={values.organizationUrl}
-          disabled={submitting}
-          required
-          spellcheck="false"
-          autocomplete="url"
-          placeholder="https://dev.azure.com/example"
-          aria-invalid={fieldError('organizationUrl') ? 'true' : undefined}
-          aria-describedby={describedBy('organizationUrl', true)}
-          oninput={() => clearClientError('organizationUrl')}
-        />
-      </Field>
-
-      <Field
-        id="ado-project"
-        label="Project"
-        hint="The Azure DevOps project that contains the board."
-        error={fieldError('project')}
-        required
-      >
-        <input
-          id="ado-project"
-          name="project"
-          class={inputClasses}
-          bind:value={values.project}
-          disabled={submitting}
-          required
-          autocomplete="off"
-          aria-invalid={fieldError('project') ? 'true' : undefined}
-          aria-describedby={describedBy('project', true)}
-          oninput={() => clearClientError('project')}
-        />
-      </Field>
-    </div>
+    <legend class="text-base font-semibold text-white">Provider</legend>
 
     <Field
-      id="ado-patEnvironmentVariable"
-      label="PAT environment-variable reference"
-      hint="Enter the name of an environment variable available to Agent Controller, for example ADO_PAT."
-      error={fieldError('patEnvironmentVariable')}
+      id="wse-provider"
+      label="Work source provider"
+      error={fieldError('provider')}
       required
     >
-      <input
-        id="ado-patEnvironmentVariable"
-        name="patEnvironmentVariable"
+      <select
+        id="wse-provider"
+        name="provider"
         class={inputClasses}
-        bind:value={values.patEnvironmentVariable}
+        bind:value={values.provider}
         disabled={submitting}
         required
-        spellcheck="false"
-        autocomplete="off"
-        placeholder="ADO_PAT"
-        aria-invalid={fieldError('patEnvironmentVariable') ? 'true' : undefined}
-        aria-describedby={describedBy('patEnvironmentVariable', true)}
-        oninput={() => clearClientError('patEnvironmentVariable')}
-      />
+        aria-invalid={fieldError('provider') ? 'true' : undefined}
+        aria-describedby={describedBy('provider')}
+        onchange={() => clearClientError('provider')}
+      >
+        <option value="AzureDevOpsBoards">Azure DevOps</option>
+      </select>
     </Field>
 
-    <Alert
-      variant="info"
-      title="Secret values are not stored"
-      message="Agent Controller stores only the environment-variable name. Enter the PAT in the runtime environment, never in this form."
-    />
+    {#if values.provider === 'AzureDevOpsBoards'}
+      <fieldset class="space-y-6">
+        <legend class="text-sm font-semibold text-slate-300">Azure DevOps connection</legend>
+
+        <div class="grid gap-6 lg:grid-cols-2">
+          <Field
+            id="wse-organizationUrl"
+            label="Organization URL"
+            error={fieldError('organizationUrl')}
+            required
+          >
+            <input
+              id="wse-organizationUrl"
+              name="organizationUrl"
+              type="url"
+              class={inputClasses}
+              bind:value={values.organizationUrl}
+              disabled={submitting}
+              required
+              spellcheck="false"
+              autocomplete="url"
+              placeholder="https://dev.azure.com/example"
+              aria-invalid={fieldError('organizationUrl') ? 'true' : undefined}
+              aria-describedby={describedBy('organizationUrl')}
+              oninput={() => clearClientError('organizationUrl')}
+            />
+          </Field>
+
+          <Field
+            id="wse-project"
+            label="Project"
+            error={fieldError('project')}
+            required
+          >
+            <input
+              id="wse-project"
+              name="project"
+              class={inputClasses}
+              bind:value={values.project}
+              disabled={submitting}
+              required
+              autocomplete="off"
+              aria-invalid={fieldError('project') ? 'true' : undefined}
+              aria-describedby={describedBy('project')}
+              oninput={() => clearClientError('project')}
+            />
+          </Field>
+        </div>
+
+        <Field
+          id="wse-patEnvironmentVariable"
+          label="PAT environment-variable reference"
+          error={fieldError('patEnvironmentVariable')}
+          required
+        >
+          <input
+            id="wse-patEnvironmentVariable"
+            name="patEnvironmentVariable"
+            class={inputClasses}
+            bind:value={values.patEnvironmentVariable}
+            disabled={submitting}
+            required
+            spellcheck="false"
+            autocomplete="off"
+            placeholder="ADO_PAT"
+            aria-invalid={fieldError('patEnvironmentVariable') ? 'true' : undefined}
+            aria-describedby={describedBy('patEnvironmentVariable')}
+            oninput={() => clearClientError('patEnvironmentVariable')}
+          />
+        </Field>
+
+        <Alert
+          variant="info"
+          title="Secret values are not stored"
+          message="Agent Controller stores only the environment-variable name. Enter the PAT in the runtime environment, never in this form."
+        />
+      </fieldset>
+    {:else}
+      <Alert
+        variant="info"
+        title="No provider-specific configuration"
+        message="Provider-specific settings will appear here when a supported work source provider is selected."
+      />
+    {/if}
   </fieldset>
 
   <fieldset class="space-y-6 border-t border-slate-800 pt-7">
     <legend class="text-base font-semibold text-white">Board policy</legend>
 
     <Field
-      id="ado-tagPrefix"
+      id="wse-tagPrefix"
       label="Tag prefix"
       hint="Namespace for controller-owned lifecycle tags (e.g. agent-ready, agent-active). Defaults to 'agent' when blank."
       error={fieldError('tagPrefix')}
     >
       <input
-        id="ado-tagPrefix"
+        id="wse-tagPrefix"
         name="tagPrefix"
         class={inputClasses}
         bind:value={values.tagPrefix}
@@ -245,13 +272,13 @@
     </Field>
 
     <Field
-      id="ado-completedStates"
+      id="wse-completedStates"
       label="Completed states"
       hint="Work items in these states are considered finished and not picked up. Enter one state per line; leave empty for any."
       error={fieldError('completedStates')}
     >
       <textarea
-        id="ado-completedStates"
+        id="wse-completedStates"
         name="completedStates"
         class={`${inputClasses} min-h-28 resize-y`}
         bind:value={values.completedStates}
@@ -265,13 +292,13 @@
 
     <div class="grid gap-6 lg:grid-cols-2">
       <Field
-        id="ado-activeState"
+        id="wse-activeState"
         label="Active state"
         hint="Optional state applied when Agent Controller begins work."
         error={fieldError('activeState')}
       >
         <input
-          id="ado-activeState"
+          id="wse-activeState"
           name="activeState"
           class={inputClasses}
           bind:value={values.activeState}
@@ -285,13 +312,13 @@
       </Field>
 
       <Field
-        id="ado-completedState"
+        id="wse-completedState"
         label="Completed state"
         hint="Optional state applied when Agent Controller completes work."
         error={fieldError('completedState')}
       >
         <input
-          id="ado-completedState"
+          id="wse-completedState"
           name="completedState"
           class={inputClasses}
           bind:value={values.completedState}
