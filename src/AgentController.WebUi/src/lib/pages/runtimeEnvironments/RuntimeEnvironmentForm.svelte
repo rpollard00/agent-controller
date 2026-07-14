@@ -144,23 +144,6 @@
       </Field>
     </div>
 
-    <div class="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-      <label class="flex min-h-8 cursor-pointer items-start gap-3" for="runtime-enabled">
-        <input
-          id="runtime-enabled"
-          name="enabled"
-          type="checkbox"
-          class="mt-0.5 size-5 rounded border-slate-600 bg-slate-950 text-cyan-400"
-          bind:checked={values.enabled}
-          disabled={submitting}
-          aria-describedby="runtime-enabled-hint"
-        />
-        <span class="block text-sm font-medium text-slate-100">Enabled</span>
-      </label>
-      <p id="runtime-enabled-hint" class="mt-1 ml-8 text-sm leading-6 text-slate-400">
-        Disabled runtime environments remain configured but cannot be selected for execution.
-      </p>
-    </div>
   </fieldset>
 
   <fieldset class="space-y-6 border-t border-slate-800 pt-7">
@@ -263,6 +246,20 @@
       />
     {/if}
   </fieldset>
+
+  <div class="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+    <label class="flex min-h-8 cursor-pointer items-start gap-3" for="runtime-enabled">
+      <input
+        id="runtime-enabled"
+        name="enabled"
+        type="checkbox"
+        class="mt-0.5 size-5 rounded border-slate-600 bg-slate-950 text-cyan-400"
+        bind:checked={values.enabled}
+        disabled={submitting}
+      />
+      <span class="block text-sm font-medium text-slate-100">Enabled</span>
+    </label>
+  </div>
 
   <div class="flex flex-col-reverse gap-3 border-t border-slate-800 pt-6 sm:flex-row sm:justify-end">
     <Button variant="secondary" onclick={oncancel} disabled={submitting}>Cancel</Button>
