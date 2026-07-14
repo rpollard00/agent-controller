@@ -12,10 +12,6 @@ internal static class RuntimeEnvironmentProfileValidation
     private const int MaximumDisplayNameLength = 256;
     private const int MaximumProviderNameLength = 128;
     private const int MaximumPathLength = 2048;
-    private const int MaximumUrlLength = 2048;
-    private const int MaximumPtyArgumentsLength = 4096;
-    private const int MaximumLoadoutLength = 256;
-    private const int MaximumEnvironmentVariableLength = 256;
 
     public static RuntimeEnvironmentProfileValidationResult ValidateAndNormalize(
         RuntimeEnvironmentProfile profile
@@ -55,62 +51,8 @@ internal static class RuntimeEnvironmentProfileValidation
             errors
         );
 
-        var runtimeSettings = profile.RuntimeSettings;
-        if (runtimeSettings is null)
-        {
-            errors.Add("runtimeSettings", "Runtime-provider settings are required.");
-            runtimeSettings = new RuntimeProviderSettings();
-        }
-
-        var piExecutablePath = NormalizeOptionalText(runtimeSettings.PiExecutablePath);
-        var controllerBaseUrl = NormalizeUrl(runtimeSettings.ControllerBaseUrl);
-        var ptyWrapperPath = NormalizeOptionalText(runtimeSettings.PtyWrapperPath);
-        var ptyWrapperArgs = ptyWrapperPath is null
-            ? null
-            : NormalizeOptionalText(runtimeSettings.PtyWrapperArgs);
-
-        ValidateOptionalText(
-            piExecutablePath,
-            "runtimeSettings.piExecutablePath",
-            MaximumPathLength,
-            errors
-        );
-        ValidateControllerBaseUrl(controllerBaseUrl, runtimeProvider, errors);
-        ValidateOptionalText(
-            ptyWrapperPath,
-            "runtimeSettings.ptyWrapperPath",
-            MaximumPathLength,
-            errors
-        );
-        ValidateOptionalText(
-            ptyWrapperArgs,
-            "runtimeSettings.ptyWrapperArgs",
-            MaximumPtyArgumentsLength,
-            errors
-        );
-
-        if (runtimeProvider == PiMateriaProvider && piExecutablePath is null)
-        {
-            errors.Add(
-                "runtimeSettings.piExecutablePath",
-                "A pi executable path or command is required for the PiMateria runtime."
-            );
-        }
-
-        var loadouts = NormalizeLoadouts(runtimeSettings.Loadouts, errors);
-        if (runtimeProvider == PiMateriaProvider && !loadouts.ContainsKey(ExecutionKind.NewWork))
-        {
-            errors.Add(
-                "runtimeSettings.loadouts",
-                "A NewWork loadout is required for the PiMateria runtime."
-            );
-        }
-
-        var forwardedVariables = NormalizeEnvironmentVariableMappings(
-            runtimeSettings.ForwardEnvironmentVariables,
-            errors
-        );
-
+        // Pi Materia process configuration belongs to the controller. Accept legacy
+        // settings in requests for compatibility, but do not validate or persist them.
         var normalized = profile with
         {
             Key = key,
@@ -118,15 +60,7 @@ internal static class RuntimeEnvironmentProfileValidation
             EnvironmentProvider = environmentProvider,
             EnvironmentSettings = new EnvironmentProviderSettings { WorkspaceRoot = workspaceRoot },
             RuntimeProvider = runtimeProvider,
-            RuntimeSettings = new RuntimeProviderSettings
-            {
-                PiExecutablePath = piExecutablePath,
-                ControllerBaseUrl = controllerBaseUrl,
-                PtyWrapperPath = ptyWrapperPath,
-                PtyWrapperArgs = ptyWrapperArgs,
-                Loadouts = loadouts,
-                ForwardEnvironmentVariables = forwardedVariables,
-            },
+            RuntimeSettings = new RuntimeProviderSettings(),
         };
 
         return new RuntimeEnvironmentProfileValidationResult(normalized, errors.ToDictionary());
@@ -150,9 +84,6 @@ internal static class RuntimeEnvironmentProfileValidation
         var normalized = NormalizeText(value);
         return normalized.Length == 0 ? null : normalized;
     }
-
-    private static string? NormalizeUrl(string? value) =>
-        NormalizeOptionalText(value)?.TrimEnd('/');
 
     private static string NormalizeEnvironmentProvider(string? value)
     {
@@ -305,174 +236,6 @@ internal static class RuntimeEnvironmentProfileValidation
             errors.Add(field, "The value cannot contain control characters.");
         }
     }
-
-    private static void ValidateControllerBaseUrl(
-        string? controllerBaseUrl,
-        string runtimeProvider,
-        ValidationErrors errors
-    )
-    {
-        if (controllerBaseUrl is null)
-        {
-            if (runtimeProvider == PiMateriaProvider)
-            {
-                errors.Add(
-                    "runtimeSettings.controllerBaseUrl",
-                    "A controller base URL is required for the PiMateria runtime."
-                );
-            }
-
-            return;
-        }
-
-        if (controllerBaseUrl.Length > MaximumUrlLength)
-        {
-            errors.Add(
-                "runtimeSettings.controllerBaseUrl",
-                $"The controller base URL must be {MaximumUrlLength} characters or fewer."
-            );
-        }
-
-        if (
-            controllerBaseUrl.Any(character =>
-                char.IsControl(character) || char.IsWhiteSpace(character)
-            )
-            || !Uri.TryCreate(controllerBaseUrl, UriKind.Absolute, out var uri)
-            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
-            || string.IsNullOrWhiteSpace(uri.Host)
-            || uri.UserInfo.Length > 0
-            || uri.Query.Length > 0
-            || uri.Fragment.Length > 0
-        )
-        {
-            errors.Add(
-                "runtimeSettings.controllerBaseUrl",
-                "The controller base URL must be an absolute HTTP or HTTPS URL without credentials, a query, or a fragment."
-            );
-        }
-    }
-
-    private static Dictionary<ExecutionKind, string> NormalizeLoadouts(
-        IReadOnlyDictionary<ExecutionKind, string>? loadouts,
-        ValidationErrors errors
-    )
-    {
-        var normalized = new Dictionary<ExecutionKind, string>();
-        if (loadouts is null)
-        {
-            errors.Add("runtimeSettings.loadouts", "A loadout map is required.");
-            return normalized;
-        }
-
-        foreach (var (executionKind, originalLoadout) in loadouts.OrderBy(pair => pair.Key))
-        {
-            if (!Enum.IsDefined(executionKind))
-            {
-                errors.Add(
-                    "runtimeSettings.loadouts",
-                    $"Execution kind '{executionKind}' is not supported."
-                );
-                continue;
-            }
-
-            var loadout = NormalizeText(originalLoadout);
-            if (loadout.Length == 0)
-            {
-                errors.Add(
-                    "runtimeSettings.loadouts",
-                    $"The {executionKind} loadout cannot be empty."
-                );
-                continue;
-            }
-
-            ValidateText(loadout, "runtimeSettings.loadouts", MaximumLoadoutLength, errors);
-            normalized.Add(executionKind, loadout);
-        }
-
-        return normalized;
-    }
-
-    private static Dictionary<string, string> NormalizeEnvironmentVariableMappings(
-        IReadOnlyDictionary<string, string>? mappings,
-        ValidationErrors errors
-    )
-    {
-        var normalized = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (mappings is null)
-        {
-            errors.Add(
-                "runtimeSettings.forwardEnvironmentVariables",
-                "An environment-variable forwarding map is required."
-            );
-            return normalized;
-        }
-
-        foreach (var (originalTarget, originalSource) in mappings)
-        {
-            var target = NormalizeText(originalTarget);
-            var source = NormalizeText(originalSource);
-            var mappingIsValid = true;
-
-            if (!IsEnvironmentVariableName(target))
-            {
-                errors.Add(
-                    "runtimeSettings.forwardEnvironmentVariables",
-                    $"Target '{target}' must be an environment-variable name containing only letters, numbers, and underscores, and it cannot start with a number."
-                );
-                mappingIsValid = false;
-            }
-
-            if (!IsEnvironmentVariableName(source))
-            {
-                errors.Add(
-                    "runtimeSettings.forwardEnvironmentVariables",
-                    $"The source for target '{target}' must be an environment-variable name, not a credential value."
-                );
-                mappingIsValid = false;
-            }
-
-            if (target.Length > MaximumEnvironmentVariableLength)
-            {
-                errors.Add(
-                    "runtimeSettings.forwardEnvironmentVariables",
-                    $"Target environment-variable names must be {MaximumEnvironmentVariableLength} characters or fewer."
-                );
-                mappingIsValid = false;
-            }
-
-            if (source.Length > MaximumEnvironmentVariableLength)
-            {
-                errors.Add(
-                    "runtimeSettings.forwardEnvironmentVariables",
-                    $"Source environment-variable names must be {MaximumEnvironmentVariableLength} characters or fewer."
-                );
-                mappingIsValid = false;
-            }
-
-            if (mappingIsValid && !normalized.TryAdd(target, source))
-            {
-                errors.Add(
-                    "runtimeSettings.forwardEnvironmentVariables",
-                    $"Target environment variable '{target}' is mapped more than once."
-                );
-            }
-        }
-
-        return normalized
-            .OrderBy(pair => pair.Key, StringComparer.Ordinal)
-            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
-    }
-
-    private static bool IsEnvironmentVariableName(string value) =>
-        value.Length > 0
-        && IsEnvironmentVariableStartCharacter(value[0])
-        && value.All(IsEnvironmentVariableCharacter);
-
-    private static bool IsEnvironmentVariableStartCharacter(char character) =>
-        character is '_' or >= 'A' and <= 'Z' or >= 'a' and <= 'z';
-
-    private static bool IsEnvironmentVariableCharacter(char character) =>
-        IsEnvironmentVariableStartCharacter(character) || character is >= '0' and <= '9';
 
     private sealed class ValidationErrors
     {

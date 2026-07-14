@@ -41,37 +41,24 @@ public sealed record EnvironmentProviderSettings
     public string? WorkspaceRoot { get; init; }
 }
 
-/// <summary>Structured settings for an agent runtime provider.</summary>
+/// <summary>
+/// Legacy per-profile runtime settings retained so profiles written by earlier controller
+/// versions can still be read. Pi Materia execution settings are controller-owned and these
+/// values are not used when launching a run.
+/// </summary>
 public sealed record RuntimeProviderSettings
 {
-    /// <summary>Path to the pi executable, or a command resolvable through PATH.</summary>
-    public string? PiExecutablePath { get; init; } = "pi";
+    public string? PiExecutablePath { get; init; }
 
-    /// <summary>Controller base URL used to construct runtime callback URLs.</summary>
     public string? ControllerBaseUrl { get; init; }
 
-    /// <summary>Optional executable used to allocate a pseudo-terminal.</summary>
-    public string? PtyWrapperPath { get; init; } = "script";
+    public string? PtyWrapperPath { get; init; }
 
-    /// <summary>Arguments passed to the pseudo-terminal wrapper.</summary>
-    public string? PtyWrapperArgs { get; init; } = "-qfc";
+    public string? PtyWrapperArgs { get; init; }
 
-    /// <summary>Pi-materia loadout selected for each execution kind.</summary>
     public IReadOnlyDictionary<ExecutionKind, string> Loadouts { get; init; } =
-        new Dictionary<ExecutionKind, string>
-        {
-            [ExecutionKind.NewWork] = "ADO-Build-NewWork",
-            [ExecutionKind.Rework] = "ADO-Build-Rework",
-        };
+        new Dictionary<ExecutionKind, string>();
 
-    /// <summary>
-    /// Target-to-source environment-variable names forwarded to the runtime.
-    /// Values are source variable names, never resolved values or credentials.
-    /// </summary>
     public IReadOnlyDictionary<string, string> ForwardEnvironmentVariables { get; init; } =
-        new Dictionary<string, string>
-        {
-            ["AZURE_DEVOPS_EXT_PAT"] = "AZURE_DEVOPS_PAT",
-            ["AZURE_DEVOPS_PAT"] = "AZURE_DEVOPS_PAT",
-        };
+        new Dictionary<string, string>();
 }

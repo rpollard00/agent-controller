@@ -71,17 +71,9 @@ internal sealed class ConfiguredProfileSource : IConfiguredProfileSource
                 WorkspaceRoot = null,
             },
             RuntimeProvider = runtime.Provider,
-            RuntimeSettings = new RuntimeProviderSettings
-            {
-                PiExecutablePath = runtime.PiExecutablePath,
-                ControllerBaseUrl = runtime.ControllerBaseUrl,
-                PtyWrapperPath = runtime.PtyWrapperPath,
-                PtyWrapperArgs = runtime.PtyWrapperArgs,
-                Loadouts = new Dictionary<ExecutionKind, string>(runtime.Loadouts),
-                ForwardEnvironmentVariables = new Dictionary<string, string>(
-                    runtime.ForwardEnvironmentVariables
-                ),
-            },
+            // Pi Materia process behavior is consumed directly from RuntimeOptions by
+            // the runtime. It is not projected into a per-environment override.
+            RuntimeSettings = new RuntimeProviderSettings(),
         };
     }
 

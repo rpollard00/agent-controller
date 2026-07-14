@@ -75,15 +75,11 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
     public Task<AgentRunHandle> StartAsync(AgentRunSpec spec, CancellationToken cancellationToken)
     {
         var options = _runtimeOptions.CurrentValue;
-        var managedSettings =
-            spec.RuntimeEnvironmentProfile
-                is { Enabled: true, RuntimeProvider: var provider } profile
-            && provider.Equals("PiMateria", StringComparison.OrdinalIgnoreCase)
-                ? profile.RuntimeSettings
-                : null;
 
+        // Process behavior is controller-owned. Runtime-environment profiles select
+        // the provider but cannot override how Pi Materia is launched.
         // ── 1. Resolve controller event URL ───────────────────────────
-        var baseUrl = managedSettings?.ControllerBaseUrl ?? options.ControllerBaseUrl;
+        var baseUrl = options.ControllerBaseUrl;
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
             Log.ControllerBaseUrlMissing(_logger, spec.RunId);
@@ -110,17 +106,13 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
         // configured, wrap the invocation so a pseudo-terminal is allocated and
         // the TUI initializes headlessly. When no wrapper is configured, launch
         // pi directly (non-Linux dev / future CRI sibling runtimes).
-        var configuredPiExecutable = managedSettings?.PiExecutablePath ?? options.PiExecutablePath;
+        var configuredPiExecutable = options.PiExecutablePath;
         var piExe = string.IsNullOrWhiteSpace(configuredPiExecutable)
             ? "pi"
             : configuredPiExecutable;
 
-        var configuredWrapperPath = managedSettings is null
-            ? options.PtyWrapperPath
-            : managedSettings.PtyWrapperPath;
-        var configuredWrapperArgs = managedSettings is null
-            ? options.PtyWrapperArgs
-            : managedSettings.PtyWrapperArgs;
+        var configuredWrapperPath = options.PtyWrapperPath;
+        var configuredWrapperArgs = options.PtyWrapperArgs;
         var useWrapper = !string.IsNullOrWhiteSpace(configuredWrapperPath);
         var wrapperPath = useWrapper ? configuredWrapperPath!.Trim() : null;
         var wrapperArgs =
@@ -128,8 +120,8 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
                 ? configuredWrapperArgs!.Trim()
                 : null;
 
-        // ── 3b. Resolve loadout from ExecutionKind via the selected profile ────────
-        var loadouts = managedSettings?.Loadouts ?? options.Loadouts.ToDictionary();
+        // ── 3b. Resolve loadout from ExecutionKind via controller configuration ───
+        var loadouts = options.Loadouts;
         var loadout =
             loadouts.TryGetValue(spec.ExecutionKind, out var kindLoadout) ? kindLoadout
             : loadouts.TryGetValue(ExecutionKind.NewWork, out var defaultLoadout) ? defaultLoadout
@@ -208,10 +200,7 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
             // into the pi child. Applies to both PTY-wrapper and direct-launch paths
             // since this operates on the shared ProcessStartInfo before the branch.
             // Entries with unset/empty source vars are silently skipped.
-            var forwardedEnvironmentVariables =
-                managedSettings?.ForwardEnvironmentVariables
-                ?? options.ForwardEnvironmentVariables.ToDictionary();
-            foreach (var kvp in forwardedEnvironmentVariables)
+            foreach (var kvp in options.ForwardEnvironmentVariables)
             {
                 var sourceValue = Environment.GetEnvironmentVariable(kvp.Value);
                 if (!string.IsNullOrEmpty(sourceValue))
