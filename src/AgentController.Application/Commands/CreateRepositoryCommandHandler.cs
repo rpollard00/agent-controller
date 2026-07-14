@@ -6,13 +6,13 @@ namespace AgentController.Application.Commands;
 /// <summary>Validates, normalizes, and creates a managed repository profile.</summary>
 public sealed class CreateRepositoryCommandHandler(
     IRepositoryStore repositoryStore,
-    IAzureDevOpsEnvironmentStore azureDevOpsEnvironmentStore,
+    IWorkSourceEnvironmentStore workSourceEnvironmentStore,
     IRuntimeEnvironmentStore runtimeEnvironmentStore
 ) : ICommandHandler<CreateRepositoryCommand, RepositoryOperationResult>
 {
     private readonly IRepositoryStore _repositoryStore = repositoryStore;
-    private readonly IAzureDevOpsEnvironmentStore _azureDevOpsEnvironmentStore =
-        azureDevOpsEnvironmentStore;
+    private readonly IWorkSourceEnvironmentStore _workSourceEnvironmentStore =
+        workSourceEnvironmentStore;
     private readonly IRuntimeEnvironmentStore _runtimeEnvironmentStore = runtimeEnvironmentStore;
 
     public async Task<RepositoryOperationResult> HandleAsync(
@@ -32,7 +32,7 @@ public sealed class CreateRepositoryCommandHandler(
 
         var validation = await RepositoryProfileValidation.ValidateAndNormalizeAsync(
             command.Profile,
-            _azureDevOpsEnvironmentStore,
+            _workSourceEnvironmentStore,
             _runtimeEnvironmentStore,
             cancellationToken
         );

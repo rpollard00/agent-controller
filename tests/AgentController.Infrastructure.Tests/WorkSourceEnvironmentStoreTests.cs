@@ -10,7 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace AgentController.Infrastructure.Tests;
 
-public sealed class AzureDevOpsEnvironmentStoreTests
+public sealed class WorkSourceEnvironmentStoreTests
 {
     [Fact]
     public async Task CreateAndGet_RoundTripsProfileAndCredentialReference()
@@ -26,7 +26,7 @@ public sealed class AzureDevOpsEnvironmentStoreTests
             var persisted = await fixture.Store.GetByKeyAsync(profile.Key, CancellationToken.None);
 
             Assert.True(created);
-            AssertProfile(profile, Assert.IsType<AzureDevOpsEnvironmentProfile>(persisted));
+            AssertProfile(profile, Assert.IsType<WorkSourceEnvironmentProfile>(persisted));
 
             await using var command = fixture.Connection.CreateCommand();
             command.CommandText = "SELECT PatEnvironmentVariable FROM WorkSourceEnvironments WHERE Key = $key";
@@ -79,13 +79,11 @@ public sealed class AzureDevOpsEnvironmentStoreTests
         {
             DisplayName = "Staging Boards",
             Enabled = false,
+            Provider = "AzureDevOpsBoards",
+            TagPrefix = "ac",
             OrganizationUrl = "https://dev.azure.com/updated-organization",
             Project = "Updated Project",
-            WorkItemType = "Product Backlog Item",
-            EligibleTags = ["agent", "ready"],
-            ExcludedTags = ["manual", "blocked"],
-            EligibleStates = ["Approved", "Committed"],
-            ExcludedStates = ["Removed"],
+            CompletedStates = ["Closed", "Removed"],
             ActiveState = "Doing",
             CompletedState = "Done",
             PatEnvironmentVariable = "ADO_STAGING_PAT_V2",
@@ -96,7 +94,7 @@ public sealed class AzureDevOpsEnvironmentStoreTests
         Assert.True(await fixture.Store.UpdateAsync(updated, CancellationToken.None));
 
         var persisted = await fixture.Store.GetByKeyAsync(updated.Key, CancellationToken.None);
-        AssertProfile(updated, Assert.IsType<AzureDevOpsEnvironmentProfile>(persisted));
+        AssertProfile(updated, Assert.IsType<WorkSourceEnvironmentProfile>(persisted));
         Assert.Equal(original.CreatedAt, persisted!.CreatedAt);
     }
 
@@ -159,7 +157,7 @@ public sealed class AzureDevOpsEnvironmentStoreTests
     }
 
     [Fact]
-    public void RepositoryRegistration_ResolvesAzureDevOpsEnvironmentStore()
+    public void RepositoryRegistration_ResolvesWorkSourceEnvironmentStore()
     {
         var databasePath = Path.Combine(
             Path.GetTempPath(),
@@ -178,24 +176,22 @@ public sealed class AzureDevOpsEnvironmentStoreTests
         using var provider = services.BuildServiceProvider();
         using var scope = provider.CreateScope();
 
-        var store = scope.ServiceProvider.GetRequiredService<IAzureDevOpsEnvironmentStore>();
-        Assert.IsType<EfAzureDevOpsEnvironmentStore>(store);
+        var store = scope.ServiceProvider.GetRequiredService<IWorkSourceEnvironmentStore>();
+        Assert.IsType<EfWorkSourceEnvironmentStore>(store);
     }
 
-    private static AzureDevOpsEnvironmentProfile CreateProfile(string key)
+    private static WorkSourceEnvironmentProfile CreateProfile(string key)
     {
-        return new AzureDevOpsEnvironmentProfile
+        return new WorkSourceEnvironmentProfile
         {
             Key = key,
             DisplayName = $"{key} boards",
             Enabled = true,
+            Provider = "AzureDevOpsBoards",
+            TagPrefix = "agent",
             OrganizationUrl = "https://dev.azure.com/example",
             Project = "Agent Controller",
-            WorkItemType = "User Story",
-            EligibleTags = ["ready", "agent"],
-            ExcludedTags = ["manual"],
-            EligibleStates = ["New", "Approved"],
-            ExcludedStates = ["Closed", "Removed"],
+            CompletedStates = ["Closed", "Removed"],
             ActiveState = "Active",
             CompletedState = "Resolved",
             PatEnvironmentVariable = "ADO_PRODUCTION_PAT",
@@ -205,19 +201,17 @@ public sealed class AzureDevOpsEnvironmentStoreTests
     }
 
     private static void AssertProfile(
-        AzureDevOpsEnvironmentProfile expected,
-        AzureDevOpsEnvironmentProfile actual)
+        WorkSourceEnvironmentProfile expected,
+        WorkSourceEnvironmentProfile actual)
     {
         Assert.Equal(expected.Key, actual.Key);
         Assert.Equal(expected.DisplayName, actual.DisplayName);
         Assert.Equal(expected.Enabled, actual.Enabled);
+        Assert.Equal(expected.Provider, actual.Provider);
+        Assert.Equal(expected.TagPrefix, actual.TagPrefix);
         Assert.Equal(expected.OrganizationUrl, actual.OrganizationUrl);
         Assert.Equal(expected.Project, actual.Project);
-        Assert.Equal(expected.WorkItemType, actual.WorkItemType);
-        Assert.Equal(expected.EligibleTags, actual.EligibleTags);
-        Assert.Equal(expected.ExcludedTags, actual.ExcludedTags);
-        Assert.Equal(expected.EligibleStates, actual.EligibleStates);
-        Assert.Equal(expected.ExcludedStates, actual.ExcludedStates);
+        Assert.Equal(expected.CompletedStates, actual.CompletedStates);
         Assert.Equal(expected.ActiveState, actual.ActiveState);
         Assert.Equal(expected.CompletedState, actual.CompletedState);
         Assert.Equal(expected.PatEnvironmentVariable, actual.PatEnvironmentVariable);
@@ -233,14 +227,14 @@ public sealed class AzureDevOpsEnvironmentStoreTests
         {
             Connection = connection;
             DbContext = dbContext;
-            Store = new EfAzureDevOpsEnvironmentStore(dbContext);
+            Store = new EfWorkSourceEnvironmentStore(dbContext);
         }
 
         public SqliteConnection Connection { get; }
 
         public AgentControllerDbContext DbContext { get; }
 
-        public EfAzureDevOpsEnvironmentStore Store { get; }
+        public EfWorkSourceEnvironmentStore Store { get; }
 
         public static async Task<StoreFixture> CreateAsync(bool useMigrations = false)
         {

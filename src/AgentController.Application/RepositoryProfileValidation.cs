@@ -13,7 +13,7 @@ internal static class RepositoryProfileValidation
 
     public static async Task<RepositoryProfileValidationResult> ValidateAndNormalizeAsync(
         RepositoryProfile profile,
-        IAzureDevOpsEnvironmentStore azureDevOpsEnvironmentStore,
+        IWorkSourceEnvironmentStore workSourceEnvironmentStore,
         IRuntimeEnvironmentStore runtimeEnvironmentStore,
         CancellationToken cancellationToken
     )
@@ -43,7 +43,7 @@ internal static class RepositoryProfileValidation
         if (
             azureDevOpsEnvironmentKey is not null
             && !errors.Contains("azureDevOpsEnvironmentKey")
-            && await azureDevOpsEnvironmentStore.GetByKeyAsync(
+            && await workSourceEnvironmentStore.GetByKeyAsync(
                 azureDevOpsEnvironmentKey,
                 cancellationToken
             )

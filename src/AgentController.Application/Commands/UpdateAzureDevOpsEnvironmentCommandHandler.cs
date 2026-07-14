@@ -5,10 +5,10 @@ namespace AgentController.Application.Commands;
 
 /// <summary>Validates and updates mutable Azure DevOps environment profile fields.</summary>
 public sealed class UpdateAzureDevOpsEnvironmentCommandHandler(
-    IAzureDevOpsEnvironmentStore environmentStore
+    IWorkSourceEnvironmentStore environmentStore
 ) : ICommandHandler<UpdateAzureDevOpsEnvironmentCommand, AzureDevOpsEnvironmentOperationResult>
 {
-    private readonly IAzureDevOpsEnvironmentStore _environmentStore = environmentStore;
+    private readonly IWorkSourceEnvironmentStore _environmentStore = environmentStore;
 
     public async Task<AzureDevOpsEnvironmentOperationResult> HandleAsync(
         UpdateAzureDevOpsEnvironmentCommand command,

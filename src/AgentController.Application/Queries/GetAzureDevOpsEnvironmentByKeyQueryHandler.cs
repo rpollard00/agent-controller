@@ -5,10 +5,10 @@ namespace AgentController.Application.Queries;
 
 /// <summary>Validates and reads a managed Azure DevOps environment by key.</summary>
 public sealed class GetAzureDevOpsEnvironmentByKeyQueryHandler(
-    IAzureDevOpsEnvironmentStore environmentStore
+    IWorkSourceEnvironmentStore environmentStore
 ) : IQueryHandler<GetAzureDevOpsEnvironmentByKeyQuery, AzureDevOpsEnvironmentOperationResult>
 {
-    private readonly IAzureDevOpsEnvironmentStore _environmentStore = environmentStore;
+    private readonly IWorkSourceEnvironmentStore _environmentStore = environmentStore;
 
     public async Task<AzureDevOpsEnvironmentOperationResult> ExecuteAsync(
         GetAzureDevOpsEnvironmentByKeyQuery query,

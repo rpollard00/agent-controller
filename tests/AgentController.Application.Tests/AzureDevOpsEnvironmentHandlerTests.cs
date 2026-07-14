@@ -15,7 +15,7 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
     {
         const string environmentVariable = "ADO_HANDLER_TEST_PAT";
         const string rawPat = "raw-pat-that-must-not-be-returned";
-        var environments = new FakeAzureDevOpsEnvironmentStore(
+        var environments = new FakeWorkSourceEnvironmentStore(
             CreateProfile("zulu"),
             CreateProfile("ado-primary") with
             {
@@ -58,7 +58,7 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
     [Fact]
     public async Task Get_ReturnsTypedValidationAndNotFoundOutcomes()
     {
-        var environments = new FakeAzureDevOpsEnvironmentStore();
+        var environments = new FakeWorkSourceEnvironmentStore();
         var handler = new GetAzureDevOpsEnvironmentByKeyQueryHandler(environments);
 
         var invalid = await handler.ExecuteAsync(
@@ -79,7 +79,7 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
     [Fact]
     public async Task Create_NormalizesProfileAndSetsManagedTimestamps()
     {
-        var environments = new FakeAzureDevOpsEnvironmentStore();
+        var environments = new FakeWorkSourceEnvironmentStore();
         var handler = new CreateAzureDevOpsEnvironmentCommandHandler(environments);
         var suppliedTimestamp = new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
         var before = DateTimeOffset.UtcNow;
@@ -128,7 +128,7 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
     [Fact]
     public async Task Create_RejectsInvalidConnectionBoardAndCredentialSettings()
     {
-        var environments = new FakeAzureDevOpsEnvironmentStore();
+        var environments = new FakeWorkSourceEnvironmentStore();
         var handler = new CreateAzureDevOpsEnvironmentCommandHandler(environments);
         var profile = CreateProfile("not valid") with
         {
@@ -167,7 +167,7 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
     [Fact]
     public async Task Create_RejectsMissingProfileAndDuplicateNormalizedKey()
     {
-        var environments = new FakeAzureDevOpsEnvironmentStore(CreateProfile("shared"));
+        var environments = new FakeWorkSourceEnvironmentStore(CreateProfile("shared"));
         var handler = new CreateAzureDevOpsEnvironmentCommandHandler(environments);
 
         var missing = await handler.HandleAsync(
@@ -199,7 +199,7 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
             CreatedAt = createdAt,
             UpdatedAt = createdAt,
         };
-        var environments = new FakeAzureDevOpsEnvironmentStore(original);
+        var environments = new FakeWorkSourceEnvironmentStore(original);
         var handler = new UpdateAzureDevOpsEnvironmentCommandHandler(environments);
         var suppliedTimestamp = new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
         var update = CreateProfile(" PRODUCTION ") with
@@ -236,7 +236,7 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
     [Fact]
     public async Task Update_RejectsImmutableKeyChangesAndReturnsNotFoundForMissingProfile()
     {
-        var environments = new FakeAzureDevOpsEnvironmentStore(CreateProfile("original"));
+        var environments = new FakeWorkSourceEnvironmentStore(CreateProfile("original"));
         var handler = new UpdateAzureDevOpsEnvironmentCommandHandler(environments);
 
         var changedKey = await handler.HandleAsync(
@@ -261,7 +261,7 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
     [Fact]
     public async Task Delete_ReturnsConflictWhileARepositoryReferencesEnvironment()
     {
-        var environments = new FakeAzureDevOpsEnvironmentStore(CreateProfile("shared"));
+        var environments = new FakeWorkSourceEnvironmentStore(CreateProfile("shared"));
         var repositories = new FakeRepositoryStore(
             new RepositoryProfile { Key = "service-b", AzureDevOpsEnvironmentKey = " SHARED " },
             new RepositoryProfile { Key = "service-a", AzureDevOpsEnvironmentKey = "shared" }
@@ -286,7 +286,7 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
     [Fact]
     public async Task Delete_RemovesUnreferencedEnvironmentAndReturnsTypedMissingOutcome()
     {
-        var environments = new FakeAzureDevOpsEnvironmentStore(CreateProfile("temporary"));
+        var environments = new FakeWorkSourceEnvironmentStore(CreateProfile("temporary"));
         var handler = new DeleteAzureDevOpsEnvironmentCommandHandler(
             environments,
             new FakeRepositoryStore()
@@ -355,19 +355,17 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
         >(services);
     }
 
-    private static AzureDevOpsEnvironmentProfile CreateProfile(string key) =>
+    private static WorkSourceEnvironmentProfile CreateProfile(string key) =>
         new()
         {
             Key = key,
             DisplayName = $"{key} Boards",
             Enabled = true,
+            Provider = "AzureDevOpsBoards",
+            TagPrefix = "agent",
             OrganizationUrl = "https://dev.azure.com/example",
             Project = "Agent Controller",
-            WorkItemType = "User Story",
-            EligibleTags = ["ready"],
-            ExcludedTags = ["blocked"],
-            EligibleStates = ["New"],
-            ExcludedStates = ["Removed"],
+            CompletedStates = ["Removed"],
             ActiveState = "Active",
             CompletedState = "Resolved",
             PatEnvironmentVariable = "ADO_TEST_PAT",
@@ -384,34 +382,34 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
         );
     }
 
-    private sealed class FakeAzureDevOpsEnvironmentStore : IAzureDevOpsEnvironmentStore
+    private sealed class FakeWorkSourceEnvironmentStore : IWorkSourceEnvironmentStore
     {
-        private readonly Dictionary<string, AzureDevOpsEnvironmentProfile> _profiles;
+        private readonly Dictionary<string, WorkSourceEnvironmentProfile> _profiles;
 
-        public FakeAzureDevOpsEnvironmentStore(params AzureDevOpsEnvironmentProfile[] profiles)
+        public FakeWorkSourceEnvironmentStore(params WorkSourceEnvironmentProfile[] profiles)
         {
             _profiles = profiles.ToDictionary(profile => profile.Key, StringComparer.Ordinal);
         }
 
         public string? LastReadKey { get; private set; }
 
-        public AzureDevOpsEnvironmentProfile? LastCreated { get; private set; }
+        public WorkSourceEnvironmentProfile? LastCreated { get; private set; }
 
-        public AzureDevOpsEnvironmentProfile? LastUpdated { get; private set; }
+        public WorkSourceEnvironmentProfile? LastUpdated { get; private set; }
 
         public string? LastDeletedKey { get; private set; }
 
-        public Task<IReadOnlyList<AzureDevOpsEnvironmentProfile>> ListAsync(
+        public Task<IReadOnlyList<WorkSourceEnvironmentProfile>> ListAsync(
             CancellationToken cancellationToken
         )
         {
-            IReadOnlyList<AzureDevOpsEnvironmentProfile> profiles = _profiles
+            IReadOnlyList<WorkSourceEnvironmentProfile> profiles = _profiles
                 .Values.OrderBy(profile => profile.Key, StringComparer.Ordinal)
                 .ToList();
             return Task.FromResult(profiles);
         }
 
-        public Task<AzureDevOpsEnvironmentProfile?> GetByKeyAsync(
+        public Task<WorkSourceEnvironmentProfile?> GetByKeyAsync(
             string key,
             CancellationToken cancellationToken
         )
@@ -422,7 +420,7 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
         }
 
         public Task<bool> CreateAsync(
-            AzureDevOpsEnvironmentProfile profile,
+            WorkSourceEnvironmentProfile profile,
             CancellationToken cancellationToken
         )
         {
@@ -431,7 +429,7 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
         }
 
         public Task<bool> UpdateAsync(
-            AzureDevOpsEnvironmentProfile profile,
+            WorkSourceEnvironmentProfile profile,
             CancellationToken cancellationToken
         )
         {

@@ -156,14 +156,14 @@ public sealed class ManagedProfileResolverTests
 
     private static ManagedProfileResolver CreateResolver(
         IReadOnlyList<RepositoryProfile> repositories,
-        IReadOnlyList<AzureDevOpsEnvironmentProfile> azureDevOps,
+        IReadOnlyList<WorkSourceEnvironmentProfile> workSourceEnvironments,
         IReadOnlyList<RuntimeEnvironmentProfile> runtimes,
         IConfiguredProfileSource configuredProfiles
     )
     {
         return new ManagedProfileResolver(
             new RepositoryStore(repositories),
-            new AzureDevOpsStore(azureDevOps),
+            new WorkSourceStore(workSourceEnvironments),
             new RuntimeStore(runtimes),
             configuredProfiles
         );
@@ -203,17 +203,19 @@ public sealed class ManagedProfileResolverTests
         };
     }
 
-    private static AzureDevOpsEnvironmentProfile AzureDevOps(
+    private static WorkSourceEnvironmentProfile AzureDevOps(
         string key,
         bool enabled,
         string project
     )
     {
-        return new AzureDevOpsEnvironmentProfile
+        return new WorkSourceEnvironmentProfile
         {
             Key = key,
             DisplayName = key,
             Enabled = enabled,
+            Provider = "AzureDevOpsBoards",
+            TagPrefix = "agent",
             OrganizationUrl = "https://dev.azure.com/example",
             Project = project,
             PatEnvironmentVariable = "TEST_ADO_PAT",
@@ -223,7 +225,7 @@ public sealed class ManagedProfileResolverTests
     private sealed class StubConfiguredProfileSource(
         RepositoryProfile? repository,
         RuntimeEnvironmentProfile runtime,
-        AzureDevOpsEnvironmentProfile? azureDevOps
+        WorkSourceEnvironmentProfile? workSourceEnvironment
     ) : IConfiguredProfileSource
     {
         public RepositoryProfile? GetRepository(string key) =>
@@ -235,7 +237,10 @@ public sealed class ManagedProfileResolverTests
             RepositoryProfile repositoryProfile
         ) => runtime;
 
-        public AzureDevOpsEnvironmentProfile? GetAzureDevOpsEnvironment() => azureDevOps;
+        public WorkSourceEnvironmentProfile? GetWorkSourceEnvironment() => workSourceEnvironment;
+
+        public AzureDevOpsEnvironmentProfile? GetAzureDevOpsEnvironment() =>
+            workSourceEnvironment as AzureDevOpsEnvironmentProfile;
     }
 
     private sealed class RepositoryStore(IReadOnlyList<RepositoryProfile> profiles)
@@ -267,25 +272,25 @@ public sealed class ManagedProfileResolverTests
             throw new NotSupportedException();
     }
 
-    private sealed class AzureDevOpsStore(IReadOnlyList<AzureDevOpsEnvironmentProfile> profiles)
-        : IAzureDevOpsEnvironmentStore
+    private sealed class WorkSourceStore(IReadOnlyList<WorkSourceEnvironmentProfile> profiles)
+        : IWorkSourceEnvironmentStore
     {
-        public Task<IReadOnlyList<AzureDevOpsEnvironmentProfile>> ListAsync(
+        public Task<IReadOnlyList<WorkSourceEnvironmentProfile>> ListAsync(
             CancellationToken cancellationToken
         ) => Task.FromResult(profiles);
 
-        public Task<AzureDevOpsEnvironmentProfile?> GetByKeyAsync(
+        public Task<WorkSourceEnvironmentProfile?> GetByKeyAsync(
             string key,
             CancellationToken cancellationToken
         ) => Task.FromResult(profiles.SingleOrDefault(profile => profile.Key == key));
 
         public Task<bool> CreateAsync(
-            AzureDevOpsEnvironmentProfile profile,
+            WorkSourceEnvironmentProfile profile,
             CancellationToken cancellationToken
         ) => throw new NotSupportedException();
 
         public Task<bool> UpdateAsync(
-            AzureDevOpsEnvironmentProfile profile,
+            WorkSourceEnvironmentProfile profile,
             CancellationToken cancellationToken
         ) => throw new NotSupportedException();
 

@@ -49,14 +49,16 @@ public sealed class ManagedLifecycleProfileTests : IDisposable
         await db.Database.EnsureCreatedAsync();
 
         var environmentStore =
-            scope.ServiceProvider.GetRequiredService<IAzureDevOpsEnvironmentStore>();
+            scope.ServiceProvider.GetRequiredService<IWorkSourceEnvironmentStore>();
         Assert.True(
             await environmentStore.CreateAsync(
-                new AzureDevOpsEnvironmentProfile
+                new WorkSourceEnvironmentProfile
                 {
                     Key = "managed-ado",
                     DisplayName = "Managed ADO",
                     Enabled = true,
+                    Provider = "AzureDevOpsBoards",
+                    TagPrefix = "agent",
                     OrganizationUrl = "https://dev.azure.com/example",
                     Project = "Example",
                     ActiveState = "Managed Active",

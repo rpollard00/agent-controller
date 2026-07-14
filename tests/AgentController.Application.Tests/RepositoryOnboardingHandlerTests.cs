@@ -59,7 +59,7 @@ public sealed class RepositoryOnboardingHandlerTests
     public async Task Create_NormalizesProfileAndReferencedKeysBeforePersisting()
     {
         var repositories = new FakeRepositoryStore();
-        var azureDevOpsEnvironments = new FakeAzureDevOpsEnvironmentStore("ado-primary");
+        var azureDevOpsEnvironments = new FakeWorkSourceEnvironmentStore("ado-primary");
         var runtimeEnvironments = new FakeRuntimeEnvironmentStore("runtime-local");
         var handler = new CreateRepositoryCommandHandler(
             repositories,
@@ -103,7 +103,7 @@ public sealed class RepositoryOnboardingHandlerTests
         var repositories = new FakeRepositoryStore();
         var handler = new CreateRepositoryCommandHandler(
             repositories,
-            new FakeAzureDevOpsEnvironmentStore(),
+            new FakeWorkSourceEnvironmentStore(),
             new FakeRuntimeEnvironmentStore()
         );
         var profile = CreateProfile("invalid") with
@@ -133,7 +133,7 @@ public sealed class RepositoryOnboardingHandlerTests
         var repositories = new FakeRepositoryStore();
         var handler = new CreateRepositoryCommandHandler(
             repositories,
-            new FakeAzureDevOpsEnvironmentStore(),
+            new FakeWorkSourceEnvironmentStore(),
             new FakeRuntimeEnvironmentStore()
         );
         var profile = CreateProfile("referencing") with
@@ -159,7 +159,7 @@ public sealed class RepositoryOnboardingHandlerTests
         var repositories = new FakeRepositoryStore(CreateProfile("shared"));
         var handler = new CreateRepositoryCommandHandler(
             repositories,
-            new FakeAzureDevOpsEnvironmentStore(),
+            new FakeWorkSourceEnvironmentStore(),
             new FakeRuntimeEnvironmentStore()
         );
 
@@ -179,7 +179,7 @@ public sealed class RepositoryOnboardingHandlerTests
         var repositories = new FakeRepositoryStore(CreateProfile("service"));
         var handler = new UpdateRepositoryCommandHandler(
             repositories,
-            new FakeAzureDevOpsEnvironmentStore(),
+            new FakeWorkSourceEnvironmentStore(),
             new FakeRuntimeEnvironmentStore()
         );
         var update = CreateProfile(" SERVICE ") with
@@ -206,7 +206,7 @@ public sealed class RepositoryOnboardingHandlerTests
         var repositories = new FakeRepositoryStore(CreateProfile("original"));
         var handler = new UpdateRepositoryCommandHandler(
             repositories,
-            new FakeAzureDevOpsEnvironmentStore(),
+            new FakeWorkSourceEnvironmentStore(),
             new FakeRuntimeEnvironmentStore()
         );
 
@@ -230,7 +230,7 @@ public sealed class RepositoryOnboardingHandlerTests
         var repositories = new FakeRepositoryStore();
         var handler = new UpdateRepositoryCommandHandler(
             repositories,
-            new FakeAzureDevOpsEnvironmentStore(),
+            new FakeWorkSourceEnvironmentStore(),
             new FakeRuntimeEnvironmentStore()
         );
 
@@ -384,33 +384,33 @@ public sealed class RepositoryOnboardingHandlerTests
         }
     }
 
-    private sealed class FakeAzureDevOpsEnvironmentStore(params string[] keys)
-        : IAzureDevOpsEnvironmentStore
+    private sealed class FakeWorkSourceEnvironmentStore(params string[] keys)
+        : IWorkSourceEnvironmentStore
     {
         private readonly HashSet<string> _keys = new(keys, StringComparer.Ordinal);
 
-        public Task<IReadOnlyList<AzureDevOpsEnvironmentProfile>> ListAsync(
+        public Task<IReadOnlyList<WorkSourceEnvironmentProfile>> ListAsync(
             CancellationToken cancellationToken
         ) => throw new NotSupportedException();
 
-        public Task<AzureDevOpsEnvironmentProfile?> GetByKeyAsync(
+        public Task<WorkSourceEnvironmentProfile?> GetByKeyAsync(
             string key,
             CancellationToken cancellationToken
         )
         {
-            AzureDevOpsEnvironmentProfile? profile = _keys.Contains(key)
-                ? new AzureDevOpsEnvironmentProfile { Key = key }
+            WorkSourceEnvironmentProfile? profile = _keys.Contains(key)
+                ? new WorkSourceEnvironmentProfile { Key = key }
                 : null;
             return Task.FromResult(profile);
         }
 
         public Task<bool> CreateAsync(
-            AzureDevOpsEnvironmentProfile profile,
+            WorkSourceEnvironmentProfile profile,
             CancellationToken cancellationToken
         ) => throw new NotSupportedException();
 
         public Task<bool> UpdateAsync(
-            AzureDevOpsEnvironmentProfile profile,
+            WorkSourceEnvironmentProfile profile,
             CancellationToken cancellationToken
         ) => throw new NotSupportedException();
 

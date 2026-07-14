@@ -5,10 +5,10 @@ namespace AgentController.Application.Commands;
 
 /// <summary>Validates, normalizes, and creates a managed Azure DevOps environment.</summary>
 public sealed class CreateAzureDevOpsEnvironmentCommandHandler(
-    IAzureDevOpsEnvironmentStore environmentStore
+    IWorkSourceEnvironmentStore environmentStore
 ) : ICommandHandler<CreateAzureDevOpsEnvironmentCommand, AzureDevOpsEnvironmentOperationResult>
 {
-    private readonly IAzureDevOpsEnvironmentStore _environmentStore = environmentStore;
+    private readonly IWorkSourceEnvironmentStore _environmentStore = environmentStore;
 
     public async Task<AzureDevOpsEnvironmentOperationResult> HandleAsync(
         CreateAzureDevOpsEnvironmentCommand command,

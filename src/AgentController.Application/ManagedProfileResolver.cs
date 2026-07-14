@@ -9,19 +9,19 @@ namespace AgentController.Application;
 internal sealed class ManagedProfileResolver : IManagedProfileResolver
 {
     private readonly IRepositoryStore _repositoryStore;
-    private readonly IAzureDevOpsEnvironmentStore _azureDevOpsEnvironmentStore;
+    private readonly IWorkSourceEnvironmentStore _workSourceEnvironmentStore;
     private readonly IRuntimeEnvironmentStore _runtimeEnvironmentStore;
     private readonly IConfiguredProfileSource _configuredProfiles;
 
     public ManagedProfileResolver(
         IRepositoryStore repositoryStore,
-        IAzureDevOpsEnvironmentStore azureDevOpsEnvironmentStore,
+        IWorkSourceEnvironmentStore workSourceEnvironmentStore,
         IRuntimeEnvironmentStore runtimeEnvironmentStore,
         IConfiguredProfileSource configuredProfiles
     )
     {
         _repositoryStore = repositoryStore;
-        _azureDevOpsEnvironmentStore = azureDevOpsEnvironmentStore;
+        _workSourceEnvironmentStore = workSourceEnvironmentStore;
         _runtimeEnvironmentStore = runtimeEnvironmentStore;
         _configuredProfiles = configuredProfiles;
     }
@@ -87,7 +87,7 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
     {
         if (!string.IsNullOrWhiteSpace(key))
         {
-            var managed = await _azureDevOpsEnvironmentStore.GetByKeyAsync(
+            var managed = await _workSourceEnvironmentStore.GetByKeyAsync(
                 NormalizeKey(key),
                 cancellationToken
             );
@@ -100,7 +100,7 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
         else
         {
             var managed = (
-                await _azureDevOpsEnvironmentStore.ListAsync(cancellationToken)
+                await _workSourceEnvironmentStore.ListAsync(cancellationToken)
             ).FirstOrDefault(profile => profile.Enabled);
 
             if (managed is not null)
@@ -119,7 +119,7 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
         IReadOnlyList<ResolvedAzureDevOpsEnvironment>
     > ListAzureDevOpsEnvironmentsAsync(CancellationToken cancellationToken)
     {
-        var managed = (await _azureDevOpsEnvironmentStore.ListAsync(cancellationToken))
+        var managed = (await _workSourceEnvironmentStore.ListAsync(cancellationToken))
             .Where(profile => profile.Enabled)
             .Select(profile => new ResolvedAzureDevOpsEnvironment(profile, IsManaged: true))
             .ToList();

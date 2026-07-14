@@ -8,13 +8,13 @@ using Microsoft.EntityFrameworkCore;
 namespace AgentController.Infrastructure.Data.Repositories;
 
 /// <summary>
-/// SQLite-backed persistence for managed Azure DevOps environment profiles.
+/// SQLite-backed persistence for managed work source environment profiles.
 /// </summary>
-internal sealed class EfAzureDevOpsEnvironmentStore : IAzureDevOpsEnvironmentStore
+internal sealed class EfWorkSourceEnvironmentStore : IWorkSourceEnvironmentStore
 {
     private readonly AgentControllerDbContext _db;
 
-    public EfAzureDevOpsEnvironmentStore(AgentControllerDbContext db)
+    public EfWorkSourceEnvironmentStore(AgentControllerDbContext db)
     {
         _db = db;
     }

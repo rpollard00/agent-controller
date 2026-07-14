@@ -7,11 +7,11 @@ namespace AgentController.Application.Commands;
 /// Validates and deletes an unreferenced managed Azure DevOps environment profile.
 /// </summary>
 public sealed class DeleteAzureDevOpsEnvironmentCommandHandler(
-    IAzureDevOpsEnvironmentStore environmentStore,
+    IWorkSourceEnvironmentStore environmentStore,
     IRepositoryStore repositoryStore
 ) : ICommandHandler<DeleteAzureDevOpsEnvironmentCommand, AzureDevOpsEnvironmentOperationResult>
 {
-    private readonly IAzureDevOpsEnvironmentStore _environmentStore = environmentStore;
+    private readonly IWorkSourceEnvironmentStore _environmentStore = environmentStore;
     private readonly IRepositoryStore _repositoryStore = repositoryStore;
 
     public async Task<AzureDevOpsEnvironmentOperationResult> HandleAsync(
