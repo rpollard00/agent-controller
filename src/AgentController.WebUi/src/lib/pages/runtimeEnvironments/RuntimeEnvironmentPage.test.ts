@@ -84,13 +84,6 @@ async function completeIdentityFields(): Promise<void> {
   });
 }
 
-async function completePiCreateFields(): Promise<void> {
-  await completeIdentityFields();
-  await fireEvent.input(screen.getByLabelText(/Controller base URL/), {
-    target: { value: 'https://controller.secondary.test/' },
-  });
-}
-
 describe('runtime environment screens', () => {
   beforeEach(() => {
     window.history.replaceState({}, '', '/runtime-environments');
@@ -123,7 +116,7 @@ describe('runtime environment screens', () => {
     expect(window.location.pathname).toBe('/runtime-environments/runtime-main');
   });
 
-  it('creates a Pi environment after editing loadout and variable-reference maps', async () => {
+  it('creates a Pi environment after editing the loadout map', async () => {
     window.history.replaceState({}, '', '/runtime-environments/new');
     const api = createApi([]);
     render(App, { client: api.client });
@@ -131,9 +124,9 @@ describe('runtime environment screens', () => {
     expect(
       await screen.findByRole('heading', { level: 1, name: 'Add runtime environment' }),
     ).toBeVisible();
-    expect(screen.getByText('Variable references only')).toBeVisible();
+    expect(screen.getByText('Loadout mappings')).toBeVisible();
 
-    await completePiCreateFields();
+    await completeIdentityFields();
     await fireEvent.input(screen.getByLabelText(/Workspace root/), {
       target: { value: '/srv/secondary-workspaces' },
     });
@@ -141,15 +134,6 @@ describe('runtime environment screens', () => {
       target: { value: 'Custom-NewWork' },
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Remove loadout mapping 2' }));
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Add variable mapping' }));
-    const targets = screen.getAllByLabelText('Target variable name');
-    const sources = screen.getAllByLabelText('Source variable reference');
-    await fireEvent.input(targets[2], { target: { value: 'GITHUB_TOKEN' } });
-    await fireEvent.input(sources[2], { target: { value: 'HOST_GITHUB_TOKEN' } });
-    await fireEvent.click(
-      screen.getByRole('button', { name: 'Remove environment-variable mapping 2' }),
-    );
     await fireEvent.click(screen.getByRole('button', { name: 'Create environment' }));
 
     await waitFor(() => expect(api.environments.create).toHaveBeenCalledOnce());
@@ -162,15 +146,12 @@ describe('runtime environment screens', () => {
         environmentSettings: { workspaceRoot: '/srv/secondary-workspaces' },
         runtimeProvider: 'PiMateria',
         runtimeSettings: expect.objectContaining({
-          piExecutablePath: 'pi',
-          controllerBaseUrl: 'https://controller.secondary.test',
-          ptyWrapperPath: 'script',
-          ptyWrapperArgs: '-qfc',
+          piExecutablePath: null,
+          controllerBaseUrl: null,
+          ptyWrapperPath: null,
+          ptyWrapperArgs: null,
           loadouts: { newWork: 'Custom-NewWork' },
-          forwardEnvironmentVariables: {
-            AZURE_DEVOPS_EXT_PAT: 'AZURE_DEVOPS_PAT',
-            GITHUB_TOKEN: 'HOST_GITHUB_TOKEN',
-          },
+          forwardEnvironmentVariables: {},
         }),
       }),
       expect.any(AbortSignal),
@@ -189,7 +170,7 @@ describe('runtime environment screens', () => {
       target: { value: 'MockPiMateria' },
     });
 
-    expect(screen.getByText('No process settings required')).toBeVisible();
+    expect(screen.getByText('No loadout mapping required')).toBeVisible();
     expect(screen.queryByLabelText(/Pi executable/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Add variable mapping' })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Create environment' }));
@@ -211,28 +192,6 @@ describe('runtime environment screens', () => {
     );
   });
 
-  it('rejects secret-like values in environment-variable reference mappings', async () => {
-    window.history.replaceState({}, '', '/runtime-environments/new');
-    const api = createApi([]);
-    render(App, { client: api.client });
-
-    await completePiCreateFields();
-    await fireEvent.input(screen.getAllByLabelText('Source variable reference')[0], {
-      target: { value: 'literal secret value' },
-    });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create environment' }));
-
-    expect(await screen.findByText('Correct the highlighted fields')).toBeVisible();
-    expect(
-      screen.getByText('Every source must be an environment-variable name, never a secret value.'),
-    ).toBeVisible();
-    expect(screen.getAllByLabelText('Source variable reference')[0]).toHaveAttribute(
-      'aria-invalid',
-      'true',
-    );
-    expect(api.environments.create).not.toHaveBeenCalled();
-  });
-
   it('rejects an invalid environment name before submitting', async () => {
     window.history.replaceState({}, '', '/runtime-environments/new');
     const api = createApi([]);
@@ -244,9 +203,6 @@ describe('runtime environment screens', () => {
     await fireEvent.input(screen.getByLabelText(/Display name/), {
       target: { value: 'Bad runtime' },
     });
-    await fireEvent.input(screen.getByLabelText(/Controller base URL/), {
-      target: { value: 'https://controller.example.test/' },
-    });
     await fireEvent.click(screen.getByRole('button', { name: 'Create environment' }));
 
     expect(
@@ -257,7 +213,7 @@ describe('runtime environment screens', () => {
     expect(api.environments.create).not.toHaveBeenCalled();
   });
 
-  it('edits runtime and workspace settings while preserving the immutable key', async () => {
+  it('edits identity and workspace settings while preserving the immutable key', async () => {
     window.history.replaceState({}, '', '/runtime-environments/runtime-main/edit');
     const api = createApi();
     render(App, { client: api.client });
@@ -272,9 +228,6 @@ describe('runtime environment screens', () => {
     await fireEvent.input(screen.getByLabelText(/Workspace root/), {
       target: { value: '/srv/updated-workspaces' },
     });
-    await fireEvent.input(screen.getByLabelText(/PTY wrapper arguments/), {
-      target: { value: '-qec' },
-    });
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(api.environments.update).toHaveBeenCalledOnce());
@@ -284,7 +237,17 @@ describe('runtime environment screens', () => {
         key: 'runtime-main',
         displayName: 'Updated runtime',
         environmentSettings: { workspaceRoot: '/srv/updated-workspaces' },
-        runtimeSettings: expect.objectContaining({ ptyWrapperArgs: '-qec' }),
+        runtimeSettings: expect.objectContaining({
+          piExecutablePath: null,
+          controllerBaseUrl: null,
+          ptyWrapperPath: null,
+          ptyWrapperArgs: null,
+          loadouts: {
+            newWork: 'ADO-Build-NewWork',
+            rework: 'ADO-Build-Rework',
+          },
+          forwardEnvironmentVariables: {},
+        }),
         createdAt: environment.createdAt,
       }),
       expect.any(AbortSignal),
@@ -301,8 +264,8 @@ describe('runtime environment screens', () => {
         status: 400,
         detail: 'Correct the highlighted runtime fields.',
         errors: {
-          'runtimeSettings.controllerBaseUrl': [
-            'The controller URL must not include a query.',
+          'environmentSettings.workspaceRoot': [
+            'The workspace root must be an absolute path.',
           ],
         },
       }),
@@ -314,8 +277,8 @@ describe('runtime environment screens', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Could not update environment');
     expect(alert).toHaveTextContent('Correct the highlighted runtime fields.');
-    expect(screen.getByText('The controller URL must not include a query.')).toBeVisible();
-    expect(screen.getByLabelText(/Controller base URL/)).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('The workspace root must be an absolute path.')).toBeVisible();
+    expect(screen.getByLabelText(/Workspace root/)).toHaveAttribute('aria-invalid', 'true');
   });
 
   it('enables and disables an environment from the list', async () => {

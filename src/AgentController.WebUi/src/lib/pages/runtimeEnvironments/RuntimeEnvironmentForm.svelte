@@ -4,13 +4,11 @@
   import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
   import Field from '../../components/ui/Field.svelte';
-  import EnvironmentVariableEditor from './EnvironmentVariableEditor.svelte';
   import LoadoutEditor from './LoadoutEditor.svelte';
   import {
     createRuntimeEnvironmentFormValues,
     toRuntimeEnvironmentProfile,
     validateRuntimeEnvironmentForm,
-    type EnvironmentVariableRow,
     type LoadoutRow,
     type RuntimeEnvironmentFormErrors,
   } from './runtimeEnvironmentForm';
@@ -33,7 +31,7 @@
 
   let values = $state(untrack(() => createRuntimeEnvironmentFormValues(profile)));
   let clientErrors = $state<RuntimeEnvironmentFormErrors>({});
-  let nextRowId = values.loadouts.length + values.forwardEnvironmentVariables.length;
+  let nextRowId = values.loadouts.length;
 
   const inputClasses =
     'min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 placeholder:text-slate-600 disabled:cursor-not-allowed disabled:bg-slate-900 disabled:text-slate-400';
@@ -86,28 +84,6 @@
   function removeLoadout(id: string): void {
     values.loadouts = values.loadouts.filter((row) => row.id !== id);
     clearClientError('runtimeSettings.loadouts');
-  }
-
-  function addVariableMapping(): void {
-    values.forwardEnvironmentVariables = [
-      ...values.forwardEnvironmentVariables,
-      { id: `variable-new-${nextRowId++}`, target: '', source: '' },
-    ];
-    clearClientError('runtimeSettings.forwardEnvironmentVariables');
-  }
-
-  function updateVariableMapping(id: string, patch: Partial<EnvironmentVariableRow>): void {
-    values.forwardEnvironmentVariables = values.forwardEnvironmentVariables.map((row) =>
-      row.id === id ? { ...row, ...patch } : row,
-    );
-    clearClientError('runtimeSettings.forwardEnvironmentVariables');
-  }
-
-  function removeVariableMapping(id: string): void {
-    values.forwardEnvironmentVariables = values.forwardEnvironmentVariables.filter(
-      (row) => row.id !== id,
-    );
-    clearClientError('runtimeSettings.forwardEnvironmentVariables');
   }
 </script>
 
@@ -273,139 +249,19 @@
     </Field>
 
     {#if values.runtimeProvider === 'PiMateria'}
-      <div class="grid gap-6 lg:grid-cols-2">
-        <Field
-          id="runtime-piExecutablePath"
-          label="Pi executable"
-          hint="An executable name resolved through PATH or an absolute path."
-          error={fieldError('runtimeSettings.piExecutablePath')}
-          required
-        >
-          <input
-            id="runtime-piExecutablePath"
-            name="piExecutablePath"
-            class={inputClasses}
-            bind:value={values.piExecutablePath}
-            disabled={submitting}
-            required
-            spellcheck="false"
-            autocomplete="off"
-            placeholder="pi"
-            aria-invalid={fieldError('runtimeSettings.piExecutablePath') ? 'true' : undefined}
-            aria-describedby={describedBy(
-              'runtime-piExecutablePath',
-              'runtimeSettings.piExecutablePath',
-              true,
-            )}
-            oninput={() => clearClientError('runtimeSettings.piExecutablePath')}
-          />
-        </Field>
-
-        <Field
-          id="runtime-controllerBaseUrl"
-          label="Controller base URL"
-          hint="The public Agent Controller origin used for runtime event callbacks."
-          error={fieldError('runtimeSettings.controllerBaseUrl')}
-          required
-        >
-          <input
-            id="runtime-controllerBaseUrl"
-            name="controllerBaseUrl"
-            type="url"
-            class={inputClasses}
-            bind:value={values.controllerBaseUrl}
-            disabled={submitting}
-            required
-            spellcheck="false"
-            autocomplete="url"
-            placeholder="http://localhost:5103"
-            aria-invalid={fieldError('runtimeSettings.controllerBaseUrl') ? 'true' : undefined}
-            aria-describedby={describedBy(
-              'runtime-controllerBaseUrl',
-              'runtimeSettings.controllerBaseUrl',
-              true,
-            )}
-            oninput={() => clearClientError('runtimeSettings.controllerBaseUrl')}
-          />
-        </Field>
-
-        <Field
-          id="runtime-ptyWrapperPath"
-          label="PTY wrapper executable"
-          hint="Optional executable used to allocate a pseudo-terminal. Leave empty to launch pi directly."
-          error={fieldError('runtimeSettings.ptyWrapperPath')}
-        >
-          <input
-            id="runtime-ptyWrapperPath"
-            name="ptyWrapperPath"
-            class={inputClasses}
-            bind:value={values.ptyWrapperPath}
-            disabled={submitting}
-            spellcheck="false"
-            autocomplete="off"
-            placeholder="script"
-            aria-invalid={fieldError('runtimeSettings.ptyWrapperPath') ? 'true' : undefined}
-            aria-describedby={describedBy(
-              'runtime-ptyWrapperPath',
-              'runtimeSettings.ptyWrapperPath',
-              true,
-            )}
-            oninput={() => clearClientError('runtimeSettings.ptyWrapperPath')}
-          />
-        </Field>
-
-        <Field
-          id="runtime-ptyWrapperArgs"
-          label="PTY wrapper arguments"
-          hint="Arguments passed before the pi command; ignored when no wrapper is configured."
-          error={fieldError('runtimeSettings.ptyWrapperArgs')}
-        >
-          <input
-            id="runtime-ptyWrapperArgs"
-            name="ptyWrapperArgs"
-            class={inputClasses}
-            bind:value={values.ptyWrapperArgs}
-            disabled={submitting}
-            spellcheck="false"
-            autocomplete="off"
-            placeholder="-qfc"
-            aria-invalid={fieldError('runtimeSettings.ptyWrapperArgs') ? 'true' : undefined}
-            aria-describedby={describedBy(
-              'runtime-ptyWrapperArgs',
-              'runtimeSettings.ptyWrapperArgs',
-              true,
-            )}
-            oninput={() => clearClientError('runtimeSettings.ptyWrapperArgs')}
-          />
-        </Field>
-      </div>
-
-      <div class="border-t border-slate-800 pt-6">
-        <LoadoutEditor
-          rows={values.loadouts}
-          disabled={submitting}
-          error={fieldError('runtimeSettings.loadouts')}
-          onadd={addLoadout}
-          onremove={removeLoadout}
-          onrowchange={updateLoadout}
-        />
-      </div>
-
-      <div class="border-t border-slate-800 pt-6">
-        <EnvironmentVariableEditor
-          rows={values.forwardEnvironmentVariables}
-          disabled={submitting}
-          error={fieldError('runtimeSettings.forwardEnvironmentVariables')}
-          onadd={addVariableMapping}
-          onremove={removeVariableMapping}
-          onrowchange={updateVariableMapping}
-        />
-      </div>
+      <LoadoutEditor
+        rows={values.loadouts}
+        disabled={submitting}
+        error={fieldError('runtimeSettings.loadouts')}
+        onadd={addLoadout}
+        onremove={removeLoadout}
+        onrowchange={updateLoadout}
+      />
     {:else}
       <Alert
         variant="info"
-        title="No process settings required"
-        message="Mock Pi Materia simulates execution and does not use Pi executable, controller callback, PTY, loadout, or environment-variable forwarding settings."
+        title="No loadout mapping required"
+        message="Mock Pi Materia simulates execution without launching a Pi process, so no loadout mapping is needed."
       />
     {/if}
   </fieldset>

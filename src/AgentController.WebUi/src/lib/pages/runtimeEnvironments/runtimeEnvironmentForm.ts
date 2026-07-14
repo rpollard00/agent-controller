@@ -10,12 +10,6 @@ export interface LoadoutRow {
   loadout: string;
 }
 
-export interface EnvironmentVariableRow {
-  id: string;
-  target: string;
-  source: string;
-}
-
 export interface RuntimeEnvironmentFormValues {
   key: string;
   displayName: string;
@@ -23,12 +17,7 @@ export interface RuntimeEnvironmentFormValues {
   environmentProvider: EnvironmentProvider;
   workspaceRoot: string;
   runtimeProvider: RuntimeProvider;
-  piExecutablePath: string;
-  controllerBaseUrl: string;
-  ptyWrapperPath: string;
-  ptyWrapperArgs: string;
   loadouts: LoadoutRow[];
-  forwardEnvironmentVariables: EnvironmentVariableRow[];
 }
 
 export type RuntimeEnvironmentFormErrors = Record<string, string[]>;
@@ -37,7 +26,6 @@ export function createRuntimeEnvironmentFormValues(
   profile?: RuntimeEnvironmentProfile,
 ): RuntimeEnvironmentFormValues {
   const loadouts = profile?.runtimeSettings.loadouts;
-  const mappings = profile?.runtimeSettings.forwardEnvironmentVariables;
 
   return {
     key: profile?.key ?? '',
@@ -46,10 +34,6 @@ export function createRuntimeEnvironmentFormValues(
     environmentProvider: asEnvironmentProvider(profile?.environmentProvider),
     workspaceRoot: profile?.environmentSettings.workspaceRoot ?? '',
     runtimeProvider: asRuntimeProvider(profile?.runtimeProvider),
-    piExecutablePath: profile?.runtimeSettings.piExecutablePath ?? 'pi',
-    controllerBaseUrl: profile?.runtimeSettings.controllerBaseUrl ?? '',
-    ptyWrapperPath: profile?.runtimeSettings.ptyWrapperPath ?? 'script',
-    ptyWrapperArgs: profile?.runtimeSettings.ptyWrapperArgs ?? '-qfc',
     loadouts: loadouts
       ? (Object.entries(loadouts) as [Exclude<ExecutionKind, ''>, string][]).map(
           ([executionKind, loadout], index) => ({
@@ -61,24 +45,6 @@ export function createRuntimeEnvironmentFormValues(
       : [
           { id: 'loadout-0', executionKind: 'newWork', loadout: 'ADO-Build-NewWork' },
           { id: 'loadout-1', executionKind: 'rework', loadout: 'ADO-Build-Rework' },
-        ],
-    forwardEnvironmentVariables: mappings
-      ? Object.entries(mappings).map(([target, source], index) => ({
-          id: `variable-${index}`,
-          target,
-          source,
-        }))
-      : [
-          {
-            id: 'variable-0',
-            target: 'AZURE_DEVOPS_EXT_PAT',
-            source: 'AZURE_DEVOPS_PAT',
-          },
-          {
-            id: 'variable-1',
-            target: 'AZURE_DEVOPS_PAT',
-            source: 'AZURE_DEVOPS_PAT',
-          },
         ],
   };
 }
@@ -110,28 +76,10 @@ export function validateRuntimeEnvironmentForm(
     ];
   }
 
+  // Pi Materia process settings (executable, controller URL, PTY, env-var forwarding)
+  // are controller-owned, so only loadouts remain as a per-profile runtime control.
   if (values.runtimeProvider === 'PiMateria') {
-    addRequiredError(
-      errors,
-      'runtimeSettings.piExecutablePath',
-      values.piExecutablePath,
-      'A pi executable path or command is required.',
-    );
-    addRequiredError(
-      errors,
-      'runtimeSettings.controllerBaseUrl',
-      values.controllerBaseUrl,
-      'A controller base URL is required.',
-    );
-
-    if (values.controllerBaseUrl.trim() && !isValidControllerUrl(values.controllerBaseUrl)) {
-      errors['runtimeSettings.controllerBaseUrl'] = [
-        'Enter an absolute HTTP or HTTPS URL without credentials, a query, or a fragment.',
-      ];
-    }
-
     validateLoadouts(values.loadouts, errors);
-    validateEnvironmentVariables(values.forwardEnvironmentVariables, errors);
   }
 
   return errors;
@@ -154,23 +102,19 @@ export function toRuntimeEnvironmentProfile(
     },
     runtimeProvider: values.runtimeProvider,
     runtimeSettings: {
-      piExecutablePath: usesPi ? nullableText(values.piExecutablePath) : null,
-      controllerBaseUrl: usesPi
-        ? nullableText(values.controllerBaseUrl)?.replace(/\/+$/, '') ?? null
-        : null,
-      ptyWrapperPath: usesPi ? nullableText(values.ptyWrapperPath) : null,
-      ptyWrapperArgs:
-        usesPi && values.ptyWrapperPath.trim() ? nullableText(values.ptyWrapperArgs) : null,
+      // The form no longer collects controller-owned Pi process settings. They are
+      // submitted as null/empty to satisfy the API shape while leaving execution
+      // control to the controller; the service ignores and drops these values.
+      piExecutablePath: null,
+      controllerBaseUrl: null,
+      ptyWrapperPath: null,
+      ptyWrapperArgs: null,
       loadouts: usesPi
         ? Object.fromEntries(
             values.loadouts.map((row) => [row.executionKind, row.loadout.trim()]),
           )
         : {},
-      forwardEnvironmentVariables: usesPi
-        ? Object.fromEntries(
-            values.forwardEnvironmentVariables.map((row) => [row.target.trim(), row.source.trim()]),
-          )
-        : {},
+      forwardEnvironmentVariables: {},
     },
     createdAt: original?.createdAt ?? now,
     updatedAt: original?.updatedAt ?? now,
@@ -194,22 +138,6 @@ function addRequiredError(
   if (!value.trim()) errors[field] = [message];
 }
 
-function isValidControllerUrl(value: string): boolean {
-  try {
-    const url = new URL(value.trim());
-    return (
-      (url.protocol === 'http:' || url.protocol === 'https:') &&
-      Boolean(url.hostname) &&
-      !url.username &&
-      !url.password &&
-      !url.search &&
-      !url.hash
-    );
-  } catch {
-    return false;
-  }
-}
-
 function validateLoadouts(
   rows: LoadoutRow[],
   errors: RuntimeEnvironmentFormErrors,
@@ -228,37 +156,6 @@ function validateLoadouts(
 
   if (!kinds.has('newWork')) messages.push('A New work loadout is required.');
   if (messages.length > 0) errors['runtimeSettings.loadouts'] = unique(messages);
-}
-
-function validateEnvironmentVariables(
-  rows: EnvironmentVariableRow[],
-  errors: RuntimeEnvironmentFormErrors,
-): void {
-  const messages: string[] = [];
-  const targets = new Set<string>();
-
-  for (const row of rows) {
-    const target = row.target.trim();
-    const source = row.source.trim();
-    if (!isEnvironmentVariableName(target)) {
-      messages.push('Every target must be an environment-variable name.');
-    }
-    if (!isEnvironmentVariableName(source)) {
-      messages.push('Every source must be an environment-variable name, never a secret value.');
-    }
-    if (target && targets.has(target)) {
-      messages.push(`Target environment variable “${target}” is mapped more than once.`);
-    }
-    targets.add(target);
-  }
-
-  if (messages.length > 0) {
-    errors['runtimeSettings.forwardEnvironmentVariables'] = unique(messages);
-  }
-}
-
-function isEnvironmentVariableName(value: string): boolean {
-  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 }
 
 function executionKindLabel(value: Exclude<ExecutionKind, ''>): string {

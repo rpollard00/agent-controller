@@ -245,7 +245,7 @@
       return 'Configure an isolated workspace and select how agent work will run.';
     }
     if (currentRoute.view === 'edit') {
-      return 'Update workspace, runtime, loadout, and environment-variable reference settings.';
+      return 'Update workspace, runtime provider, and loadout mapping settings.';
     }
     return 'Review workspace provisioning, runtime process settings, and variable references.';
   }
