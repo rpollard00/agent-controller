@@ -743,12 +743,7 @@ public class AzureDevOpsBoardsClientTests
         var parameters = new BoardsQueryParameters
         {
             Project = Project,
-            ExcludedTags = new[]
-            {
-                WorkSourceOptions.DefaultExcludedTagAgentActive,
-                WorkSourceOptions.DefaultExcludedTagAgentFailed,
-                WorkSourceOptions.DefaultExcludedTagAgentNeedsHuman,
-            },
+            ExcludedTags = WorkSourceOptions.LifecycleTags(),
         };
 
         var results = await client.QueryWorkItemsAsync(parameters, CancellationToken.None);

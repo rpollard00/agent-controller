@@ -58,25 +58,21 @@ internal sealed partial class LocalFileWorkSource : IWorkSource, IDisposable
 
         // Merge configured filters into the query, letting caller overrides win
         // where explicitly provided (same pattern as LocalFakeWorkSource).
+        // Note: EligibleStates/EligibleTags/ExcludedTags removed in favor of
+        // CompletedStates + TagPrefix model; caller overrides take precedence.
         var effectiveQuery = query with
         {
             States = query.States is { Count: > 0 }
                 ? query.States
-                : (workOpts.EligibleStates is { Count: > 0 }
-                    ? workOpts.EligibleStates
-                    : null),
+                : null,
 
             Tags = query.Tags is { Count: > 0 }
                 ? query.Tags
-                : (workOpts.EligibleTags is { Count: > 0 }
-                    ? workOpts.EligibleTags
-                    : null),
+                : null,
 
             ExcludedTags = query.ExcludedTags is { Count: > 0 }
                 ? query.ExcludedTags
-                : (workOpts.ExcludedTags is { Count: > 0 }
-                    ? workOpts.ExcludedTags
-                    : null),
+                : null,
         };
 
         await using var scope = _scopeFactory.CreateAsyncScope();
@@ -175,27 +171,26 @@ internal sealed partial class LocalFileWorkSource : IWorkSource, IDisposable
             };
         }
 
-        // Determine target state: first eligible state.
+        // Determine target state: ActiveState from options.
         var options = _workSourceOptions.CurrentValue;
-        var eligibleStates = options.EligibleStates;
-        if (eligibleStates is { Count: > 0 })
+        if (!string.IsNullOrWhiteSpace(options.ActiveState))
         {
-            await store.UpdateStatusAsync(request.WorkItemId, eligibleStates[0], cancellationToken);
+            await store.UpdateStatusAsync(request.WorkItemId, options.ActiveState, cancellationToken);
         }
 
         // Ensure agent-ready; remove agent lifecycle exclusion tags.
         // Aligns with the ADO path: strips agent-active, agent-failed,
         // agent-needs-human, and any agent-worker:{id} tags.
         var tags = candidate.Tags
-            .Where(t => t != WorkSourceOptions.DefaultExcludedTagAgentActive &&
-                        t != WorkSourceOptions.DefaultExcludedTagAgentFailed &&
-                        t != WorkSourceOptions.DefaultExcludedTagAgentNeedsHuman &&
+            .Where(t => t != WorkSourceOptions.TagActive() &&
+                        t != WorkSourceOptions.TagFailed() &&
+                        t != WorkSourceOptions.TagNeedsHuman() &&
                         !t.StartsWith("agent-worker:", StringComparison.Ordinal))
             .ToList();
 
-        if (!tags.Contains(WorkSourceOptions.DefaultTagAgentReady))
+        if (!tags.Contains(WorkSourceOptions.TagReady()))
         {
-            tags.Add(WorkSourceOptions.DefaultTagAgentReady);
+            tags.Add(WorkSourceOptions.TagReady());
         }
 
         // Upsert with updated tags (idempotent against local state).

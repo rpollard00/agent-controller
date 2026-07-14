@@ -84,24 +84,19 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
             return;
         }
 
-        var workItemType = string.IsNullOrWhiteSpace(workSource.WorkItemType)
-            ? WorkSourceOptions.DefaultWorkItemType
-            : workSource.WorkItemType;
-
-        ValidateStarting(_logger, project!, workItemType);
-
         // Query ADO for valid states via the scoped IAzureDevOpsBoardsClient.
         // The client is registered with the correct base URL and PAT from options.
-        var validStates = await FetchValidStatesViaClientAsync(project!, workItemType, cancellationToken);
+        // Note: WorkItemType removed; state discovery no longer targets a specific type.
+        var validStates = await FetchValidStatesViaClientAsync(project!, cancellationToken);
 
         if (validStates.Count == 0)
         {
-            WarnNoValidStates(_logger, project!, workItemType);
+            WarnNoValidStates(_logger, project!);
             return;
         }
 
 #pragma warning disable CA1873 // LoggerMessage source-gen has its own IsEnabled guard
-        ValidStatesEnumerated(_logger, project!, workItemType, string.Join(", ", validStates));
+        ValidStatesEnumerated(_logger, project!, string.Join(", ", validStates));
 #pragma warning restore CA1873
 
         // Validate configured states
@@ -124,14 +119,14 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
                 $"Valid states: [{string.Join(", ", validStates)}].");
         }
 
-        if (workSource.EligibleStates is { Count: > 0 })
+        if (workSource.CompletedStates is { Count: > 0 })
         {
-            foreach (var state in workSource.EligibleStates)
+            foreach (var state in workSource.CompletedStates)
             {
                 if (!string.IsNullOrWhiteSpace(state) && !validStatesSet.Contains(state))
                 {
                     failures.Add(
-                        $"EligibleStates value '{state}' is not a valid System.State value. " +
+                        $"CompletedStates value '{state}' is not a valid System.State value. " +
                         $"Valid states: [{string.Join(", ", validStates)}].");
                 }
             }
@@ -140,8 +135,7 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
         if (failures.Count > 0)
         {
             throw new InvalidOperationException(
-                $"Azure DevOps board state configuration is invalid for project '{project}', " +
-                $"work item type '{workItemType}':\n" +
+                $"Azure DevOps board state configuration is invalid for project '{project}':\n" +
                 string.Join("\n", failures.Select((f, i) => $"  {i + 1}. {f}")));
         }
 
@@ -149,7 +143,7 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
         ValidationPassed(_logger,
             workSource.ActiveState ?? "(not set)",
             workSource.CompletedState ?? "(not set)",
-            string.Join(", ", workSource.EligibleStates));
+            string.Join(", ", workSource.CompletedStates));
 #pragma warning restore CA1873
     }
 
@@ -159,12 +153,11 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
     /// </summary>
     private async Task<IReadOnlyList<string>> FetchValidStatesViaClientAsync(
         string project,
-        string workItemType,
         CancellationToken cancellationToken)
     {
         using var scope = _scopeFactory.CreateScope();
         var client = scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClient>();
-        return await client.GetValidStatesAsync(project, workItemType, cancellationToken);
+        return await client.GetValidStatesAsync(project, cancellationToken);
     }
 
     public Task StopAsync(CancellationToken cancellationToken)
@@ -197,25 +190,20 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
         Message = "Skipping ADO board state validation: organizationUrl or project is not configured.")]
     private static partial void SkipValidationMissingConfig(ILogger logger);
 
-    [LoggerMessage(Level = LogLevel.Information,
-        Message = "Validating configured ADO board states for project='{Project}', workItemType='{WorkItemType}'.")]
-    private static partial void ValidateStarting(
-        ILogger logger, string project, string workItemType);
-
     [LoggerMessage(Level = LogLevel.Warning,
-        Message = "Could not enumerate valid ADO states for project='{Project}', workItemType='{WorkItemType}'. " +
+        Message = "Could not enumerate valid ADO states for project='{Project}'. " +
                   "Skipping board state validation. This may indicate a connectivity or permission issue.")]
     private static partial void WarnNoValidStates(
-        ILogger logger, string project, string workItemType);
+        ILogger logger, string project);
 
     [LoggerMessage(Level = LogLevel.Debug,
-        Message = "Valid ADO states for '{Project}/{WorkItemType}': [{States}].")]
+        Message = "Valid ADO states for '{Project}': [{States}].")]
     private static partial void ValidStatesEnumerated(
-        ILogger logger, string project, string workItemType, string states);
+        ILogger logger, string project, string states);
 
     [LoggerMessage(Level = LogLevel.Information,
         Message = "ADO board state validation passed: ActiveState='{ActiveState}', " +
-                  "CompletedState='{CompletedState}', EligibleStates=[{EligibleStates}].")]
+                  "CompletedState='{CompletedState}', CompletedStates=[{CompletedStates}].")]
     private static partial void ValidationPassed(
-        ILogger logger, string activeState, string completedState, string eligibleStates);
+        ILogger logger, string activeState, string completedState, string completedStates);
 }

@@ -43,55 +43,30 @@ public sealed class WorkSourceOptions : IWorkSourceOptions
     /// </summary>
     public IReadOnlyList<string> CompletedStates { get; init; } = [];
 
-    // --- Legacy fields (removed by downstream work item #10) ---
+    // ── Prefix-aware lifecycle tag helpers ──
 
-    /// <summary>
-    /// Tags that mark a work item as eligible for autonomous execution.
-    /// </summary>
-    public IReadOnlyList<string> EligibleTags { get; init; } = [];
-
-    /// <summary>
-    /// Tags that exclude a work item from autonomous execution.
-    /// Defaults to agent-controlled lifecycle tags so that items already
-    /// claimed, failed, or marked needs-human are not re-picked up on the
-    /// next discovery cycle. Items can be retried explicitly by removing
-    /// the exclusion tag from the work item in ADO.
-    /// </summary>
-    public IReadOnlyList<string> ExcludedTags { get; init; } =
-    [
-        DefaultExcludedTagAgentActive,
-        DefaultExcludedTagAgentFailed,
-        DefaultExcludedTagAgentNeedsHuman,
-    ];
+    /// <summary>Tag added when a work item is prepared for agent pickup.</summary>
+    public static string TagReady(string prefix = DefaultTagPrefix) => $"{prefix}-ready";
 
     /// <summary>Tag added when the controller claims a work item.</summary>
-    public const string DefaultExcludedTagAgentActive = "agent-active";
+    public static string TagActive(string prefix = DefaultTagPrefix) => $"{prefix}-active";
 
     /// <summary>Tag added when a run fails.</summary>
-    public const string DefaultExcludedTagAgentFailed = "agent-failed";
+    public static string TagFailed(string prefix = DefaultTagPrefix) => $"{prefix}-failed";
 
     /// <summary>Tag added when a run requires human input.</summary>
-    public const string DefaultExcludedTagAgentNeedsHuman = "agent-needs-human";
-
-    /// <summary>Tag added when a work item is prepared for agent pickup via rework.</summary>
-    public const string DefaultTagAgentReady = "agent-ready";
+    public static string TagNeedsHuman(string prefix = DefaultTagPrefix) => $"{prefix}-needs-human";
 
     /// <summary>
-    /// Work item states that are eligible for autonomous pickup.
+    /// All controller-owned lifecycle tags for the given prefix
+    /// (active, failed, needs-human).
     /// </summary>
-    public IReadOnlyList<string> EligibleStates { get; init; } = [];
-
-    /// <summary>
-    /// Azure DevOps work item type used for state validation and queries
-    /// (e.g. "User Story", "Task", "Bug").
-    /// Defaults to "User Story" if not configured.
-    /// Used by startup validation to enumerate valid System.State values
-    /// for the configured project/WIT.
-    /// </summary>
-    public string WorkItemType { get; init; } = DefaultWorkItemType;
-
-    /// <summary>Default work item type when not explicitly configured.</summary>
-    public const string DefaultWorkItemType = "User Story";
+    public static IReadOnlyList<string> LifecycleTags(string prefix = DefaultTagPrefix) =>
+    [
+        TagActive(prefix),
+        TagFailed(prefix),
+        TagNeedsHuman(prefix),
+    ];
 
     /// <summary>
     /// State to set on a work item when the controller starts working on it.

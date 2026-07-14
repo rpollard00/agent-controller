@@ -351,8 +351,8 @@ public class LocalFileWorkSourceTests
         var options = provider.GetRequiredService<IOptions<WorkSourceOptions>>().Value;
 
         Assert.Equal("LocalFile", options.Provider);
-        Assert.Single(options.EligibleTags);
-        Assert.Contains("agent-ready", options.EligibleTags);
+        Assert.Equal("agent", options.TagPrefix);
+        Assert.Empty(options.CompletedStates);
         // Azure DevOps fields are optional and not required for LocalFile
         Assert.Null(options.OrganizationUrl);
         Assert.Null(options.Project);
@@ -649,54 +649,6 @@ public class LocalFileWorkSourceTests
                 CancellationToken.None);
 
             Assert.Empty(afterClaim);
-        }
-        finally
-        {
-            TryDeleteFile(dbPath);
-        }
-    }
-
-    [Fact]
-    public async Task LocalFileWorkSource_RespectsEligibleTags()
-    {
-        var dbPath = Path.GetTempFileName();
-        var connStr = $"Data Source={dbPath}";
-
-        try
-        {
-            var config = BuildConfiguration(new Dictionary<string, string?>
-            {
-                ["workSource:provider"] = "LocalFile",
-                ["workSource:eligibleTags:0"] = "agent-ready",
-                ["agentController:workerId"] = "test-worker",
-                ["agentController:pollIntervalSeconds"] = "30",
-                ["agentController:maxConcurrentRuns"] = "3",
-                ["agentController:runRoot"] = "/tmp/runs",
-                ["persistence:provider"] = "Sqlite",
-                ["persistence:connectionString"] = connStr,
-                ["sourceControl:provider"] = "LocalFake",
-                ["environmentProvider:provider"] = "LocalWorkspace",
-                ["runtime:provider"] = "NoOp",
-                // Def 0: has agent-ready tag
-                ["localWork:definitions:0:repoKey"] = "example-service",
-                ["localWork:definitions:0:title"] = "Eligible task",
-                ["localWork:definitions:0:tags:0"] = "agent-ready",
-                // Def 1: does NOT have agent-ready tag
-                ["localWork:definitions:1:repoKey"] = "example-service",
-                ["localWork:definitions:1:title"] = "Ineligible task",
-                ["localWork:definitions:1:tags:0"] = "other-tag",
-            });
-
-            var services = BuildServiceProvider(config, connStr);
-            var workSource = services.GetRequiredService<IWorkSource>();
-
-            var candidates = await workSource.FindEligibleAsync(
-                new WorkQuery(),
-                CancellationToken.None);
-
-            // Only the first item has the eligible tag
-            Assert.Single(candidates);
-            Assert.Equal("Eligible task", candidates[0].Title);
         }
         finally
         {

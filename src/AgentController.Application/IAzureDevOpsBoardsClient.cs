@@ -114,7 +114,6 @@ public interface IAzureDevOpsBoardsClient
     /// </returns>
     Task<IReadOnlyList<string>> GetValidStatesAsync(
         string project,
-        string workItemType,
         CancellationToken cancellationToken
     );
 }

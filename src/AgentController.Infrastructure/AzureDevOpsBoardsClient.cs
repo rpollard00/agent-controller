@@ -1263,14 +1263,17 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
 
     public async Task<IReadOnlyList<string>> GetValidStatesAsync(
         string project,
-        string workItemType,
         CancellationToken cancellationToken
     )
     {
-        if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(workItemType))
+        if (string.IsNullOrWhiteSpace(project))
         {
             return Array.Empty<string>();
         }
+
+        // Use a default work item type for state discovery.
+        // States are process-level, not WIT-specific in most configurations.
+        const string discoveryWorkItemType = "User Story";
 
         try
         {
@@ -1377,7 +1380,7 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
 
             // (2) Get the work item type definition to find System.State allowed values.
             var witResponse = await _http.GetAsync(
-                $"_apis/work/processes/{Uri.EscapeDataString(processId)}/workItemTypes/{Uri.EscapeDataString(workItemType)}?api-version=7.1-preview.3&fields=System.State",
+                $"_apis/work/processes/{Uri.EscapeDataString(processId)}/workItemTypes/{Uri.EscapeDataString(discoveryWorkItemType)}?api-version=7.1-preview.3&fields=System.State",
                 cancellationToken
             );
 

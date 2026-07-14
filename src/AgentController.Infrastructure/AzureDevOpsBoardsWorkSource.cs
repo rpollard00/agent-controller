@@ -235,10 +235,7 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
         // Determine target state from the selected managed profile or appsettings.
         var targetState =
             selection.Environment?.Profile.ActiveState
-            ?? options.ActiveState
-            ?? (options.EligibleStates is { Count: > 0 } eligibleStates
-                ? eligibleStates[0]
-                : null);
+            ?? options.ActiveState;
         if (string.IsNullOrWhiteSpace(targetState))
         {
             return new ReworkReactivateResult
@@ -261,12 +258,12 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
             new ExternalWorkStatus
             {
                 Status = targetState,
-                Tags = [WorkSourceOptions.DefaultTagAgentReady],
+                Tags = [WorkSourceOptions.TagReady()],
                 RemovedTags =
                 [
-                    WorkSourceOptions.DefaultExcludedTagAgentActive,
-                    WorkSourceOptions.DefaultExcludedTagAgentFailed,
-                    WorkSourceOptions.DefaultExcludedTagAgentNeedsHuman,
+                    WorkSourceOptions.TagActive(),
+                    WorkSourceOptions.TagFailed(),
+                    WorkSourceOptions.TagNeedsHuman(),
                     "agent-worker:*",
                 ],
             },
@@ -302,14 +299,13 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
         return new BoardsQueryParameters
         {
             Project = query.Project ?? options.Project ?? string.Empty,
-            WorkItemType = query.WorkItemType ?? options.WorkItemType,
             States = query.States is { Count: > 0 }
                 ? query.States
-                : NullIfEmpty(options.EligibleStates),
-            Tags = query.Tags is { Count: > 0 } ? query.Tags : NullIfEmpty(options.EligibleTags),
+                : NullIfEmpty(options.CompletedStates),
+            Tags = query.Tags is { Count: > 0 } ? query.Tags : null,
             ExcludedTags = query.ExcludedTags is { Count: > 0 }
                 ? query.ExcludedTags
-                : NullIfEmpty(options.ExcludedTags),
+                : null,
             MaxResults = query.MaxResults,
         };
     }

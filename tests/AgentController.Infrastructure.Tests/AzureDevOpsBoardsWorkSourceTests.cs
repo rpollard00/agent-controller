@@ -22,8 +22,8 @@ public class AzureDevOpsBoardsWorkSourceTests
     private const string OrgUrl = "https://dev.azure.com/testorg";
     private const string Project = "TestProject";
     private const string EligibleState = "New";
+    private const string ActiveState = "Active";
     private static readonly string[] EmptyStringArray = [];
-    private static readonly string[] MultiEligibleStates = ["Ready", "New", "Active"];
 
     [Fact]
     public async Task FindEligibleAsync_PollsAllEnabledManagedEnvironmentsWithProfileSettings()
@@ -134,15 +134,15 @@ public class AzureDevOpsBoardsWorkSourceTests
         Assert.Single(mockClient.UpdateWorkItemStatusCalls);
         var call = mockClient.UpdateWorkItemStatusCalls[0];
 
-        // Assert: status is set to the first eligible state
-        Assert.Equal(EligibleState, call.Status.Status);
+        // Assert: status is set to the configured active state
+        Assert.Equal(ActiveState, call.Status.Status);
 
-        // Assert: RemovedTags contains agent-active, agent-failed, agent-needs-human, and agent-worker:*
+        // Assert: RemovedTags contains active, failed, needs-human lifecycle tags and agent-worker:*
         Assert.NotNull(call.Status.RemovedTags);
-        Assert.Contains(WorkSourceOptions.DefaultExcludedTagAgentActive, call.Status.RemovedTags);
-        Assert.Contains(WorkSourceOptions.DefaultExcludedTagAgentFailed, call.Status.RemovedTags);
+        Assert.Contains(WorkSourceOptions.TagActive(), call.Status.RemovedTags);
+        Assert.Contains(WorkSourceOptions.TagFailed(), call.Status.RemovedTags);
         Assert.Contains(
-            WorkSourceOptions.DefaultExcludedTagAgentNeedsHuman,
+            WorkSourceOptions.TagNeedsHuman(),
             call.Status.RemovedTags
         );
         Assert.Contains("agent-worker:*", call.Status.RemovedTags);
@@ -150,7 +150,7 @@ public class AzureDevOpsBoardsWorkSourceTests
         // Assert: Tags to add contains agent-ready
         Assert.NotNull(call.Status.Tags);
         Assert.Single(call.Status.Tags);
-        Assert.Equal(WorkSourceOptions.DefaultTagAgentReady, call.Status.Tags[0]);
+        Assert.Equal(WorkSourceOptions.TagReady(), call.Status.Tags[0]);
 
         // Assert: a rework-start comment was posted
         Assert.Single(mockClient.AddCommentCalls);
@@ -192,22 +192,22 @@ public class AzureDevOpsBoardsWorkSourceTests
         Assert.False(result.Success);
         Assert.NotNull(result.FailureReason);
         Assert.Contains("[rework_tag_strip_failed]", result.FailureReason);
-        Assert.Contains(EligibleState, result.FailureReason);
+        Assert.Contains(ActiveState, result.FailureReason);
 
         // Assert: no comment was posted (comment is only posted on success)
         Assert.Empty(mockClient.AddCommentCalls);
     }
 
     [Fact]
-    public async Task ReactivateForReworkAsync_UsesFirstEligibleStateAsTarget()
+    public async Task ReactivateForReworkAsync_UsesActiveStateAsTarget()
     {
-        // Arrange: mock client with multiple eligible states
+        // Arrange: mock client with custom active state
         var mockClient = new MockAzureDevOpsBoardsClient
         {
             UpdateWorkItemStatusAsyncReturns = true,
         };
 
-        var workSource = CreateWorkSource(mockClient, eligibleStates: MultiEligibleStates);
+        var workSource = CreateWorkSource(mockClient, activeState: "Ready");
 
         var request = new ReworkReactivateRequest
         {
@@ -221,22 +221,22 @@ public class AzureDevOpsBoardsWorkSourceTests
         // Act
         var result = await workSource.ReactivateForReworkAsync(request, CancellationToken.None);
 
-        // Assert: uses the first eligible state
+        // Assert: uses the configured active state
         Assert.True(result.Success);
         Assert.Single(mockClient.UpdateWorkItemStatusCalls);
         Assert.Equal("Ready", mockClient.UpdateWorkItemStatusCalls[0].Status.Status);
     }
 
     [Fact]
-    public async Task ReactivateForReworkAsync_NoEligibleStates_ReturnsFailure()
+    public async Task ReactivateForReworkAsync_NoActiveState_ReturnsFailure()
     {
-        // Arrange: no eligible states configured
+        // Arrange: no active state configured (ActiveState is the target for reactivation)
         var mockClient = new MockAzureDevOpsBoardsClient();
         var options = new WorkSourceOptions
         {
             Project = Project,
             OrganizationUrl = OrgUrl,
-            EligibleStates = null!, // Explicitly null — no eligible states
+            ActiveState = null, // No active state configured
         };
         var optionsMonitor = new FakeOptionsMonitor<WorkSourceOptions>(options);
         var scopeFactory = CreateScopeFactory(mockClient);
@@ -650,16 +650,14 @@ public class AzureDevOpsBoardsWorkSourceTests
     private static AzureDevOpsBoardsWorkSource CreateWorkSource(
         IAzureDevOpsBoardsClient mockClient,
         string? project = Project,
-        string[]? eligibleStates = null
+        string? activeState = null
     )
     {
         var options = new WorkSourceOptions
         {
             Project = project,
             OrganizationUrl = OrgUrl,
-            EligibleStates = eligibleStates is { Length: > 0 }
-                ? eligibleStates
-                : new[] { EligibleState },
+            ActiveState = activeState ?? ActiveState,
         };
 
         var optionsMonitor = new FakeOptionsMonitor<WorkSourceOptions>(options);
@@ -897,7 +895,6 @@ public class AzureDevOpsBoardsWorkSourceTests
 
         public Task<IReadOnlyList<string>> GetValidStatesAsync(
             string project,
-            string workItemType,
             CancellationToken ct
         ) => Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
     }

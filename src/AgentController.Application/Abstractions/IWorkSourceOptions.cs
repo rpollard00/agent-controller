@@ -28,13 +28,6 @@ public interface IWorkSourceOptions
     string? CompletedState { get; }
 
     /// <summary>
-    /// Work item states that are eligible for autonomous pickup.
-    /// Used to determine the target state when releasing a claim
-    /// so the work item becomes immediately retryable.
-    /// </summary>
-    IReadOnlyList<string>? EligibleStates { get; }
-
-    /// <summary>
     /// Work item states that are considered finished and not picked up.
     /// Items in these states are excluded from discovery queries.
     /// </summary>

@@ -154,7 +154,6 @@ public sealed class ManagedAzureDevOpsDiagnosticTests
 
         public Task<IReadOnlyList<string>> GetValidStatesAsync(
             string project,
-            string workItemType,
             CancellationToken cancellationToken
         ) => throw new NotSupportedException();
     }

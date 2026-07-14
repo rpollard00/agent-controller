@@ -119,24 +119,6 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         Assert.Equal(TaskStatus.RanToCompletion, task.Status);
     }
 
-    [Fact]
-    public void WorkSourceOptions_DefaultWorkItemType_IsUserStory()
-    {
-        var options = new WorkSourceOptions();
-        Assert.Equal("User Story", options.WorkItemType);
-    }
-
-    [Fact]
-    public void WorkSourceOptions_WorkItemType_CanBeConfigured()
-    {
-        var options = new WorkSourceOptions
-        {
-            WorkItemType = "Task",
-        };
-
-        Assert.Equal("Task", options.WorkItemType);
-    }
-
     // ═══════════════════════════════════════════════════════════════
     // Validation tests (mock IAzureDevOpsBoardsClient)
     // ═══════════════════════════════════════════════════════════════
@@ -157,7 +139,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
                 project: "TestProject",
                 activeState: "Active", // Not in valid states, but we'll test below
                 completedState: "Resolved",
-                eligibleStates: ["New"]));
+                completedStates: ["Resolved"]));
 
         // ActiveState "Active" is NOT in the mock valid states, so this should fail.
         // Let's use "Resolved" for ActiveState to test the success path.
@@ -168,7 +150,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
                 project: "TestProject",
                 activeState: "InProgress",
                 completedState: "Resolved",
-                eligibleStates: ["New"]));
+                completedStates: ["Resolved"]));
 
         // Act & Assert: should not throw
         await validatorSuccess.StartAsync(CancellationToken.None);
@@ -189,7 +171,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
                 project: "TestProject",
                 activeState: "Active", // NOT in valid states
                 completedState: "Resolved",
-                eligibleStates: ["New"]));
+                completedStates: ["Resolved"]));
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => validator.StartAsync(CancellationToken.None));
@@ -214,7 +196,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
                 project: "TestProject",
                 activeState: "InProgress",
                 completedState: "Done", // NOT in valid states
-                eligibleStates: ["New"]));
+                completedStates: ["Resolved"]));
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => validator.StartAsync(CancellationToken.None));
@@ -238,12 +220,12 @@ public class AzureDevOpsBoardStateStartupValidatorTests
                 project: "TestProject",
                 activeState: "InProgress",
                 completedState: "Resolved",
-                eligibleStates: ["New", "Queued"])); // "Queued" NOT in valid states
+                completedStates: ["New", "Queued"])); // "Queued" NOT in valid states
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => validator.StartAsync(CancellationToken.None));
 
-        Assert.Contains("EligibleStates value 'Queued'", ex.Message);
+        Assert.Contains("CompletedStates value 'Queued'", ex.Message);
         Assert.Contains("not a valid System.State value", ex.Message);
     }
 
@@ -262,7 +244,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
                 project: "TestProject",
                 activeState: "Active", // invalid
                 completedState: "Done", // invalid
-                eligibleStates: ["New", "Queued"])); // "Queued" invalid
+                completedStates: ["New", "Queued"])); // "Queued" invalid
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => validator.StartAsync(CancellationToken.None));
@@ -270,7 +252,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         // Should report all three failures
         Assert.Contains("ActiveState 'Active'", ex.Message);
         Assert.Contains("CompletedState 'Done'", ex.Message);
-        Assert.Contains("EligibleStates value 'Queued'", ex.Message);
+        Assert.Contains("CompletedStates value 'Queued'", ex.Message);
     }
 
     [Fact]
@@ -290,7 +272,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
                 project: "TestProject",
                 activeState: "Active",
                 completedState: "Resolved",
-                eligibleStates: ["New"]));
+                completedStates: ["Resolved"]));
 
         // Should not throw — empty valid states means skip
         await validator.StartAsync(CancellationToken.None);
@@ -312,7 +294,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
                 project: "TestProject",
                 activeState: null,
                 completedState: "Resolved",
-                eligibleStates: ["New"]));
+                completedStates: ["Resolved"]));
 
         await validator.StartAsync(CancellationToken.None);
     }
@@ -332,13 +314,13 @@ public class AzureDevOpsBoardStateStartupValidatorTests
                 project: "TestProject",
                 activeState: "InProgress",
                 completedState: null,
-                eligibleStates: ["New"]));
+                completedStates: ["InProgress"]));
 
         await validator.StartAsync(CancellationToken.None);
     }
 
     [Fact]
-    public async Task StartAsync_EmptyEligibleStates_SkipsEligibleStatesCheck()
+    public async Task StartAsync_EmptyCompletedStates_SkipsCompletedStatesCheck()
     {
         var mockClient = new FakeAzureDevOpsBoardsClient
         {
@@ -352,7 +334,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
                 project: "TestProject",
                 activeState: "New",
                 completedState: "Resolved",
-                eligibleStates: [])); // empty list
+                completedStates: [])); // empty list
 
         await validator.StartAsync(CancellationToken.None);
     }
@@ -367,8 +349,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         string? project = null,
         string? activeState = "Active",
         string? completedState = "Resolved",
-        IReadOnlyList<string>? eligibleStates = null,
-        string? workItemType = null)
+        IReadOnlyList<string>? completedStates = null)
     {
         return global::Microsoft.Extensions.Options.Options.Create(new WorkSourceOptions
         {
@@ -377,8 +358,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
             Project = project,
             ActiveState = activeState,
             CompletedState = completedState,
-            EligibleStates = eligibleStates ?? ["New"],
-            WorkItemType = workItemType ?? WorkSourceOptions.DefaultWorkItemType,
+            CompletedStates = completedStates ?? ["Resolved"],
         });
     }
 
@@ -473,7 +453,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         public Task ReleaseClaimWorkItemAsync(ReleaseClaimRequest request, CancellationToken cancellationToken) =>
             throw new NotImplementedException();
 
-        public Task<IReadOnlyList<string>> GetValidStatesAsync(string project, string workItemType, CancellationToken cancellationToken) =>
+        public Task<IReadOnlyList<string>> GetValidStatesAsync(string project, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<string>>(ValidStates);
     }
 

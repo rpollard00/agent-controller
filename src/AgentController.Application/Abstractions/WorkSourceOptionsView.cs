@@ -21,9 +21,6 @@ public sealed class WorkSourceOptionsView : IWorkSourceOptions
     public string? CompletedState { get; set; }
 
     /// <inheritdoc />
-    public IReadOnlyList<string>? EligibleStates { get; set; }
-
-    /// <inheritdoc />
     public IReadOnlyList<string> CompletedStates { get; set; } = [];
 
     /// <inheritdoc />
