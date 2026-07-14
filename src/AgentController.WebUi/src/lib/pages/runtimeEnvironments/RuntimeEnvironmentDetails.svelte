@@ -68,12 +68,6 @@
         <dd class="mt-1 text-slate-100">{environment.environmentProvider}</dd>
       </div>
       <div>
-        <dt class="text-sm font-medium text-slate-400">Workspace root</dt>
-        <dd class="mt-1 break-all text-slate-100">
-          {environment.environmentSettings.workspaceRoot ?? 'Service default'}
-        </dd>
-      </div>
-      <div>
         <dt class="text-sm font-medium text-slate-400">Runtime provider</dt>
         <dd class="mt-1 text-slate-100">{environment.runtimeProvider}</dd>
       </div>

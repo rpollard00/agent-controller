@@ -52,7 +52,6 @@
         <tr>
           <th class="px-4 py-3 font-medium" scope="col">Environment</th>
           <th class="px-4 py-3 font-medium" scope="col">Providers</th>
-          <th class="px-4 py-3 font-medium" scope="col">Workspace root</th>
           <th class="px-4 py-3 font-medium" scope="col">Status</th>
           <th class="px-4 py-3 text-right font-medium" scope="col">Actions</th>
         </tr>
@@ -74,11 +73,6 @@
             <td class="px-4 py-4 text-slate-300">
               <span class="block">{profile.environmentProvider}</span>
               <span class="mt-1 block text-xs text-slate-500">{profile.runtimeProvider}</span>
-            </td>
-            <td class="px-4 py-4 text-slate-300">
-              <span class="block max-w-xs break-all">
-                {profile.environmentSettings.workspaceRoot ?? 'Service default'}
-              </span>
             </td>
             <td class="px-4 py-4">
               <span

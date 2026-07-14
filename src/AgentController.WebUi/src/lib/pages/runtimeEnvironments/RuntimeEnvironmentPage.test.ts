@@ -101,7 +101,6 @@ describe('runtime environment screens', () => {
     render(App, { client: api.client });
 
     const environmentLink = await screen.findByRole('link', { name: 'Primary runtime' });
-    expect(screen.getByText('/srv/agent-controller/workspaces')).toBeVisible();
     expect(screen.getByText('Enabled')).toBeVisible();
 
     await fireEvent.click(environmentLink);
