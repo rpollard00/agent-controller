@@ -4,6 +4,7 @@
   import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
   import Field from '../../components/ui/Field.svelte';
+  import CompletedStatesEditor from './CompletedStatesEditor.svelte';
   import {
     createWorkSourceEnvironmentFormValues,
     toWorkSourceEnvironmentProfile,
@@ -18,6 +19,7 @@
     serverErrors = {},
     onsave,
     oncancel,
+    boardStates = [],
   }: {
     mode: 'create' | 'edit';
     profile?: WorkSourceEnvironmentProfile;
@@ -25,10 +27,14 @@
     serverErrors?: Readonly<Record<string, string[]>>;
     onsave: (profile: WorkSourceEnvironmentProfile) => void;
     oncancel: () => void;
+    boardStates?: string[];
   } = $props();
 
   let values = $state(untrack(() => createWorkSourceEnvironmentFormValues(profile)));
   let clientErrors = $state<WorkSourceEnvironmentFormErrors>({});
+
+  const tagPrefixHint =
+    'Namespace for controller-owned tags like prefix-ready, prefix-active, prefix-failed, prefix-needs-human. Defaults to \'agent\' when blank.';
 
   const inputClasses =
     'min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 placeholder:text-slate-600 disabled:cursor-not-allowed disabled:bg-slate-900 disabled:text-slate-400';
@@ -37,8 +43,11 @@
     return clientErrors[field]?.[0] ?? serverErrors[field]?.[0];
   }
 
-  function describedBy(field: string): string | undefined {
-    return fieldError(field) ? `wse-${field}-error` : undefined;
+  function describedBy(id: string, field: string, hasHint = false): string | undefined {
+    const ids: string[] = [];
+    if (hasHint) ids.push(`${id}-hint`);
+    if (fieldError(field)) ids.push(`wse-${field}-error`);
+    return ids.length > 0 ? ids.join(' ') : undefined;
   }
 
   function handleSubmit(event: SubmitEvent): void {
@@ -87,7 +96,7 @@
           autocomplete="off"
           placeholder="ado-dev"
           aria-invalid={fieldError('key') ? 'true' : undefined}
-          aria-describedby={describedBy('key')}
+          aria-describedby={describedBy('wse-key', 'key')}
           oninput={() => clearClientError('key')}
         />
       </Field>
@@ -108,7 +117,7 @@
           autocomplete="off"
           placeholder="Business Products Azure DevOps"
           aria-invalid={fieldError('displayName') ? 'true' : undefined}
-          aria-describedby={describedBy('displayName')}
+          aria-describedby={describedBy('wse-displayName', 'displayName')}
           oninput={() => clearClientError('displayName')}
         />
       </Field>
@@ -152,7 +161,7 @@
         disabled={submitting}
         required
         aria-invalid={fieldError('provider') ? 'true' : undefined}
-        aria-describedby={describedBy('provider')}
+        aria-describedby={describedBy('wse-provider', 'provider')}
         onchange={() => clearClientError('provider')}
       >
         <option value="AzureDevOpsBoards">Azure DevOps</option>
@@ -182,7 +191,7 @@
               autocomplete="url"
               placeholder="https://dev.azure.com/example"
               aria-invalid={fieldError('organizationUrl') ? 'true' : undefined}
-              aria-describedby={describedBy('organizationUrl')}
+              aria-describedby={describedBy('wse-organizationUrl', 'organizationUrl')}
               oninput={() => clearClientError('organizationUrl')}
             />
           </Field>
@@ -202,7 +211,7 @@
               required
               autocomplete="off"
               aria-invalid={fieldError('project') ? 'true' : undefined}
-              aria-describedby={describedBy('project')}
+              aria-describedby={describedBy('wse-project', 'project')}
               oninput={() => clearClientError('project')}
             />
           </Field>
@@ -225,7 +234,7 @@
             autocomplete="off"
             placeholder="ADO_PAT"
             aria-invalid={fieldError('patEnvironmentVariable') ? 'true' : undefined}
-            aria-describedby={describedBy('patEnvironmentVariable')}
+            aria-describedby={describedBy('wse-patEnvironmentVariable', 'patEnvironmentVariable')}
             oninput={() => clearClientError('patEnvironmentVariable')}
           />
         </Field>
@@ -251,6 +260,7 @@
     <Field
       id="wse-tagPrefix"
       label="Tag prefix"
+      hint={tagPrefixHint}
       error={fieldError('tagPrefix')}
     >
       <input
@@ -262,7 +272,7 @@
         autocomplete="off"
         placeholder="agent"
         aria-invalid={fieldError('tagPrefix') ? 'true' : undefined}
-        aria-describedby={describedBy('tagPrefix')}
+        aria-describedby={describedBy('wse-tagPrefix', 'tagPrefix', true)}
         oninput={() => clearClientError('tagPrefix')}
       />
     </Field>
@@ -270,19 +280,15 @@
     <Field
       id="wse-completedStates"
       label="Completed states"
+      hint="Items in these states are considered finished and not picked up."
       error={fieldError('completedStates')}
     >
-      <textarea
-        id="wse-completedStates"
-        name="completedStates"
-        class={`${inputClasses} min-h-28 resize-y`}
-        bind:value={values.completedStates}
+      <CompletedStatesEditor
+        selected={values.completedStates}
+        suggestions={boardStates}
         disabled={submitting}
-        placeholder={'Resolved\nClosed'}
-        aria-invalid={fieldError('completedStates') ? 'true' : undefined}
-        aria-describedby={describedBy('completedStates')}
-        oninput={() => clearClientError('completedStates')}
-      ></textarea>
+        error={Boolean(fieldError('completedStates'))}
+      />
     </Field>
 
     <div class="grid gap-6 lg:grid-cols-2">
@@ -300,7 +306,7 @@
           autocomplete="off"
           placeholder="Active"
           aria-invalid={fieldError('activeState') ? 'true' : undefined}
-          aria-describedby={describedBy('activeState')}
+          aria-describedby={describedBy('wse-activeState', 'activeState')}
           oninput={() => clearClientError('activeState')}
         />
       </Field>
@@ -319,7 +325,7 @@
           autocomplete="off"
           placeholder="Resolved"
           aria-invalid={fieldError('completedState') ? 'true' : undefined}
-          aria-describedby={describedBy('completedState')}
+          aria-describedby={describedBy('wse-completedState', 'completedState')}
           oninput={() => clearClientError('completedState')}
         />
       </Field>

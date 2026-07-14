@@ -7,7 +7,7 @@ export interface WorkSourceEnvironmentFormValues {
   provider: string;
   organizationUrl: string;
   project: string;
-  completedStates: string;
+  completedStates: string[];
   tagPrefix: string;
   activeState: string;
   completedState: string;
@@ -26,7 +26,7 @@ export function createWorkSourceEnvironmentFormValues(
     provider: profile?.provider ?? 'AzureDevOpsBoards',
     organizationUrl: profile?.organizationUrl ?? '',
     project: profile?.project ?? '',
-    completedStates: profile?.completedStates.join('\n') ?? '',
+    completedStates: profile?.completedStates ?? [],
     tagPrefix: profile?.tagPrefix ?? '',
     activeState: profile?.activeState ?? '',
     completedState: profile?.completedState ?? '',
@@ -97,7 +97,7 @@ export function toWorkSourceEnvironmentProfile(
     provider: values.provider.trim() || 'AzureDevOpsBoards',
     organizationUrl: values.organizationUrl.trim().replace(/\/+$/, ''),
     project: values.project.trim(),
-    completedStates: parseBoardValues(values.completedStates),
+    completedStates: values.completedStates.filter((s) => s.length > 0),
     tagPrefix: values.tagPrefix.trim() || 'agent',
     activeState: nullableText(values.activeState),
     completedState: nullableText(values.completedState),
@@ -130,13 +130,6 @@ function isValidOrganizationUrl(value: string): boolean {
   } catch {
     return false;
   }
-}
-
-function parseBoardValues(value: string): string[] {
-  return value
-    .split(/\r?\n/)
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
 }
 
 function nullableText(value: string): string | null {
