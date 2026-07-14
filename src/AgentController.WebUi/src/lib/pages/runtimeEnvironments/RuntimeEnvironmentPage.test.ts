@@ -76,7 +76,7 @@ function staticResource<T>(profiles: T[]): ResourceClient<T> {
 }
 
 async function completeIdentityFields(): Promise<void> {
-  await fireEvent.input(await screen.findByLabelText(/Environment key/), {
+  await fireEvent.input(await screen.findByLabelText(/Environment name/), {
     target: { value: 'runtime-secondary' },
   });
   await fireEvent.input(screen.getByLabelText(/Display name/), {
@@ -238,7 +238,7 @@ describe('runtime environment screens', () => {
     const api = createApi([]);
     render(App, { client: api.client });
 
-    await fireEvent.input(await screen.findByLabelText(/Environment key/), {
+    await fireEvent.input(await screen.findByLabelText(/Environment name/), {
       target: { value: '1bad.name' },
     });
     await fireEvent.input(screen.getByLabelText(/Display name/), {
@@ -251,7 +251,7 @@ describe('runtime environment screens', () => {
 
     expect(
       await screen.findByText(
-        'Use 1 to 32 characters starting with a letter and only letters, numbers, hyphens, or underscores.',
+        'Use 1 to 32 characters starting with an ASCII letter, followed by ASCII letters, numbers, hyphens, or underscores.',
       ),
     ).toBeVisible();
     expect(api.environments.create).not.toHaveBeenCalled();
@@ -262,9 +262,9 @@ describe('runtime environment screens', () => {
     const api = createApi();
     render(App, { client: api.client });
 
-    const keyInput = await screen.findByLabelText(/Environment key/);
+    const keyInput = await screen.findByLabelText(/Environment name/);
     expect(keyInput).toHaveAttribute('readonly');
-    expect(screen.getByText(/Keys are immutable/)).toBeVisible();
+    expect(screen.getByText(/Environment names are immutable/)).toBeVisible();
 
     await fireEvent.input(screen.getByLabelText(/Display name/), {
       target: { value: 'Updated runtime' },

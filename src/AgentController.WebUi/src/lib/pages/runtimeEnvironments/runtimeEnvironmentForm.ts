@@ -88,7 +88,7 @@ export function validateRuntimeEnvironmentForm(
 ): RuntimeEnvironmentFormErrors {
   const errors: RuntimeEnvironmentFormErrors = {};
 
-  addRequiredError(errors, 'key', values.key, 'A key is required.');
+  addRequiredError(errors, 'key', values.key, 'An environment name is required.');
   addRequiredError(errors, 'displayName', values.displayName, 'A display name is required.');
   addRequiredError(
     errors,
@@ -106,7 +106,7 @@ export function validateRuntimeEnvironmentForm(
   const key = values.key.trim().toLowerCase();
   if (key && !/^[a-z][a-z0-9_-]{0,31}$/.test(key)) {
     errors.key = [
-      'Use 1 to 32 characters starting with a letter and only letters, numbers, hyphens, or underscores.',
+      'Use 1 to 32 characters starting with an ASCII letter, followed by ASCII letters, numbers, hyphens, or underscores.',
     ];
   }
 

@@ -55,7 +55,7 @@
 
     <dl class="grid gap-x-8 gap-y-6 sm:grid-cols-2">
       <div>
-        <dt class="text-sm font-medium text-slate-400">Environment key</dt>
+        <dt class="text-sm font-medium text-slate-400">Environment name</dt>
         <dd class="mt-1 break-all text-slate-100">{environment.key}</dd>
       </div>
       <div>

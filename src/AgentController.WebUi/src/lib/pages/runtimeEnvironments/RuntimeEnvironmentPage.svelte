@@ -356,7 +356,7 @@
   {:else if route?.view === 'edit' && environment}
     <Card
       title="Runtime environment configuration"
-      description="The environment key is fixed after creation."
+      description="The environment name is fixed after creation."
     >
       {#if mutationError}
         <div class="mb-6">

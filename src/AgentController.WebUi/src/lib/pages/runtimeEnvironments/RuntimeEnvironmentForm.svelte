@@ -126,10 +126,10 @@
     <div class="grid gap-6 lg:grid-cols-2">
       <Field
         id="runtime-key"
-        label="Environment key"
+        label="Environment name"
         hint={mode === 'edit'
-          ? 'Keys are immutable. Create a new environment to use a different key.'
-          : 'Use a stable key. It cannot be changed after creation.'}
+          ? 'Environment names are immutable. Create a new environment to use a different name.'
+          : 'Use 1 to 32 characters starting with an ASCII letter, followed by ASCII letters, numbers, hyphens, or underscores. It cannot be changed after creation.'}
         error={fieldError('key')}
         required
       >
@@ -181,7 +181,7 @@
           disabled={submitting}
           aria-describedby="runtime-enabled-hint"
         />
-        <span class="block text-sm font-medium text-slate-100">Enabled for new work</span>
+        <span class="block text-sm font-medium text-slate-100">Enabled</span>
       </label>
       <p id="runtime-enabled-hint" class="mt-1 ml-8 text-sm leading-6 text-slate-400">
         Disabled runtime environments remain configured but cannot be selected for execution.
