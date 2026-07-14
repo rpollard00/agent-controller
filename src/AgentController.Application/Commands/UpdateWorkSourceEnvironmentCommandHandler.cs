@@ -15,7 +15,7 @@ public sealed class UpdateWorkSourceEnvironmentCommandHandler(
         CancellationToken cancellationToken
     )
     {
-        var routeKey = AzureDevOpsEnvironmentProfileValidation.ValidateAndNormalizeKey(command.Key);
+        var routeKey = WorkSourceEnvironmentProfileValidation.ValidateAndNormalizeKey(command.Key);
         if (!routeKey.IsValid)
         {
             return WorkSourceEnvironmentOperationResult.ValidationFailed(routeKey.Errors);
@@ -31,7 +31,7 @@ public sealed class UpdateWorkSourceEnvironmentCommandHandler(
             );
         }
 
-        var validation = AzureDevOpsEnvironmentProfileValidation.ValidateAndNormalize(
+        var validation = WorkSourceEnvironmentProfileValidation.ValidateAndNormalize(
             command.Profile
         );
         if (!validation.IsValid)

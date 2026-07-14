@@ -15,7 +15,7 @@ public sealed class GetWorkSourceEnvironmentByKeyQueryHandler(
         CancellationToken cancellationToken
     )
     {
-        var key = AzureDevOpsEnvironmentProfileValidation.ValidateAndNormalizeKey(query.Key);
+        var key = WorkSourceEnvironmentProfileValidation.ValidateAndNormalizeKey(query.Key);
         if (!key.IsValid)
         {
             return WorkSourceEnvironmentOperationResult.ValidationFailed(key.Errors);

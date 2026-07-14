@@ -2,18 +2,17 @@ using AgentController.Domain;
 
 namespace AgentController.Application;
 
-/// <summary>Normalization and validation shared by managed Azure DevOps environment handlers.</summary>
-internal static class AzureDevOpsEnvironmentProfileValidation
+/// <summary>Normalization and validation shared by managed work source environment handlers.</summary>
+internal static class WorkSourceEnvironmentProfileValidation
 {
     private const int MaximumKeyLength = 128;
     private const int MaximumDisplayNameLength = 256;
     private const int MaximumOrganizationUrlLength = 2048;
     private const int MaximumProjectLength = 256;
-    private const int MaximumWorkItemTypeLength = 128;
     private const int MaximumBoardValueLength = 256;
     private const int MaximumEnvironmentVariableLength = 256;
 
-    public static AzureDevOpsEnvironmentProfileValidationResult ValidateAndNormalize(
+    public static WorkSourceEnvironmentProfileValidationResult ValidateAndNormalize(
         WorkSourceEnvironmentProfile profile
     )
     {
@@ -88,7 +87,7 @@ internal static class AzureDevOpsEnvironmentProfileValidation
             PatEnvironmentVariable = patEnvironmentVariable,
         };
 
-        return new AzureDevOpsEnvironmentProfileValidationResult(normalized, errors.ToDictionary());
+        return new WorkSourceEnvironmentProfileValidationResult(normalized, errors.ToDictionary());
     }
 
     private static string NormalizeTagPrefix(string? value, ValidationErrors errors)
@@ -121,12 +120,12 @@ internal static class AzureDevOpsEnvironmentProfileValidation
         return normalized;
     }
 
-    public static AzureDevOpsEnvironmentKeyValidationResult ValidateAndNormalizeKey(string? value)
+    public static WorkSourceEnvironmentKeyValidationResult ValidateAndNormalizeKey(string? value)
     {
         var errors = new ValidationErrors();
         var key = NormalizeKey(value);
         ValidateKey(key, errors);
-        return new AzureDevOpsEnvironmentKeyValidationResult(key, errors.ToDictionary());
+        return new WorkSourceEnvironmentKeyValidationResult(key, errors.ToDictionary());
     }
 
     private static string NormalizeKey(string? value) =>
@@ -288,21 +287,6 @@ internal static class AzureDevOpsEnvironmentProfileValidation
         return value;
     }
 
-    private static void ValidateNoOverlap(
-        IReadOnlyList<string> eligible,
-        IReadOnlyList<string> excluded,
-        string field,
-        string valueKind,
-        ValidationErrors errors
-    )
-    {
-        var eligibleValues = new HashSet<string>(eligible, StringComparer.OrdinalIgnoreCase);
-        foreach (var value in excluded.Where(eligibleValues.Contains))
-        {
-            errors.Add(field, $"The {valueKind} '{value}' cannot be both eligible and excluded.");
-        }
-    }
-
     private static void ValidateEnvironmentVariableName(
         string environmentVariable,
         ValidationErrors errors
@@ -367,7 +351,7 @@ internal static class AzureDevOpsEnvironmentProfileValidation
     }
 }
 
-internal sealed record AzureDevOpsEnvironmentProfileValidationResult(
+internal sealed record WorkSourceEnvironmentProfileValidationResult(
     WorkSourceEnvironmentProfile Profile,
     IReadOnlyDictionary<string, string[]> Errors
 )
@@ -375,7 +359,7 @@ internal sealed record AzureDevOpsEnvironmentProfileValidationResult(
     public bool IsValid => Errors.Count == 0;
 }
 
-internal sealed record AzureDevOpsEnvironmentKeyValidationResult(
+internal sealed record WorkSourceEnvironmentKeyValidationResult(
     string Key,
     IReadOnlyDictionary<string, string[]> Errors
 )

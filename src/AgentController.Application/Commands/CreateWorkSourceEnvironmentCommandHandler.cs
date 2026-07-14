@@ -25,7 +25,7 @@ public sealed class CreateWorkSourceEnvironmentCommandHandler(
             );
         }
 
-        var validation = AzureDevOpsEnvironmentProfileValidation.ValidateAndNormalize(
+        var validation = WorkSourceEnvironmentProfileValidation.ValidateAndNormalize(
             command.Profile
         );
         if (!validation.IsValid)

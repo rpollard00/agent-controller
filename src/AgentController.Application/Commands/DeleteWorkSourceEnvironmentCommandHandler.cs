@@ -19,7 +19,7 @@ public sealed class DeleteWorkSourceEnvironmentCommandHandler(
         CancellationToken cancellationToken
     )
     {
-        var key = AzureDevOpsEnvironmentProfileValidation.ValidateAndNormalizeKey(command.Key);
+        var key = WorkSourceEnvironmentProfileValidation.ValidateAndNormalizeKey(command.Key);
         if (!key.IsValid)
         {
             return WorkSourceEnvironmentOperationResult.ValidationFailed(key.Errors);
