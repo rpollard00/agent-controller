@@ -8,13 +8,14 @@ using Microsoft.Extensions.Options;
 namespace AgentController.Infrastructure;
 
 /// <summary>
-/// Validates configured ADO board states against the actual valid states
-/// for the configured project and work item type at host startup.
-/// 
+/// Validates configured work source board states against the actual valid states
+/// for the configured project at host startup.
+///
 /// Uses <see cref="IAzureDevOpsBoardsClient.GetValidStatesAsync"/> to enumerate
 /// the valid System.State values, then throws during startup if ActiveState,
-/// CompletedState, or any EligibleStates value is not a valid state for that WIT/project.
-/// 
+/// CompletedState, or any CompletedStates value is not a valid state.
+/// Also validates that ActiveState and CompletedState are distinct when both are set.
+///
 /// This validation only runs when the work source provider is "AzureDevOpsBoards".
 /// It is skipped when the <c>AGENT_CONTROLLER_SKIP_ADO_STATE_VALIDATION</c>
 /// environment variable is set (useful for CI/test environments without ADO access).
@@ -130,6 +131,15 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
                         $"Valid states: [{string.Join(", ", validStates)}].");
                 }
             }
+        }
+
+        // ActiveState and CompletedState must be distinct when both are configured.
+        if (!string.IsNullOrWhiteSpace(workSource.ActiveState)
+            && !string.IsNullOrWhiteSpace(workSource.CompletedState)
+            && workSource.ActiveState.Equals(workSource.CompletedState, StringComparison.OrdinalIgnoreCase))
+        {
+            failures.Add(
+                $"ActiveState and CompletedState must be distinct, but both are set to '{workSource.ActiveState}'.");
         }
 
         if (failures.Count > 0)

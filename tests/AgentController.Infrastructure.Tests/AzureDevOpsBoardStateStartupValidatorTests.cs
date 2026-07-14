@@ -12,7 +12,8 @@ namespace AgentController.Infrastructure.Tests;
 /// Tests for <see cref="AzureDevOpsBoardStateStartupValidator"/>.
 /// Verifies that the validator skips validation for non-ADO providers,
 /// respects the skip environment variable, handles missing config gracefully,
-/// and correctly rejects invalid ActiveState/CompletedState/EligibleStates.
+/// and correctly rejects invalid ActiveState/CompletedState/CompletedStates
+/// and duplicate ActiveState/CompletedState values.
 /// </summary>
 public class AzureDevOpsBoardStateStartupValidatorTests
 {
@@ -206,7 +207,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
     }
 
     [Fact]
-    public async Task StartAsync_InvalidEligibleStates_ThrowsInvalidOperationException()
+    public async Task StartAsync_InvalidCompletedStates_ThrowsInvalidOperationException()
     {
         var mockClient = new FakeAzureDevOpsBoardsClient
         {
@@ -253,6 +254,52 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         Assert.Contains("ActiveState 'Active'", ex.Message);
         Assert.Contains("CompletedState 'Done'", ex.Message);
         Assert.Contains("CompletedStates value 'Queued'", ex.Message);
+    }
+
+    [Fact]
+    public async Task StartAsync_ActiveStateEqualsCompletedState_ThrowsInvalidOperationException()
+    {
+        var mockClient = new FakeAzureDevOpsBoardsClient
+        {
+            ValidStates = ["New", "Approved", "InProgress", "Resolved", "Closed"],
+        };
+
+        var validator = CreateValidatorWithMockClient(
+            mockClient,
+            workSource: CreateWorkSourceOptions(
+                organizationUrl: "https://dev.azure.com/testorg",
+                project: "TestProject",
+                activeState: "Resolved",
+                completedState: "Resolved",
+                completedStates: ["Resolved"]));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => validator.StartAsync(CancellationToken.None));
+
+        Assert.Contains("ActiveState and CompletedState must be distinct", ex.Message);
+    }
+
+    [Fact]
+    public async Task StartAsync_ActiveStateEqualsCompletedStateCaseInsensitive_ThrowsInvalidOperationException()
+    {
+        var mockClient = new FakeAzureDevOpsBoardsClient
+        {
+            ValidStates = ["New", "Approved", "InProgress", "Resolved", "Closed"],
+        };
+
+        var validator = CreateValidatorWithMockClient(
+            mockClient,
+            workSource: CreateWorkSourceOptions(
+                organizationUrl: "https://dev.azure.com/testorg",
+                project: "TestProject",
+                activeState: "resolved",
+                completedState: "Resolved",
+                completedStates: ["Closed"]));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => validator.StartAsync(CancellationToken.None));
+
+        Assert.Contains("ActiveState and CompletedState must be distinct", ex.Message);
     }
 
     [Fact]
