@@ -1,11 +1,11 @@
 namespace AgentController.Infrastructure.Data.Entities;
 
 /// <summary>
-/// Persisted managed Azure DevOps environment profile. Credential values are
+/// Persisted managed work-source environment profile. Credential values are
 /// deliberately absent; only the name of the environment variable containing
 /// the PAT is stored.
 /// </summary>
-internal sealed class AzureDevOpsEnvironmentEntity
+internal sealed class WorkSourceEnvironmentEntity
 {
     public string Key { get; set; } = string.Empty;
 
@@ -13,19 +13,15 @@ internal sealed class AzureDevOpsEnvironmentEntity
 
     public bool Enabled { get; set; } = true;
 
+    public string Provider { get; set; } = "AzureDevOpsBoards";
+
+    public string TagPrefix { get; set; } = "agent";
+
     public string OrganizationUrl { get; set; } = string.Empty;
 
     public string Project { get; set; } = string.Empty;
 
-    public string WorkItemType { get; set; } = string.Empty;
-
-    public string EligibleTagsJson { get; set; } = "[]";
-
-    public string ExcludedTagsJson { get; set; } = "[]";
-
-    public string EligibleStatesJson { get; set; } = "[]";
-
-    public string ExcludedStatesJson { get; set; } = "[]";
+    public string CompletedStatesJson { get; set; } = "[]";
 
     public string? ActiveState { get; set; }
 

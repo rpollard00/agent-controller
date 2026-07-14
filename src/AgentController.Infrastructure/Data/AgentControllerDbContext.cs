@@ -28,8 +28,8 @@ internal sealed class AgentControllerDbContext : DbContext
     public DbSet<EnvironmentEntity> Environments => Set<EnvironmentEntity>();
     public DbSet<LifecycleEventEntity> LifecycleEvents => Set<LifecycleEventEntity>();
     public DbSet<RepositoryEntity> Repositories => Set<RepositoryEntity>();
-    public DbSet<AzureDevOpsEnvironmentEntity> AzureDevOpsEnvironments =>
-        Set<AzureDevOpsEnvironmentEntity>();
+    public DbSet<WorkSourceEnvironmentEntity> WorkSourceEnvironments =>
+        Set<WorkSourceEnvironmentEntity>();
     public DbSet<RuntimeEnvironmentEntity> RuntimeEnvironments => Set<RuntimeEnvironmentEntity>();
     public DbSet<ReworkCycleEntity> ReworkCycles => Set<ReworkCycleEntity>();
     public DbSet<ReworkFeedbackEntity> ReworkFeedback => Set<ReworkFeedbackEntity>();
@@ -41,7 +41,7 @@ internal sealed class AgentControllerDbContext : DbContext
         modelBuilder.ApplyConfiguration(new EnvironmentEntityConfiguration());
         modelBuilder.ApplyConfiguration(new LifecycleEventEntityConfiguration());
         modelBuilder.ApplyConfiguration(new RepositoryEntityConfiguration());
-        modelBuilder.ApplyConfiguration(new AzureDevOpsEnvironmentEntityConfiguration());
+        modelBuilder.ApplyConfiguration(new WorkSourceEnvironmentEntityConfiguration());
         modelBuilder.ApplyConfiguration(new RuntimeEnvironmentEntityConfiguration());
         modelBuilder.ApplyConfiguration(new ReworkCycleEntityConfiguration());
         modelBuilder.ApplyConfiguration(new ReworkFeedbackEntityConfiguration());

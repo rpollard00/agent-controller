@@ -5,14 +5,14 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 namespace AgentController.Infrastructure.Data.Configurations;
 
 /// <summary>
-/// EF Core configuration for managed Azure DevOps environment profiles.
+/// EF Core configuration for managed work-source environment profiles.
 /// </summary>
-internal sealed class AzureDevOpsEnvironmentEntityConfiguration
-    : IEntityTypeConfiguration<AzureDevOpsEnvironmentEntity>
+internal sealed class WorkSourceEnvironmentEntityConfiguration
+    : IEntityTypeConfiguration<WorkSourceEnvironmentEntity>
 {
-    public void Configure(EntityTypeBuilder<AzureDevOpsEnvironmentEntity> builder)
+    public void Configure(EntityTypeBuilder<WorkSourceEnvironmentEntity> builder)
     {
-        builder.ToTable("AzureDevOpsEnvironments");
+        builder.ToTable("WorkSourceEnvironments");
 
         builder.HasKey(x => x.Key);
 
@@ -26,6 +26,14 @@ internal sealed class AzureDevOpsEnvironmentEntityConfiguration
         builder.Property(x => x.Enabled)
             .IsRequired();
 
+        builder.Property(x => x.Provider)
+            .IsRequired()
+            .HasMaxLength(128);
+
+        builder.Property(x => x.TagPrefix)
+            .IsRequired()
+            .HasMaxLength(64);
+
         builder.Property(x => x.OrganizationUrl)
             .IsRequired()
             .HasMaxLength(2048);
@@ -34,20 +42,7 @@ internal sealed class AzureDevOpsEnvironmentEntityConfiguration
             .IsRequired()
             .HasMaxLength(256);
 
-        builder.Property(x => x.WorkItemType)
-            .IsRequired()
-            .HasMaxLength(128);
-
-        builder.Property(x => x.EligibleTagsJson)
-            .IsRequired();
-
-        builder.Property(x => x.ExcludedTagsJson)
-            .IsRequired();
-
-        builder.Property(x => x.EligibleStatesJson)
-            .IsRequired();
-
-        builder.Property(x => x.ExcludedStatesJson)
+        builder.Property(x => x.CompletedStatesJson)
             .IsRequired();
 
         builder.Property(x => x.ActiveState)

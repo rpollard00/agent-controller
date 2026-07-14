@@ -19,10 +19,10 @@ internal sealed class EfAzureDevOpsEnvironmentStore : IAzureDevOpsEnvironmentSto
         _db = db;
     }
 
-    public async Task<IReadOnlyList<AzureDevOpsEnvironmentProfile>> ListAsync(
+    public async Task<IReadOnlyList<WorkSourceEnvironmentProfile>> ListAsync(
         CancellationToken cancellationToken)
     {
-        var entities = await _db.AzureDevOpsEnvironments
+        var entities = await _db.WorkSourceEnvironments
             .AsNoTracking()
             .OrderBy(x => x.Key)
             .ToListAsync(cancellationToken);
@@ -30,11 +30,11 @@ internal sealed class EfAzureDevOpsEnvironmentStore : IAzureDevOpsEnvironmentSto
         return entities.Select(MapToProfile).ToList();
     }
 
-    public async Task<AzureDevOpsEnvironmentProfile?> GetByKeyAsync(
+    public async Task<WorkSourceEnvironmentProfile?> GetByKeyAsync(
         string key,
         CancellationToken cancellationToken)
     {
-        var entity = await _db.AzureDevOpsEnvironments
+        var entity = await _db.WorkSourceEnvironments
             .AsNoTracking()
             .SingleOrDefaultAsync(x => x.Key == key, cancellationToken);
 
@@ -42,10 +42,10 @@ internal sealed class EfAzureDevOpsEnvironmentStore : IAzureDevOpsEnvironmentSto
     }
 
     public async Task<bool> CreateAsync(
-        AzureDevOpsEnvironmentProfile profile,
+        WorkSourceEnvironmentProfile profile,
         CancellationToken cancellationToken)
     {
-        if (await _db.AzureDevOpsEnvironments.AnyAsync(
+        if (await _db.WorkSourceEnvironments.AnyAsync(
                 x => x.Key == profile.Key,
                 cancellationToken))
         {
@@ -53,7 +53,7 @@ internal sealed class EfAzureDevOpsEnvironmentStore : IAzureDevOpsEnvironmentSto
         }
 
         var entity = MapToEntity(profile);
-        _db.AzureDevOpsEnvironments.Add(entity);
+        _db.WorkSourceEnvironments.Add(entity);
 
         try
         {
@@ -70,10 +70,10 @@ internal sealed class EfAzureDevOpsEnvironmentStore : IAzureDevOpsEnvironmentSto
     }
 
     public async Task<bool> UpdateAsync(
-        AzureDevOpsEnvironmentProfile profile,
+        WorkSourceEnvironmentProfile profile,
         CancellationToken cancellationToken)
     {
-        var entity = await _db.AzureDevOpsEnvironments.FindAsync(
+        var entity = await _db.WorkSourceEnvironments.FindAsync(
             [profile.Key],
             cancellationToken);
 
@@ -84,13 +84,11 @@ internal sealed class EfAzureDevOpsEnvironmentStore : IAzureDevOpsEnvironmentSto
 
         entity.DisplayName = profile.DisplayName;
         entity.Enabled = profile.Enabled;
+        entity.Provider = profile.Provider;
+        entity.TagPrefix = profile.TagPrefix;
         entity.OrganizationUrl = profile.OrganizationUrl;
         entity.Project = profile.Project;
-        entity.WorkItemType = profile.WorkItemType;
-        entity.EligibleTagsJson = SerializeList(profile.EligibleTags);
-        entity.ExcludedTagsJson = SerializeList(profile.ExcludedTags);
-        entity.EligibleStatesJson = SerializeList(profile.EligibleStates);
-        entity.ExcludedStatesJson = SerializeList(profile.ExcludedStates);
+        entity.CompletedStatesJson = SerializeList(profile.CompletedStates);
         entity.ActiveState = profile.ActiveState;
         entity.CompletedState = profile.CompletedState;
         entity.PatEnvironmentVariable = profile.PatEnvironmentVariable;
@@ -104,7 +102,7 @@ internal sealed class EfAzureDevOpsEnvironmentStore : IAzureDevOpsEnvironmentSto
         string key,
         CancellationToken cancellationToken)
     {
-        var entity = await _db.AzureDevOpsEnvironments.FindAsync(
+        var entity = await _db.WorkSourceEnvironments.FindAsync(
             [key],
             cancellationToken);
 
@@ -113,26 +111,24 @@ internal sealed class EfAzureDevOpsEnvironmentStore : IAzureDevOpsEnvironmentSto
             return false;
         }
 
-        _db.AzureDevOpsEnvironments.Remove(entity);
+        _db.WorkSourceEnvironments.Remove(entity);
         await _db.SaveChangesAsync(cancellationToken);
         return true;
     }
 
-    private static AzureDevOpsEnvironmentEntity MapToEntity(
-        AzureDevOpsEnvironmentProfile profile)
+    private static WorkSourceEnvironmentEntity MapToEntity(
+        WorkSourceEnvironmentProfile profile)
     {
-        return new AzureDevOpsEnvironmentEntity
+        return new WorkSourceEnvironmentEntity
         {
             Key = profile.Key,
             DisplayName = profile.DisplayName,
             Enabled = profile.Enabled,
+            Provider = profile.Provider,
+            TagPrefix = profile.TagPrefix,
             OrganizationUrl = profile.OrganizationUrl,
             Project = profile.Project,
-            WorkItemType = profile.WorkItemType,
-            EligibleTagsJson = SerializeList(profile.EligibleTags),
-            ExcludedTagsJson = SerializeList(profile.ExcludedTags),
-            EligibleStatesJson = SerializeList(profile.EligibleStates),
-            ExcludedStatesJson = SerializeList(profile.ExcludedStates),
+            CompletedStatesJson = SerializeList(profile.CompletedStates),
             ActiveState = profile.ActiveState,
             CompletedState = profile.CompletedState,
             PatEnvironmentVariable = profile.PatEnvironmentVariable,
@@ -141,21 +137,19 @@ internal sealed class EfAzureDevOpsEnvironmentStore : IAzureDevOpsEnvironmentSto
         };
     }
 
-    private static AzureDevOpsEnvironmentProfile MapToProfile(
-        AzureDevOpsEnvironmentEntity entity)
+    private static WorkSourceEnvironmentProfile MapToProfile(
+        WorkSourceEnvironmentEntity entity)
     {
-        return new AzureDevOpsEnvironmentProfile
+        return new WorkSourceEnvironmentProfile
         {
             Key = entity.Key,
             DisplayName = entity.DisplayName,
             Enabled = entity.Enabled,
+            Provider = entity.Provider,
+            TagPrefix = entity.TagPrefix,
             OrganizationUrl = entity.OrganizationUrl,
             Project = entity.Project,
-            WorkItemType = entity.WorkItemType,
-            EligibleTags = DeserializeList(entity.EligibleTagsJson),
-            ExcludedTags = DeserializeList(entity.ExcludedTagsJson),
-            EligibleStates = DeserializeList(entity.EligibleStatesJson),
-            ExcludedStates = DeserializeList(entity.ExcludedStatesJson),
+            CompletedStates = DeserializeList(entity.CompletedStatesJson),
             ActiveState = entity.ActiveState,
             CompletedState = entity.CompletedState,
             PatEnvironmentVariable = entity.PatEnvironmentVariable,
