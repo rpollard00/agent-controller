@@ -253,18 +253,27 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
         //     PATCHes caused the tag-strip to be silently skipped.
         //     On failure (412 or non-success) the PATCH returns false and we surface
         //     [rework_tag_strip_failed] so the cycle is NOT marked reactivated.
+        // Use prefix-aware tag helpers so managed profiles with custom TagPrefix
+        // still get correct lifecycle tag names. Managed profiles use their own
+        // TagPrefix; unmanaged (configured) environments use the appsettings TagPrefix.
+        var tagPrefix = selection.IsManaged
+            ? (string.IsNullOrWhiteSpace(selection.Environment!.Profile.TagPrefix)
+                ? WorkSourceOptions.DefaultTagPrefix
+                : selection.Environment.Profile.TagPrefix)
+            : options.TagPrefix;
+
         var mergedOk = await selection.Client.UpdateWorkItemStatusAsync(
             workRef,
             new ExternalWorkStatus
             {
                 Status = targetState,
-                Tags = [WorkSourceOptions.TagReady()],
+                Tags = [WorkSourceOptions.TagReady(tagPrefix)],
                 RemovedTags =
                 [
-                    WorkSourceOptions.TagActive(),
-                    WorkSourceOptions.TagFailed(),
-                    WorkSourceOptions.TagNeedsHuman(),
-                    "agent-worker:*",
+                    WorkSourceOptions.TagActive(tagPrefix),
+                    WorkSourceOptions.TagFailed(tagPrefix),
+                    WorkSourceOptions.TagNeedsHuman(tagPrefix),
+                    $"{tagPrefix}-worker:*",
                 ],
             },
             cancellationToken
@@ -316,19 +325,18 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
     )
     {
         var tagPrefix = string.IsNullOrWhiteSpace(profile.TagPrefix)
-            ? "agent"
+            ? WorkSourceOptions.DefaultTagPrefix
             : profile.TagPrefix;
         return new BoardsQueryParameters
         {
             Project = query.Project ?? profile.Project,
-            States = query.States is { Count: > 0 }
-                ? query.States
+            ExcludedStates = query.States is { Count: > 0 }
+                ? null
                 : NullIfEmpty(profile.CompletedStates),
-            ExcludedStates = NullIfEmpty(profile.CompletedStates),
-            Tags = query.Tags is { Count: > 0 } ? query.Tags : [$"{tagPrefix}-ready"],
+            Tags = query.Tags is { Count: > 0 } ? query.Tags : [WorkSourceOptions.TagReady(tagPrefix)],
             ExcludedTags = query.ExcludedTags is { Count: > 0 }
                 ? query.ExcludedTags
-                : [$"{tagPrefix}-active", $"{tagPrefix}-failed", $"{tagPrefix}-needs-human"],
+                : WorkSourceOptions.LifecycleTags(tagPrefix),
             MaxResults = query.MaxResults,
         };
     }
@@ -375,13 +383,13 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
         var result = metadata is null
             ? new Dictionary<string, string>()
             : new Dictionary<string, string>(metadata);
-        result["azureDevOpsEnvironmentKey"] = key;
+        result["workSourceEnvironmentKey"] = key;
         return result;
     }
 
     private static string? GetEnvironmentKey(IReadOnlyDictionary<string, string>? metadata)
     {
-        return metadata?.TryGetValue("azureDevOpsEnvironmentKey", out var key) == true ? key : null;
+        return metadata?.TryGetValue("workSourceEnvironmentKey", out var key) == true ? key : null;
     }
 
     private static IReadOnlyList<string>? NullIfEmpty(IReadOnlyList<string>? values) =>

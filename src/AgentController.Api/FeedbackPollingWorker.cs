@@ -481,7 +481,7 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
                 Revision = revision,
                 EnvironmentKey =
                     workItem.SourceMetadata?.TryGetValue(
-                        "azureDevOpsEnvironmentKey",
+                        "workSourceEnvironmentKey",
                         out var environmentKey
                     ) == true
                         ? environmentKey

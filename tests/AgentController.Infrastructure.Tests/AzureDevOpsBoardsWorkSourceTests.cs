@@ -83,13 +83,15 @@ public class AzureDevOpsBoardsWorkSourceTests
 
         Assert.Equal(2, candidates.Count);
         Assert.Equal("AlphaProject", Assert.Single(alphaClient.QueryCalls).Project);
-        Assert.Equal(["Ready"], alphaClient.QueryCalls[0].States);
+        Assert.Equal(["Ready"], alphaClient.QueryCalls[0].ExcludedStates);
+        Assert.Null(alphaClient.QueryCalls[0].States);
         Assert.Equal(["agent-ready"], alphaClient.QueryCalls[0].Tags);
         Assert.Equal("ZetaProject", Assert.Single(zetaClient.QueryCalls).Project);
-        Assert.Equal(["Approved"], zetaClient.QueryCalls[0].States);
+        Assert.Equal(["Approved"], zetaClient.QueryCalls[0].ExcludedStates);
+        Assert.Null(zetaClient.QueryCalls[0].States);
         Assert.Equal(["agent-ready"], zetaClient.QueryCalls[0].Tags);
-        Assert.Equal("alpha", candidates[0].SourceMetadata?["azureDevOpsEnvironmentKey"]);
-        Assert.Equal("zeta", candidates[1].SourceMetadata?["azureDevOpsEnvironmentKey"]);
+        Assert.Equal("alpha", candidates[0].SourceMetadata?["workSourceEnvironmentKey"]);
+        Assert.Equal("zeta", candidates[1].SourceMetadata?["workSourceEnvironmentKey"]);
     }
 
     // ──────────────────────────────────────────────

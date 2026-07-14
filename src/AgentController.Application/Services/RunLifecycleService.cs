@@ -634,7 +634,7 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             ExternalId = workItem.ExternalId,
             Url = workItem.ExternalUrl,
             Revision = revision,
-            EnvironmentKey = GetAzureDevOpsEnvironmentKey(workItem.SourceMetadata),
+            EnvironmentKey = GetWorkSourceEnvironmentKey(workItem.SourceMetadata),
         };
 
         // Determine status update (tags, state) and comment for this lifecycle milestone.
@@ -999,7 +999,7 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
     {
         var configured = _workSourceOptions.CurrentValue;
         var fallback = new WorkSourceStates(configured.ActiveState, configured.CompletedState);
-        var environmentKey = GetAzureDevOpsEnvironmentKey(workItem.SourceMetadata);
+        var environmentKey = GetWorkSourceEnvironmentKey(workItem.SourceMetadata);
 
         if (_profileResolver is null || string.IsNullOrWhiteSpace(environmentKey))
         {
@@ -1018,11 +1018,11 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             : fallback;
     }
 
-    private static string? GetAzureDevOpsEnvironmentKey(
+    private static string? GetWorkSourceEnvironmentKey(
         IReadOnlyDictionary<string, string>? metadata
     )
     {
-        return metadata?.TryGetValue("azureDevOpsEnvironmentKey", out var key) == true ? key : null;
+        return metadata?.TryGetValue("workSourceEnvironmentKey", out var key) == true ? key : null;
     }
 
     private sealed record WorkSourceStates(string? ActiveState, string? CompletedState);

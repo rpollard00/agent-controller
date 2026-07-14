@@ -703,7 +703,7 @@ public sealed partial class PollingWorker : BackgroundService
             ExternalId = candidate.ExternalId,
             Url = candidate.ExternalUrl,
             Revision = revision,
-            EnvironmentKey = GetAzureDevOpsEnvironmentKey(candidate.SourceMetadata),
+            EnvironmentKey = GetWorkSourceEnvironmentKey(candidate.SourceMetadata),
         };
 
         try
@@ -1053,7 +1053,7 @@ public sealed partial class PollingWorker : BackgroundService
                     Source = candidate.Source,
                     ExternalId = candidate.ExternalId,
                     Url = candidate.ExternalUrl,
-                    EnvironmentKey = GetAzureDevOpsEnvironmentKey(candidate.SourceMetadata),
+                    EnvironmentKey = GetWorkSourceEnvironmentKey(candidate.SourceMetadata),
                 },
                 RepoCheckout = checkout,
                 EnvironmentHandle = envHandle,
@@ -1214,7 +1214,7 @@ public sealed partial class PollingWorker : BackgroundService
                     ExternalId = candidate.ExternalId,
                     Url = candidate.ExternalUrl,
                     Revision = revision,
-                    EnvironmentKey = GetAzureDevOpsEnvironmentKey(candidate.SourceMetadata),
+                    EnvironmentKey = GetWorkSourceEnvironmentKey(candidate.SourceMetadata),
                 },
                 WorkerId = _options.CurrentValue.WorkerId,
                 TargetState = null, // Do NOT revert state — let retry/escalation handle it
@@ -1387,7 +1387,7 @@ public sealed partial class PollingWorker : BackgroundService
             ExternalId = candidate.ExternalId,
             Url = candidate.ExternalUrl,
             Revision = revision,
-            EnvironmentKey = GetAzureDevOpsEnvironmentKey(candidate.SourceMetadata),
+            EnvironmentKey = GetWorkSourceEnvironmentKey(candidate.SourceMetadata),
         };
 
         // Use a reasonable default for max comments.
@@ -1405,11 +1405,11 @@ public sealed partial class PollingWorker : BackgroundService
         }
     }
 
-    private static string? GetAzureDevOpsEnvironmentKey(
+    private static string? GetWorkSourceEnvironmentKey(
         IReadOnlyDictionary<string, string>? metadata
     )
     {
-        return metadata?.TryGetValue("azureDevOpsEnvironmentKey", out var key) == true ? key : null;
+        return metadata?.TryGetValue("workSourceEnvironmentKey", out var key) == true ? key : null;
     }
 
     /// <summary>

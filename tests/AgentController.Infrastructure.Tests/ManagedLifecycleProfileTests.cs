@@ -82,7 +82,7 @@ public sealed class ManagedLifecycleProfileTests : IDisposable
                 SourceMetadata = new Dictionary<string, string>
                 {
                     ["revision"] = "1",
-                    ["azureDevOpsEnvironmentKey"] = "managed-ado",
+                    ["workSourceEnvironmentKey"] = "managed-ado",
                 },
             },
             CancellationToken.None
