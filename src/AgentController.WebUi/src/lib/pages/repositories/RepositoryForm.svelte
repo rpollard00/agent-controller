@@ -71,7 +71,7 @@
     return `${profile.displayName} — ${profile.key}${profile.enabled ? '' : ' (disabled)'}`;
   }
 
-  function hasAzureDevOpsEnvironment(key: string): boolean {
+  function hasWorkSourceEnvironment(key: string): boolean {
     return workSourceEnvironments.some((environment) => environment.key === key);
   }
 
@@ -214,7 +214,8 @@
     <div class="grid gap-6 lg:grid-cols-2">
       <Field
         id="repository-azureDevOpsEnvironmentKey"
-        label="Azure DevOps environment"
+        label="Work source environment"
+        hint="Choose the work source this repository pulls from."
         error={fieldError('azureDevOpsEnvironmentKey')}
       >
         <select
@@ -224,10 +225,10 @@
           bind:value={values.azureDevOpsEnvironmentKey}
           disabled={submitting}
           aria-invalid={fieldError('azureDevOpsEnvironmentKey') ? 'true' : undefined}
-          aria-describedby={describedBy('azureDevOpsEnvironmentKey')}
+          aria-describedby={describedBy('azureDevOpsEnvironmentKey', true)}
         >
-          <option value="">No managed Azure DevOps environment</option>
-          {#if values.azureDevOpsEnvironmentKey && !hasAzureDevOpsEnvironment(values.azureDevOpsEnvironmentKey)}
+          <option value="">No managed work source environment</option>
+          {#if values.azureDevOpsEnvironmentKey && !hasWorkSourceEnvironment(values.azureDevOpsEnvironmentKey)}
             <option value={values.azureDevOpsEnvironmentKey}>
               {values.azureDevOpsEnvironmentKey} (unavailable)
             </option>

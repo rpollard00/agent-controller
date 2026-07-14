@@ -90,7 +90,10 @@ function createApi(initialRepositories: RepositoryProfile[] = [repository]): Moc
   return {
     client: {
       repositories,
-      workSourceEnvironments: staticResource([workSourceEnvironment]),
+      workSourceEnvironments: {
+        ...staticResource([workSourceEnvironment]),
+        getBoardStates: vi.fn(async () => ['New', 'Active', 'Resolved', 'Closed']),
+      },
       runtimeEnvironments: staticResource([runtimeEnvironment]),
     },
     repositories,
@@ -134,7 +137,7 @@ describe('repository onboarding screens', () => {
     await fireEvent.input(screen.getByLabelText(/Allowed paths/), {
       target: { value: 'src\ntests/integration' },
     });
-    await fireEvent.change(screen.getByLabelText('Azure DevOps environment'), {
+    await fireEvent.change(screen.getByLabelText('Work source environment'), {
       target: { value: 'ado-main' },
     });
     await fireEvent.change(screen.getByLabelText('Runtime environment'), {

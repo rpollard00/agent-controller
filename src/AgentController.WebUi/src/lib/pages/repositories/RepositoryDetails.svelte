@@ -60,7 +60,7 @@
       </dd>
     </div>
     <div>
-      <dt class="text-sm font-medium text-slate-400">Azure DevOps environment</dt>
+      <dt class="text-sm font-medium text-slate-400">Work source environment</dt>
       <dd class="mt-1 text-slate-100">{repository.azureDevOpsEnvironmentKey ?? 'None'}</dd>
     </div>
     <div>
