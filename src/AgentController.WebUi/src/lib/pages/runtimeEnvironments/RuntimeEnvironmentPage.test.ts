@@ -140,9 +140,6 @@ describe('runtime environment screens', () => {
     expect(screen.getByPlaceholderText('Contoso Software Development')).toBeVisible();
 
     await completeIdentityFields();
-    await fireEvent.input(screen.getByLabelText(/Workspace root/), {
-      target: { value: '/srv/secondary-workspaces' },
-    });
     await fireEvent.input(screen.getAllByLabelText('Loadout name')[0], {
       target: { value: 'Custom-NewWork' },
     });
@@ -156,7 +153,7 @@ describe('runtime environment screens', () => {
         displayName: 'Secondary runtime',
         enabled: true,
         environmentProvider: 'LocalWorkspace',
-        environmentSettings: { workspaceRoot: '/srv/secondary-workspaces' },
+        environmentSettings: { workspaceRoot: null },
         runtimeProvider: 'PiMateria',
         runtimeSettings: expect.objectContaining({
           piExecutablePath: null,
@@ -237,9 +234,6 @@ describe('runtime environment screens', () => {
     await fireEvent.input(screen.getByLabelText(/Display name/), {
       target: { value: 'Updated runtime' },
     });
-    await fireEvent.input(screen.getByLabelText(/Workspace root/), {
-      target: { value: '/srv/updated-workspaces' },
-    });
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(api.environments.update).toHaveBeenCalledOnce());
@@ -248,7 +242,7 @@ describe('runtime environment screens', () => {
       expect.objectContaining({
         key: 'runtime-main',
         displayName: 'Updated runtime',
-        environmentSettings: { workspaceRoot: '/srv/updated-workspaces' },
+        environmentSettings: { workspaceRoot: null },
         runtimeSettings: expect.objectContaining({
           piExecutablePath: null,
           controllerBaseUrl: null,
@@ -276,8 +270,8 @@ describe('runtime environment screens', () => {
         status: 400,
         detail: 'Correct the highlighted runtime fields.',
         errors: {
-          'environmentSettings.workspaceRoot': [
-            'The workspace root must be an absolute path.',
+          displayName: [
+            'A display name with that value is already in use.',
           ],
         },
       }),
@@ -289,8 +283,8 @@ describe('runtime environment screens', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Could not update environment');
     expect(alert).toHaveTextContent('Correct the highlighted runtime fields.');
-    expect(screen.getByText('The workspace root must be an absolute path.')).toBeVisible();
-    expect(screen.getByLabelText(/Workspace root/)).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('A display name with that value is already in use.')).toBeVisible();
+    expect(screen.getByLabelText(/Display name/)).toHaveAttribute('aria-invalid', 'true');
   });
 
   it('enables and disables an environment from the list', async () => {

@@ -174,30 +174,7 @@
         </select>
       </Field>
 
-      <Field
-        id="runtime-workspaceRoot"
-        label="Workspace root"
-        hint="Optional parent directory for provisioned workspaces. The service default is used when empty."
-        error={fieldError('environmentSettings.workspaceRoot')}
-      >
-        <input
-          id="runtime-workspaceRoot"
-          name="workspaceRoot"
-          class={inputClasses}
-          bind:value={values.workspaceRoot}
-          disabled={submitting}
-          spellcheck="false"
-          autocomplete="off"
-          placeholder="/var/lib/agent-controller/workspaces"
-          aria-invalid={fieldError('environmentSettings.workspaceRoot') ? 'true' : undefined}
-          aria-describedby={describedBy(
-            'runtime-workspaceRoot',
-            'environmentSettings.workspaceRoot',
-            true,
-          )}
-          oninput={() => clearClientError('environmentSettings.workspaceRoot')}
-        />
-      </Field>
+
     </div>
   </fieldset>
 

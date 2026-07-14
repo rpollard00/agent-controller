@@ -15,7 +15,6 @@ export interface RuntimeEnvironmentFormValues {
   displayName: string;
   enabled: boolean;
   environmentProvider: EnvironmentProvider;
-  workspaceRoot: string;
   runtimeProvider: RuntimeProvider;
   loadouts: LoadoutRow[];
 }
@@ -32,7 +31,6 @@ export function createRuntimeEnvironmentFormValues(
     displayName: profile?.displayName ?? '',
     enabled: profile?.enabled ?? true,
     environmentProvider: asEnvironmentProvider(profile?.environmentProvider),
-    workspaceRoot: profile?.environmentSettings.workspaceRoot ?? '',
     runtimeProvider: asRuntimeProvider(profile?.runtimeProvider),
     loadouts: loadouts
       ? (Object.entries(loadouts) as [Exclude<ExecutionKind, ''>, string][]).map(
@@ -98,7 +96,7 @@ export function toRuntimeEnvironmentProfile(
     enabled: values.enabled,
     environmentProvider: values.environmentProvider,
     environmentSettings: {
-      workspaceRoot: nullableText(values.workspaceRoot),
+      workspaceRoot: null,
     },
     runtimeProvider: values.runtimeProvider,
     runtimeSettings: {
