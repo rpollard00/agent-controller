@@ -20,6 +20,8 @@
     onsave,
     oncancel,
     boardStates = [],
+    boardStatesLoading = false,
+    boardStatesError = false,
   }: {
     mode: 'create' | 'edit';
     profile?: WorkSourceEnvironmentProfile;
@@ -28,6 +30,8 @@
     onsave: (profile: WorkSourceEnvironmentProfile) => void;
     oncancel: () => void;
     boardStates?: string[];
+    boardStatesLoading?: boolean;
+    boardStatesError?: boolean;
   } = $props();
 
   let values = $state(untrack(() => createWorkSourceEnvironmentFormValues(profile)));
@@ -283,10 +287,21 @@
       hint="Items in these states are considered finished and not picked up."
       error={fieldError('completedStates')}
     >
+      {#if boardStatesLoading}
+        <div class="flex items-center gap-2 text-sm text-slate-400" role="status">
+          <span
+            class="size-3.5 animate-spin rounded-full border border-slate-700 border-t-cyan-300"
+            aria-hidden="true"
+          ></span>
+          Loading board states…
+        </div>
+      {:else if boardStatesError}
+        <p class="text-sm text-amber-300">Unable to load board states. You can still enter states manually.</p>
+      {/if}
       <CompletedStatesEditor
         selected={values.completedStates}
         suggestions={boardStates}
-        disabled={submitting}
+        disabled={submitting || boardStatesLoading}
         error={Boolean(fieldError('completedStates'))}
       />
     </Field>

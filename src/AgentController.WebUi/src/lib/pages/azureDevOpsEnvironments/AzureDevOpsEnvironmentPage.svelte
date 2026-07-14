@@ -37,6 +37,10 @@
   let deleting = $state(false);
   let loadController: AbortController | undefined;
   let mutationController: AbortController | undefined;
+  let boardStatesController: AbortController | undefined;
+  let boardStates = $state<string[]>([]);
+  let boardStatesLoading = $state(false);
+  let boardStatesError = $state(false);
   let successNotice = $state<{ path: string; title: string; message: string }>();
 
   const route = $derived(parseWorkSourceEnvironmentRoute(pathname));
@@ -54,18 +58,46 @@
     if (!currentRoute) return;
 
     startLoad(currentRoute);
-    return () => loadController?.abort();
+    return () => {
+      loadController?.abort();
+      boardStatesController?.abort();
+    };
   });
 
   onDestroy(() => {
     loadController?.abort();
     mutationController?.abort();
+    boardStatesController?.abort();
   });
 
   function startLoad(currentRoute: WorkSourceEnvironmentRoute): void {
     loadController?.abort();
+    boardStatesController?.abort();
     loadController = new AbortController();
+    boardStates = [];
+    boardStatesLoading = false;
+    boardStatesError = false;
     void loadRoute(currentRoute, loadController.signal);
+  }
+
+  async function fetchBoardStates(key: string): Promise<void> {
+    boardStatesController?.abort();
+    boardStatesController = new AbortController();
+    boardStates = [];
+    boardStatesLoading = true;
+    boardStatesError = false;
+
+    try {
+      boardStates = await client.workSourceEnvironments.getBoardStates(
+        key,
+        boardStatesController.signal,
+      );
+      boardStatesLoading = false;
+    } catch (error) {
+      if (boardStatesController.signal.aborted) return;
+      boardStatesLoading = false;
+      boardStatesError = true;
+    }
   }
 
   async function loadRoute(
@@ -91,6 +123,10 @@
 
       environment = await client.workSourceEnvironments.get(currentRoute.key, signal);
       status = 'ready';
+      // Fetch board states for ADO environments in edit mode
+      if (environment?.provider === 'AzureDevOpsBoards') {
+        fetchBoardStates(environment.key);
+      }
     } catch (error) {
       if (signal.aborted) return;
       requestError = error;
@@ -351,6 +387,8 @@
         serverErrors={getFieldErrors(mutationError)}
         onsave={(profile) => void saveEnvironment(profile)}
         oncancel={cancelForm}
+        boardStatesLoading={boardStatesLoading}
+        boardStatesError={boardStatesError}
       />
     </Card>
   {:else if route?.view === 'edit' && environment}
@@ -376,6 +414,9 @@
           serverErrors={getFieldErrors(mutationError)}
           onsave={(profile) => void saveEnvironment(profile)}
           oncancel={cancelForm}
+          boardStates={boardStates}
+          boardStatesLoading={boardStatesLoading}
+          boardStatesError={boardStatesError}
         />
       {/key}
     </Card>
