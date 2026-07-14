@@ -8,18 +8,16 @@ public class ManagedOnboardingProfileTests
     private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
 
     [Fact]
-    public void AzureDevOpsEnvironmentProfile_HasSafeDefaults()
+    public void WorkSourceEnvironmentProfile_HasSafeDefaults()
     {
         var before = DateTimeOffset.UtcNow;
-        var profile = new AzureDevOpsEnvironmentProfile();
+        var profile = new WorkSourceEnvironmentProfile();
         var after = DateTimeOffset.UtcNow;
 
         Assert.True(profile.Enabled);
-        Assert.Equal("User Story", profile.WorkItemType);
-        Assert.Empty(profile.EligibleTags);
-        Assert.Empty(profile.ExcludedTags);
-        Assert.Empty(profile.EligibleStates);
-        Assert.Empty(profile.ExcludedStates);
+        Assert.Equal("AzureDevOpsBoards", profile.Provider);
+        Assert.Equal("agent", profile.TagPrefix);
+        Assert.Empty(profile.CompletedStates);
         Assert.Null(profile.ActiveState);
         Assert.Null(profile.CompletedState);
         Assert.Empty(profile.PatEnvironmentVariable);
@@ -66,21 +64,19 @@ public class ManagedOnboardingProfileTests
     }
 
     [Fact]
-    public void AzureDevOpsEnvironmentProfile_SerializesCredentialAsEnvironmentVariableReference()
+    public void WorkSourceEnvironmentProfile_SerializesCredentialAsEnvironmentVariableReference()
     {
         var createdAt = new DateTimeOffset(2026, 7, 13, 12, 0, 0, TimeSpan.Zero);
-        var profile = new AzureDevOpsEnvironmentProfile
+        var profile = new WorkSourceEnvironmentProfile
         {
             Key = "primary-ado",
             DisplayName = "Primary Azure DevOps",
             Enabled = false,
+            Provider = "AzureDevOpsBoards",
+            TagPrefix = "ac",
             OrganizationUrl = "https://dev.azure.com/example",
             Project = "Agent Controller",
-            WorkItemType = "Task",
-            EligibleTags = ["agent-ready"],
-            ExcludedTags = ["agent-blocked"],
-            EligibleStates = ["New", "Approved"],
-            ExcludedStates = ["Removed"],
+            CompletedStates = ["Closed", "Done"],
             ActiveState = "Active",
             CompletedState = "Closed",
             PatEnvironmentVariable = "AZURE_DEVOPS_PAT_PRIMARY",
@@ -96,18 +92,19 @@ public class ManagedOnboardingProfileTests
         Assert.False(root.TryGetProperty("personalAccessToken", out _));
         Assert.False(root.TryGetProperty("pat", out _));
 
-        var roundTripped = JsonSerializer.Deserialize<AzureDevOpsEnvironmentProfile>(json, JsonOptions);
+        var roundTripped = JsonSerializer.Deserialize<WorkSourceEnvironmentProfile>(json, JsonOptions);
 
         Assert.NotNull(roundTripped);
         Assert.Equal(profile.Key, roundTripped.Key);
         Assert.Equal(profile.DisplayName, roundTripped.DisplayName);
         Assert.Equal(profile.Enabled, roundTripped.Enabled);
+        Assert.Equal(profile.Provider, roundTripped.Provider);
+        Assert.Equal(profile.TagPrefix, roundTripped.TagPrefix);
         Assert.Equal(profile.OrganizationUrl, roundTripped.OrganizationUrl);
         Assert.Equal(profile.Project, roundTripped.Project);
-        Assert.Equal(profile.EligibleTags, roundTripped.EligibleTags);
-        Assert.Equal(profile.ExcludedTags, roundTripped.ExcludedTags);
-        Assert.Equal(profile.EligibleStates, roundTripped.EligibleStates);
-        Assert.Equal(profile.ExcludedStates, roundTripped.ExcludedStates);
+        Assert.Equal(profile.CompletedStates, roundTripped.CompletedStates);
+        Assert.Equal(profile.ActiveState, roundTripped.ActiveState);
+        Assert.Equal(profile.CompletedState, roundTripped.CompletedState);
         Assert.Equal(profile.PatEnvironmentVariable, roundTripped.PatEnvironmentVariable);
         Assert.Equal(profile.CreatedAt, roundTripped.CreatedAt);
         Assert.Equal(profile.UpdatedAt, roundTripped.UpdatedAt);

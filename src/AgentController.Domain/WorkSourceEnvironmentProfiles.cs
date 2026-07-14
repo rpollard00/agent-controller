@@ -1,10 +1,11 @@
 namespace AgentController.Domain;
 
 /// <summary>
-/// Managed configuration for an Azure DevOps organization and project.
+/// Managed configuration for a work-source environment (e.g. Azure DevOps Boards, GitHub Issues).
 /// This is an onboarding profile, not a run-scoped execution environment.
+/// Azure DevOps Boards is the first supported provider.
 /// </summary>
-public sealed record AzureDevOpsEnvironmentProfile
+public sealed record WorkSourceEnvironmentProfile
 {
     /// <summary>Stable key used by repository profiles to reference this profile.</summary>
     public string Key { get; init; } = string.Empty;
@@ -15,26 +16,33 @@ public sealed record AzureDevOpsEnvironmentProfile
     /// <summary>Whether the profile may be used for new work.</summary>
     public bool Enabled { get; init; } = true;
 
-    /// <summary>Azure DevOps organization URL.</summary>
+    /// <summary>
+    /// Provider discriminator (e.g. "AzureDevOpsBoards").
+    /// Determines which provider-specific configuration is applicable.
+    /// </summary>
+    public string Provider { get; init; } = "AzureDevOpsBoards";
+
+    /// <summary>
+    /// Prefix used for controller-owned lifecycle tags on the board
+    /// (e.g. "{prefix}-ready", "{prefix}-active", "{prefix}-failed", "{prefix}-needs-human").
+    /// Defaults to "agent" when blank.
+    /// </summary>
+    public string TagPrefix { get; init; } = "agent";
+
+    // --- Azure DevOps Boards connection fields ---
+
+    /// <summary>Azure DevOps organization URL (provider: AzureDevOpsBoards).</summary>
     public string OrganizationUrl { get; init; } = string.Empty;
 
-    /// <summary>Azure DevOps project name.</summary>
+    /// <summary>Azure DevOps project name (provider: AzureDevOpsBoards).</summary>
     public string Project { get; init; } = string.Empty;
 
-    /// <summary>Work item type used for board-state discovery and validation.</summary>
-    public string WorkItemType { get; init; } = "User Story";
-
-    /// <summary>Tags that make a work item eligible for autonomous execution.</summary>
-    public IReadOnlyList<string> EligibleTags { get; init; } = [];
-
-    /// <summary>Tags that exclude a work item from autonomous execution.</summary>
-    public IReadOnlyList<string> ExcludedTags { get; init; } = [];
-
-    /// <summary>Board states that are eligible for autonomous execution.</summary>
-    public IReadOnlyList<string> EligibleStates { get; init; } = [];
-
-    /// <summary>Board states that exclude a work item from autonomous execution.</summary>
-    public IReadOnlyList<string> ExcludedStates { get; init; } = [];
+    /// <summary>
+    /// Board states that indicate a work item is finished.
+    /// Items in these states are excluded from autonomous execution.
+    /// When empty, any non-lifecycle state is eligible.
+    /// </summary>
+    public IReadOnlyList<string> CompletedStates { get; init; } = [];
 
     /// <summary>State applied when work begins, if configured.</summary>
     public string? ActiveState { get; init; }
