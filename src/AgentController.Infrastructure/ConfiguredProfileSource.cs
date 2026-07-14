@@ -71,9 +71,14 @@ internal sealed class ConfiguredProfileSource : IConfiguredProfileSource
                 WorkspaceRoot = null,
             },
             RuntimeProvider = runtime.Provider,
-            // Pi Materia process behavior is consumed directly from RuntimeOptions by
-            // the runtime. It is not projected into a per-environment override.
-            RuntimeSettings = new RuntimeProviderSettings(),
+            // Loadouts are projected so the configured profile carries the operator's
+            // per-profile loadout map. Pi Materia process behavior (executable, controller
+            // URL, PTY, environment-variable forwarding) is consumed directly from
+            // RuntimeOptions by the runtime and is not projected into a per-environment override.
+            RuntimeSettings = new RuntimeProviderSettings
+            {
+                Loadouts = new Dictionary<ExecutionKind, string>(runtime.Loadouts),
+            },
         };
     }
 

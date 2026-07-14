@@ -36,17 +36,16 @@ public class ManagedOnboardingProfileTests
         Assert.Empty(profile.EnvironmentProvider);
         Assert.Empty(profile.RuntimeProvider);
         Assert.Null(profile.EnvironmentSettings.WorkspaceRoot);
-        Assert.Equal("pi", profile.RuntimeSettings.PiExecutablePath);
-        Assert.Equal("script", profile.RuntimeSettings.PtyWrapperPath);
-        Assert.Equal("-qfc", profile.RuntimeSettings.PtyWrapperArgs);
+        // Pi Materia process settings are controller-owned; the per-profile record carries
+        // no defaults for them so stale stored overrides cannot influence execution.
+        Assert.Null(profile.RuntimeSettings.PiExecutablePath);
+        Assert.Null(profile.RuntimeSettings.ControllerBaseUrl);
+        Assert.Null(profile.RuntimeSettings.PtyWrapperPath);
+        Assert.Null(profile.RuntimeSettings.PtyWrapperArgs);
+        Assert.Empty(profile.RuntimeSettings.ForwardEnvironmentVariables);
+        // Loadouts remain a user-level, profile-specific control and keep safe defaults.
         Assert.Equal("ADO-Build-NewWork", profile.RuntimeSettings.Loadouts[ExecutionKind.NewWork]);
         Assert.Equal("ADO-Build-Rework", profile.RuntimeSettings.Loadouts[ExecutionKind.Rework]);
-        Assert.Equal(
-            "AZURE_DEVOPS_PAT",
-            profile.RuntimeSettings.ForwardEnvironmentVariables["AZURE_DEVOPS_EXT_PAT"]);
-        Assert.Equal(
-            "AZURE_DEVOPS_PAT",
-            profile.RuntimeSettings.ForwardEnvironmentVariables["AZURE_DEVOPS_PAT"]);
     }
 
     [Fact]

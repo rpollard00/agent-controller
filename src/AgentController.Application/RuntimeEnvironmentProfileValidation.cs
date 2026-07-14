@@ -12,6 +12,7 @@ internal static class RuntimeEnvironmentProfileValidation
     private const int MaximumDisplayNameLength = 256;
     private const int MaximumProviderNameLength = 128;
     private const int MaximumPathLength = 2048;
+    private const int MaximumLoadoutLength = 256;
 
     public static RuntimeEnvironmentProfileValidationResult ValidateAndNormalize(
         RuntimeEnvironmentProfile profile
@@ -51,8 +52,26 @@ internal static class RuntimeEnvironmentProfileValidation
             errors
         );
 
-        // Pi Materia process configuration belongs to the controller. Accept legacy
-        // settings in requests for compatibility, but do not validate or persist them.
+        var runtimeSettings = profile.RuntimeSettings;
+        if (runtimeSettings is null)
+        {
+            errors.Add("runtimeSettings", "Runtime-provider settings are required.");
+            runtimeSettings = new RuntimeProviderSettings();
+        }
+
+        // Loadouts are a user-level, profile-specific control and remain per-profile.
+        // Pi Materia process settings (executable, controller URL, PTY, env-var forwarding)
+        // are controller-owned: accept legacy values in requests for compatibility, but do
+        // not validate or persist them so stale stored overrides cannot alter execution.
+        var loadouts = NormalizeLoadouts(runtimeSettings.Loadouts, errors);
+        if (runtimeProvider == PiMateriaProvider && !loadouts.ContainsKey(ExecutionKind.NewWork))
+        {
+            errors.Add(
+                "runtimeSettings.loadouts",
+                "A NewWork loadout is required for the PiMateria runtime."
+            );
+        }
+
         var normalized = profile with
         {
             Key = key,
@@ -60,7 +79,7 @@ internal static class RuntimeEnvironmentProfileValidation
             EnvironmentProvider = environmentProvider,
             EnvironmentSettings = new EnvironmentProviderSettings { WorkspaceRoot = workspaceRoot },
             RuntimeProvider = runtimeProvider,
-            RuntimeSettings = new RuntimeProviderSettings(),
+            RuntimeSettings = new RuntimeProviderSettings { Loadouts = loadouts },
         };
 
         return new RuntimeEnvironmentProfileValidationResult(normalized, errors.ToDictionary());
@@ -235,6 +254,46 @@ internal static class RuntimeEnvironmentProfileValidation
         {
             errors.Add(field, "The value cannot contain control characters.");
         }
+    }
+
+    private static Dictionary<ExecutionKind, string> NormalizeLoadouts(
+        IReadOnlyDictionary<ExecutionKind, string>? loadouts,
+        ValidationErrors errors
+    )
+    {
+        var normalized = new Dictionary<ExecutionKind, string>();
+        if (loadouts is null)
+        {
+            errors.Add("runtimeSettings.loadouts", "A loadout map is required.");
+            return normalized;
+        }
+
+        foreach (var (executionKind, originalLoadout) in loadouts.OrderBy(pair => pair.Key))
+        {
+            if (!Enum.IsDefined(executionKind))
+            {
+                errors.Add(
+                    "runtimeSettings.loadouts",
+                    $"Execution kind '{executionKind}' is not supported."
+                );
+                continue;
+            }
+
+            var loadout = NormalizeText(originalLoadout);
+            if (loadout.Length == 0)
+            {
+                errors.Add(
+                    "runtimeSettings.loadouts",
+                    $"The {executionKind} loadout cannot be empty."
+                );
+                continue;
+            }
+
+            ValidateText(loadout, "runtimeSettings.loadouts", MaximumLoadoutLength, errors);
+            normalized.Add(executionKind, loadout);
+        }
+
+        return normalized;
     }
 
     private sealed class ValidationErrors

@@ -321,12 +321,19 @@ public sealed class WebUiControllerTests : IAsyncLifetime
             var getBody = await AssertCredentialRedactedAsync(getResponse, credentialValue);
             using var getJson = JsonDocument.Parse(getBody);
             var runtimeSettings = getJson.RootElement.GetProperty("runtimeSettings");
+            // Loadouts remain a user-level, profile-specific control and are persisted.
             Assert.Equal(
-                credentialVariable,
-                runtimeSettings
-                    .GetProperty("forwardEnvironmentVariables")
-                    .GetProperty("RUNTIME_TOKEN")
-                    .GetString()
+                "ADO-Build-NewWork",
+                runtimeSettings.GetProperty("loadouts").GetProperty("newWork").GetString()
+            );
+            // Controller-owned process settings are accepted for compatibility but not
+            // persisted per-profile, so stale stored overrides cannot alter execution.
+            Assert.Null(runtimeSettings.GetProperty("piExecutablePath").GetString());
+            Assert.Null(runtimeSettings.GetProperty("controllerBaseUrl").GetString());
+            Assert.Null(runtimeSettings.GetProperty("ptyWrapperPath").GetString());
+            Assert.Null(runtimeSettings.GetProperty("ptyWrapperArgs").GetString());
+            Assert.False(
+                runtimeSettings.GetProperty("forwardEnvironmentVariables").EnumerateObject().Any()
             );
             Assert.False(runtimeSettings.TryGetProperty("environmentVariableValues", out _));
 
@@ -367,6 +374,14 @@ public sealed class WebUiControllerTests : IAsyncLifetime
                 updateJson.RootElement.GetProperty("displayName").GetString()
             );
             Assert.False(updateJson.RootElement.GetProperty("enabled").GetBoolean());
+            Assert.Equal(
+                "updated-new-work",
+                updateJson.RootElement
+                    .GetProperty("runtimeSettings")
+                    .GetProperty("loadouts")
+                    .GetProperty("newWork")
+                    .GetString()
+            );
 
             using var deleteResponse = await _client.DeleteAsync(
                 "/api/webui/runtime-environments/runtime.local"

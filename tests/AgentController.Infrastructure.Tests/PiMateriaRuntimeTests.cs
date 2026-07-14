@@ -666,8 +666,12 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task StartAsync_ManagedRuntimeProfileOverridesConfiguredProcessSettings()
+    public async Task StartAsync_ManagedProfileUsesPerProfileLoadoutsButControllerOwnedProcessSettings()
     {
+        // WI-1: Pi executable, controller callback URL, PTY, and environment-variable
+        // forwarding are controller-owned. A managed runtime-environment profile may not
+        // override them (stale stored overrides cannot alter execution). Loadouts remain a
+        // user-level, profile-specific control and are still honored from the profile.
         var fakePiPath = WriteCaptureScript(_tempRoot, "capture-managed-runtime.sh");
         var runId = await SeedRunAsync();
         var baseSpec = await BuildSpecAsync(runId, "Managed runtime task");
@@ -682,22 +686,26 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
                 RuntimeProvider = "PiMateria",
                 RuntimeSettings = new RuntimeProviderSettings
                 {
-                    PiExecutablePath = fakePiPath,
+                    // Stale overrides that must be ignored at launch.
+                    PiExecutablePath = "/managed/path/that-must-not-be-used",
                     ControllerBaseUrl = "http://127.0.0.1:43210",
                     PtyWrapperPath = null,
-                    Loadouts = new Dictionary<ExecutionKind, string>
-                    {
-                        [ExecutionKind.NewWork] = "Managed-NewWork-Loadout",
-                    },
                     ForwardEnvironmentVariables = new Dictionary<string, string>
                     {
                         ["MANAGED_TARGET"] = "MANAGED_SOURCE",
                     },
+                    // Per-profile loadout that must be honored.
+                    Loadouts = new Dictionary<ExecutionKind, string>
+                    {
+                        [ExecutionKind.NewWork] = "Managed-NewWork-Loadout",
+                    },
                 },
             },
         };
-        var originalValue = Environment.GetEnvironmentVariable("MANAGED_SOURCE");
+        var originalManaged = Environment.GetEnvironmentVariable("MANAGED_SOURCE");
+        var originalOptions = Environment.GetEnvironmentVariable("OPTIONS_SOURCE");
         Environment.SetEnvironmentVariable("MANAGED_SOURCE", "managed-value");
+        Environment.SetEnvironmentVariable("OPTIONS_SOURCE", "options-value");
 
         try
         {
@@ -707,9 +715,14 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
                     new RuntimeOptions
                     {
                         Provider = "PiMateria",
-                        PiExecutablePath = "/configured/path/that-must-not-be-used",
+                        // Controller-owned process settings (these win).
+                        PiExecutablePath = fakePiPath,
                         ControllerBaseUrl = "http://127.0.0.1:9999",
                         PtyWrapperPath = null,
+                        ForwardEnvironmentVariables = new Dictionary<string, string>
+                        {
+                            ["OPTIONS_TARGET"] = "OPTIONS_SOURCE",
+                        },
                         Loadouts = new Dictionary<ExecutionKind, string>
                         {
                             [ExecutionKind.NewWork] = "Configured-Loadout",
@@ -726,19 +739,26 @@ public class PiMateriaRuntimeTests : IAsyncLifetime
             var environment = await File.ReadAllTextAsync(
                 Path.Combine(_tempRoot, "capture-env.txt")
             );
+
+            // Per-profile loadout is honored (user-level control retained).
             Assert.Contains("/materia loadout Managed-NewWork-Loadout", arguments);
             Assert.DoesNotContain("Configured-Loadout", arguments);
+
+            // Controller-owned settings win over stale managed overrides.
             Assert.Contains(
-                $"CONTROLLER_EVENT_URL=http://127.0.0.1:43210/runs/{runId}/events",
+                $"CONTROLLER_EVENT_URL=http://127.0.0.1:9999/runs/{runId}/events",
                 environment
             );
-            Assert.Contains("MANAGED_TARGET=managed-value", environment);
+            Assert.DoesNotContain("http://127.0.0.1:43210", environment);
+            Assert.Contains("OPTIONS_TARGET=options-value", environment);
+            Assert.DoesNotContain("MANAGED_TARGET", environment);
 
             runtime.Dispose();
         }
         finally
         {
-            Environment.SetEnvironmentVariable("MANAGED_SOURCE", originalValue);
+            Environment.SetEnvironmentVariable("MANAGED_SOURCE", originalManaged);
+            Environment.SetEnvironmentVariable("OPTIONS_SOURCE", originalOptions);
         }
     }
 

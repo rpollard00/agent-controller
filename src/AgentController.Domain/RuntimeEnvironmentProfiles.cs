@@ -42,23 +42,35 @@ public sealed record EnvironmentProviderSettings
 }
 
 /// <summary>
-/// Legacy per-profile runtime settings retained so profiles written by earlier controller
-/// versions can still be read. Pi Materia execution settings are controller-owned and these
-/// values are not used when launching a run.
+/// Per-profile runtime settings. <see cref="Loadouts"/> are a user-level, profile-specific
+/// control. The remaining properties are legacy fields retained so profiles written by
+/// earlier controller versions can still be read; Pi Materia process behavior (executable,
+/// controller callback URL, PTY, environment-variable forwarding) is controller-owned and
+/// these legacy values are not used when launching a run.
 /// </summary>
 public sealed record RuntimeProviderSettings
 {
+    /// <summary>Legacy. The pi executable path is controller-owned and not read at launch.</summary>
     public string? PiExecutablePath { get; init; }
 
+    /// <summary>Legacy. The controller callback URL is controller-owned and not read at launch.</summary>
     public string? ControllerBaseUrl { get; init; }
 
+    /// <summary>Legacy. The PTY wrapper path is controller-owned and not read at launch.</summary>
     public string? PtyWrapperPath { get; init; }
 
+    /// <summary>Legacy. The PTY wrapper arguments are controller-owned and not read at launch.</summary>
     public string? PtyWrapperArgs { get; init; }
 
+    /// <summary>Pi-materia loadout selected for each execution kind. User-level, profile-specific.</summary>
     public IReadOnlyDictionary<ExecutionKind, string> Loadouts { get; init; } =
-        new Dictionary<ExecutionKind, string>();
+        new Dictionary<ExecutionKind, string>
+        {
+            [ExecutionKind.NewWork] = "ADO-Build-NewWork",
+            [ExecutionKind.Rework] = "ADO-Build-Rework",
+        };
 
+    /// <summary>Legacy. Environment-variable forwarding is controller-owned and not read at launch.</summary>
     public IReadOnlyDictionary<string, string> ForwardEnvironmentVariables { get; init; } =
         new Dictionary<string, string>();
 }

@@ -90,7 +90,7 @@ public sealed class RuntimeEnvironmentHandlerTests
     }
 
     [Fact]
-    public async Task Create_NormalizesProvidersSettingsMapsAndManagedTimestamps()
+    public async Task Create_NormalizesLoadoutsAndManagedTimestampsAndDropsControllerOwnedSettings()
     {
         var environments = new FakeRuntimeEnvironmentStore();
         var handler = new CreateRuntimeEnvironmentCommandHandler(environments);
@@ -140,23 +140,19 @@ public sealed class RuntimeEnvironmentHandlerTests
         Assert.Equal("LocalWorkspace", persisted.EnvironmentProvider);
         Assert.Equal("~/.agent-controller/runs", persisted.EnvironmentSettings.WorkspaceRoot);
         Assert.Equal("PiMateria", persisted.RuntimeProvider);
-        Assert.Equal("/usr/local/bin/pi", persisted.RuntimeSettings.PiExecutablePath);
-        Assert.Equal(
-            "https://controller.example.test",
-            persisted.RuntimeSettings.ControllerBaseUrl
-        );
-        Assert.Equal("script", persisted.RuntimeSettings.PtyWrapperPath);
-        Assert.Equal("-qfc", persisted.RuntimeSettings.PtyWrapperArgs);
+        // Controller-owned process settings are accepted for compatibility but dropped:
+        // they are not persisted so stale stored overrides cannot alter execution.
+        Assert.Null(persisted.RuntimeSettings.PiExecutablePath);
+        Assert.Null(persisted.RuntimeSettings.ControllerBaseUrl);
+        Assert.Null(persisted.RuntimeSettings.PtyWrapperPath);
+        Assert.Null(persisted.RuntimeSettings.PtyWrapperArgs);
+        Assert.Empty(persisted.RuntimeSettings.ForwardEnvironmentVariables);
+        // Loadouts remain a user-level, profile-specific control and are normalized/persisted.
         Assert.Equal(
             [ExecutionKind.NewWork, ExecutionKind.Rework],
             persisted.RuntimeSettings.Loadouts.Keys
         );
         Assert.Equal("new-work", persisted.RuntimeSettings.Loadouts[ExecutionKind.NewWork]);
-        Assert.Equal(
-            ["A_TARGET", "Z_TARGET"],
-            persisted.RuntimeSettings.ForwardEnvironmentVariables.Keys
-        );
-        Assert.Equal("A_SOURCE", persisted.RuntimeSettings.ForwardEnvironmentVariables["A_TARGET"]);
         Assert.Equal(persisted.CreatedAt, persisted.UpdatedAt);
         Assert.InRange(persisted.CreatedAt, before, after);
     }
@@ -186,7 +182,7 @@ public sealed class RuntimeEnvironmentHandlerTests
     }
 
     [Fact]
-    public async Task Create_RejectsUnsupportedProvidersAndInvalidProviderSpecificSettings()
+    public async Task Create_RejectsUnsupportedProvidersAndInvalidLoadoutsButIgnoresControllerOwnedSettings()
     {
         var environments = new FakeRuntimeEnvironmentStore();
         var handler = new CreateRuntimeEnvironmentCommandHandler(environments);
@@ -225,12 +221,14 @@ public sealed class RuntimeEnvironmentHandlerTests
         Assert.Contains("displayName", result.ValidationErrors.Keys);
         Assert.Contains("environmentProvider", result.ValidationErrors.Keys);
         Assert.Contains("environmentSettings.workspaceRoot", result.ValidationErrors.Keys);
-        Assert.Contains("runtimeSettings.piExecutablePath", result.ValidationErrors.Keys);
-        Assert.Contains("runtimeSettings.controllerBaseUrl", result.ValidationErrors.Keys);
-        Assert.Contains("runtimeSettings.ptyWrapperPath", result.ValidationErrors.Keys);
-        Assert.Contains("runtimeSettings.ptyWrapperArgs", result.ValidationErrors.Keys);
         Assert.Contains("runtimeSettings.loadouts", result.ValidationErrors.Keys);
-        Assert.Contains(
+        // Controller-owned process settings are no longer validated per-profile, so invalid
+        // executable, controller URL, PTY, and env-var forwarding values are ignored.
+        Assert.DoesNotContain("runtimeSettings.piExecutablePath", result.ValidationErrors.Keys);
+        Assert.DoesNotContain("runtimeSettings.controllerBaseUrl", result.ValidationErrors.Keys);
+        Assert.DoesNotContain("runtimeSettings.ptyWrapperPath", result.ValidationErrors.Keys);
+        Assert.DoesNotContain("runtimeSettings.ptyWrapperArgs", result.ValidationErrors.Keys);
+        Assert.DoesNotContain(
             "runtimeSettings.forwardEnvironmentVariables",
             result.ValidationErrors.Keys
         );

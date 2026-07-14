@@ -75,9 +75,16 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
     public Task<AgentRunHandle> StartAsync(AgentRunSpec spec, CancellationToken cancellationToken)
     {
         var options = _runtimeOptions.CurrentValue;
+        var managedSettings =
+            spec.RuntimeEnvironmentProfile
+                is { Enabled: true, RuntimeProvider: var provider } profile
+            && provider.Equals("PiMateria", StringComparison.OrdinalIgnoreCase)
+                ? profile.RuntimeSettings
+                : null;
 
-        // Process behavior is controller-owned. Runtime-environment profiles select
-        // the provider but cannot override how Pi Materia is launched.
+        // Process behavior is controller-owned. Runtime-environment profiles select the
+        // provider and supply per-profile loadouts, but cannot override how Pi Materia is
+        // launched (executable, controller URL, PTY, environment-variable forwarding).
         // ── 1. Resolve controller event URL ───────────────────────────
         var baseUrl = options.ControllerBaseUrl;
         if (string.IsNullOrWhiteSpace(baseUrl))
@@ -120,8 +127,10 @@ public sealed partial class PiMateriaRuntime : IAgentRuntime
                 ? configuredWrapperArgs!.Trim()
                 : null;
 
-        // ── 3b. Resolve loadout from ExecutionKind via controller configuration ───
-        var loadouts = options.Loadouts;
+        // ── 3b. Resolve loadout from ExecutionKind via the selected profile ────────
+        // Loadouts remain a user-level, profile-specific control. Fall back to the
+        // controller-configured loadout map when no managed profile supplies one.
+        var loadouts = managedSettings?.Loadouts ?? options.Loadouts.ToDictionary();
         var loadout =
             loadouts.TryGetValue(spec.ExecutionKind, out var kindLoadout) ? kindLoadout
             : loadouts.TryGetValue(ExecutionKind.NewWork, out var defaultLoadout) ? defaultLoadout
