@@ -37,11 +37,8 @@
     return clientErrors[field]?.[0] ?? serverErrors[field]?.[0];
   }
 
-  function describedBy(field: string, hasHint = false): string | undefined {
-    const ids: string[] = [];
-    if (hasHint) ids.push(`wse-${field}-hint`);
-    if (fieldError(field)) ids.push(`wse-${field}-error`);
-    return ids.length > 0 ? ids.join(' ') : undefined;
+  function describedBy(field: string): string | undefined {
+    return fieldError(field) ? `wse-${field}-error` : undefined;
   }
 
   function handleSubmit(event: SubmitEvent): void {
@@ -254,7 +251,6 @@
     <Field
       id="wse-tagPrefix"
       label="Tag prefix"
-      hint="Namespace for controller-owned lifecycle tags (e.g. agent-ready, agent-active). Defaults to 'agent' when blank."
       error={fieldError('tagPrefix')}
     >
       <input
@@ -266,7 +262,7 @@
         autocomplete="off"
         placeholder="agent"
         aria-invalid={fieldError('tagPrefix') ? 'true' : undefined}
-        aria-describedby={describedBy('tagPrefix', true)}
+        aria-describedby={describedBy('tagPrefix')}
         oninput={() => clearClientError('tagPrefix')}
       />
     </Field>
@@ -274,7 +270,6 @@
     <Field
       id="wse-completedStates"
       label="Completed states"
-      hint="Work items in these states are considered finished and not picked up. Enter one state per line; leave empty for any."
       error={fieldError('completedStates')}
     >
       <textarea
@@ -285,7 +280,7 @@
         disabled={submitting}
         placeholder={'Resolved\nClosed'}
         aria-invalid={fieldError('completedStates') ? 'true' : undefined}
-        aria-describedby={describedBy('completedStates', true)}
+        aria-describedby={describedBy('completedStates')}
         oninput={() => clearClientError('completedStates')}
       ></textarea>
     </Field>
@@ -294,7 +289,6 @@
       <Field
         id="wse-activeState"
         label="Active state"
-        hint="Optional state applied when Agent Controller begins work."
         error={fieldError('activeState')}
       >
         <input
@@ -306,7 +300,7 @@
           autocomplete="off"
           placeholder="Active"
           aria-invalid={fieldError('activeState') ? 'true' : undefined}
-          aria-describedby={describedBy('activeState', true)}
+          aria-describedby={describedBy('activeState')}
           oninput={() => clearClientError('activeState')}
         />
       </Field>
@@ -314,7 +308,6 @@
       <Field
         id="wse-completedState"
         label="Completed state"
-        hint="Optional state applied when Agent Controller completes work."
         error={fieldError('completedState')}
       >
         <input
@@ -326,7 +319,7 @@
           autocomplete="off"
           placeholder="Resolved"
           aria-invalid={fieldError('completedState') ? 'true' : undefined}
-          aria-describedby={describedBy('completedState', true)}
+          aria-describedby={describedBy('completedState')}
           oninput={() => clearClientError('completedState')}
         />
       </Field>
