@@ -153,7 +153,6 @@
       <Field
         id="runtime-environmentProvider"
         label="Environment provider"
-        hint="The provider that provisions an isolated workspace for each run."
         error={fieldError('environmentProvider')}
         required
       >
@@ -168,7 +167,6 @@
           aria-describedby={describedBy(
             'runtime-environmentProvider',
             'environmentProvider',
-            true,
           )}
           onchange={() => clearClientError('environmentProvider')}
         >
