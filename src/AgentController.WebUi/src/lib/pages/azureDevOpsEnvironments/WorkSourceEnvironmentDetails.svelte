@@ -28,7 +28,7 @@
 </script>
 
 <div class="space-y-6">
-  <Card title="Environment details" description="Managed Azure DevOps connection and board policy.">
+  <Card title="Environment details" description="Work source connection and board configuration.">
     {#snippet actions()}
       <div class="flex flex-wrap gap-2">
         <Button
@@ -52,7 +52,7 @@
 
     <dl class="grid gap-x-8 gap-y-6 sm:grid-cols-2">
       <div>
-        <dt class="text-sm font-medium text-slate-400">Environment key</dt>
+        <dt class="text-sm font-medium text-slate-400">Environment name</dt>
         <dd class="mt-1 break-all text-slate-100">{environment.key}</dd>
       </div>
       <div>
@@ -126,6 +126,6 @@
     href="/work-source-environments"
     class="inline-flex min-h-10 items-center rounded-lg px-3 py-2 text-sm font-semibold text-cyan-300 hover:bg-slate-800 hover:text-cyan-200"
   >
-    Back to Azure DevOps environments
+    Back to Work source environments
   </a>
 </div>

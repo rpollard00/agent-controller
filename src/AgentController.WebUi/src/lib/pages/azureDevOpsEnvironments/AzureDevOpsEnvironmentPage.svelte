@@ -6,9 +6,9 @@
   import Button from '../../components/ui/Button.svelte';
   import Card from '../../components/ui/Card.svelte';
   import Dialog from '../../components/ui/Dialog.svelte';
-  import AzureDevOpsEnvironmentDetails from './AzureDevOpsEnvironmentDetails.svelte';
+  import WorkSourceEnvironmentDetails from './WorkSourceEnvironmentDetails.svelte';
   import WorkSourceEnvironmentForm from './WorkSourceEnvironmentForm.svelte';
-  import AzureDevOpsEnvironmentList from './AzureDevOpsEnvironmentList.svelte';
+  import WorkSourceEnvironmentList from './WorkSourceEnvironmentList.svelte';
   import {
     workSourceEnvironmentDetailPath,
     parseWorkSourceEnvironmentRoute,
@@ -114,7 +114,7 @@
         successNotice = {
           path: nextPath,
           title: 'Environment created',
-          message: `Azure DevOps environment “${created.displayName}” was created.`,
+          message: `Work source environment "${created.displayName}" was created.`,
         };
         navigate(nextPath);
       } else {
@@ -127,7 +127,7 @@
         successNotice = {
           path: pathname,
           title: 'Environment updated',
-          message: `Azure DevOps environment “${updated.displayName}” was updated.`,
+          message: `Work source environment "${updated.displayName}" was updated.`,
         };
       }
     } catch (error) {
@@ -158,7 +158,7 @@
       successNotice = {
         path: pathname,
         title: updated.enabled ? 'Environment enabled' : 'Environment disabled',
-        message: `Azure DevOps environment “${updated.displayName}” is now ${
+        message: `Work source environment "${updated.displayName}" is now ${
           updated.enabled ? 'enabled' : 'disabled'
         }.`,
       };
@@ -199,7 +199,7 @@
         successNotice = {
           path: '/work-source-environments',
           title: 'Environment deleted',
-          message: `Azure DevOps environment "${target.displayName}" was deleted.`,
+          message: `Work source environment "${target.displayName}" was deleted.`,
         };
         navigate('/work-source-environments');
       } else {
@@ -208,7 +208,7 @@
         successNotice = {
           path: '/work-source-environments',
           title: 'Environment deleted',
-          message: `Azure DevOps environment “${target.displayName}” was deleted.`,
+          message: `Work source environment "${target.displayName}" was deleted.`,
         };
       }
     } catch (error) {
@@ -231,18 +231,18 @@
   }
 
   function pageTitle(currentRoute: WorkSourceEnvironmentRoute | undefined): string {
-    if (!currentRoute || currentRoute.view === 'list') return 'Azure DevOps Environments';
-    if (currentRoute.view === 'create') return 'Add Azure DevOps environment';
+    if (!currentRoute || currentRoute.view === 'list') return 'Work source environments';
+    if (currentRoute.view === 'create') return 'Add work source environment';
     if (currentRoute.view === 'edit') return `Edit ${currentRoute.key}`;
     return currentRoute.key;
   }
 
   function pageDescription(currentRoute: WorkSourceEnvironmentRoute | undefined): string {
     if (!currentRoute || currentRoute.view === 'list') {
-      return 'Manage Azure DevOps organizations, projects, credential references, and board policies.';
+      return 'Manage work source connections, credential references, and board policies.';
     }
     if (currentRoute.view === 'create') {
-      return 'Connect an Azure DevOps project without storing its personal access token.';
+      return 'Connect a work source without storing its personal access token.';
     }
     if (currentRoute.view === 'edit') {
       return 'Update connection settings, work-selection rules, and environment availability.';
@@ -254,7 +254,7 @@
 <div class="space-y-8">
   <div class="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
     <div class="max-w-3xl">
-      <p class="text-sm font-semibold tracking-widest text-cyan-300 uppercase">Azure DevOps</p>
+      <p class="text-sm font-semibold tracking-widest text-cyan-300 uppercase">Work source environments</p>
       <h1 class="mt-2 break-words text-3xl font-semibold tracking-tight text-white sm:text-4xl">
         {title}
       </h1>
@@ -294,7 +294,7 @@
           class="size-4 animate-spin rounded-full border-2 border-slate-700 border-t-cyan-300"
           aria-hidden="true"
         ></span>
-        Loading {route?.view === 'list' ? 'Azure DevOps environments' : 'environment'}…
+        Loading {route?.view === 'list' ? 'work source environments' : 'environment'}…
       </div>
     </Card>
   {:else if status === 'error'}
@@ -303,8 +303,8 @@
         <Alert
           variant="error"
           title={route?.view === 'list'
-            ? 'Could not load Azure DevOps environments'
-            : 'Could not load Azure DevOps environment'}
+            ? 'Could not load work source environments'
+            : 'Could not load work source environment'}
           message={getErrorMessage(requestError)}
           errors={loadMessages}
         />
@@ -315,14 +315,14 @@
               href="/work-source-environments"
               class="inline-flex min-h-10 items-center rounded-lg px-4 py-2 text-sm font-semibold text-slate-300 hover:bg-slate-800 hover:text-white"
             >
-              Back to Azure DevOps environments
+              Back to Work source environments
             </a>
           {/if}
         </div>
       </div>
     </Card>
   {:else if route?.view === 'list'}
-    <AzureDevOpsEnvironmentList
+    <WorkSourceEnvironmentList
       {environments}
       empty={status === 'empty'}
       {updatingKey}
@@ -332,7 +332,7 @@
     />
   {:else if route?.view === 'create'}
     <Card
-      title="Azure DevOps environment configuration"
+      title="Work source environment configuration"
       description="Required fields are marked with an asterisk."
     >
       {#if mutationError}
@@ -355,8 +355,8 @@
     </Card>
   {:else if route?.view === 'edit' && environment}
     <Card
-      title="Azure DevOps environment configuration"
-      description="The environment key is fixed after creation."
+      title="Work source environment configuration"
+      description="The environment name is fixed after creation."
     >
       {#if mutationError}
         <div class="mb-6">
@@ -380,7 +380,7 @@
       {/key}
     </Card>
   {:else if route?.view === 'detail' && environment}
-    <AzureDevOpsEnvironmentDetails
+    <WorkSourceEnvironmentDetails
       {environment}
       updating={updatingKey === environment.key}
       ontoggle={(profile) => void toggleEnvironment(profile)}
@@ -391,7 +391,7 @@
 
 <Dialog
   open={Boolean(deleteTarget)}
-  title="Delete Azure DevOps environment?"
+  title="Delete work source environment?"
   description="An environment referenced by a repository cannot be deleted."
   onclose={closeDeleteDialog}
 >

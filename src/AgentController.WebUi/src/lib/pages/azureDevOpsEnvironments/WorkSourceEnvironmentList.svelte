@@ -26,8 +26,8 @@
 </script>
 
 <Card
-  title="Managed Azure DevOps environments"
-  description="Board connections and work-selection policies configured through Agent Controller."
+  title="Managed work source environments"
+  description="Work source connections configured through Agent Controller."
 >
   {#snippet actions()}
     <Button variant="secondary" onclick={onrefresh}>Refresh</Button>
@@ -35,9 +35,9 @@
 
   {#if empty}
     <div class="rounded-xl border border-dashed border-slate-700 px-5 py-12 text-center">
-      <h2 class="font-semibold text-white">No Azure DevOps environments yet</h2>
+      <h2 class="font-semibold text-white">No work source environments yet</h2>
       <p class="mx-auto mt-2 max-w-lg text-sm leading-6 text-slate-400">
-        Add an environment to connect an Azure DevOps project and define its board policy.
+        Add an environment to connect a work source and configure its board policy.
       </p>
       <a
         href="/work-source-environments/new"
@@ -47,7 +47,7 @@
       </a>
     </div>
   {:else}
-    <DataTable caption="Managed Azure DevOps environments">
+    <DataTable caption="Managed work source environments">
       <thead class="bg-slate-950/60 text-xs tracking-wide text-slate-400 uppercase">
         <tr>
           <th class="px-4 py-3 font-medium" scope="col">Environment</th>
