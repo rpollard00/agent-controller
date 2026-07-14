@@ -104,9 +104,9 @@ export function validateRuntimeEnvironmentForm(
   );
 
   const key = values.key.trim().toLowerCase();
-  if (key && !/^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/.test(key)) {
+  if (key && !/^[a-z][a-z0-9_-]{0,31}$/.test(key)) {
     errors.key = [
-      'Use letters, numbers, periods, underscores, or hyphens, and start and end with a letter or number.',
+      'Use 1 to 32 characters starting with a letter and only letters, numbers, hyphens, or underscores.',
     ];
   }
 

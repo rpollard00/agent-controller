@@ -259,7 +259,7 @@ public sealed class WebUiControllerTests : IAsyncLifetime
         {
             var profile = new
             {
-                key = " Runtime.Local ",
+                key = " Runtime-Local ",
                 displayName = " Local Runtime ",
                 enabled = true,
                 environmentProvider = "localworkspace",
@@ -289,7 +289,7 @@ public sealed class WebUiControllerTests : IAsyncLifetime
             );
             Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
             Assert.Equal(
-                "/api/webui/runtime-environments/runtime.local",
+                "/api/webui/runtime-environments/runtime-local",
                 createResponse.Headers.Location?.ToString()
             );
             await AssertCredentialRedactedAsync(createResponse, credentialValue);
@@ -311,11 +311,11 @@ public sealed class WebUiControllerTests : IAsyncLifetime
             using var listJson = JsonDocument.Parse(listBody);
             Assert.Contains(
                 listJson.RootElement.EnumerateArray(),
-                environment => environment.GetProperty("key").GetString() == "runtime.local"
+                environment => environment.GetProperty("key").GetString() == "runtime-local"
             );
 
             using var getResponse = await _client.GetAsync(
-                "/api/webui/runtime-environments/RUNTIME.LOCAL"
+                "/api/webui/runtime-environments/RUNTIME-LOCAL"
             );
             Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
             var getBody = await AssertCredentialRedactedAsync(getResponse, credentialValue);
@@ -339,7 +339,7 @@ public sealed class WebUiControllerTests : IAsyncLifetime
 
             var update = new
             {
-                key = "runtime.local",
+                key = "runtime-local",
                 displayName = "Updated Local Runtime",
                 enabled = false,
                 environmentProvider = "LocalWorkspace",
@@ -363,7 +363,7 @@ public sealed class WebUiControllerTests : IAsyncLifetime
                 },
             };
             using var updateResponse = await _client.PutAsJsonAsync(
-                "/api/webui/runtime-environments/runtime.local",
+                "/api/webui/runtime-environments/runtime-local",
                 update
             );
             Assert.Equal(HttpStatusCode.OK, updateResponse.StatusCode);
@@ -384,12 +384,12 @@ public sealed class WebUiControllerTests : IAsyncLifetime
             );
 
             using var deleteResponse = await _client.DeleteAsync(
-                "/api/webui/runtime-environments/runtime.local"
+                "/api/webui/runtime-environments/runtime-local"
             );
             Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
 
             using var missingResponse = await _client.GetAsync(
-                "/api/webui/runtime-environments/runtime.local"
+                "/api/webui/runtime-environments/runtime-local"
             );
             await AssertProblemAsync(
                 missingResponse,

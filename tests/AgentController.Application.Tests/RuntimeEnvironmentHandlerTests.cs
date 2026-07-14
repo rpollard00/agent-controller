@@ -95,7 +95,7 @@ public sealed class RuntimeEnvironmentHandlerTests
         var environments = new FakeRuntimeEnvironmentStore();
         var handler = new CreateRuntimeEnvironmentCommandHandler(environments);
         var suppliedTimestamp = new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var profile = CreateProfile("  LOCAL.PI  ") with
+        var profile = CreateProfile("  LOCAL-PI  ") with
         {
             DisplayName = "  Local pi-materia  ",
             EnvironmentProvider = " localworkspace ",
@@ -135,7 +135,7 @@ public sealed class RuntimeEnvironmentHandlerTests
         Assert.Equal(RuntimeEnvironmentOperationStatus.Succeeded, result.Status);
         var persisted = Assert.IsType<RuntimeEnvironmentProfile>(environments.LastCreated);
         Assert.Same(persisted, result.Environment);
-        Assert.Equal("local.pi", persisted.Key);
+        Assert.Equal("local-pi", persisted.Key);
         Assert.Equal("Local pi-materia", persisted.DisplayName);
         Assert.Equal("LocalWorkspace", persisted.EnvironmentProvider);
         Assert.Equal("~/.agent-controller/runs", persisted.EnvironmentSettings.WorkspaceRoot);

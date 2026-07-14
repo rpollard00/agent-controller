@@ -233,6 +233,30 @@ describe('runtime environment screens', () => {
     expect(api.environments.create).not.toHaveBeenCalled();
   });
 
+  it('rejects an invalid environment name before submitting', async () => {
+    window.history.replaceState({}, '', '/runtime-environments/new');
+    const api = createApi([]);
+    render(App, { client: api.client });
+
+    await fireEvent.input(await screen.findByLabelText(/Environment key/), {
+      target: { value: '1bad.name' },
+    });
+    await fireEvent.input(screen.getByLabelText(/Display name/), {
+      target: { value: 'Bad runtime' },
+    });
+    await fireEvent.input(screen.getByLabelText(/Controller base URL/), {
+      target: { value: 'https://controller.example.test/' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create environment' }));
+
+    expect(
+      await screen.findByText(
+        'Use 1 to 32 characters starting with a letter and only letters, numbers, hyphens, or underscores.',
+      ),
+    ).toBeVisible();
+    expect(api.environments.create).not.toHaveBeenCalled();
+  });
+
   it('edits runtime and workspace settings while preserving the immutable key', async () => {
     window.history.replaceState({}, '', '/runtime-environments/runtime-main/edit');
     const api = createApi();

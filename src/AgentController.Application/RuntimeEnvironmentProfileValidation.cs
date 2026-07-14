@@ -8,7 +8,10 @@ internal static class RuntimeEnvironmentProfileValidation
     private const string LocalWorkspaceProvider = "LocalWorkspace";
     private const string PiMateriaProvider = "PiMateria";
     private const string MockPiMateriaProvider = "MockPiMateria";
-    private const int MaximumKeyLength = 128;
+    // The runtime environment key is treated as the environment name: 1-32 characters,
+    // the first an ASCII letter and the remainder ASCII letters, numbers, hyphens, or
+    // underscores. The field keeps its internal API/storage role and edit immutability.
+    private const int MaximumKeyLength = 32;
     private const int MaximumDisplayNameLength = 256;
     private const int MaximumProviderNameLength = 128;
     private const int MaximumPathLength = 2048;
@@ -129,31 +132,36 @@ internal static class RuntimeEnvironmentProfileValidation
     {
         if (key.Length == 0)
         {
-            errors.Add("key", "A key is required.");
+            errors.Add("key", "An environment name is required.");
             return;
         }
 
         if (key.Length > MaximumKeyLength)
         {
-            errors.Add("key", $"The key must be {MaximumKeyLength} characters or fewer.");
+            errors.Add(
+                "key",
+                $"The environment name must be {MaximumKeyLength} characters or fewer."
+            );
         }
 
-        if (!IsAsciiLetterOrDigit(key[0]) || !IsAsciiLetterOrDigit(key[^1]))
+        if (!IsAsciiLetter(key[0]))
         {
-            errors.Add("key", "The key must start and end with a letter or number.");
+            errors.Add("key", "The environment name must start with a letter.");
         }
 
-        if (key.Any(character => !IsKeyCharacter(character)))
+        if (key.Any(character => !IsEnvironmentNameCharacter(character)))
         {
             errors.Add(
                 "key",
-                "The key may contain only letters, numbers, periods, underscores, and hyphens."
+                "The environment name may contain only letters, numbers, hyphens, and underscores."
             );
         }
     }
 
-    private static bool IsKeyCharacter(char character) =>
-        IsAsciiLetterOrDigit(character) || character is '.' or '_' or '-';
+    private static bool IsEnvironmentNameCharacter(char character) =>
+        IsAsciiLetterOrDigit(character) || character is '_' or '-';
+
+    private static bool IsAsciiLetter(char character) => character is >= 'a' and <= 'z';
 
     private static bool IsAsciiLetterOrDigit(char character) =>
         character is >= 'a' and <= 'z' or >= '0' and <= '9';
