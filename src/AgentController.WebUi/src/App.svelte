@@ -175,7 +175,7 @@
         {client}
         navigate={(path) => showPath(path, true)}
       />
-    {:else if currentRoute.id === 'ado-environments'}
+    {:else if currentRoute.id === 'work-source-environments'}
       <AzureDevOpsEnvironmentPage
         {pathname}
         {client}

@@ -51,7 +51,7 @@ describe('App shell', () => {
       'page',
     );
     expect(
-      within(primaryNavigation).getByRole('link', { name: 'Azure DevOps Environments' }),
+      within(primaryNavigation).getByRole('link', { name: 'Work source environments' }),
     ).toBeInTheDocument();
     expect(
       within(primaryNavigation).getByRole('link', { name: 'Runtime Environments' }),

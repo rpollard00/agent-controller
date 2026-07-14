@@ -3,7 +3,7 @@
   import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
   import Card from '../../components/ui/Card.svelte';
-  import { azureDevOpsEnvironmentEditPath } from './azureDevOpsEnvironmentRoutes';
+  import { workSourceEnvironmentEditPath } from './workSourceEnvironmentRoutes';
 
   let {
     environment,
@@ -39,7 +39,7 @@
           {updating ? 'Saving…' : environment.enabled ? 'Disable' : 'Enable'}
         </Button>
         <a
-          href={azureDevOpsEnvironmentEditPath(environment.key)}
+          href={workSourceEnvironmentEditPath(environment.key)}
           class="inline-flex min-h-10 items-center rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"
         >
           Edit
@@ -137,7 +137,7 @@
   </Card>
 
   <a
-    href="/ado-environments"
+    href="/work-source-environments"
     class="inline-flex min-h-10 items-center rounded-lg px-3 py-2 text-sm font-semibold text-cyan-300 hover:bg-slate-800 hover:text-cyan-200"
   >
     Back to Azure DevOps environments

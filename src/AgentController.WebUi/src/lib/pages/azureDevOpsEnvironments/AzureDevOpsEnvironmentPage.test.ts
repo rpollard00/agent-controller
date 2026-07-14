@@ -88,11 +88,11 @@ async function completeRequiredCreateFields(): Promise<void> {
 
 describe('Azure DevOps environment screens', () => {
   beforeEach(() => {
-    window.history.replaceState({}, '', '/ado-environments');
+    window.history.replaceState({}, '', '/work-source-environments');
   });
 
   it('creates an environment with board policy and a credential reference', async () => {
-    window.history.replaceState({}, '', '/ado-environments/new');
+    window.history.replaceState({}, '', '/work-source-environments/new');
     const api = createApi([]);
     render(App, { client: api.client });
 
@@ -142,11 +142,11 @@ describe('Azure DevOps environment screens', () => {
     expect(
       await screen.findByText('Azure DevOps environment “Secondary boards” was created.'),
     ).toBeVisible();
-    expect(window.location.pathname).toBe('/ado-environments/ado-secondary');
+    expect(window.location.pathname).toBe('/work-source-environments/ado-secondary');
   });
 
   it('validates required fields before submitting', async () => {
-    window.history.replaceState({}, '', '/ado-environments/new');
+    window.history.replaceState({}, '', '/work-source-environments/new');
     const api = createApi([]);
     render(App, { client: api.client });
 
@@ -160,7 +160,7 @@ describe('Azure DevOps environment screens', () => {
   });
 
   it('edits board settings and environment enablement while preserving the key', async () => {
-    window.history.replaceState({}, '', '/ado-environments/ado-main/edit');
+    window.history.replaceState({}, '', '/work-source-environments/ado-main/edit');
     const api = createApi();
     render(App, { client: api.client });
 
@@ -195,7 +195,7 @@ describe('Azure DevOps environment screens', () => {
   });
 
   it('shows field-level server validation errors', async () => {
-    window.history.replaceState({}, '', '/ado-environments/new');
+    window.history.replaceState({}, '', '/work-source-environments/new');
     const api = createApi([]);
     api.environments.create.mockRejectedValueOnce(
       new ApiError({
@@ -222,7 +222,7 @@ describe('Azure DevOps environment screens', () => {
   });
 
   it('renders only the PAT environment-variable reference, never a returned secret value', async () => {
-    window.history.replaceState({}, '', '/ado-environments/ado-main');
+    window.history.replaceState({}, '', '/work-source-environments/ado-main');
     const responseWithUnexpectedSecret = {
       ...environment,
       personalAccessToken: 'super-secret-value',

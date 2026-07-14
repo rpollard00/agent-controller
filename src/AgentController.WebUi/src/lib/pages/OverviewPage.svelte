@@ -8,9 +8,9 @@
       description: 'Onboard source repositories and connect them to managed environments.',
     },
     {
-      href: '/ado-environments',
-      title: 'Azure DevOps Environments',
-      description: 'Configure organization, project, board policy, and credential references.',
+      href: '/work-source-environments',
+      title: 'Work source environments',
+      description: 'Configure work source organizations, projects, board policies, and credential references.',
     },
     {
       href: '/runtime-environments',

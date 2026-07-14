@@ -1,4 +1,4 @@
-export type RouteId = 'overview' | 'repositories' | 'ado-environments' | 'runtime-environments';
+export type RouteId = 'overview' | 'repositories' | 'work-source-environments' | 'runtime-environments';
 
 export interface AppRoute {
   id: RouteId;
@@ -27,12 +27,12 @@ export const routes: readonly AppRoute[] = [
     description: 'Onboard and configure source repositories for agent work.',
   },
   {
-    id: 'ado-environments',
-    path: '/ado-environments',
-    label: 'Azure DevOps Environments',
-    shortLabel: 'Azure DevOps',
-    title: 'Azure DevOps Environments',
-    description: 'Manage Azure DevOps organizations, projects, and board policies.',
+    id: 'work-source-environments',
+    path: '/work-source-environments',
+    label: 'Work source environments',
+    shortLabel: 'Work sources',
+    title: 'Work source environments',
+    description: 'Manage work source organizations, projects, and board policies.',
   },
   {
     id: 'runtime-environments',
@@ -53,8 +53,8 @@ export function matchRoute(pathname: string): AppRoute | undefined {
     return routes.find((route) => route.id === 'repositories');
   }
 
-  if (/^\/ado-environments\/(?:new|[^/]+(?:\/edit)?)$/.test(normalizedPath)) {
-    return routes.find((route) => route.id === 'ado-environments');
+  if (/^\/work-source-environments\/(?:new|[^/]+(?:\/edit)?)$/.test(normalizedPath)) {
+    return routes.find((route) => route.id === 'work-source-environments');
   }
 
   if (/^\/runtime-environments\/(?:new|[^/]+(?:\/edit)?)$/.test(normalizedPath)) {

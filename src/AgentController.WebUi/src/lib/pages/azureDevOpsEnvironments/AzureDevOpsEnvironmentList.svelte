@@ -4,9 +4,9 @@
   import Card from '../../components/ui/Card.svelte';
   import DataTable from '../../components/ui/DataTable.svelte';
   import {
-    azureDevOpsEnvironmentDetailPath,
-    azureDevOpsEnvironmentEditPath,
-  } from './azureDevOpsEnvironmentRoutes';
+    workSourceEnvironmentDetailPath,
+    workSourceEnvironmentEditPath,
+  } from './workSourceEnvironmentRoutes';
 
   let {
     environments,
@@ -40,7 +40,7 @@
         Add an environment to connect an Azure DevOps project and define its board policy.
       </p>
       <a
-        href="/ado-environments/new"
+        href="/work-source-environments/new"
         class="mt-5 inline-flex min-h-11 items-center justify-center rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-300"
       >
         Add your first environment
@@ -63,7 +63,7 @@
             <th class="px-4 py-4 font-medium" scope="row">
               <a
                 class="text-cyan-300 hover:text-cyan-200 hover:underline"
-                href={azureDevOpsEnvironmentDetailPath(profile.key)}
+                href={workSourceEnvironmentDetailPath(profile.key)}
               >
                 {profile.displayName}
               </a>
@@ -104,7 +104,7 @@
                       : 'Enable'}
                 </Button>
                 <a
-                  href={azureDevOpsEnvironmentEditPath(profile.key)}
+                  href={workSourceEnvironmentEditPath(profile.key)}
                   class="inline-flex min-h-10 items-center rounded-lg px-3 py-2 text-sm font-semibold text-slate-300 hover:bg-slate-800 hover:text-white"
                 >
                   Edit

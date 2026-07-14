@@ -10,10 +10,10 @@
   import AzureDevOpsEnvironmentForm from './AzureDevOpsEnvironmentForm.svelte';
   import AzureDevOpsEnvironmentList from './AzureDevOpsEnvironmentList.svelte';
   import {
-    azureDevOpsEnvironmentDetailPath,
-    parseAzureDevOpsEnvironmentRoute,
-    type AzureDevOpsEnvironmentRoute,
-  } from './azureDevOpsEnvironmentRoutes';
+    workSourceEnvironmentDetailPath,
+    parseWorkSourceEnvironmentRoute,
+    type WorkSourceEnvironmentRoute,
+  } from './workSourceEnvironmentRoutes';
 
   let {
     pathname,
@@ -39,7 +39,7 @@
   let mutationController: AbortController | undefined;
   let successNotice = $state<{ path: string; title: string; message: string }>();
 
-  const route = $derived(parseAzureDevOpsEnvironmentRoute(pathname));
+  const route = $derived(parseWorkSourceEnvironmentRoute(pathname));
   const title = $derived(pageTitle(route));
   const description = $derived(pageDescription(route));
   const visibleSuccessNotice = $derived(
@@ -62,14 +62,14 @@
     mutationController?.abort();
   });
 
-  function startLoad(currentRoute: AzureDevOpsEnvironmentRoute): void {
+  function startLoad(currentRoute: WorkSourceEnvironmentRoute): void {
     loadController?.abort();
     loadController = new AbortController();
     void loadRoute(currentRoute, loadController.signal);
   }
 
   async function loadRoute(
-    currentRoute: AzureDevOpsEnvironmentRoute,
+    currentRoute: WorkSourceEnvironmentRoute,
     signal: AbortSignal,
   ): Promise<void> {
     status = 'loading';
@@ -110,7 +110,7 @@
     try {
       if (route.view === 'create') {
         const created = await client.azureDevOpsEnvironments.create(profile, controller.signal);
-        const nextPath = azureDevOpsEnvironmentDetailPath(created.key);
+        const nextPath = workSourceEnvironmentDetailPath(created.key);
         successNotice = {
           path: nextPath,
           title: 'Environment created',
@@ -197,16 +197,16 @@
 
       if (route?.view === 'detail' || route?.view === 'edit') {
         successNotice = {
-          path: '/ado-environments',
+          path: '/work-source-environments',
           title: 'Environment deleted',
-          message: `Azure DevOps environment “${target.displayName}” was deleted.`,
+          message: `Azure DevOps environment "${target.displayName}" was deleted.`,
         };
-        navigate('/ado-environments');
+        navigate('/work-source-environments');
       } else {
         environments = environments.filter((profile) => profile.key !== target.key);
         status = environments.length > 0 ? 'ready' : 'empty';
         successNotice = {
-          path: '/ado-environments',
+          path: '/work-source-environments',
           title: 'Environment deleted',
           message: `Azure DevOps environment “${target.displayName}” was deleted.`,
         };
@@ -220,8 +220,8 @@
   }
 
   function cancelForm(): void {
-    if (route?.view === 'edit') navigate(azureDevOpsEnvironmentDetailPath(route.key));
-    else navigate('/ado-environments');
+    if (route?.view === 'edit') navigate(workSourceEnvironmentDetailPath(route.key));
+    else navigate('/work-source-environments');
   }
 
   function validationMessages(error: unknown): string[] {
@@ -230,14 +230,14 @@
     );
   }
 
-  function pageTitle(currentRoute: AzureDevOpsEnvironmentRoute | undefined): string {
+  function pageTitle(currentRoute: WorkSourceEnvironmentRoute | undefined): string {
     if (!currentRoute || currentRoute.view === 'list') return 'Azure DevOps Environments';
     if (currentRoute.view === 'create') return 'Add Azure DevOps environment';
     if (currentRoute.view === 'edit') return `Edit ${currentRoute.key}`;
     return currentRoute.key;
   }
 
-  function pageDescription(currentRoute: AzureDevOpsEnvironmentRoute | undefined): string {
+  function pageDescription(currentRoute: WorkSourceEnvironmentRoute | undefined): string {
     if (!currentRoute || currentRoute.view === 'list') {
       return 'Manage Azure DevOps organizations, projects, credential references, and board policies.';
     }
@@ -262,7 +262,7 @@
     </div>
     {#if route?.view === 'list'}
       <a
-        href="/ado-environments/new"
+        href="/work-source-environments/new"
         class="inline-flex min-h-11 shrink-0 items-center justify-center rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-300"
       >
         Add environment
@@ -312,7 +312,7 @@
           <Button variant="secondary" onclick={() => route && startLoad(route)}>Try again</Button>
           {#if route?.view !== 'list'}
             <a
-              href="/ado-environments"
+              href="/work-source-environments"
               class="inline-flex min-h-10 items-center rounded-lg px-4 py-2 text-sm font-semibold text-slate-300 hover:bg-slate-800 hover:text-white"
             >
               Back to Azure DevOps environments
