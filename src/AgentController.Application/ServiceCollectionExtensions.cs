@@ -42,24 +42,24 @@ public static class ServiceCollectionExtensions
         >();
         services.AddScoped<
             ICommandHandler<
-                CreateAzureDevOpsEnvironmentCommand,
+                CreateWorkSourceEnvironmentCommand,
                 AzureDevOpsEnvironmentOperationResult
             >,
-            CreateAzureDevOpsEnvironmentCommandHandler
+            CreateWorkSourceEnvironmentCommandHandler
         >();
         services.AddScoped<
             ICommandHandler<
-                UpdateAzureDevOpsEnvironmentCommand,
+                UpdateWorkSourceEnvironmentCommand,
                 AzureDevOpsEnvironmentOperationResult
             >,
-            UpdateAzureDevOpsEnvironmentCommandHandler
+            UpdateWorkSourceEnvironmentCommandHandler
         >();
         services.AddScoped<
             ICommandHandler<
-                DeleteAzureDevOpsEnvironmentCommand,
+                DeleteWorkSourceEnvironmentCommand,
                 AzureDevOpsEnvironmentOperationResult
             >,
-            DeleteAzureDevOpsEnvironmentCommandHandler
+            DeleteWorkSourceEnvironmentCommandHandler
         >();
         services.AddScoped<
             ICommandHandler<CreateRuntimeEnvironmentCommand, RuntimeEnvironmentOperationResult>,

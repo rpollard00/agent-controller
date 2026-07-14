@@ -3,15 +3,15 @@ using AgentController.Application.Results;
 
 namespace AgentController.Application.Commands;
 
-/// <summary>Validates, normalizes, and creates a managed Azure DevOps environment.</summary>
-public sealed class CreateAzureDevOpsEnvironmentCommandHandler(
+/// <summary>Validates, normalizes, and creates a managed work source environment.</summary>
+public sealed class CreateWorkSourceEnvironmentCommandHandler(
     IWorkSourceEnvironmentStore environmentStore
-) : ICommandHandler<CreateAzureDevOpsEnvironmentCommand, AzureDevOpsEnvironmentOperationResult>
+) : ICommandHandler<CreateWorkSourceEnvironmentCommand, AzureDevOpsEnvironmentOperationResult>
 {
     private readonly IWorkSourceEnvironmentStore _environmentStore = environmentStore;
 
     public async Task<AzureDevOpsEnvironmentOperationResult> HandleAsync(
-        CreateAzureDevOpsEnvironmentCommand command,
+        CreateWorkSourceEnvironmentCommand command,
         CancellationToken cancellationToken
     )
     {
@@ -20,7 +20,7 @@ public sealed class CreateAzureDevOpsEnvironmentCommandHandler(
             return AzureDevOpsEnvironmentOperationResult.ValidationFailed(
                 new Dictionary<string, string[]>
                 {
-                    ["profile"] = ["An Azure DevOps environment profile is required."],
+                    ["profile"] = ["A work source environment profile is required."],
                 }
             );
         }
@@ -40,7 +40,7 @@ public sealed class CreateAzureDevOpsEnvironmentCommandHandler(
         return created
             ? AzureDevOpsEnvironmentOperationResult.Succeeded(profile)
             : AzureDevOpsEnvironmentOperationResult.Conflict(
-                $"Azure DevOps environment '{profile.Key}' already exists."
+                $"Work source environment '{profile.Key}' already exists."
             );
     }
 }

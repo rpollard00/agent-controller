@@ -4,18 +4,18 @@ using AgentController.Application.Results;
 namespace AgentController.Application.Commands;
 
 /// <summary>
-/// Validates and deletes an unreferenced managed Azure DevOps environment profile.
+/// Validates and deletes an unreferenced managed work source environment profile.
 /// </summary>
-public sealed class DeleteAzureDevOpsEnvironmentCommandHandler(
+public sealed class DeleteWorkSourceEnvironmentCommandHandler(
     IWorkSourceEnvironmentStore environmentStore,
     IRepositoryStore repositoryStore
-) : ICommandHandler<DeleteAzureDevOpsEnvironmentCommand, AzureDevOpsEnvironmentOperationResult>
+) : ICommandHandler<DeleteWorkSourceEnvironmentCommand, AzureDevOpsEnvironmentOperationResult>
 {
     private readonly IWorkSourceEnvironmentStore _environmentStore = environmentStore;
     private readonly IRepositoryStore _repositoryStore = repositoryStore;
 
     public async Task<AzureDevOpsEnvironmentOperationResult> HandleAsync(
-        DeleteAzureDevOpsEnvironmentCommand command,
+        DeleteWorkSourceEnvironmentCommand command,
         CancellationToken cancellationToken
     )
     {
@@ -29,7 +29,7 @@ public sealed class DeleteAzureDevOpsEnvironmentCommandHandler(
         if (existing is null)
         {
             return AzureDevOpsEnvironmentOperationResult.NotFound(
-                $"Azure DevOps environment '{key.Key}' was not found."
+                $"Work source environment '{key.Key}' was not found."
             );
         }
 
@@ -48,7 +48,7 @@ public sealed class DeleteAzureDevOpsEnvironmentCommandHandler(
         if (referencingRepository is not null)
         {
             return AzureDevOpsEnvironmentOperationResult.Conflict(
-                $"Azure DevOps environment '{key.Key}' is referenced by repository '{referencingRepository.Key}'."
+                $"Work source environment '{key.Key}' is referenced by repository '{referencingRepository.Key}'."
             );
         }
 
@@ -56,7 +56,7 @@ public sealed class DeleteAzureDevOpsEnvironmentCommandHandler(
         return deleted
             ? AzureDevOpsEnvironmentOperationResult.Succeeded()
             : AzureDevOpsEnvironmentOperationResult.NotFound(
-                $"Azure DevOps environment '{key.Key}' was not found."
+                $"Work source environment '{key.Key}' was not found."
             );
     }
 }

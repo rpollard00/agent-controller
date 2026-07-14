@@ -3,15 +3,15 @@ using AgentController.Application.Results;
 
 namespace AgentController.Application.Commands;
 
-/// <summary>Validates and updates mutable Azure DevOps environment profile fields.</summary>
-public sealed class UpdateAzureDevOpsEnvironmentCommandHandler(
+/// <summary>Validates and updates mutable work source environment profile fields.</summary>
+public sealed class UpdateWorkSourceEnvironmentCommandHandler(
     IWorkSourceEnvironmentStore environmentStore
-) : ICommandHandler<UpdateAzureDevOpsEnvironmentCommand, AzureDevOpsEnvironmentOperationResult>
+) : ICommandHandler<UpdateWorkSourceEnvironmentCommand, AzureDevOpsEnvironmentOperationResult>
 {
     private readonly IWorkSourceEnvironmentStore _environmentStore = environmentStore;
 
     public async Task<AzureDevOpsEnvironmentOperationResult> HandleAsync(
-        UpdateAzureDevOpsEnvironmentCommand command,
+        UpdateWorkSourceEnvironmentCommand command,
         CancellationToken cancellationToken
     )
     {
@@ -26,7 +26,7 @@ public sealed class UpdateAzureDevOpsEnvironmentCommandHandler(
             return AzureDevOpsEnvironmentOperationResult.ValidationFailed(
                 new Dictionary<string, string[]>
                 {
-                    ["profile"] = ["An Azure DevOps environment profile is required."],
+                    ["profile"] = ["A work source environment profile is required."],
                 }
             );
         }
@@ -46,7 +46,7 @@ public sealed class UpdateAzureDevOpsEnvironmentCommandHandler(
                 {
                     ["key"] =
                     [
-                        "Azure DevOps environment keys are immutable; the request key must match the profile key.",
+                        "Work source environment keys are immutable; the request key must match the profile key.",
                     ],
                 }
             );
@@ -56,7 +56,7 @@ public sealed class UpdateAzureDevOpsEnvironmentCommandHandler(
         if (existing is null)
         {
             return AzureDevOpsEnvironmentOperationResult.NotFound(
-                $"Azure DevOps environment '{routeKey.Key}' was not found."
+                $"Work source environment '{routeKey.Key}' was not found."
             );
         }
 
@@ -70,7 +70,7 @@ public sealed class UpdateAzureDevOpsEnvironmentCommandHandler(
         return updated
             ? AzureDevOpsEnvironmentOperationResult.Succeeded(profile)
             : AzureDevOpsEnvironmentOperationResult.NotFound(
-                $"Azure DevOps environment '{routeKey.Key}' was not found."
+                $"Work source environment '{routeKey.Key}' was not found."
             );
     }
 }

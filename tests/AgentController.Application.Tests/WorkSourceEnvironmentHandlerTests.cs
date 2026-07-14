@@ -8,7 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace AgentController.Application.Tests;
 
-public sealed class AzureDevOpsEnvironmentHandlerTests
+public sealed class WorkSourceEnvironmentHandlerTests
 {
     [Fact]
     public async Task ListAndGet_ReturnStoredProfilesAndNormalizeLookupKeyWithoutResolvingPat()
@@ -39,7 +39,7 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
 
             Assert.Equal(["ado-primary", "zulu"], listed.Select(profile => profile.Key));
             Assert.Equal(AzureDevOpsEnvironmentOperationStatus.Succeeded, read.Status);
-            var profile = Assert.IsType<AzureDevOpsEnvironmentProfile>(read.Environment);
+            var profile = Assert.IsType<WorkSourceEnvironmentProfile>(read.Environment);
             Assert.Equal(environmentVariable, profile.PatEnvironmentVariable);
             Assert.Equal("ado-primary", environments.LastReadKey);
             Assert.DoesNotContain(
@@ -80,7 +80,7 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
     public async Task Create_NormalizesProfileAndSetsManagedTimestamps()
     {
         var environments = new FakeWorkSourceEnvironmentStore();
-        var handler = new CreateAzureDevOpsEnvironmentCommandHandler(environments);
+        var handler = new CreateWorkSourceEnvironmentCommandHandler(environments);
         var suppliedTimestamp = new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
         var before = DateTimeOffset.UtcNow;
         var profile = CreateProfile("  ADO.Primary  ") with
@@ -88,11 +88,9 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
             DisplayName = "  Primary Boards  ",
             OrganizationUrl = "  https://dev.azure.com/example/  ",
             Project = "  Agent Controller  ",
-            WorkItemType = "  User Story  ",
-            EligibleTags = [" ready ", "READY", " agent "],
-            ExcludedTags = [" blocked ", "BLOCKED"],
-            EligibleStates = [" New ", "NEW"],
-            ExcludedStates = [" Removed "],
+            Provider = "  AzureDevOpsBoards  ",
+            TagPrefix = "  agent  ",
+            CompletedStates = [" Resolved ", "RESOLVED", " Removed "],
             ActiveState = " Active ",
             CompletedState = " Resolved ",
             PatEnvironmentVariable = " ADO_PRIMARY_PAT ",
@@ -101,23 +99,21 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
         };
 
         var result = await handler.HandleAsync(
-            new CreateAzureDevOpsEnvironmentCommand(profile),
+            new CreateWorkSourceEnvironmentCommand(profile),
             CancellationToken.None
         );
         var after = DateTimeOffset.UtcNow;
 
         Assert.Equal(AzureDevOpsEnvironmentOperationStatus.Succeeded, result.Status);
-        var persisted = Assert.IsType<AzureDevOpsEnvironmentProfile>(environments.LastCreated);
+        var persisted = Assert.IsType<WorkSourceEnvironmentProfile>(environments.LastCreated);
         Assert.Same(persisted, result.Environment);
         Assert.Equal("ado.primary", persisted.Key);
         Assert.Equal("Primary Boards", persisted.DisplayName);
         Assert.Equal("https://dev.azure.com/example", persisted.OrganizationUrl);
         Assert.Equal("Agent Controller", persisted.Project);
-        Assert.Equal("User Story", persisted.WorkItemType);
-        Assert.Equal(["ready", "agent"], persisted.EligibleTags);
-        Assert.Equal(["blocked"], persisted.ExcludedTags);
-        Assert.Equal(["New"], persisted.EligibleStates);
-        Assert.Equal(["Removed"], persisted.ExcludedStates);
+        Assert.Equal("AzureDevOpsBoards", persisted.Provider);
+        Assert.Equal("agent", persisted.TagPrefix);
+        Assert.Equal(["Resolved", "Removed"], persisted.CompletedStates);
         Assert.Equal("Active", persisted.ActiveState);
         Assert.Equal("Resolved", persisted.CompletedState);
         Assert.Equal("ADO_PRIMARY_PAT", persisted.PatEnvironmentVariable);
@@ -129,24 +125,21 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
     public async Task Create_RejectsInvalidConnectionBoardAndCredentialSettings()
     {
         var environments = new FakeWorkSourceEnvironmentStore();
-        var handler = new CreateAzureDevOpsEnvironmentCommandHandler(environments);
+        var handler = new CreateWorkSourceEnvironmentCommandHandler(environments);
         var profile = CreateProfile("not valid") with
         {
             DisplayName = " ",
             OrganizationUrl = "ftp://user:secret@example.test/org?token=secret",
             Project = " ",
-            WorkItemType = " ",
-            EligibleTags = ["ready", " "],
-            ExcludedTags = ["READY"],
-            EligibleStates = ["New"],
-            ExcludedStates = ["new"],
+            TagPrefix = "  ",
+            CompletedStates = [" "],
             ActiveState = "Active",
             CompletedState = "active",
             PatEnvironmentVariable = "ENV:raw-pat-value",
         };
 
         var result = await handler.HandleAsync(
-            new CreateAzureDevOpsEnvironmentCommand(profile),
+            new CreateWorkSourceEnvironmentCommand(profile),
             CancellationToken.None
         );
 
@@ -155,10 +148,6 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
         Assert.Contains("displayName", result.ValidationErrors.Keys);
         Assert.Contains("organizationUrl", result.ValidationErrors.Keys);
         Assert.Contains("project", result.ValidationErrors.Keys);
-        Assert.Contains("workItemType", result.ValidationErrors.Keys);
-        Assert.Contains("eligibleTags", result.ValidationErrors.Keys);
-        Assert.Contains("excludedTags", result.ValidationErrors.Keys);
-        Assert.Contains("excludedStates", result.ValidationErrors.Keys);
         Assert.Contains("completedState", result.ValidationErrors.Keys);
         Assert.Contains("patEnvironmentVariable", result.ValidationErrors.Keys);
         Assert.Null(environments.LastCreated);
@@ -168,14 +157,14 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
     public async Task Create_RejectsMissingProfileAndDuplicateNormalizedKey()
     {
         var environments = new FakeWorkSourceEnvironmentStore(CreateProfile("shared"));
-        var handler = new CreateAzureDevOpsEnvironmentCommandHandler(environments);
+        var handler = new CreateWorkSourceEnvironmentCommandHandler(environments);
 
         var missing = await handler.HandleAsync(
-            new CreateAzureDevOpsEnvironmentCommand(null!),
+            new CreateWorkSourceEnvironmentCommand(null!),
             CancellationToken.None
         );
         var duplicate = await handler.HandleAsync(
-            new CreateAzureDevOpsEnvironmentCommand(CreateProfile(" SHARED ")),
+            new CreateWorkSourceEnvironmentCommand(CreateProfile(" SHARED ")),
             CancellationToken.None
         );
 
@@ -200,14 +189,15 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
             UpdatedAt = createdAt,
         };
         var environments = new FakeWorkSourceEnvironmentStore(original);
-        var handler = new UpdateAzureDevOpsEnvironmentCommandHandler(environments);
+        var handler = new UpdateWorkSourceEnvironmentCommandHandler(environments);
         var suppliedTimestamp = new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
         var update = CreateProfile(" PRODUCTION ") with
         {
             DisplayName = " Updated Boards ",
             Enabled = false,
             Project = " Updated Project ",
-            EligibleTags = [" agent ", "AGENT"],
+            TagPrefix = " custom ",
+            CompletedStates = [" Done ", "DONE"],
             PatEnvironmentVariable = " ADO_UPDATED_PAT ",
             CreatedAt = suppliedTimestamp,
             UpdatedAt = suppliedTimestamp,
@@ -215,18 +205,19 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
         var before = DateTimeOffset.UtcNow;
 
         var result = await handler.HandleAsync(
-            new UpdateAzureDevOpsEnvironmentCommand(" production ", update),
+            new UpdateWorkSourceEnvironmentCommand(" production ", update),
             CancellationToken.None
         );
         var after = DateTimeOffset.UtcNow;
 
         Assert.Equal(AzureDevOpsEnvironmentOperationStatus.Succeeded, result.Status);
-        var persisted = Assert.IsType<AzureDevOpsEnvironmentProfile>(environments.LastUpdated);
+        var persisted = Assert.IsType<WorkSourceEnvironmentProfile>(environments.LastUpdated);
         Assert.Equal("production", persisted.Key);
         Assert.Equal("Updated Boards", persisted.DisplayName);
         Assert.False(persisted.Enabled);
         Assert.Equal("Updated Project", persisted.Project);
-        Assert.Equal(["agent"], persisted.EligibleTags);
+        Assert.Equal("custom", persisted.TagPrefix);
+        Assert.Equal(["Done"], persisted.CompletedStates);
         Assert.Equal("ADO_UPDATED_PAT", persisted.PatEnvironmentVariable);
         Assert.Equal(createdAt, persisted.CreatedAt);
         Assert.InRange(persisted.UpdatedAt, before, after);
@@ -237,14 +228,14 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
     public async Task Update_RejectsImmutableKeyChangesAndReturnsNotFoundForMissingProfile()
     {
         var environments = new FakeWorkSourceEnvironmentStore(CreateProfile("original"));
-        var handler = new UpdateAzureDevOpsEnvironmentCommandHandler(environments);
+        var handler = new UpdateWorkSourceEnvironmentCommandHandler(environments);
 
         var changedKey = await handler.HandleAsync(
-            new UpdateAzureDevOpsEnvironmentCommand("original", CreateProfile("replacement")),
+            new UpdateWorkSourceEnvironmentCommand("original", CreateProfile("replacement")),
             CancellationToken.None
         );
         var missing = await handler.HandleAsync(
-            new UpdateAzureDevOpsEnvironmentCommand("missing", CreateProfile("missing")),
+            new UpdateWorkSourceEnvironmentCommand("missing", CreateProfile("missing")),
             CancellationToken.None
         );
 
@@ -266,10 +257,10 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
             new RepositoryProfile { Key = "service-b", AzureDevOpsEnvironmentKey = " SHARED " },
             new RepositoryProfile { Key = "service-a", AzureDevOpsEnvironmentKey = "shared" }
         );
-        var handler = new DeleteAzureDevOpsEnvironmentCommandHandler(environments, repositories);
+        var handler = new DeleteWorkSourceEnvironmentCommandHandler(environments, repositories);
 
         var result = await handler.HandleAsync(
-            new DeleteAzureDevOpsEnvironmentCommand(" SHARED "),
+            new DeleteWorkSourceEnvironmentCommand(" SHARED "),
             CancellationToken.None
         );
 
@@ -287,21 +278,21 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
     public async Task Delete_RemovesUnreferencedEnvironmentAndReturnsTypedMissingOutcome()
     {
         var environments = new FakeWorkSourceEnvironmentStore(CreateProfile("temporary"));
-        var handler = new DeleteAzureDevOpsEnvironmentCommandHandler(
+        var handler = new DeleteWorkSourceEnvironmentCommandHandler(
             environments,
             new FakeRepositoryStore()
         );
 
         var deleted = await handler.HandleAsync(
-            new DeleteAzureDevOpsEnvironmentCommand(" TEMPORARY "),
+            new DeleteWorkSourceEnvironmentCommand(" TEMPORARY "),
             CancellationToken.None
         );
         var missing = await handler.HandleAsync(
-            new DeleteAzureDevOpsEnvironmentCommand("temporary"),
+            new DeleteWorkSourceEnvironmentCommand("temporary"),
             CancellationToken.None
         );
         var invalid = await handler.HandleAsync(
-            new DeleteAzureDevOpsEnvironmentCommand("bad key"),
+            new DeleteWorkSourceEnvironmentCommand("bad key"),
             CancellationToken.None
         );
 
@@ -312,7 +303,7 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
     }
 
     [Fact]
-    public void AddApplicationHandlers_RegistersAzureDevOpsEnvironmentCommandsAndQueries()
+    public void AddApplicationHandlers_RegistersWorkSourceEnvironmentCommandsAndQueries()
     {
         var services = new ServiceCollection();
 
@@ -320,29 +311,29 @@ public sealed class AzureDevOpsEnvironmentHandlerTests
 
         AssertRegistration<
             ICommandHandler<
-                CreateAzureDevOpsEnvironmentCommand,
+                CreateWorkSourceEnvironmentCommand,
                 AzureDevOpsEnvironmentOperationResult
             >,
-            CreateAzureDevOpsEnvironmentCommandHandler
+            CreateWorkSourceEnvironmentCommandHandler
         >(services);
         AssertRegistration<
             ICommandHandler<
-                UpdateAzureDevOpsEnvironmentCommand,
+                UpdateWorkSourceEnvironmentCommand,
                 AzureDevOpsEnvironmentOperationResult
             >,
-            UpdateAzureDevOpsEnvironmentCommandHandler
+            UpdateWorkSourceEnvironmentCommandHandler
         >(services);
         AssertRegistration<
             ICommandHandler<
-                DeleteAzureDevOpsEnvironmentCommand,
+                DeleteWorkSourceEnvironmentCommand,
                 AzureDevOpsEnvironmentOperationResult
             >,
-            DeleteAzureDevOpsEnvironmentCommandHandler
+            DeleteWorkSourceEnvironmentCommandHandler
         >(services);
         AssertRegistration<
             IQueryHandler<
                 ListAzureDevOpsEnvironmentsQuery,
-                IReadOnlyList<AzureDevOpsEnvironmentProfile>
+                IReadOnlyList<WorkSourceEnvironmentProfile>
             >,
             ListAzureDevOpsEnvironmentsQueryHandler
         >(services);

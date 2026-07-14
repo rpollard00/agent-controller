@@ -115,16 +115,16 @@ public static class WebUiControllers
         group.MapPost(
             "",
             async (
-                AzureDevOpsEnvironmentProfile profile,
+                WorkSourceEnvironmentProfile profile,
                 ICommandHandler<
-                    CreateAzureDevOpsEnvironmentCommand,
+                    CreateWorkSourceEnvironmentCommand,
                     AzureDevOpsEnvironmentOperationResult
                 > handler,
                 CancellationToken cancellationToken
             ) =>
             {
                 var result = await handler.HandleAsync(
-                    new CreateAzureDevOpsEnvironmentCommand(profile),
+                    new CreateWorkSourceEnvironmentCommand(profile),
                     cancellationToken
                 );
                 return MapResult(
@@ -178,16 +178,16 @@ public static class WebUiControllers
             "/{key}",
             async (
                 string key,
-                AzureDevOpsEnvironmentProfile profile,
+                WorkSourceEnvironmentProfile profile,
                 ICommandHandler<
-                    UpdateAzureDevOpsEnvironmentCommand,
+                    UpdateWorkSourceEnvironmentCommand,
                     AzureDevOpsEnvironmentOperationResult
                 > handler,
                 CancellationToken cancellationToken
             ) =>
             {
                 var result = await handler.HandleAsync(
-                    new UpdateAzureDevOpsEnvironmentCommand(key, profile),
+                    new UpdateWorkSourceEnvironmentCommand(key, profile),
                     cancellationToken
                 );
                 return MapResult(result, Results.Ok);
@@ -199,14 +199,14 @@ public static class WebUiControllers
             async (
                 string key,
                 ICommandHandler<
-                    DeleteAzureDevOpsEnvironmentCommand,
+                    DeleteWorkSourceEnvironmentCommand,
                     AzureDevOpsEnvironmentOperationResult
                 > handler,
                 CancellationToken cancellationToken
             ) =>
             {
                 var result = await handler.HandleAsync(
-                    new DeleteAzureDevOpsEnvironmentCommand(key),
+                    new DeleteWorkSourceEnvironmentCommand(key),
                     cancellationToken
                 );
                 return MapResult(result, _ => Results.NoContent());
