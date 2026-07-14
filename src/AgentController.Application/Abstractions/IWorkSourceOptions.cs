@@ -33,4 +33,16 @@ public interface IWorkSourceOptions
     /// so the work item becomes immediately retryable.
     /// </summary>
     IReadOnlyList<string>? EligibleStates { get; }
+
+    /// <summary>
+    /// Work item states that are considered finished and not picked up.
+    /// Items in these states are excluded from discovery queries.
+    /// </summary>
+    IReadOnlyList<string> CompletedStates { get; }
+
+    /// <summary>
+    /// Prefix used for controller-owned lifecycle tags on the board.
+    /// Defaults to "agent" when not configured.
+    /// </summary>
+    string TagPrefix { get; }
 }

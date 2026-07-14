@@ -15,5 +15,5 @@ public interface IConfiguredProfileSource
     RuntimeEnvironmentProfile GetRuntimeEnvironment(RepositoryProfile repository);
 
     /// <summary>Gets the configured work source fallback, or <see langword="null"/> when absent.</summary>
-    WorkSourceEnvironmentProfile? GetAzureDevOpsEnvironment();
+    WorkSourceEnvironmentProfile? GetWorkSourceEnvironment();
 }

@@ -109,7 +109,7 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
             }
         }
 
-        var configured = _configuredProfiles.GetAzureDevOpsEnvironment();
+        var configured = _configuredProfiles.GetWorkSourceEnvironment();
         return configured is null
             ? null
             : new ResolvedWorkSourceEnvironment(configured, IsManaged: false);
@@ -129,7 +129,7 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
             return managed;
         }
 
-        var configured = _configuredProfiles.GetAzureDevOpsEnvironment();
+        var configured = _configuredProfiles.GetWorkSourceEnvironment();
         return configured is null
             ? []
             : [new ResolvedWorkSourceEnvironment(configured, IsManaged: false)];

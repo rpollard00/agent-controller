@@ -28,6 +28,24 @@ public sealed class WorkSourceOptions : IWorkSourceOptions
     public string? Project { get; init; }
 
     /// <summary>
+    /// Prefix used for controller-owned lifecycle tags on the board.
+    /// Defaults to "agent" producing tags like agent-ready, agent-active,
+    /// agent-failed, agent-needs-human.
+    /// </summary>
+    public string TagPrefix { get; init; } = DefaultTagPrefix;
+
+    /// <summary>Default tag prefix when not explicitly configured.</summary>
+    public const string DefaultTagPrefix = "agent";
+
+    /// <summary>
+    /// Work item states that are considered finished and not picked up.
+    /// Items in these states are excluded from discovery queries.
+    /// </summary>
+    public IReadOnlyList<string> CompletedStates { get; init; } = [];
+
+    // --- Legacy fields (removed by downstream work item #10) ---
+
+    /// <summary>
     /// Tags that mark a work item as eligible for autonomous execution.
     /// </summary>
     public IReadOnlyList<string> EligibleTags { get; init; } = [];
@@ -64,16 +82,6 @@ public sealed class WorkSourceOptions : IWorkSourceOptions
     public IReadOnlyList<string> EligibleStates { get; init; } = [];
 
     /// <summary>
-    /// State to set on a work item when the controller starts working on it.
-    /// </summary>
-    public string? ActiveState { get; init; }
-
-    /// <summary>
-    /// State to set on a work item when the controller completes it.
-    /// </summary>
-    public string? CompletedState { get; init; }
-
-    /// <summary>
     /// Azure DevOps work item type used for state validation and queries
     /// (e.g. "User Story", "Task", "Bug").
     /// Defaults to "User Story" if not configured.
@@ -84,6 +92,16 @@ public sealed class WorkSourceOptions : IWorkSourceOptions
 
     /// <summary>Default work item type when not explicitly configured.</summary>
     public const string DefaultWorkItemType = "User Story";
+
+    /// <summary>
+    /// State to set on a work item when the controller starts working on it.
+    /// </summary>
+    public string? ActiveState { get; init; }
+
+    /// <summary>
+    /// State to set on a work item when the controller completes it.
+    /// </summary>
+    public string? CompletedState { get; init; }
 
     /// <summary>
     /// Maximum number of discussion comments to fetch from the work source

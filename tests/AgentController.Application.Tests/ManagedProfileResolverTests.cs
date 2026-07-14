@@ -238,9 +238,6 @@ public sealed class ManagedProfileResolverTests
         ) => runtime;
 
         public WorkSourceEnvironmentProfile? GetWorkSourceEnvironment() => workSourceEnvironment;
-
-        public WorkSourceEnvironmentProfile? GetAzureDevOpsEnvironment() =>
-            workSourceEnvironment as WorkSourceEnvironmentProfile;
     }
 
     private sealed class RepositoryStore(IReadOnlyList<RepositoryProfile> profiles)

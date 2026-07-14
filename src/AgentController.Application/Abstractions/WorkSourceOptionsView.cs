@@ -22,4 +22,10 @@ public sealed class WorkSourceOptionsView : IWorkSourceOptions
 
     /// <inheritdoc />
     public IReadOnlyList<string>? EligibleStates { get; set; }
+
+    /// <inheritdoc />
+    public IReadOnlyList<string> CompletedStates { get; set; } = [];
+
+    /// <inheritdoc />
+    public string TagPrefix { get; set; } = "agent";
 }
