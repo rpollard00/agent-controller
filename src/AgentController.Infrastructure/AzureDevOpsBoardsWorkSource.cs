@@ -39,8 +39,8 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
         await using var scope = _scopeFactory.CreateAsyncScope();
         var resolver = scope.ServiceProvider.GetService<IManagedProfileResolver>();
         var environments = resolver is null
-            ? Array.Empty<ResolvedAzureDevOpsEnvironment>()
-            : await resolver.ListAzureDevOpsEnvironmentsAsync(cancellationToken);
+            ? Array.Empty<ResolvedWorkSourceEnvironment>()
+            : await resolver.ListWorkSourceEnvironmentsAsync(cancellationToken);
         var managedEnvironments = environments.Where(environment => environment.IsManaged).ToList();
 
         if (managedEnvironments.Count == 0)
@@ -348,7 +348,7 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
             var resolver = services.GetService<IManagedProfileResolver>();
             var environment = resolver is null
                 ? null
-                : await resolver.ResolveAzureDevOpsEnvironmentAsync(
+                : await resolver.ResolveWorkSourceEnvironmentAsync(
                     environmentKey,
                     cancellationToken
                 );
@@ -393,7 +393,7 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
 
     private sealed record ClientSelection(
         IAzureDevOpsBoardsClient Client,
-        ResolvedAzureDevOpsEnvironment? Environment,
+        ResolvedWorkSourceEnvironment? Environment,
         bool OwnsClient
     )
     {

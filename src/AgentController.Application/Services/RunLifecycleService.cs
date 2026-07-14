@@ -1006,7 +1006,7 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             return fallback;
         }
 
-        var environment = await _profileResolver.ResolveAzureDevOpsEnvironmentAsync(
+        var environment = await _profileResolver.ResolveWorkSourceEnvironmentAsync(
             environmentKey,
             ct
         );

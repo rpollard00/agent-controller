@@ -47,13 +47,13 @@ public sealed class ManagedDiagnosticRegistrationTests
             CancellationToken cancellationToken
         ) => Task.FromResult<ResolvedControllerProfiles?>(null);
 
-        public Task<ResolvedAzureDevOpsEnvironment?> ResolveAzureDevOpsEnvironmentAsync(
+        public Task<ResolvedWorkSourceEnvironment?> ResolveWorkSourceEnvironmentAsync(
             string? key,
             CancellationToken cancellationToken
-        ) => Task.FromResult<ResolvedAzureDevOpsEnvironment?>(null);
+        ) => Task.FromResult<ResolvedWorkSourceEnvironment?>(null);
 
-        public Task<IReadOnlyList<ResolvedAzureDevOpsEnvironment>> ListAzureDevOpsEnvironmentsAsync(
+        public Task<IReadOnlyList<ResolvedWorkSourceEnvironment>> ListWorkSourceEnvironmentsAsync(
             CancellationToken cancellationToken
-        ) => Task.FromResult<IReadOnlyList<ResolvedAzureDevOpsEnvironment>>([]);
+        ) => Task.FromResult<IReadOnlyList<ResolvedWorkSourceEnvironment>>([]);
     }
 }

@@ -33,10 +33,10 @@ public sealed class ManagedProfileResolverTests
         Assert.NotNull(result);
         Assert.True(result.RepositoryIsManaged);
         Assert.True(result.RuntimeEnvironmentIsManaged);
-        Assert.True(result.AzureDevOpsEnvironmentIsManaged);
+        Assert.True(result.WorkSourceEnvironmentIsManaged);
         Assert.Equal("https://managed.example/orders.git", result.Repository.CloneUrl);
         Assert.Equal("managed-runtime", result.RuntimeEnvironment.Key);
-        Assert.Equal("managed-ado", result.AzureDevOpsEnvironment?.Key);
+        Assert.Equal("managed-ado", result.WorkSourceEnvironment?.Key);
     }
 
     [Theory]
@@ -69,9 +69,9 @@ public sealed class ManagedProfileResolverTests
 
         Assert.NotNull(result);
         Assert.False(result.RuntimeEnvironmentIsManaged);
-        Assert.False(result.AzureDevOpsEnvironmentIsManaged);
+        Assert.False(result.WorkSourceEnvironmentIsManaged);
         Assert.Same(configuredRuntime, result.RuntimeEnvironment);
-        Assert.Same(configuredAzureDevOps, result.AzureDevOpsEnvironment);
+        Assert.Same(configuredAzureDevOps, result.WorkSourceEnvironment);
     }
 
     [Fact]
@@ -106,7 +106,7 @@ public sealed class ManagedProfileResolverTests
     }
 
     [Fact]
-    public async Task ListAzureDevOpsEnvironmentsAsync_ReturnsOnlyEnabledManagedProfilesInStoreOrder()
+    public async Task ListWorkSourceEnvironmentsAsync_ReturnsOnlyEnabledManagedProfilesInStoreOrder()
     {
         var resolver = CreateResolver(
             [],
@@ -123,7 +123,7 @@ public sealed class ManagedProfileResolverTests
             )
         );
 
-        var environments = await resolver.ListAzureDevOpsEnvironmentsAsync(CancellationToken.None);
+        var environments = await resolver.ListWorkSourceEnvironmentsAsync(CancellationToken.None);
 
         Assert.Equal(
             ["alpha", "zeta"],
@@ -133,7 +133,7 @@ public sealed class ManagedProfileResolverTests
     }
 
     [Fact]
-    public async Task ListAzureDevOpsEnvironmentsAsync_NoEnabledManagedProfilesUsesAppsettings()
+    public async Task ListWorkSourceEnvironmentsAsync_NoEnabledManagedProfilesUsesAppsettings()
     {
         var configured = AzureDevOps("appsettings", enabled: true, "Configured");
         var resolver = CreateResolver(
@@ -147,7 +147,7 @@ public sealed class ManagedProfileResolverTests
             )
         );
 
-        var environments = await resolver.ListAzureDevOpsEnvironmentsAsync(CancellationToken.None);
+        var environments = await resolver.ListWorkSourceEnvironmentsAsync(CancellationToken.None);
 
         var environment = Assert.Single(environments);
         Assert.False(environment.IsManaged);

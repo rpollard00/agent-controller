@@ -794,7 +794,7 @@ public class AzureDevOpsBoardsWorkSourceTests
             CancellationToken cancellationToken
         ) => Task.FromResult<ResolvedControllerProfiles?>(null);
 
-        public Task<ResolvedAzureDevOpsEnvironment?> ResolveAzureDevOpsEnvironmentAsync(
+        public Task<ResolvedWorkSourceEnvironment?> ResolveWorkSourceEnvironmentAsync(
             string? key,
             CancellationToken cancellationToken
         )
@@ -803,17 +803,17 @@ public class AzureDevOpsBoardsWorkSourceTests
             return Task.FromResult(
                 profile is null
                     ? null
-                    : new ResolvedAzureDevOpsEnvironment(profile, IsManaged: true)
+                    : new ResolvedWorkSourceEnvironment(profile, IsManaged: true)
             );
         }
 
-        public Task<IReadOnlyList<ResolvedAzureDevOpsEnvironment>> ListAzureDevOpsEnvironmentsAsync(
+        public Task<IReadOnlyList<ResolvedWorkSourceEnvironment>> ListWorkSourceEnvironmentsAsync(
             CancellationToken cancellationToken
         )
         {
-            return Task.FromResult<IReadOnlyList<ResolvedAzureDevOpsEnvironment>>(
+            return Task.FromResult<IReadOnlyList<ResolvedWorkSourceEnvironment>>(
                 profiles
-                    .Select(profile => new ResolvedAzureDevOpsEnvironment(profile, IsManaged: true))
+                    .Select(profile => new ResolvedWorkSourceEnvironment(profile, IsManaged: true))
                     .ToList()
             );
         }

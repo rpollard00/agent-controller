@@ -64,7 +64,7 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
             }
         }
 
-        var resolvedAzureDevOps = await ResolveAzureDevOpsEnvironmentAsync(
+        var resolvedWorkSource = await ResolveWorkSourceEnvironmentAsync(
             repository.AzureDevOpsEnvironmentKey,
             cancellationToken
         );
@@ -73,14 +73,14 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
         {
             Repository = repository,
             RuntimeEnvironment = runtime,
-            AzureDevOpsEnvironment = resolvedAzureDevOps?.Profile,
+            WorkSourceEnvironment = resolvedWorkSource?.Profile,
             RepositoryIsManaged = repositoryIsManaged,
             RuntimeEnvironmentIsManaged = runtimeIsManaged,
-            AzureDevOpsEnvironmentIsManaged = resolvedAzureDevOps?.IsManaged == true,
+            WorkSourceEnvironmentIsManaged = resolvedWorkSource?.IsManaged == true,
         };
     }
 
-    public async Task<ResolvedAzureDevOpsEnvironment?> ResolveAzureDevOpsEnvironmentAsync(
+    public async Task<ResolvedWorkSourceEnvironment?> ResolveWorkSourceEnvironmentAsync(
         string? key,
         CancellationToken cancellationToken
     )
@@ -94,7 +94,7 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
 
             if (managed?.Enabled == true)
             {
-                return new ResolvedAzureDevOpsEnvironment(managed, IsManaged: true);
+                return new ResolvedWorkSourceEnvironment(managed, IsManaged: true);
             }
         }
         else
@@ -105,23 +105,23 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
 
             if (managed is not null)
             {
-                return new ResolvedAzureDevOpsEnvironment(managed, IsManaged: true);
+                return new ResolvedWorkSourceEnvironment(managed, IsManaged: true);
             }
         }
 
         var configured = _configuredProfiles.GetAzureDevOpsEnvironment();
         return configured is null
             ? null
-            : new ResolvedAzureDevOpsEnvironment(configured, IsManaged: false);
+            : new ResolvedWorkSourceEnvironment(configured, IsManaged: false);
     }
 
     public async Task<
-        IReadOnlyList<ResolvedAzureDevOpsEnvironment>
-    > ListAzureDevOpsEnvironmentsAsync(CancellationToken cancellationToken)
+        IReadOnlyList<ResolvedWorkSourceEnvironment>
+    > ListWorkSourceEnvironmentsAsync(CancellationToken cancellationToken)
     {
         var managed = (await _workSourceEnvironmentStore.ListAsync(cancellationToken))
             .Where(profile => profile.Enabled)
-            .Select(profile => new ResolvedAzureDevOpsEnvironment(profile, IsManaged: true))
+            .Select(profile => new ResolvedWorkSourceEnvironment(profile, IsManaged: true))
             .ToList();
 
         if (managed.Count > 0)
@@ -132,7 +132,7 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
         var configured = _configuredProfiles.GetAzureDevOpsEnvironment();
         return configured is null
             ? []
-            : [new ResolvedAzureDevOpsEnvironment(configured, IsManaged: false)];
+            : [new ResolvedWorkSourceEnvironment(configured, IsManaged: false)];
     }
 
     private static string NormalizeKey(string? key) =>

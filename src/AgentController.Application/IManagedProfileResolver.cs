@@ -13,19 +13,19 @@ public interface IManagedProfileResolver
     );
 
     /// <summary>
-    /// Resolves one enabled Azure DevOps profile by key. When the key is absent, the first
+    /// Resolves one enabled work source environment profile by key. When the key is absent, the first
     /// enabled managed profile is selected deterministically. Static configuration is the fallback.
     /// </summary>
-    Task<ResolvedAzureDevOpsEnvironment?> ResolveAzureDevOpsEnvironmentAsync(
+    Task<ResolvedWorkSourceEnvironment?> ResolveWorkSourceEnvironmentAsync(
         string? key,
         CancellationToken cancellationToken
     );
 
     /// <summary>
-    /// Lists enabled managed Azure DevOps profiles for polling. Static configuration is returned
+    /// Lists enabled managed work source environment profiles for polling. Static configuration is returned
     /// only when there are no enabled managed profiles.
     /// </summary>
-    Task<IReadOnlyList<ResolvedAzureDevOpsEnvironment>> ListAzureDevOpsEnvironmentsAsync(
+    Task<IReadOnlyList<ResolvedWorkSourceEnvironment>> ListWorkSourceEnvironmentsAsync(
         CancellationToken cancellationToken
     );
 }

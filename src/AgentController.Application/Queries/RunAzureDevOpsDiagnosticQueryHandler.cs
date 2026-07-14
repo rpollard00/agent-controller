@@ -18,7 +18,7 @@ public sealed class RunAzureDevOpsDiagnosticQueryHandler(
         CancellationToken cancellationToken
     )
     {
-        var resolvedEnvironment = await profileResolver.ResolveAzureDevOpsEnvironmentAsync(
+        var resolvedEnvironment = await profileResolver.ResolveWorkSourceEnvironmentAsync(
             query.EnvironmentKey,
             cancellationToken
         );
