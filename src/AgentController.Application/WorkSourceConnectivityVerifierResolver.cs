@@ -11,30 +11,29 @@ namespace AgentController.Application;
 /// Returns a non-success result with a clear error for unsupported providers.
 /// </summary>
 internal sealed class WorkSourceConnectivityVerifierResolver(
-    IServiceProvider serviceProvider,
+    IServiceScopeFactory scopeFactory,
     IReadOnlyDictionary<string, Type> verifierTypes
 ) : IWorkSourceConnectivityVerifierResolver
 {
     /// <inheritdoc />
-    public Task<WorkSourceConnectivityResult> VerifyAsync(
+    public async Task<WorkSourceConnectivityResult> VerifyAsync(
         WorkSourceEnvironmentProfile profile,
         CancellationToken cancellationToken
     )
     {
         if (!verifierTypes.TryGetValue(profile.Provider, out var verifierType))
         {
-            return Task.FromResult(
-                WorkSourceConnectivityResult.FailureResult(
-                    [
-                        $"Connectivity verification is not supported for provider '{profile.Provider}'."
-                    ]
-                )
+            return WorkSourceConnectivityResult.FailureResult(
+                [
+                    $"Connectivity verification is not supported for provider '{profile.Provider}'."
+                ]
             );
         }
 
-        var verifier = (IWorkSourceConnectivityVerifier)serviceProvider
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var verifier = (IWorkSourceConnectivityVerifier)scope.ServiceProvider
             .GetRequiredService(verifierType);
 
-        return verifier.VerifyAsync(profile, cancellationToken);
+        return await verifier.VerifyAsync(profile, cancellationToken);
     }
 }
