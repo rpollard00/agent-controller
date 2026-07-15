@@ -213,22 +213,6 @@ public static class WebUiControllers
             }
         );
 
-        // Board introspection: returns valid System.State values for the environment's board.
-        group.MapGet(
-            "/{key}/board-states",
-            async (
-                string key,
-                IQueryHandler<GetBoardStatesQuery, BoardStatesResult> handler,
-                CancellationToken cancellationToken
-            ) =>
-            {
-                var result = await handler.ExecuteAsync(
-                    new GetBoardStatesQuery(key),
-                    cancellationToken
-                );
-                return MapBoardStatesResult(result);
-            }
-        );
     }
 
     private static void MapRuntimeEnvironmentControllers(RouteGroupBuilder group)
@@ -383,26 +367,6 @@ public static class WebUiControllers
             RuntimeEnvironmentOperationStatus.Conflict => ConflictProblem(result.Detail),
             _ => throw new InvalidOperationException(
                 $"Unsupported runtime environment operation status '{result.Status}'."
-            ),
-        };
-
-    private static IResult MapBoardStatesResult(BoardStatesResult result) =>
-        result.Status switch
-        {
-            BoardStatesStatus.Succeeded => Results.Ok(result.StatesByType),
-            BoardStatesStatus.NotFound => NotFoundProblem(result.Error),
-            BoardStatesStatus.UnsupportedProvider => Results.Problem(
-                statusCode: StatusCodes.Status400BadRequest,
-                title: "Unsupported provider.",
-                detail: result.Error
-            ),
-            BoardStatesStatus.ConnectivityError => Results.Problem(
-                statusCode: StatusCodes.Status502BadGateway,
-                title: "Connectivity error.",
-                detail: result.Error
-            ),
-            _ => throw new InvalidOperationException(
-                $"Unsupported board states status '{result.Status}'."
             ),
         };
 

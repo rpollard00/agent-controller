@@ -122,11 +122,6 @@ public static class ServiceCollectionExtensions
             IQueryHandler<GetRuntimeEnvironmentByKeyQuery, RuntimeEnvironmentOperationResult>,
             GetRuntimeEnvironmentByKeyQueryHandler
         >();
-        services.AddScoped<
-            IQueryHandler<GetBoardStatesQuery, BoardStatesResult>,
-            GetBoardStatesQueryHandler
-        >();
-
         return services;
     }
 }
