@@ -97,7 +97,6 @@ public sealed class WorkSourceEnvironmentHandlerTests
             Project = "  Agent Controller  ",
             Provider = "  AzureDevOpsBoards  ",
             TagPrefix = "  agent  ",
-            CompletedStates = [" Resolved ", "RESOLVED", " Removed "],
             ActiveState = " Active ",
             CompletedState = " Resolved ",
             PatEnvironmentVariable = " ADO_PRIMARY_PAT ",
@@ -120,7 +119,6 @@ public sealed class WorkSourceEnvironmentHandlerTests
         Assert.Equal("Agent Controller", persisted.Project);
         Assert.Equal("AzureDevOpsBoards", persisted.Provider);
         Assert.Equal("agent", persisted.TagPrefix);
-        Assert.Equal(["Resolved", "Removed"], persisted.CompletedStates);
         Assert.Equal("Active", persisted.ActiveState);
         Assert.Equal("Resolved", persisted.CompletedState);
         Assert.Equal("ADO_PRIMARY_PAT", persisted.PatEnvironmentVariable);
@@ -139,7 +137,6 @@ public sealed class WorkSourceEnvironmentHandlerTests
             OrganizationUrl = "ftp://user:secret@example.test/org?token=secret",
             Project = " ",
             TagPrefix = "  ",
-            CompletedStates = [" "],
             ActiveState = "Active",
             CompletedState = "active",
             PatEnvironmentVariable = "ENV:raw-pat-value",
@@ -204,7 +201,6 @@ public sealed class WorkSourceEnvironmentHandlerTests
             Enabled = false,
             Project = " Updated Project ",
             TagPrefix = " custom ",
-            CompletedStates = [" Done ", "DONE"],
             PatEnvironmentVariable = " ADO_UPDATED_PAT ",
             CreatedAt = suppliedTimestamp,
             UpdatedAt = suppliedTimestamp,
@@ -224,7 +220,6 @@ public sealed class WorkSourceEnvironmentHandlerTests
         Assert.False(persisted.Enabled);
         Assert.Equal("Updated Project", persisted.Project);
         Assert.Equal("custom", persisted.TagPrefix);
-        Assert.Equal(["Done"], persisted.CompletedStates);
         Assert.Equal("ADO_UPDATED_PAT", persisted.PatEnvironmentVariable);
         Assert.Equal(createdAt, persisted.CreatedAt);
         Assert.InRange(persisted.UpdatedAt, before, after);

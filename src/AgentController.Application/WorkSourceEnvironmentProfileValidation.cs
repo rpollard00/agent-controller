@@ -47,8 +47,6 @@ internal static class WorkSourceEnvironmentProfileValidation
             provider = "AzureDevOpsBoards";
         }
 
-        var completedStates = NormalizeBoardValues(profile.CompletedStates, "completedStates", errors);
-
         var activeState = NormalizeOptionalBoardValue(profile.ActiveState, "activeState", errors);
         var completedState = NormalizeOptionalBoardValue(
             profile.CompletedState,
@@ -80,7 +78,6 @@ internal static class WorkSourceEnvironmentProfileValidation
             Provider = provider,
             OrganizationUrl = organizationUrl,
             Project = project,
-            CompletedStates = completedStates,
             ActiveState = activeState,
             CompletedState = completedState,
             TagPrefix = tagPrefix,
@@ -237,38 +234,6 @@ internal static class WorkSourceEnvironmentProfileValidation
                 "The organization URL must be an absolute HTTP or HTTPS URL without credentials, a query, or a fragment."
             );
         }
-    }
-
-    private static List<string> NormalizeBoardValues(
-        IReadOnlyList<string>? values,
-        string field,
-        ValidationErrors errors
-    )
-    {
-        if (values is null || values.Count == 0)
-        {
-            return [];
-        }
-
-        var normalized = new List<string>(values.Count);
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var originalValue in values)
-        {
-            var value = NormalizeText(originalValue);
-            if (value.Length == 0)
-            {
-                errors.Add(field, "Board values cannot be empty.");
-                continue;
-            }
-
-            ValidateText(value, field, MaximumBoardValueLength, errors);
-            if (seen.Add(value))
-            {
-                normalized.Add(value);
-            }
-        }
-
-        return normalized;
     }
 
     private static string? NormalizeOptionalBoardValue(
