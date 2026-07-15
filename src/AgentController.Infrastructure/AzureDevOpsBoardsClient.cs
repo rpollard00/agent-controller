@@ -1263,35 +1263,9 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             return new Dictionary<string, IReadOnlyList<string>>();
         }
 
-        // (1) GET project → read capabilities.processTemplate.templateTypeId.
-        var projectResponse = await _http.GetAsync(
-            $"_apis/projects/{Uri.EscapeDataString(project)}?api-version=7.1&includeProcessSettings=true",
-            cancellationToken
-        );
-
-        if (!projectResponse.IsSuccessStatusCode)
-        {
-            throw new HttpRequestException(
-                $"Project lookup failed: HTTP {(int)projectResponse.StatusCode} {projectResponse.ReasonPhrase}"
-            );
-        }
-
-        var projectJson = await projectResponse.Content.ReadAsStringAsync(cancellationToken);
-        using var projectDoc = JsonDocument.Parse(projectJson);
-
-        // Extract processId from capabilities.processTemplate.templateTypeId.
-        var processTypeId = ExtractProcessTypeId(projectDoc.RootElement);
-
-        if (string.IsNullOrWhiteSpace(processTypeId))
-        {
-            throw new HttpRequestException(
-                "Project response does not contain a process template type ID."
-            );
-        }
-
-        // (2) GET process WITs for that process type id.
+        // (1) GET WIT list: {project}/_apis/wit/workitemtypes?api-version=7.1
         var witListResponse = await _http.GetAsync(
-            $"_apis/work/processes/{Uri.EscapeDataString(processTypeId)}/workItemTypes?api-version=7.1-preview.3",
+            $"{Uri.EscapeDataString(project)}/_apis/wit/workitemtypes?api-version=7.1",
             cancellationToken
         );
 
@@ -1333,9 +1307,10 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             return new Dictionary<string, IReadOnlyList<string>>();
         }
 
-        // (3) For each WIT, GET its states — fetch in parallel.
+        // (2) For each WIT, GET its System.State field with $expand=All — fetch in parallel.
+        //     {project}/_apis/wit/workitemtypes/{wit}/fields/System.State?$expand=All&api-version=7.1
         var stateTasks = witNames
-            .Select(witName => FetchStatesForWitAsync(processTypeId, witName, cancellationToken))
+            .Select(witName => FetchStatesForWitAsync(project, witName, cancellationToken))
             .ToArray();
 
         await Task.WhenAll(stateTasks);
@@ -1362,54 +1337,12 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
     }
 
     /// <summary>
-    /// Extract the process template type ID from a project JSON document.
-    /// Tries capabilities.processTemplate.templateTypeId first (Process API path),
-    /// then falls back to processSettings.processId.
-    /// </summary>
-    private static string? ExtractProcessTypeId(JsonElement projectRoot)
-    {
-        // Primary: capabilities.processTemplate.templateTypeId
-        if (
-            projectRoot.TryGetProperty("capabilities", out var capabilities)
-            && capabilities.ValueKind == JsonValueKind.Object
-            && capabilities.TryGetProperty("processTemplate", out var processTemplate)
-            && processTemplate.ValueKind == JsonValueKind.Object
-            && processTemplate.TryGetProperty("templateTypeId", out var templateTypeId)
-            && templateTypeId.ValueKind == JsonValueKind.String
-        )
-        {
-            return templateTypeId.GetString();
-        }
-
-        // Fallback: processSettings.processId
-        if (
-            projectRoot.TryGetProperty("processSettings", out var processSettings)
-            && processSettings.ValueKind == JsonValueKind.Object
-            && processSettings.TryGetProperty("processId", out var processId)
-            && processId.ValueKind == JsonValueKind.String
-        )
-        {
-            return processId.GetString();
-        }
-
-        // Fallback: top-level processId
-        if (
-            projectRoot.TryGetProperty("processId", out var topProcessId)
-            && topProcessId.ValueKind == JsonValueKind.String
-        )
-        {
-            return topProcessId.GetString();
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// Fetch the allowed state values for a single work item type via the Process API.
+    /// Fetch the allowed state values for a single work item type via the WIT field API.
+    /// Uses <c>$expand=All</c> to ensure allowedValues is populated.
     /// Returns a sorted list of bare state names.
     /// </summary>
     private async Task<IReadOnlyList<string>> FetchStatesForWitAsync(
-        string processTypeId,
+        string project,
         string witName,
         CancellationToken cancellationToken
     )
@@ -1417,7 +1350,7 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         try
         {
             var response = await _http.GetAsync(
-                $"_apis/work/processes/{Uri.EscapeDataString(processTypeId)}/workItemTypes/{Uri.EscapeDataString(witName)}?api-version=7.1-preview.3&fields=System.State",
+                $"{Uri.EscapeDataString(project)}/_apis/wit/workitemtypes/{Uri.EscapeDataString(witName)}/fields/System.State?$expand=All&api-version=7.1",
                 cancellationToken
             );
 
@@ -1429,17 +1362,11 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
             using var doc = JsonDocument.Parse(json);
 
-            // Navigate to fields → System.State → name → allowedValues.
+            // WIT field API with $expand=All returns allowedValues directly on the root element.
             var states = new List<string>();
 
             if (
-                doc.RootElement.TryGetProperty("fields", out var fields)
-                && fields.ValueKind == JsonValueKind.Object
-                && fields.TryGetProperty("System.State", out var stateField)
-                && stateField.ValueKind == JsonValueKind.Object
-                && stateField.TryGetProperty("name", out var nameField)
-                && nameField.ValueKind == JsonValueKind.Object
-                && nameField.TryGetProperty("allowedValues", out var allowedValuesEl)
+                doc.RootElement.TryGetProperty("allowedValues", out var allowedValuesEl)
                 && allowedValuesEl.ValueKind == JsonValueKind.Array
             )
             {
