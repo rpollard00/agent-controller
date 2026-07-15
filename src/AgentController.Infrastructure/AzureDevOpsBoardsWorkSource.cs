@@ -332,7 +332,7 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
             Project = query.Project ?? profile.Project,
             ExcludedStates = query.States is { Count: > 0 }
                 ? null
-                : NullIfEmpty(profile.CompletedStates),
+                : BoardTerminalStates.Values,
             Tags = query.Tags is { Count: > 0 } ? query.Tags : [WorkSourceOptions.TagReady(tagPrefix)],
             ExcludedTags = query.ExcludedTags is { Count: > 0 }
                 ? query.ExcludedTags
