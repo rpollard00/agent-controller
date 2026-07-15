@@ -12,18 +12,9 @@
   } = $props();
 
   let input = $state('');
-  let nextId = selected.length;
 
   const inputClasses =
     'min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 placeholder:text-slate-600 disabled:cursor-not-allowed disabled:bg-slate-900 disabled:text-slate-400';
-
-  // Flatten grouped suggestions into a sorted list of available states.
-  const available = $derived(
-    Object.values(suggestions)
-      .flat()
-      .filter((s) => !selected.includes(s))
-      .sort((a, b) => a.localeCompare(b)),
-  );
 
   // Sorted work item type groups for display.
   const witGroups = $derived(
