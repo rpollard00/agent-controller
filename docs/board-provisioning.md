@@ -383,6 +383,7 @@ If a run in `AwaitingResult` state exceeds `agentController.staleTimeoutSeconds`
 
 ## 11. Related Documentation
 
+- [Boards Setup Flow and PAT Runtime Requirement](./boards-setup.md) — Connect-first flow for web UI setup and PAT-as-env-var runtime model.
 - [Architecture Document](./arch.md) — §3.6 (Work Item Eligibility), §8 (Azure DevOps Boards Integration), §10 (Runtime Event Contract).
 - [Runtime Event Contract](./runtime-events.md) — Event types, state transitions, and API contract.
 - [Development Guide](./development.md) — Local setup, running tests, and integration harnesses.
