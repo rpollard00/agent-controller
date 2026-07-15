@@ -385,6 +385,7 @@
   {:else if route?.view === 'detail' && environment}
     <WorkSourceEnvironmentDetails
       {environment}
+      {client}
       updating={updatingKey === environment.key}
       ontoggle={(profile) => void toggleEnvironment(profile)}
       ondelete={askToDelete}

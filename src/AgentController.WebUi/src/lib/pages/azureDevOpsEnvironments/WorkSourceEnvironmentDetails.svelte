@@ -1,5 +1,7 @@
 <script lang="ts">
-  import type { WorkSourceEnvironmentProfile } from '../../api/types';
+  import { onDestroy } from 'svelte';
+  import type { WebUiApiClient } from '../../api/client';
+  import type { WorkSourceConnectivityResult, WorkSourceEnvironmentProfile } from '../../api/types';
   import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
   import Card from '../../components/ui/Card.svelte';
@@ -7,11 +9,13 @@
 
   let {
     environment,
+    client,
     updating = false,
     ontoggle,
     ondelete,
   }: {
     environment: WorkSourceEnvironmentProfile;
+    client: WebUiApiClient;
     updating?: boolean;
     ontoggle: (profile: WorkSourceEnvironmentProfile) => void;
     ondelete: (profile: WorkSourceEnvironmentProfile) => void;
@@ -21,6 +25,53 @@
     const date = new Date(value);
     return Number.isNaN(date.valueOf()) ? value : date.toLocaleString();
   }
+
+  // Ephemeral verify-connection state (in-session, not persisted)
+  let verifyLoading = $state(false);
+  let verifyResult = $state<WorkSourceConnectivityResult | null>(null);
+  let verifyController: AbortController | undefined;
+
+  async function testConnection(): Promise<void> {
+    verifyController?.abort();
+    const controller = new AbortController();
+    verifyController = controller;
+    verifyLoading = true;
+    verifyResult = null;
+
+    try {
+      const result = await client.workSourceEnvironments.verifyConnection(
+        environment.key,
+        controller.signal,
+      );
+      if (!controller.signal.aborted) {
+        verifyResult = result;
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        verifyResult = {
+          success: false,
+          authMechanism: '',
+          errors: [error instanceof Error ? error.message : 'Connection test failed.'],
+        };
+      }
+    } finally {
+      if (verifyController === controller) {
+        verifyLoading = false;
+        verifyController = undefined;
+      }
+    }
+  }
+
+  function getRepoCount(result: WorkSourceConnectivityResult | null): number | undefined {
+    if (!result?.payload) return undefined;
+    const repos = result.payload.repositories;
+    if (Array.isArray(repos)) return repos.length;
+    return undefined;
+  }
+
+  onDestroy(() => {
+    verifyController?.abort();
+  });
 </script>
 
 <div class="space-y-6">
@@ -29,10 +80,18 @@
       <div class="flex flex-wrap gap-2">
         <Button
           variant="secondary"
-          disabled={updating}
+          disabled={updating || verifyLoading}
           onclick={() => ontoggle(environment)}
         >
           {updating ? 'Saving…' : environment.enabled ? 'Disable' : 'Enable'}
+        </Button>
+        <Button
+          variant="secondary"
+          disabled={verifyLoading}
+          ariaLabel="Test connection"
+          onclick={() => void testConnection()}
+        >
+          {verifyLoading ? 'Testing…' : 'Test connection'}
         </Button>
         <a
           href={workSourceEnvironmentEditPath(environment.key)}
@@ -111,6 +170,40 @@
       />
     </div>
   </Card>
+
+  {#if verifyLoading}
+    <Card title="Testing connection">
+      <div class="flex items-center gap-3 text-sm text-slate-300" role="status">
+        <span
+          class="size-4 animate-spin rounded-full border-2 border-slate-700 border-t-cyan-300"
+          aria-hidden="true"
+        ></span>
+        Testing connection…
+      </div>
+    </Card>
+  {:else if verifyResult}
+    <Card title="Connection test result">
+      {#if verifyResult.success}
+        <div class="flex items-center gap-2">
+          <span class="inline-flex items-center gap-1 rounded-full bg-emerald-950 px-2.5 py-1 text-xs font-semibold text-emerald-300">
+            Connected
+            {#if getRepoCount(verifyResult) !== undefined}
+              <span class="text-emerald-400">({getRepoCount(verifyResult)} repos)</span>
+            {/if}
+          </span>
+        </div>
+      {:else}
+        <div class="space-y-1">
+          <span class="inline-flex rounded-full bg-red-950 px-2.5 py-1 text-xs font-semibold text-red-300">
+            Failed
+          </span>
+          {#each verifyResult.errors as error}
+            <p class="text-sm text-red-400">{error}</p>
+          {/each}
+        </div>
+      {/if}
+    </Card>
+  {/if}
 
   <a
     href="/work-source-environments"
