@@ -58,7 +58,14 @@ function createApi(initialEnvironments: RuntimeEnvironmentProfile[] = [environme
 
   const client: WebUiApiClient = {
     repositories: staticResource<RepositoryProfile>([]),
-    workSourceEnvironments: staticResource<WorkSourceEnvironmentProfile>([]),
+    workSourceEnvironments: {
+      ...staticResource<WorkSourceEnvironmentProfile>([]),
+      verifyConnection: async () => ({
+        success: true,
+        authMechanism: 'PersonalAccessToken',
+        errors: [],
+      }),
+    },
     runtimeEnvironments,
   };
 

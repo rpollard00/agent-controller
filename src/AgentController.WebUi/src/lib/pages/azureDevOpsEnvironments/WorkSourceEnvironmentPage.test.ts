@@ -24,8 +24,18 @@ const environment: WorkSourceEnvironmentProfile = {
   updatedAt: '2026-07-13T00:00:00Z',
 };
 
-function createApi(initialEnvironments: WorkSourceEnvironmentProfile[] = [environment]) {
+function createApi(
+  initialEnvironments: WorkSourceEnvironmentProfile[] = [environment],
+  verifyResult?: WorkSourceConnectivityResult,
+) {
   let profiles = [...initialEnvironments];
+
+  const defaultVerifyResult: WorkSourceConnectivityResult = {
+    success: true,
+    authMechanism: 'PersonalAccessToken',
+    errors: [],
+    payload: { repositories: [] },
+  };
 
   const workSourceEnvironments = {
     list: vi.fn(async () => [...profiles]),
@@ -45,12 +55,9 @@ function createApi(initialEnvironments: WorkSourceEnvironmentProfile[] = [enviro
     delete: vi.fn(async (key: string) => {
       profiles = profiles.filter((candidate) => candidate.key !== key);
     }),
-    verifyConnection: vi.fn(async (): Promise<WorkSourceConnectivityResult> => ({
-      success: true,
-      authMechanism: 'PersonalAccessToken',
-      errors: [],
-      payload: { repositories: [] },
-    })),
+    verifyConnection: vi.fn(
+      async (): Promise<WorkSourceConnectivityResult> => verifyResult ?? defaultVerifyResult,
+    ),
   };
 
   const client: WebUiApiClient = {
@@ -329,5 +336,253 @@ describe('work source environment screens', () => {
 
     // Board policy info alert is NOT present on edit
     expect(screen.queryByText('Board policy configured after save')).not.toBeInTheDocument();
+  });
+
+  // ── Test Connection — List view ─────────────────────────────────────
+
+  it('renders a Test connection button per row in the list view', async () => {
+    const api = createApi();
+    render(App, { client: api.client });
+
+    // Wait for the table to render
+    await screen.findByRole('table');
+
+    // Each row should have a Test connection button
+    const buttons = screen.getAllByRole('button', {
+      name: /Test connection for Primary boards/i,
+    });
+    expect(buttons.length).toBeGreaterThanOrEqual(1);
+    expect(buttons[0]).toBeVisible();
+    expect(buttons[0]).not.toBeDisabled();
+  });
+
+  it('list view: clicking Test connection shows success badge with repo count', async () => {
+    const api = createApi([environment], {
+      success: true,
+      authMechanism: 'PersonalAccessToken',
+      httpStatus: 200,
+      errors: [],
+      payload: { repositories: ['repo-a', 'repo-b', 'repo-c'] },
+    });
+    render(App, { client: api.client });
+
+    await screen.findByRole('table');
+    const testButton = screen.getByRole('button', {
+      name: /Test connection for Primary boards/i,
+    });
+    fireEvent.click(testButton);
+
+    // verifyConnection should have been called with the environment key
+    await waitFor(() =>
+      expect(api.environments.verifyConnection).toHaveBeenCalledWith(
+        'ado-main',
+        expect.anything(),
+      ),
+    );
+
+    // Success badge should appear
+    await waitFor(() => expect(screen.getByText('Connected')).toBeVisible());
+    expect(screen.getByText('(3 repos)')).toBeVisible();
+  });
+
+  it('list view: clicking Test connection shows success badge without repo count when payload is empty', async () => {
+    const api = createApi([environment], {
+      success: true,
+      authMechanism: 'PersonalAccessToken',
+      errors: [],
+      payload: {},
+    });
+    render(App, { client: api.client });
+
+    await screen.findByRole('table');
+    const testButton = screen.getByRole('button', {
+      name: /Test connection for Primary boards/i,
+    });
+    fireEvent.click(testButton);
+
+    await waitFor(() =>
+      expect(api.environments.verifyConnection).toHaveBeenCalledWith(
+        'ado-main',
+        expect.anything(),
+      ),
+    );
+
+    // Success badge should appear without repo count
+    await waitFor(() => expect(screen.getByText('Connected')).toBeVisible());
+    expect(screen.queryByText(/\(\d+ repos\)/)).not.toBeInTheDocument();
+  });
+
+  it('list view: clicking Test connection shows failure badge with error messages', async () => {
+    const api = createApi([environment], {
+      success: false,
+      authMechanism: 'PersonalAccessToken',
+      httpStatus: 401,
+      errors: ['Unauthorized: the personal access token is invalid or expired.'],
+    });
+    render(App, { client: api.client });
+
+    await screen.findByRole('table');
+    const testButton = screen.getByRole('button', {
+      name: /Test connection for Primary boards/i,
+    });
+    fireEvent.click(testButton);
+
+    await waitFor(() =>
+      expect(api.environments.verifyConnection).toHaveBeenCalledWith(
+        'ado-main',
+        expect.anything(),
+      ),
+    );
+
+    // Failure badge and error message
+    await waitFor(() => expect(screen.getByText('Failed')).toBeVisible());
+    expect(
+      screen.getByText('Unauthorized: the personal access token is invalid or expired.'),
+    ).toBeVisible();
+  });
+
+  it('list view: Test connection button shows loading state then success', async () => {
+    // Use a macrotask delay so there's a window to observe the loading state
+    const api = createApi([environment]);
+    api.environments.verifyConnection.mockImplementationOnce(
+      async () =>
+        new Promise((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                success: true,
+                authMechanism: 'PersonalAccessToken',
+                errors: [],
+                payload: { repositories: ['repo-x'] },
+              }),
+            0,
+          ),
+        ),
+    );
+    render(App, { client: api.client });
+
+    await screen.findByRole('table');
+    const testButton = screen.getByRole('button', {
+      name: /Test connection for Primary boards/i,
+    });
+    fireEvent.click(testButton);
+
+    // verifyConnection should have been called
+    await waitFor(() =>
+      expect(api.environments.verifyConnection).toHaveBeenCalledWith(
+        'ado-main',
+        expect.anything(),
+      ),
+    );
+
+    // After the delayed resolution, success badge should appear
+    await waitFor(() => expect(screen.getByText('Connected')).toBeVisible());
+  });
+
+  // ── Test Connection — Details view ──────────────────────────────────
+
+  it('details view renders a Test connection button', async () => {
+    window.history.replaceState({}, '', '/work-source-environments/ado-main');
+    const api = createApi();
+    render(App, { client: api.client });
+
+    // Wait for details view to load
+    expect(await screen.findByText('Environment details')).toBeVisible();
+
+    const testButton = screen.getByRole('button', { name: 'Test connection' });
+    expect(testButton).toBeVisible();
+    expect(testButton).not.toBeDisabled();
+  });
+
+  it('details view: Test connection transitions through loading to success result', async () => {
+    window.history.replaceState({}, '', '/work-source-environments/ado-main');
+    const api = createApi([environment], {
+      success: true,
+      authMechanism: 'PersonalAccessToken',
+      httpStatus: 200,
+      errors: [],
+      payload: { repositories: ['repo-a', 'repo-b'] },
+    });
+    render(App, { client: api.client });
+
+    expect(await screen.findByText('Environment details')).toBeVisible();
+    const testButton = screen.getByRole('button', { name: 'Test connection' });
+    fireEvent.click(testButton);
+
+    // verifyConnection called with the correct key
+    await waitFor(() =>
+      expect(api.environments.verifyConnection).toHaveBeenCalledWith(
+        'ado-main',
+        expect.anything(),
+      ),
+    );
+
+    // Success result card
+    await waitFor(() => expect(screen.getByText('Connected')).toBeVisible());
+    expect(screen.getByText('(2 repos)')).toBeVisible();
+  });
+
+  it('details view: Test connection transitions through loading to failure result', async () => {
+    window.history.replaceState({}, '', '/work-source-environments/ado-main');
+    const api = createApi([environment], {
+      success: false,
+      authMechanism: 'PersonalAccessToken',
+      httpStatus: 401,
+      errors: ['Connection failed: invalid credentials.'],
+    });
+    render(App, { client: api.client });
+
+    expect(await screen.findByText('Environment details')).toBeVisible();
+    const testButton = screen.getByRole('button', { name: 'Test connection' });
+    fireEvent.click(testButton);
+
+    await waitFor(() =>
+      expect(api.environments.verifyConnection).toHaveBeenCalledWith(
+        'ado-main',
+        expect.anything(),
+      ),
+    );
+
+    // Failure result card
+    await waitFor(() => expect(screen.getByText('Failed')).toBeVisible());
+    expect(screen.getByText('Connection failed: invalid credentials.')).toBeVisible();
+  });
+
+  it('details view: Test connection shows loading state then result', async () => {
+    window.history.replaceState({}, '', '/work-source-environments/ado-main');
+    // Use a macrotask delay so there's a window to observe the loading state
+    const api = createApi([environment]);
+    api.environments.verifyConnection.mockImplementationOnce(
+      async () =>
+        new Promise((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                success: true,
+                authMechanism: 'PersonalAccessToken',
+                errors: [],
+                payload: { repositories: ['only-repo'] },
+              }),
+            0,
+          ),
+        ),
+    );
+    render(App, { client: api.client });
+
+    expect(await screen.findByText('Environment details')).toBeVisible();
+    const testButton = screen.getByRole('button', { name: 'Test connection' });
+    fireEvent.click(testButton);
+
+    // verifyConnection called
+    await waitFor(() =>
+      expect(api.environments.verifyConnection).toHaveBeenCalledWith(
+        'ado-main',
+        expect.anything(),
+      ),
+    );
+
+    // After the delayed resolution, result card appears
+    await waitFor(() => expect(screen.getByText('Connected')).toBeVisible());
+    expect(screen.getByText('(1 repos)')).toBeVisible();
   });
 });

@@ -34,47 +34,66 @@
     ondelete: (profile: WorkSourceEnvironmentProfile) => void;
   } = $props();
 
-  let verifyStates = $state(new Map<string, VerifyState>());
+  // Flat reactive state — each key maps to a reactive sub-object.
+  // We replace the entire sub-object on mutation so $state detects the change.
+  let verifyLoading = $state<Record<string, boolean>>({});
+  let verifyResults = $state<Record<string, WorkSourceConnectivityResult | null>>({});
+  let verifyControllers = new Map<string, AbortController>();
 
   function getVerifyState(key: string): VerifyState {
-    let state = verifyStates.get(key);
-    if (!state) {
-      state = { loading: false, result: null, controller: null };
-      verifyStates.set(key, state);
+    return {
+      loading: verifyLoading[key] ?? false,
+      result: verifyResults[key] ?? null,
+      controller: verifyControllers.get(key) ?? null,
+    };
+  }
+
+  function setVerifyLoading(key: string, loading: boolean): void {
+    verifyLoading[key] = loading;
+  }
+
+  function setVerifyResult(key: string, result: WorkSourceConnectivityResult | null): void {
+    verifyResults[key] = result;
+  }
+
+  function setVerifyController(key: string, controller: AbortController | null): void {
+    if (controller) {
+      verifyControllers.set(key, controller);
+    } else {
+      verifyControllers.delete(key);
     }
-    return state;
   }
 
   async function testConnection(profile: WorkSourceEnvironmentProfile): Promise<void> {
-    const state = getVerifyState(profile.key);
+    const key = profile.key;
 
     // Abort any in-flight request for this row
-    state.controller?.abort();
+    verifyControllers.get(key)?.abort();
     const controller = new AbortController();
-    state.controller = controller;
-    state.loading = true;
-    state.result = null;
+    setVerifyController(key, controller);
+    setVerifyLoading(key, true);
+    setVerifyResult(key, null);
 
     try {
       const result = await client.workSourceEnvironments.verifyConnection(
-        profile.key,
+        key,
         controller.signal,
       );
       if (!controller.signal.aborted) {
-        state.result = result;
+        setVerifyResult(key, result);
       }
     } catch (error) {
       if (!controller.signal.aborted) {
-        state.result = {
+        setVerifyResult(key, {
           success: false,
           authMechanism: '',
           errors: [error instanceof Error ? error.message : 'Connection test failed.'],
-        };
+        });
       }
     } finally {
-      if (state.controller === controller) {
-        state.loading = false;
-        state.controller = null;
+      if (verifyControllers.get(key) === controller) {
+        setVerifyLoading(key, false);
+        setVerifyController(key, null);
       }
     }
   }
@@ -87,8 +106,8 @@
   }
 
   onDestroy(() => {
-    for (const state of verifyStates.values()) {
-      state.controller?.abort();
+    for (const controller of verifyControllers.values()) {
+      controller.abort();
     }
   });
 </script>

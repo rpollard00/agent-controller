@@ -89,7 +89,14 @@ function createApi(initialRepositories: RepositoryProfile[] = [repository]): Moc
   return {
     client: {
       repositories,
-      workSourceEnvironments: staticResource([workSourceEnvironment]),
+      workSourceEnvironments: {
+        ...staticResource([workSourceEnvironment]),
+        verifyConnection: async () => ({
+          success: true,
+          authMechanism: 'PersonalAccessToken',
+          errors: [],
+        }),
+      },
       runtimeEnvironments: staticResource([runtimeEnvironment]),
     },
     repositories,

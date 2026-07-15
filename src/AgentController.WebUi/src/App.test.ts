@@ -25,9 +25,17 @@ function resourceClient<T>(list: (signal?: AbortSignal) => Promise<T[]>): Resour
 function createClient(
   repositoryList: (signal?: AbortSignal) => Promise<RepositoryProfile[]> = async () => [],
 ): WebUiApiClient {
+  const workSourceEnvs = resourceClient<WorkSourceEnvironmentProfile>(async () => []);
   return {
     repositories: resourceClient(repositoryList),
-    workSourceEnvironments: resourceClient<WorkSourceEnvironmentProfile>(async () => []),
+    workSourceEnvironments: {
+      ...workSourceEnvs,
+      verifyConnection: async () => ({
+        success: true,
+        authMechanism: 'PersonalAccessToken',
+        errors: [],
+      }),
+    },
     runtimeEnvironments: resourceClient<RuntimeEnvironmentProfile>(async () => []),
   };
 }
