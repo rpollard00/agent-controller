@@ -124,6 +124,44 @@ public sealed class WorkSourceConnectivityVerifierResolverTests
         Assert.True(fakeVerifier.ReceivedCancellation);
     }
 
+    // ─── Regression: scoped verifier resolves through singleton resolver ───
+
+    /// <summary>
+    /// Regression guard for the captive-dependency bug:
+    /// a scoped-registered verifier must resolve cleanly through the singleton
+    /// WorkSourceConnectivityVerifierResolver without throwing
+    /// InvalidOperationException('Cannot resolve scoped service ... from root provider').
+    /// </summary>
+    [Fact]
+    public async Task VerifyAsync_ScopedVerifier_Regression_ShouldNotThrowCaptiveDependencyError()
+    {
+        // Arrange: register FakeConnectivityVerifier as scoped (NOT singleton)
+        // with no factory — the container creates instances per scope.
+        var services = new ServiceCollection();
+        services.AddScoped<FakeConnectivityVerifier>();
+        var sp = services.BuildServiceProvider(validateScopes: true);
+
+        var resolver = new WorkSourceConnectivityVerifierResolver(
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            new Dictionary<string, Type>
+            {
+                ["TestProvider"] = typeof(FakeConnectivityVerifier),
+            }
+        );
+
+        var profile = new WorkSourceEnvironmentProfile
+        {
+            Key = "test-env",
+            Provider = "TestProvider",
+        };
+
+        // Act — must not throw InvalidOperationException about scoped service from root provider
+        var result = await resolver.VerifyAsync(profile, CancellationToken.None);
+
+        // Assert: scoped verifier resolved and invoked successfully
+        Assert.True(result.Success);
+    }
+
     // ─── Resolver returns failure from verifier ───
 
     [Fact]
