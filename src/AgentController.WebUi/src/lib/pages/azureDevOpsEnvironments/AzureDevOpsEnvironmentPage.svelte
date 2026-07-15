@@ -327,6 +327,7 @@
     <WorkSourceEnvironmentList
       {environments}
       empty={status === 'empty'}
+      {client}
       {updatingKey}
       onrefresh={() => startLoad(route)}
       ontoggle={(profile) => void toggleEnvironment(profile)}

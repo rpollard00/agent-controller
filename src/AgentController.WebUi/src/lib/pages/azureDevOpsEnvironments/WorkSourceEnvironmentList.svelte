@@ -1,5 +1,7 @@
 <script lang="ts">
-  import type { WorkSourceEnvironmentProfile } from '../../api/types';
+  import { onDestroy } from 'svelte';
+  import type { WebUiApiClient } from '../../api/client';
+  import type { WorkSourceConnectivityResult, WorkSourceEnvironmentProfile } from '../../api/types';
   import Button from '../../components/ui/Button.svelte';
   import Card from '../../components/ui/Card.svelte';
   import DataTable from '../../components/ui/DataTable.svelte';
@@ -8,9 +10,16 @@
     workSourceEnvironmentEditPath,
   } from './workSourceEnvironmentRoutes';
 
+  interface VerifyState {
+    loading: boolean;
+    result: WorkSourceConnectivityResult | null;
+    controller: AbortController | null;
+  }
+
   let {
     environments,
     empty,
+    client,
     updatingKey,
     onrefresh,
     ontoggle,
@@ -18,11 +27,70 @@
   }: {
     environments: WorkSourceEnvironmentProfile[];
     empty: boolean;
+    client: WebUiApiClient;
     updatingKey?: string;
     onrefresh: () => void;
     ontoggle: (profile: WorkSourceEnvironmentProfile) => void;
     ondelete: (profile: WorkSourceEnvironmentProfile) => void;
   } = $props();
+
+  let verifyStates = $state(new Map<string, VerifyState>());
+
+  function getVerifyState(key: string): VerifyState {
+    let state = verifyStates.get(key);
+    if (!state) {
+      state = { loading: false, result: null, controller: null };
+      verifyStates.set(key, state);
+    }
+    return state;
+  }
+
+  async function testConnection(profile: WorkSourceEnvironmentProfile): Promise<void> {
+    const state = getVerifyState(profile.key);
+
+    // Abort any in-flight request for this row
+    state.controller?.abort();
+    const controller = new AbortController();
+    state.controller = controller;
+    state.loading = true;
+    state.result = null;
+
+    try {
+      const result = await client.workSourceEnvironments.verifyConnection(
+        profile.key,
+        controller.signal,
+      );
+      if (!controller.signal.aborted) {
+        state.result = result;
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        state.result = {
+          success: false,
+          authMechanism: '',
+          errors: [error instanceof Error ? error.message : 'Connection test failed.'],
+        };
+      }
+    } finally {
+      if (state.controller === controller) {
+        state.loading = false;
+        state.controller = null;
+      }
+    }
+  }
+
+  function getRepoCount(result: WorkSourceConnectivityResult | null): number | undefined {
+    if (!result?.payload) return undefined;
+    const repos = result.payload.repositories;
+    if (Array.isArray(repos)) return repos.length;
+    return undefined;
+  }
+
+  onDestroy(() => {
+    for (const state of verifyStates.values()) {
+      state.controller?.abort();
+    }
+  });
 </script>
 
 <Card
@@ -90,7 +158,17 @@
               </span>
             </td>
             <td class="px-4 py-3">
-              <div class="flex min-w-max justify-end gap-1">
+              <div class="flex min-w-max flex-wrap items-center justify-end gap-1">
+                <Button
+                  variant="ghost"
+                  disabled={getVerifyState(profile.key).loading}
+                  ariaLabel={`Test connection for ${profile.displayName}`}
+                  onclick={() => void testConnection(profile)}
+                >
+                  {getVerifyState(profile.key).loading
+                    ? 'Testing…'
+                    : 'Test connection'}
+                </Button>
                 <Button
                   variant="ghost"
                   disabled={Boolean(updatingKey)}
@@ -118,6 +196,36 @@
                   Delete
                 </Button>
               </div>
+              {#if getVerifyState(profile.key).loading}
+                <div class="mt-2 flex items-center gap-2 text-xs text-slate-400" role="status">
+                  <span
+                    class="size-3 animate-spin rounded-full border border-slate-600 border-t-cyan-300"
+                    aria-hidden="true"
+                  ></span>
+                  Testing connection…
+                </div>
+              {:else}
+                {@const result = getVerifyState(profile.key).result}
+                {#if result?.success}
+                  <div class="mt-2">
+                    <span class="inline-flex items-center gap-1 rounded-full bg-emerald-950 px-2.5 py-1 text-xs font-semibold text-emerald-300">
+                      Connected
+                      {#if getRepoCount(result) !== undefined}
+                        <span class="text-emerald-400">({getRepoCount(result)} repos)</span>
+                      {/if}
+                    </span>
+                  </div>
+                {:else if result && !result.success}
+                  <div class="mt-2 space-y-1">
+                    <span class="inline-flex rounded-full bg-red-950 px-2.5 py-1 text-xs font-semibold text-red-300">
+                      Failed
+                    </span>
+                    {#each result.errors as error}
+                      <p class="text-xs text-red-400">{error}</p>
+                    {/each}
+                  </div>
+                {/if}
+              {/if}
             </td>
           </tr>
         {/each}

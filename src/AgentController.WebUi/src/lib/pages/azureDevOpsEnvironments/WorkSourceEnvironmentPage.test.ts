@@ -5,6 +5,7 @@ import { ApiError, type ResourceClient, type WebUiApiClient } from '../../api/cl
 import type {
   RepositoryProfile,
   RuntimeEnvironmentProfile,
+  WorkSourceConnectivityResult,
   WorkSourceEnvironmentProfile,
 } from '../../api/types';
 
@@ -44,6 +45,12 @@ function createApi(initialEnvironments: WorkSourceEnvironmentProfile[] = [enviro
     delete: vi.fn(async (key: string) => {
       profiles = profiles.filter((candidate) => candidate.key !== key);
     }),
+    verifyConnection: vi.fn(async (): Promise<WorkSourceConnectivityResult> => ({
+      success: true,
+      authMechanism: 'PersonalAccessToken',
+      errors: [],
+      payload: { repositories: [] },
+    })),
   };
 
   const client: WebUiApiClient = {
