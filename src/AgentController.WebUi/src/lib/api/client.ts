@@ -15,13 +15,9 @@ export interface ResourceClient<T> {
   delete(key: string, signal?: AbortSignal): Promise<void>;
 }
 
-export interface WorkSourceEnvironmentResourceClient extends ResourceClient<WorkSourceEnvironmentProfile> {
-  getBoardStates(key: string, signal?: AbortSignal): Promise<Record<string, string[]>>;
-}
-
 export interface WebUiApiClient {
   repositories: ResourceClient<RepositoryProfile>;
-  workSourceEnvironments: WorkSourceEnvironmentResourceClient;
+  workSourceEnvironments: ResourceClient<WorkSourceEnvironmentProfile>;
   runtimeEnvironments: ResourceClient<RuntimeEnvironmentProfile>;
 }
 
@@ -122,14 +118,7 @@ export function createWebUiApiClient(options: ApiClientOptions = {}): WebUiApiCl
 
   return {
     repositories: resource<RepositoryProfile>('/repositories'),
-    workSourceEnvironments: {
-      ...resource<WorkSourceEnvironmentProfile>('/work-source-environments'),
-      getBoardStates: (key, signal) =>
-        request<Record<string, string[]>>(
-          `/work-source-environments/${encodeURIComponent(key)}/board-states`,
-          { signal },
-        ),
-    },
+    workSourceEnvironments: resource<WorkSourceEnvironmentProfile>('/work-source-environments'),
     runtimeEnvironments: resource<RuntimeEnvironmentProfile>('/runtime-environments'),
   };
 }

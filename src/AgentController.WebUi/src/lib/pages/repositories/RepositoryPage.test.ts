@@ -27,7 +27,6 @@ const workSourceEnvironment: WorkSourceEnvironmentProfile = {
   provider: 'AzureDevOpsBoards',
   organizationUrl: 'https://dev.azure.com/example',
   project: 'Agent Controller',
-  completedStates: ['Done'],
   tagPrefix: 'agent',
   activeState: 'Active',
   completedState: 'Done',
@@ -90,12 +89,7 @@ function createApi(initialRepositories: RepositoryProfile[] = [repository]): Moc
   return {
     client: {
       repositories,
-      workSourceEnvironments: {
-        ...staticResource([workSourceEnvironment]),
-        getBoardStates: vi.fn(async () => ({
-          Default: ['Active', 'Closed', 'New', 'Resolved'],
-        })),
-      },
+      workSourceEnvironments: staticResource([workSourceEnvironment]),
       runtimeEnvironments: staticResource([runtimeEnvironment]),
     },
     repositories,

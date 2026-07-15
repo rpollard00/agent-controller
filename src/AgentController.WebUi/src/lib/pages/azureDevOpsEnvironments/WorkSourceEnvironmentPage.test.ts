@@ -15,7 +15,6 @@ const environment: WorkSourceEnvironmentProfile = {
   provider: 'AzureDevOpsBoards',
   organizationUrl: 'https://dev.azure.com/example',
   project: 'Agent Controller',
-  completedStates: ['Resolved', 'Removed'],
   tagPrefix: 'agent',
   activeState: 'Active',
   completedState: 'Resolved',
@@ -45,9 +44,6 @@ function createApi(initialEnvironments: WorkSourceEnvironmentProfile[] = [enviro
     delete: vi.fn(async (key: string) => {
       profiles = profiles.filter((candidate) => candidate.key !== key);
     }),
-    getBoardStates: vi.fn(async () => ({
-      Default: ['Active', 'New', 'Removed', 'Resolved'],
-    })),
   };
 
   const client: WebUiApiClient = {
@@ -122,7 +118,6 @@ describe('work source environment screens', () => {
         provider: 'AzureDevOpsBoards',
         organizationUrl: 'https://dev.azure.com/example',
         project: 'Secondary Project',
-        completedStates: [],
         tagPrefix: 'agent',
         patEnvironmentVariable: 'SECONDARY_ADO_PAT',
         activeState: null,
@@ -308,7 +303,6 @@ describe('work source environment screens', () => {
       expect.objectContaining({
         provider: 'AzureDevOpsBoards',
         tagPrefix: 'agent',
-        completedStates: [],
         activeState: null,
         completedState: null,
       }),
@@ -325,109 +319,8 @@ describe('work source environment screens', () => {
     expect(await screen.findByLabelText(/Tag prefix/)).toBeVisible();
     expect(screen.getByLabelText(/Active state/)).toBeVisible();
     expect(screen.getByLabelText(/^Completed state$/)).toBeVisible();
-    expect(screen.getByText('Completed states')).toBeVisible();
 
     // Board policy info alert is NOT present on edit
     expect(screen.queryByText('Board policy configured after save')).not.toBeInTheDocument();
-  });
-
-  it('renders board-state suggestions grouped by work item type with type headers', async () => {
-    const groupedEnvironment: WorkSourceEnvironmentProfile = {
-      ...environment,
-      completedStates: [],
-      activeState: '',
-      completedState: '',
-    };
-    const api = createApi([groupedEnvironment]);
-    api.environments.getBoardStates.mockResolvedValue({
-      Bug: ['Active', 'Investigating', 'Resolved'],
-      Task: ['Not Started', 'In Progress', 'Done'],
-      'User Story': ['New', 'Approved', 'Closed'],
-    });
-
-    window.history.replaceState({}, '', '/work-source-environments/ado-main/edit');
-    render(App, { client: api.client });
-
-    // Wait for board policy section to render
-    expect(await screen.findByText('Board policy')).toBeVisible();
-
-    // Wait for board states to load (async fetchBoardStates after environment load)
-    const suggestedSection = await screen.findByText('Suggested from board');
-    expect(suggestedSection).toBeVisible();
-
-    // Each WIT group header is rendered (alpha-sorted: Bug, Task, User Story)
-    expect(screen.getByText('Bug')).toBeVisible();
-    expect(screen.getByText('Task')).toBeVisible();
-    expect(screen.getByText('User Story')).toBeVisible();
-
-    // State suggestion buttons appear under their WIT groups
-    expect(screen.getByText('+ Active')).toBeVisible();
-    expect(screen.getByText('+ Investigating')).toBeVisible();
-    expect(screen.getByText('+ Resolved')).toBeVisible();
-    expect(screen.getByText('+ In Progress')).toBeVisible();
-    expect(screen.getByText('+ Not Started')).toBeVisible();
-    expect(screen.getByText('+ Done')).toBeVisible();
-    expect(screen.getByText('+ Approved')).toBeVisible();
-    expect(screen.getByText('+ New')).toBeVisible();
-    expect(screen.getByText('+ Closed')).toBeVisible();
-
-    // Verify getBoardStates was called (grouped shape consumed)
-    expect(api.environments.getBoardStates).toHaveBeenCalled();
-  });
-
-  it('selects a board state from grouped suggestion and stores bare state name', async () => {
-    const emptyEnvironment: WorkSourceEnvironmentProfile = {
-      ...environment,
-      completedStates: [],
-    };
-    const api = createApi([emptyEnvironment]);
-    api.environments.getBoardStates.mockResolvedValue({
-      Bug: ['Active', 'Resolved'],
-      Task: ['Done', 'In Progress'],
-    });
-
-    window.history.replaceState({}, '', '/work-source-environments/ado-main/edit');
-    render(App, { client: api.client });
-
-    // Wait for board policy section and suggestions to load
-    expect(await screen.findByText('Board policy')).toBeVisible();
-    const doneButton = await screen.findByText('+ Done');
-    expect(doneButton).toBeVisible();
-
-    // Click a suggestion button from a WIT group
-    await fireEvent.click(doneButton);
-
-    // The + Done suggestion should no longer appear (already selected)
-    expect(screen.queryByText('+ Done')).not.toBeInTheDocument();
-  });
-
-  it('renders board-states connectivity error detail on 502 response', async () => {
-    const api = createApi();
-    api.environments.getBoardStates.mockRejectedValueOnce(
-      new ApiError({
-        title: 'Board states unavailable.',
-        status: 502,
-        detail:
-          'Could not reach Azure DevOps API for project "Agent Controller". Ensure the PAT has Work item tracking (Read) scope.',
-      }),
-    );
-
-    window.history.replaceState({}, '', '/work-source-environments/ado-main/edit');
-    render(App, { client: api.client });
-
-    // Wait for board policy section to render
-    expect(await screen.findByText('Board policy')).toBeVisible();
-
-    // Generic fallback message is visible
-    expect(await screen.findByText(/Unable to load board states/)).toBeVisible();
-    expect(screen.getByText(/You can still enter states manually/)).toBeVisible();
-
-    // Backend problem.detail is rendered inline
-    expect(
-      screen.getByText(
-        /Could not reach Azure DevOps API for project "Agent Controller"/,
-      ),
-    ).toBeVisible();
-    expect(screen.getByText(/Ensure the PAT has Work item tracking \(Read\) scope/)).toBeVisible();
   });
 });
