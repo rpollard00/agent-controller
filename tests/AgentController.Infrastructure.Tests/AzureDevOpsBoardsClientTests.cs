@@ -2669,6 +2669,795 @@ public class AzureDevOpsBoardsClientTests
     }
 
     // ──────────────────────────────────────────────
+    // GetValidStatesAsync — Process API path (HTTP-mocked)
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetValidStatesAsync_ProcessApiSequence_ReturnsGroupedByWit()
+    {
+        // Arrange: mock the 3-step Process API sequence:
+        //   (1) GET project → capabilities.processTemplate.templateTypeId
+        //   (2) GET process WITs for that process type id
+        //   (3) GET per-WIT states (in parallel)
+        const string processTypeId = "b7b7c690-4f2f-4a0e-9a3d-1234567890ab";
+
+        var projectResponse = $$"""
+            {
+              "id": "proj-123",
+              "name": "{{Project}}",
+              "capabilities": {
+                "processTemplate": {
+                  "templateTypeId": "{{processTypeId}}"
+                }
+              }
+            }
+            """;
+        projectResponse = projectResponse
+            .Replace("{{Project}}", Project)
+            .Replace("{{processTypeId}}", processTypeId);
+
+        var witListResponse = $$"""
+            {
+              "count": 2,
+              "value": [
+                { "id": "wit-bug", "name": "Bug" },
+                { "id": "wit-story", "name": "User Story" }
+              ]
+            }
+            """;
+
+        // Per-WIT state responses (Process API: fields.System.State.name.allowedValues)
+        var bugStatesResponse = $$"""
+            {
+              "id": "wit-bug",
+              "name": "Bug",
+              "fields": {
+                "System.State": {
+                  "name": {
+                    "refName": "System.State",
+                    "allowedValues": [ "Resolved", "New", "Closed", "Active" ]
+                  }
+                }
+              }
+            }
+            """;
+
+        var storyStatesResponse = $$"""
+            {
+              "id": "wit-story",
+              "name": "User Story",
+              "fields": {
+                "System.State": {
+                  "name": {
+                    "refName": "System.State",
+                    "allowedValues": [ "Done", "To Do", "In Progress" ]
+                  }
+                }
+              }
+            }
+            """;
+
+        var client = CreateClientWithProcessApiResponses(
+            processTypeId,
+            projectResponse,
+            witListResponse,
+            new Dictionary<string, string>
+            {
+                ["Bug"] = bugStatesResponse,
+                ["User Story"] = storyStatesResponse,
+            }
+        );
+
+        // Act
+        var result = await client.GetValidStatesAsync(Project, CancellationToken.None);
+
+        // Assert: grouped by WIT, alpha-sorted WITs
+        Assert.Equal(2, result.Count);
+        var keys = result.Keys.ToList();
+        Assert.Equal("Bug", keys[0]);
+        Assert.Equal("User Story", keys[1]);
+
+        // Assert: states alpha-sorted within each WIT
+        var bugStates = result["Bug"];
+        string[] expectedBugStates = ["Active", "Closed", "New", "Resolved"];
+        Assert.Equal(expectedBugStates, bugStates);
+
+        var storyStates = result["User Story"];
+        string[] expectedStoryStates = ["Done", "In Progress", "To Do"];
+        Assert.Equal(expectedStoryStates, storyStates);
+
+        // Assert: bare state names only — no IDs, URLs, or metadata leaked
+        foreach (var kvp in result)
+        {
+            foreach (var state in kvp.Value)
+            {
+                Assert.DoesNotContain("http", state, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("/", state);
+                Assert.DoesNotContain("\"", state);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task GetValidStatesAsync_PinsProcessApiRequestPaths()
+    {
+        // Arrange: capture all request URLs to pin the exact API paths
+        var capturedUrls = new List<string>();
+        const string processTypeId = "proc-abc-123";
+
+        var handler = new CaptureHttpMessageHandler(async (req) =>
+        {
+            var url = req.RequestUri?.AbsoluteUri ?? string.Empty;
+            capturedUrls.Add(url);
+
+            // (1) Project lookup
+            if (url.Contains("_apis/projects/"))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        $$"""
+                        {
+                          "id": "proj-123",
+                          "name": "{{Project}}",
+                          "capabilities": {
+                            "processTemplate": {
+                              "templateTypeId": "{{processTypeId}}"
+                            }
+                          }
+                        }
+                        """,
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            // (2) WIT list
+            if (url.Contains("/workItemTypes?"))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        $$"""
+                        {
+                          "count": 1,
+                          "value": [
+                            { "id": "wit-task", "name": "Task" }
+                          ]
+                        }
+                        """,
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            // (3) Per-WIT states
+            if (url.Contains("/workItemTypes/Task?"))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        $$"""
+                        {
+                          "id": "wit-task",
+                          "name": "Task",
+                          "fields": {
+                            "System.State": {
+                              "name": {
+                                "refName": "System.State",
+                                "allowedValues": [ "Done", "To Do" ]
+                              }
+                            }
+                          }
+                        }
+                        """,
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var client = CreateClientWithHandler(handler);
+
+        // Act
+        await client.GetValidStatesAsync(Project, CancellationToken.None);
+
+        // Assert: exact API path sequence
+        // (1) Project lookup with includeProcessSettings
+        Assert.Contains(capturedUrls, u => u.Contains("_apis/projects/")
+            && u.Contains("api-version=7.1")
+            && u.Contains("includeProcessSettings=true"));
+
+        // (2) WIT list with process type id and preview API version
+        Assert.Contains(capturedUrls, u => u.Contains("/work/processes/")
+            && u.Contains("proc-abc-123")
+            && u.Contains("/workItemTypes?")
+            && u.Contains("api-version=7.1-preview.3"));
+
+        // (3) Per-WIT states with fields=System.State
+        Assert.Contains(capturedUrls, u => u.Contains("/workItemTypes/Task?")
+            && u.Contains("api-version=7.1-preview.3")
+            && u.Contains("fields=System.State"));
+    }
+
+    [Fact]
+    public async Task GetValidStatesAsync_PerWitStateCalls_RunInParallel()
+    {
+        // Arrange: track concurrency of per-WIT state calls
+        const string processTypeId = "proc-concurrent";
+        int maxConcurrentRequests = 0;
+        int currentConcurrentRequests = 0;
+        object lockObj = new();
+
+        var handler = new CaptureHttpMessageHandler(async (req) =>
+        {
+            var url = req.RequestUri?.AbsoluteUri ?? string.Empty;
+
+            // (1) Project lookup
+            if (url.Contains("_apis/projects/"))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        $$"""
+                        {
+                          "id": "proj-123",
+                          "name": "{{Project}}",
+                          "capabilities": {
+                            "processTemplate": {
+                              "templateTypeId": "{{processTypeId}}"
+                            }
+                          }
+                        }
+                        """,
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            // (2) WIT list — return 3 WITs to test parallel fetching
+            if (url.Contains("/workItemTypes?"))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        $$"""
+                        {
+                          "count": 3,
+                          "value": [
+                            { "id": "wit-bug", "name": "Bug" },
+                            { "id": "wit-story", "name": "User Story" },
+                            { "id": "wit-task", "name": "Task" }
+                          ]
+                        }
+                        """,
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            // (3) Per-WIT states — track concurrency
+            if (url.Contains("/workItemTypes/"))
+            {
+                lock (lockObj)
+                {
+                    currentConcurrentRequests++;
+                    if (currentConcurrentRequests > maxConcurrentRequests)
+                        maxConcurrentRequests = currentConcurrentRequests;
+                }
+
+                // Small delay to allow concurrent requests to overlap
+                await Task.Delay(50);
+
+                lock (lockObj)
+                {
+                    currentConcurrentRequests--;
+                }
+
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        $$"""
+                        {
+                          "fields": {
+                            "System.State": {
+                              "name": {
+                                "allowedValues": [ "New", "Done" ]
+                              }
+                            }
+                          }
+                        }
+                        """,
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var client = CreateClientWithHandler(handler);
+
+        // Act
+        await client.GetValidStatesAsync(Project, CancellationToken.None);
+
+        // Assert: per-WIT state calls ran in parallel (at least 2 concurrent)
+        Assert.True(maxConcurrentRequests >= 2,
+            $"Expected parallel state fetches but max concurrency was {maxConcurrentRequests}");
+    }
+
+    [Fact]
+    public async Task GetValidStatesAsync_FallbackProcessSettings_ReturnsStates()
+    {
+        // Arrange: project response uses processSettings.processId fallback
+        // (not capabilities.processTemplate.templateTypeId)
+        const string processTypeId = "fallback-proc-id";
+
+        var projectResponse = $$"""
+            {
+              "id": "proj-123",
+              "name": "{{Project}}",
+              "processSettings": {
+                "processId": "{{processTypeId}}"
+              }
+            }
+            """;
+
+        var witListResponse = $$"""
+            {
+              "count": 1,
+              "value": [
+                { "id": "wit-bug", "name": "Bug" }
+              ]
+            }
+            """;
+
+        var bugStatesResponse = $$"""
+            {
+              "fields": {
+                "System.State": {
+                  "name": {
+                    "allowedValues": [ "New", "Active" ]
+                  }
+                }
+              }
+            }
+            """;
+
+        var client = CreateClientWithProcessApiResponses(
+            processTypeId,
+            projectResponse,
+            witListResponse,
+            new Dictionary<string, string>
+            {
+                ["Bug"] = bugStatesResponse,
+            }
+        );
+
+        // Act
+        var result = await client.GetValidStatesAsync(Project, CancellationToken.None);
+
+        // Assert: fallback processSettings.processId worked
+        Assert.Single(result);
+        string[] expectedBugStates2 = ["Active", "New"];
+        Assert.Equal(expectedBugStates2, result["Bug"]);
+    }
+
+    [Fact]
+    public async Task GetValidStatesAsync_TopLevelProcessIdFallback_ReturnsStates()
+    {
+        // Arrange: project response has only top-level processId (no capabilities or processSettings)
+        const string processTypeId = "top-level-proc-id";
+
+        var projectResponse = $$"""
+            {
+              "id": "proj-123",
+              "name": "{{Project}}",
+              "processId": "{{processTypeId}}"
+            }
+            """;
+
+        var witListResponse = $$"""
+            {
+              "count": 1,
+              "value": [
+                { "id": "wit-task", "name": "Task" }
+              ]
+            }
+            """;
+
+        var taskStatesResponse = $$"""
+            {
+              "fields": {
+                "System.State": {
+                  "name": {
+                    "allowedValues": [ "To Do", "Done" ]
+                  }
+                }
+              }
+            }
+            """;
+
+        var client = CreateClientWithProcessApiResponses(
+            processTypeId,
+            projectResponse,
+            witListResponse,
+            new Dictionary<string, string>
+            {
+                ["Task"] = taskStatesResponse,
+            }
+        );
+
+        // Act
+        var result = await client.GetValidStatesAsync(Project, CancellationToken.None);
+
+        // Assert: top-level processId fallback worked
+        Assert.Single(result);
+        string[] expectedTaskStates = ["Done", "To Do"];
+        Assert.Equal(expectedTaskStates, result["Task"]);
+    }
+
+    [Fact]
+    public async Task GetValidStatesAsync_EmptyWitList_ReturnsEmptyDictionary()
+    {
+        // Arrange: project valid, but WIT list returns empty
+        const string processTypeId = "proc-empty";
+
+        var projectResponse = $$"""
+            {
+              "capabilities": {
+                "processTemplate": {
+                  "templateTypeId": "{{processTypeId}}"
+                }
+              }
+            }
+            """;
+
+        var witListResponse = $$"""
+            {
+              "count": 0,
+              "value": []
+            }
+            """;
+
+        var client = CreateClientWithProcessApiResponses(
+            processTypeId,
+            projectResponse,
+            witListResponse,
+            new Dictionary<string, string>()
+        );
+
+        // Act
+        var result = await client.GetValidStatesAsync(Project, CancellationToken.None);
+
+        // Assert: empty dictionary (no WITs to query)
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task GetValidStatesAsync_NoProcessTypeId_ThrowsHttpRequestException()
+    {
+        // Arrange: project response has no process template info
+        var projectResponse = $$"""
+            {
+              "id": "proj-123",
+              "name": "{{Project}}"
+            }
+            """;
+
+        var client = CreateClientWithProcessApiResponses(
+            null!,
+            projectResponse,
+            $$"""{"value":[]}""",
+            new Dictionary<string, string>()
+        );
+
+        // Act + Assert
+        var ex = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.GetValidStatesAsync(Project, CancellationToken.None));
+
+        Assert.Contains("process template type ID", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GetValidStatesAsync_ProjectLookupFails_ThrowsHttpRequestException()
+    {
+        // Arrange: project lookup returns 401
+        var client = CreateClientWithStatusCodes(
+            (urlContains: "_apis/projects/",
+             statusCode: HttpStatusCode.Unauthorized,
+             body: $$"""{"message":"Unauthorized"}""")
+        );
+
+        // Act + Assert
+        var ex = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.GetValidStatesAsync(Project, CancellationToken.None));
+
+        Assert.Contains("Project lookup failed", ex.Message);
+        Assert.Contains("401", ex.Message);
+    }
+
+    [Fact]
+    public async Task GetValidStatesAsync_WitListFails_ThrowsHttpRequestException()
+    {
+        // Arrange: project lookup succeeds, WIT list returns 403
+        const string processTypeId = "proc-forbidden";
+
+        var handler = new CaptureHttpMessageHandler(async (req) =>
+        {
+            var url = req.RequestUri?.AbsoluteUri ?? string.Empty;
+
+            if (url.Contains("_apis/projects/"))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        $$"""
+                        {
+                          "capabilities": {
+                            "processTemplate": {
+                              "templateTypeId": "{{processTypeId}}"
+                            }
+                          }
+                        }
+                        """,
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            // WIT list returns 403
+            if (url.Contains("/workItemTypes?"))
+            {
+                return new HttpResponseMessage(HttpStatusCode.Forbidden)
+                {
+                    Content = new StringContent(
+                        $$"""{"message":"Forbidden"}""",
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var client = CreateClientWithHandler(handler);
+
+        // Act + Assert
+        var ex = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.GetValidStatesAsync(Project, CancellationToken.None));
+
+        Assert.Contains("work item types", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("403", ex.Message);
+    }
+
+    [Fact]
+    public async Task GetValidStatesAsync_WitWithNoStates_ExcludedFromResult()
+    {
+        // Arrange: one WIT has states, another has none
+        const string processTypeId = "proc-partial";
+
+        var projectResponse = $$"""
+            {
+              "capabilities": {
+                "processTemplate": {
+                  "templateTypeId": "{{processTypeId}}"
+                }
+              }
+            }
+            """;
+
+        var witListResponse = $$"""
+            {
+              "count": 2,
+              "value": [
+                { "id": "wit-bug", "name": "Bug" },
+                { "id": "wit-epic", "name": "Epic" }
+              ]
+            }
+            """;
+
+        // Bug has states, Epic has none (no allowedValues)
+        var bugStatesResponse = $$"""
+            {
+              "fields": {
+                "System.State": {
+                  "name": {
+                    "allowedValues": [ "New", "Closed" ]
+                  }
+                }
+              }
+            }
+            """;
+
+        var epicStatesResponse = $$"""
+            {
+              "fields": {
+                "System.State": {
+                  "name": {}
+                }
+              }
+            }
+            """;
+
+        var client = CreateClientWithProcessApiResponses(
+            processTypeId,
+            projectResponse,
+            witListResponse,
+            new Dictionary<string, string>
+            {
+                ["Bug"] = bugStatesResponse,
+                ["Epic"] = epicStatesResponse,
+            }
+        );
+
+        // Act
+        var result = await client.GetValidStatesAsync(Project, CancellationToken.None);
+
+        // Assert: only WITs with states are included
+        Assert.Single(result);
+        Assert.True(result.ContainsKey("Bug"));
+        Assert.False(result.ContainsKey("Epic"));
+        string[] expectedBugStates3 = ["Closed", "New"];
+        Assert.Equal(expectedBugStates3, result["Bug"]);
+    }
+
+    [Fact]
+    public async Task GetValidStatesAsync_EmptyProject_ReturnsEmptyDictionary()
+    {
+        var client = CreateClient();
+
+        // Act
+        var result = await client.GetValidStatesAsync(string.Empty, CancellationToken.None);
+
+        // Assert: empty project returns empty dict (no HTTP call)
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task GetValidStatesAsync_NullProject_ReturnsEmptyDictionary()
+    {
+        var client = CreateClient();
+
+        // Act
+        var result = await client.GetValidStatesAsync(null!, CancellationToken.None);
+
+        // Assert: null project returns empty dict (no HTTP call)
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task GetValidStatesAsync_NoLegacyFlatFields_OnlyBareStateNames()
+    {
+        // Arrange: mock response includes extra fields (id, url, metadata) that should NOT leak
+        const string processTypeId = "proc-legacy";
+
+        var projectResponse = $$"""
+            {
+              "capabilities": {
+                "processTemplate": {
+                  "templateTypeId": "{{processTypeId}}"
+                }
+              }
+            }
+            """;
+
+        var witListResponse = $$"""
+            {
+              "count": 1,
+              "value": [
+                { "id": "wit-bug", "name": "Bug" }
+              ]
+            }
+            """;
+
+        // ADO response with extra fields that could leak if not handled correctly
+        var bugStatesResponse = $$"""
+            {
+              "id": "wit-bug",
+              "url": "https://dev.azure.com/org/_apis/work/processes/proc-legacy/workItemTypes/Bug",
+              "fields": {
+                "System.State": {
+                  "name": {
+                    "refName": "System.State",
+                    "description": "Work item state",
+                    "allowedValues": [ "Resolved", "New", "Closed", "Active" ]
+                  }
+                }
+              }
+            }
+            """;
+
+        var client = CreateClientWithProcessApiResponses(
+            processTypeId,
+            projectResponse,
+            witListResponse,
+            new Dictionary<string, string>
+            {
+                ["Bug"] = bugStatesResponse,
+            }
+        );
+
+        // Act
+        var result = await client.GetValidStatesAsync(Project, CancellationToken.None);
+
+        // Assert: only bare state names, no legacy fields
+        Assert.Single(result);
+        var states = result["Bug"];
+        Assert.Equal(4, states.Count);
+
+        // Each state should be a plain string — no JSON, URLs, or IDs
+        foreach (var state in states)
+        {
+            Assert.Matches("^[A-Z][a-zA-Z ]+$", state);
+            Assert.DoesNotContain("http", state, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("\"", state);
+            Assert.DoesNotContain("{", state);
+        }
+
+        // Verify the expected states are present
+        Assert.Contains("Active", states);
+        Assert.Contains("Closed", states);
+        Assert.Contains("New", states);
+        Assert.Contains("Resolved", states);
+    }
+
+    // ──────────────────────────────────────────────
+    // GetValidStatesAsync helper — CreateClientWithProcessApiResponses
+    // ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Creates an <see cref="AzureDevOpsBoardsClient"/> wired to a capture handler
+    /// that routes Process API requests: project lookup, WIT list, and per-WIT states.
+    /// </summary>
+    private static AzureDevOpsBoardsClient CreateClientWithProcessApiResponses(
+        string processTypeId,
+        string projectResponseJson,
+        string witListResponseJson,
+        Dictionary<string, string> witStatesResponses)
+    {
+        var handler = new CaptureHttpMessageHandler(async (req) =>
+        {
+            var url = req.RequestUri?.AbsoluteUri ?? string.Empty;
+
+            // (1) Project lookup
+            if (url.Contains("_apis/projects/"))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        projectResponseJson,
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            // (2) WIT list (ends with ?api-version or ?api-version& — has query string)
+            if (url.Contains("/workItemTypes?") || url.EndsWith("/workItemTypes", StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        witListResponseJson,
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            // (3) Per-WIT states — match by WIT name in URL (URL-encoded)
+            foreach (var (witName, responseJson) in witStatesResponses)
+            {
+                var encodedWitName = Uri.EscapeDataString(witName);
+                if (url.Contains($"/workItemTypes/{encodedWitName}"))
+                {
+                    return new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(
+                            responseJson,
+                            Encoding.UTF8, "application/json"),
+                    };
+                }
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        return CreateClientWithHandler(handler);
+    }
+
+    // ──────────────────────────────────────────────
     // JSON response helpers
     // ──────────────────────────────────────────────
 
