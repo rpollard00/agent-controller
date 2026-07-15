@@ -116,6 +116,7 @@ app.MapWorkItemEndpoints();
 app.MapRunEndpoints();
 app.MapRuntimeEventEndpoints();
 app.MapAzureDevOpsDiagnosticEndpoints();
+app.MapWorkSourceConnectivityEndpoints();
 app.MapWebUiControllers();
 app.MapWebUiHosting();
 
