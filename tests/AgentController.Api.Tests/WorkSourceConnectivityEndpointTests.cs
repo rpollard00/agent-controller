@@ -310,12 +310,7 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
                     new MockAzureDevOpsBoardsClientFactory()
                 );
 
-                // Register the Azure DevOps connectivity verifier as singleton so the
-                // singleton WorkSourceConnectivityVerifierResolver can resolve it.
-                // The resolver is singleton and resolves verifiers from the root provider,
-                // so scoped verifiers cannot be resolved. The mock factory ensures no
-                // real HTTP calls are made.
-                services.AddSingleton<AgentController.Infrastructure.AzureDevOpsConnectivityVerifier>();
+
             });
         }
     }
