@@ -308,9 +308,9 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
         return new BoardsQueryParameters
         {
             Project = query.Project ?? options.Project ?? string.Empty,
-            States = query.States is { Count: > 0 }
-                ? query.States
-                : NullIfEmpty(options.CompletedStates),
+            ExcludedStates = query.States is { Count: > 0 }
+                ? null
+                : BoardTerminalStates.Values,
             Tags = query.Tags is { Count: > 0 } ? query.Tags : null,
             ExcludedTags = query.ExcludedTags is { Count: > 0 }
                 ? query.ExcludedTags

@@ -14,7 +14,7 @@ namespace AgentController.Infrastructure.Tests;
 /// Tests for <see cref="AzureDevOpsBoardStateStartupValidator"/>.
 /// Verifies that the validator skips validation for non-ADO providers,
 /// respects the skip environment variable, handles missing config gracefully,
-/// and correctly rejects invalid ActiveState/CompletedState/CompletedStates
+/// and correctly rejects invalid ActiveState/CompletedState
 /// and duplicate ActiveState/CompletedState values.
 /// </summary>
 public class AzureDevOpsBoardStateStartupValidatorTests
@@ -141,8 +141,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
                 organizationUrl: "https://dev.azure.com/testorg",
                 project: "TestProject",
                 activeState: "Active", // Not in valid states, but we'll test below
-                completedState: "Resolved",
-                completedStates: ["Resolved"]));
+                completedState: "Resolved"));
 
         // ActiveState "Active" is NOT in the mock valid states, so this should fail.
         // Let's use "Resolved" for ActiveState to test the success path.
@@ -152,8 +151,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
                 organizationUrl: "https://dev.azure.com/testorg",
                 project: "TestProject",
                 activeState: "InProgress",
-                completedState: "Resolved",
-                completedStates: ["Resolved"]));
+                completedState: "Resolved"));
 
         // Act & Assert: should not throw
         await validatorSuccess.StartAsync(CancellationToken.None);
@@ -173,8 +171,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
                 organizationUrl: "https://dev.azure.com/testorg",
                 project: "TestProject",
                 activeState: "Active", // NOT in valid states
-                completedState: "Resolved",
-                completedStates: ["Resolved"]));
+                completedState: "Resolved"));
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => validator.StartAsync(CancellationToken.None));
@@ -198,37 +195,13 @@ public class AzureDevOpsBoardStateStartupValidatorTests
                 organizationUrl: "https://dev.azure.com/testorg",
                 project: "TestProject",
                 activeState: "InProgress",
-                completedState: "Done", // NOT in valid states
-                completedStates: ["Resolved"]));
+                completedState: "Done" // NOT in valid states
+            ));
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => validator.StartAsync(CancellationToken.None));
 
         Assert.Contains("CompletedState 'Done'", ex.Message);
-        Assert.Contains("not a valid System.State value", ex.Message);
-    }
-
-    [Fact]
-    public async Task StartAsync_InvalidCompletedStates_ThrowsInvalidOperationException()
-    {
-        var mockClient = new FakeAzureDevOpsBoardsClient
-        {
-            ValidStates = ["New", "Approved", "InProgress", "Resolved", "Closed"],
-        };
-
-        var validator = CreateValidatorWithMockClient(
-            mockClient,
-            workSource: CreateWorkSourceOptions(
-                organizationUrl: "https://dev.azure.com/testorg",
-                project: "TestProject",
-                activeState: "InProgress",
-                completedState: "Resolved",
-                completedStates: ["New", "Queued"])); // "Queued" NOT in valid states
-
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => validator.StartAsync(CancellationToken.None));
-
-        Assert.Contains("CompletedStates value 'Queued'", ex.Message);
         Assert.Contains("not a valid System.State value", ex.Message);
     }
 
@@ -246,16 +219,15 @@ public class AzureDevOpsBoardStateStartupValidatorTests
                 organizationUrl: "https://dev.azure.com/testorg",
                 project: "TestProject",
                 activeState: "Active", // invalid
-                completedState: "Done", // invalid
-                completedStates: ["New", "Queued"])); // "Queued" invalid
+                completedState: "Done" // invalid
+            ));
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => validator.StartAsync(CancellationToken.None));
 
-        // Should report all three failures
+        // Should report both failures
         Assert.Contains("ActiveState 'Active'", ex.Message);
         Assert.Contains("CompletedState 'Done'", ex.Message);
-        Assert.Contains("CompletedStates value 'Queued'", ex.Message);
     }
 
     [Fact]
@@ -272,8 +244,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
                 organizationUrl: "https://dev.azure.com/testorg",
                 project: "TestProject",
                 activeState: "Resolved",
-                completedState: "Resolved",
-                completedStates: ["Resolved"]));
+                completedState: "Resolved"));
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => validator.StartAsync(CancellationToken.None));
@@ -295,8 +266,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
                 organizationUrl: "https://dev.azure.com/testorg",
                 project: "TestProject",
                 activeState: "resolved",
-                completedState: "Resolved",
-                completedStates: ["Closed"]));
+                completedState: "Resolved"));
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => validator.StartAsync(CancellationToken.None));
@@ -320,8 +290,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
                 organizationUrl: "https://dev.azure.com/testorg",
                 project: "TestProject",
                 activeState: "Active",
-                completedState: "Resolved",
-                completedStates: ["Resolved"]));
+                completedState: "Resolved"));
 
         // Should not throw — empty valid states means skip
         await validator.StartAsync(CancellationToken.None);
@@ -343,8 +312,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
                 organizationUrl: "https://dev.azure.com/testorg",
                 project: "TestProject",
                 activeState: "Active",
-                completedState: "Resolved",
-                completedStates: ["Resolved"]));
+                completedState: "Resolved"));
 
         // Should not throw — connectivity failure means skip with warning
         await validator.StartAsync(CancellationToken.None);
@@ -365,8 +333,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
                 organizationUrl: "https://dev.azure.com/testorg",
                 project: "TestProject",
                 activeState: null,
-                completedState: "Resolved",
-                completedStates: ["Resolved"]));
+                completedState: "Resolved"));
 
         await validator.StartAsync(CancellationToken.None);
     }
@@ -385,28 +352,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
                 organizationUrl: "https://dev.azure.com/testorg",
                 project: "TestProject",
                 activeState: "InProgress",
-                completedState: null,
-                completedStates: ["InProgress"]));
-
-        await validator.StartAsync(CancellationToken.None);
-    }
-
-    [Fact]
-    public async Task StartAsync_EmptyCompletedStates_SkipsCompletedStatesCheck()
-    {
-        var mockClient = new FakeAzureDevOpsBoardsClient
-        {
-            ValidStates = ["New", "Resolved"],
-        };
-
-        var validator = CreateValidatorWithMockClient(
-            mockClient,
-            workSource: CreateWorkSourceOptions(
-                organizationUrl: "https://dev.azure.com/testorg",
-                project: "TestProject",
-                activeState: "New",
-                completedState: "Resolved",
-                completedStates: [])); // empty list
+                completedState: null));
 
         await validator.StartAsync(CancellationToken.None);
     }
@@ -420,8 +366,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         string? organizationUrl = null,
         string? project = null,
         string? activeState = "Active",
-        string? completedState = "Resolved",
-        IReadOnlyList<string>? completedStates = null)
+        string? completedState = "Resolved")
     {
         return global::Microsoft.Extensions.Options.Options.Create(new WorkSourceOptions
         {
@@ -430,7 +375,6 @@ public class AzureDevOpsBoardStateStartupValidatorTests
             Project = project,
             ActiveState = activeState,
             CompletedState = completedState,
-            CompletedStates = completedStates ?? ["Resolved"],
         });
     }
 

@@ -99,8 +99,6 @@ public class OptionsSmokeTests
         var config = BuildConfiguration(
             new Dictionary<string, string?>
             {
-                ["workSource:completedStates:0"] = "Resolved",
-                ["workSource:completedStates:1"] = "Closed",
                 ["workSource:tagPrefix"] = "ac",
             }
         );
@@ -114,9 +112,6 @@ public class OptionsSmokeTests
             .Value;
 
         Assert.Equal("LocalFake", options.Provider);
-        Assert.Equal(2, options.CompletedStates.Count);
-        Assert.Contains("Resolved", options.CompletedStates);
-        Assert.Contains("Closed", options.CompletedStates);
         Assert.Equal("ac", options.TagPrefix);
     }
 
@@ -126,7 +121,6 @@ public class OptionsSmokeTests
         var options = new WorkSourceOptions { Provider = "LocalFake" };
 
         Assert.Equal("agent", options.TagPrefix);
-        Assert.Empty(options.CompletedStates);
     }
 
     [Fact]
@@ -187,7 +181,6 @@ public class OptionsSmokeTests
 
         Assert.Equal("LocalFake", options.Provider);
         Assert.Equal("agent", options.TagPrefix);
-        Assert.Empty(options.CompletedStates);
     }
 
     [Fact]

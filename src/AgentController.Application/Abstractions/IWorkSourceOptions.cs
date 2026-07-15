@@ -28,12 +28,6 @@ public interface IWorkSourceOptions
     string? CompletedState { get; }
 
     /// <summary>
-    /// Work item states that are considered finished and not picked up.
-    /// Items in these states are excluded from discovery queries.
-    /// </summary>
-    IReadOnlyList<string> CompletedStates { get; }
-
-    /// <summary>
     /// Prefix used for controller-owned lifecycle tags on the board.
     /// Defaults to "agent" when not configured.
     /// </summary>

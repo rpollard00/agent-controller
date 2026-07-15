@@ -37,12 +37,6 @@ public sealed class WorkSourceOptions : IWorkSourceOptions
     /// <summary>Default tag prefix when not explicitly configured.</summary>
     public const string DefaultTagPrefix = "agent";
 
-    /// <summary>
-    /// Work item states that are considered finished and not picked up.
-    /// Items in these states are excluded from discovery queries.
-    /// </summary>
-    public IReadOnlyList<string> CompletedStates { get; init; } = [];
-
     // ── Prefix-aware lifecycle tag helpers ──
 
     /// <summary>Tag added when a work item is prepared for agent pickup.</summary>

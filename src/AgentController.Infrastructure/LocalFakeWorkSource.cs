@@ -40,7 +40,7 @@ internal sealed class LocalFakeWorkSource : IWorkSource
         // Merge configured filters into the query, letting caller overrides win
         // where explicitly provided.
         // Note: EligibleStates/EligibleTags/ExcludedTags removed in favor of
-        // CompletedStates + TagPrefix model; caller overrides take precedence.
+        // TagPrefix model; caller overrides take precedence.
         var effectiveQuery = query with
         {
             States = query.States is { Count: > 0 }

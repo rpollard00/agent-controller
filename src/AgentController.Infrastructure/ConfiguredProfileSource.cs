@@ -104,7 +104,6 @@ internal sealed class ConfiguredProfileSource : IConfiguredProfileSource
             TagPrefix = workSource.TagPrefix,
             OrganizationUrl = workSource.OrganizationUrl ?? string.Empty,
             Project = workSource.Project ?? string.Empty,
-            CompletedStates = workSource.CompletedStates,
             ActiveState = workSource.ActiveState,
             CompletedState = workSource.CompletedState,
             PatEnvironmentVariable = GetEnvironmentVariableReference(

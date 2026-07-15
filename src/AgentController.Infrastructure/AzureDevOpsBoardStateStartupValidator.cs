@@ -13,8 +13,8 @@ namespace AgentController.Infrastructure;
 /// for the configured project at host startup.
 ///
 /// Uses <see cref="IAzureDevOpsBoardsClient.GetValidStatesAsync"/> to enumerate
-/// the valid System.State values, then throws during startup if ActiveState,
-/// CompletedState, or any CompletedStates value is not a valid state.
+/// the valid System.State values, then throws during startup if ActiveState
+/// or CompletedState is not a valid state.
 /// Also validates that ActiveState and CompletedState are distinct when both are set.
 ///
 /// This validation only runs when the work source provider is "AzureDevOpsBoards".
@@ -140,19 +140,6 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
                 $"Valid states: [{string.Join(", ", validStates)}].");
         }
 
-        if (workSource.CompletedStates is { Count: > 0 })
-        {
-            foreach (var state in workSource.CompletedStates)
-            {
-                if (!string.IsNullOrWhiteSpace(state) && !validStatesSet.Contains(state))
-                {
-                    failures.Add(
-                        $"CompletedStates value '{state}' is not a valid System.State value. " +
-                        $"Valid states: [{string.Join(", ", validStates)}].");
-                }
-            }
-        }
-
         // ActiveState and CompletedState must be distinct when both are configured.
         if (!string.IsNullOrWhiteSpace(workSource.ActiveState)
             && !string.IsNullOrWhiteSpace(workSource.CompletedState)
@@ -172,8 +159,7 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
 #pragma warning disable CA1873 // LoggerMessage source-gen has its own IsEnabled guard
         ValidationPassed(_logger,
             workSource.ActiveState ?? "(not set)",
-            workSource.CompletedState ?? "(not set)",
-            string.Join(", ", workSource.CompletedStates));
+            workSource.CompletedState ?? "(not set)");
 #pragma warning restore CA1873
     }
 
@@ -239,7 +225,7 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
 
     [LoggerMessage(Level = LogLevel.Information,
         Message = "ADO board state validation passed: ActiveState='{ActiveState}', " +
-                  "CompletedState='{CompletedState}', CompletedStates=[{CompletedStates}].")]
+                  "CompletedState='{CompletedState}'.")]
     private static partial void ValidationPassed(
-        ILogger logger, string activeState, string completedState, string completedStates);
+        ILogger logger, string activeState, string completedState);
 }
