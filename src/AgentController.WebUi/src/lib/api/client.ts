@@ -16,7 +16,7 @@ export interface ResourceClient<T> {
 }
 
 export interface WorkSourceEnvironmentResourceClient extends ResourceClient<WorkSourceEnvironmentProfile> {
-  getBoardStates(key: string, signal?: AbortSignal): Promise<string[]>;
+  getBoardStates(key: string, signal?: AbortSignal): Promise<Record<string, string[]>>;
 }
 
 export interface WebUiApiClient {
@@ -125,7 +125,7 @@ export function createWebUiApiClient(options: ApiClientOptions = {}): WebUiApiCl
     workSourceEnvironments: {
       ...resource<WorkSourceEnvironmentProfile>('/work-source-environments'),
       getBoardStates: (key, signal) =>
-        request<string[]>(
+        request<Record<string, string[]>>(
           `/work-source-environments/${encodeURIComponent(key)}/board-states`,
           { signal },
         ),

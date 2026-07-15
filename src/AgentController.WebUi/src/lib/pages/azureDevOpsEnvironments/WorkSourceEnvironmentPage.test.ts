@@ -45,7 +45,9 @@ function createApi(initialEnvironments: WorkSourceEnvironmentProfile[] = [enviro
     delete: vi.fn(async (key: string) => {
       profiles = profiles.filter((candidate) => candidate.key !== key);
     }),
-    getBoardStates: vi.fn(async () => ['New', 'Active', 'Resolved', 'Removed']),
+    getBoardStates: vi.fn(async () => ({
+      Default: ['Active', 'New', 'Removed', 'Resolved'],
+    })),
   };
 
   const client: WebUiApiClient = {

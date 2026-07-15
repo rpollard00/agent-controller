@@ -1,4 +1,3 @@
-using System.Linq;
 using AgentController.Application.Abstractions;
 using AgentController.Application.Results;
 
@@ -69,14 +68,6 @@ public sealed class GetBoardStatesQueryHandler(
             );
         }
 
-        // Flatten grouped states into a sorted union for the current flat result shape.
-        // Work item 3 will update BoardStatesResult to carry the grouped shape directly.
-        var flatStates = groupedStates
-            .SelectMany(kvp => kvp.Value)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        return BoardStatesResult.Succeeded(flatStates);
+        return BoardStatesResult.Succeeded(groupedStates);
     }
 }

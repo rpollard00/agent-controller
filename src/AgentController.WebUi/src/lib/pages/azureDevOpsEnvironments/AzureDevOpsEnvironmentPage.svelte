@@ -38,7 +38,7 @@
   let loadController: AbortController | undefined;
   let mutationController: AbortController | undefined;
   let boardStatesController: AbortController | undefined;
-  let boardStates = $state<string[]>([]);
+  let boardStates = $state<Record<string, string[]>>({});
   let boardStatesLoading = $state(false);
   let boardStatesError = $state(false);
   let successNotice = $state<{ path: string; title: string; message: string }>();
@@ -74,7 +74,7 @@
     loadController?.abort();
     boardStatesController?.abort();
     loadController = new AbortController();
-    boardStates = [];
+    boardStates = {};
     boardStatesLoading = false;
     boardStatesError = false;
     void loadRoute(currentRoute, loadController.signal);
@@ -83,7 +83,7 @@
   async function fetchBoardStates(key: string): Promise<void> {
     boardStatesController?.abort();
     boardStatesController = new AbortController();
-    boardStates = [];
+    boardStates = {};
     boardStatesLoading = true;
     boardStatesError = false;
 

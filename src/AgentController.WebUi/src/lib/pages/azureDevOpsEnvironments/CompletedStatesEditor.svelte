@@ -1,12 +1,12 @@
 <script lang="ts">
   let {
     selected,
-    suggestions = [],
+    suggestions = {},
     disabled = false,
     error = false,
   }: {
     selected: string[];
-    suggestions?: string[];
+    suggestions?: Record<string, string[]>;
     disabled?: boolean;
     error?: boolean;
   } = $props();
@@ -17,8 +17,23 @@
   const inputClasses =
     'min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 placeholder:text-slate-600 disabled:cursor-not-allowed disabled:bg-slate-900 disabled:text-slate-400';
 
+  // Flatten grouped suggestions into a sorted list of available states.
   const available = $derived(
-    suggestions.filter((s) => !selected.includes(s)),
+    Object.values(suggestions)
+      .flat()
+      .filter((s) => !selected.includes(s))
+      .sort((a, b) => a.localeCompare(b)),
+  );
+
+  // Sorted work item type groups for display.
+  const witGroups = $derived(
+    Object.entries(suggestions)
+      .map(([wit, states]) => ({
+        wit,
+        available: states.filter((s) => !selected.includes(s)),
+      }))
+      .filter((group) => group.available.length > 0)
+      .sort((a, b) => a.wit.localeCompare(b.wit)),
   );
 
   function handleKeydown(event: KeyboardEvent): void {
@@ -88,21 +103,26 @@
     </button>
   </div>
 
-  {#if available.length > 0}
-    <div class="space-y-1">
+  {#if witGroups.length > 0}
+    <div class="space-y-2">
       <p class="text-xs font-medium text-slate-500">Suggested from board</p>
-      <div class="flex flex-wrap gap-1.5">
-        {#each available as state (state)}
-          <button
-            type="button"
-            class="rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-xs text-slate-300 hover:border-slate-500 hover:text-slate-100 disabled:cursor-not-allowed disabled:text-slate-600"
-            disabled={disabled}
-            onclick={() => addFromSuggestion(state)}
-          >
-            + {state}
-          </button>
-        {/each}
-      </div>
+      {#each witGroups as group}
+        <div class="space-y-1">
+          <p class="text-xs font-medium text-slate-600">{group.wit}</p>
+          <div class="flex flex-wrap gap-1.5">
+            {#each group.available as state (state)}
+              <button
+                type="button"
+                class="rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-xs text-slate-300 hover:border-slate-500 hover:text-slate-100 disabled:cursor-not-allowed disabled:text-slate-600"
+                disabled={disabled}
+                onclick={() => addFromSuggestion(state)}
+              >
+                + {state}
+              </button>
+            {/each}
+          </div>
+        </div>
+      {/each}
     </div>
   {/if}
 </div>

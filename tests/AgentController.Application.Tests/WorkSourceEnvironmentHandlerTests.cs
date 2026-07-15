@@ -369,8 +369,10 @@ public sealed class WorkSourceEnvironmentHandlerTests
         );
 
         Assert.Equal(Results.BoardStatesStatus.Succeeded, result.Status);
-        // States are flattened from grouped response and sorted alphabetically.
-        Assert.Equal(["Active", "Closed", "New", "Resolved"], result.States);
+        // States are returned grouped by work item type.
+        Assert.Single(result.StatesByType);
+        Assert.True(result.StatesByType.ContainsKey("Default"));
+        Assert.Equal(["New", "Active", "Resolved", "Closed"], result.StatesByType["Default"]);
         Assert.Null(result.Error);
         Assert.Equal("ado-dev", store.LastReadKey);
     }
@@ -388,7 +390,7 @@ public sealed class WorkSourceEnvironmentHandlerTests
         );
 
         Assert.Equal(Results.BoardStatesStatus.NotFound, result.Status);
-        Assert.Empty(result.States);
+        Assert.Empty(result.StatesByType);
         Assert.Contains("not found", result.Error!, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -405,7 +407,7 @@ public sealed class WorkSourceEnvironmentHandlerTests
         );
 
         Assert.Equal(Results.BoardStatesStatus.NotFound, result.Status);
-        Assert.Empty(result.States);
+        Assert.Empty(result.StatesByType);
         Assert.Contains("Invalid", result.Error!, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -423,7 +425,7 @@ public sealed class WorkSourceEnvironmentHandlerTests
         );
 
         Assert.Equal(Results.BoardStatesStatus.UnsupportedProvider, result.Status);
-        Assert.Empty(result.States);
+        Assert.Empty(result.StatesByType);
         Assert.Contains("GitHub", result.Error!, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -441,7 +443,7 @@ public sealed class WorkSourceEnvironmentHandlerTests
         );
 
         Assert.Equal(Results.BoardStatesStatus.ConnectivityError, result.Status);
-        Assert.Empty(result.States);
+        Assert.Empty(result.StatesByType);
         Assert.NotNull(result.Error);
     }
 

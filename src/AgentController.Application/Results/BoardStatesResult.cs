@@ -28,16 +28,20 @@ public sealed record BoardStatesResult
     public BoardStatesStatus Status { get; init; }
 
     /// <summary>
-    /// The valid System.State values discovered from the board.
+    /// The valid System.State values discovered from the board, grouped by work item type.
+    /// Keys are work item type names; values are sorted lists of bare state names.
     /// Populated only when Status is Succeeded.
     /// </summary>
-    public IReadOnlyList<string> States { get; init; } = Array.Empty<string>();
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> StatesByType { get; init; } =
+        new Dictionary<string, IReadOnlyList<string>>();
 
     /// <summary>Human-readable error detail when the query fails.</summary>
     public string? Error { get; init; }
 
-    public static BoardStatesResult Succeeded(IReadOnlyList<string> states) =>
-        new() { Status = BoardStatesStatus.Succeeded, States = states };
+    public static BoardStatesResult Succeeded(
+        IReadOnlyDictionary<string, IReadOnlyList<string>> statesByType
+    ) =>
+        new() { Status = BoardStatesStatus.Succeeded, StatesByType = statesByType };
 
     public static BoardStatesResult NotFound(string? error = null) =>
         new() { Status = BoardStatesStatus.NotFound, Error = error };

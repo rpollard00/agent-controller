@@ -92,7 +92,9 @@ function createApi(initialRepositories: RepositoryProfile[] = [repository]): Moc
       repositories,
       workSourceEnvironments: {
         ...staticResource([workSourceEnvironment]),
-        getBoardStates: vi.fn(async () => ['New', 'Active', 'Resolved', 'Closed']),
+        getBoardStates: vi.fn(async () => ({
+          Default: ['Active', 'Closed', 'New', 'Resolved'],
+        })),
       },
       runtimeEnvironments: staticResource([runtimeEnvironment]),
     },

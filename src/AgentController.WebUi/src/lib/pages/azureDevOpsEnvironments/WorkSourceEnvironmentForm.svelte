@@ -19,7 +19,7 @@
     serverErrors = {},
     onsave,
     oncancel,
-    boardStates = [],
+    boardStates = {},
     boardStatesLoading = false,
     boardStatesError = false,
   }: {
@@ -29,7 +29,7 @@
     serverErrors?: Readonly<Record<string, string[]>>;
     onsave: (profile: WorkSourceEnvironmentProfile) => void;
     oncancel: () => void;
-    boardStates?: string[];
+    boardStates?: Record<string, string[]>;
     boardStatesLoading?: boolean;
     boardStatesError?: boolean;
   } = $props();

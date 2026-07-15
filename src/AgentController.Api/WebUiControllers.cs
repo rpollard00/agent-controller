@@ -389,7 +389,7 @@ public static class WebUiControllers
     private static IResult MapBoardStatesResult(BoardStatesResult result) =>
         result.Status switch
         {
-            BoardStatesStatus.Succeeded => Results.Ok(result.States),
+            BoardStatesStatus.Succeeded => Results.Ok(result.StatesByType),
             BoardStatesStatus.NotFound => NotFoundProblem(result.Error),
             BoardStatesStatus.UnsupportedProvider => Results.Problem(
                 statusCode: StatusCodes.Status400BadRequest,
