@@ -330,4 +330,74 @@ describe('work source environment screens', () => {
     // Board policy info alert is NOT present on edit
     expect(screen.queryByText('Board policy configured after save')).not.toBeInTheDocument();
   });
+
+  it('renders board-state suggestions grouped by work item type with type headers', async () => {
+    const groupedEnvironment: WorkSourceEnvironmentProfile = {
+      ...environment,
+      completedStates: [],
+      activeState: '',
+      completedState: '',
+    };
+    const api = createApi([groupedEnvironment]);
+    api.environments.getBoardStates.mockResolvedValue({
+      Bug: ['Active', 'Investigating', 'Resolved'],
+      Task: ['Not Started', 'In Progress', 'Done'],
+      'User Story': ['New', 'Approved', 'Closed'],
+    });
+
+    window.history.replaceState({}, '', '/work-source-environments/ado-main/edit');
+    render(App, { client: api.client });
+
+    // Wait for board policy section to render
+    expect(await screen.findByText('Board policy')).toBeVisible();
+
+    // Wait for board states to load (async fetchBoardStates after environment load)
+    const suggestedSection = await screen.findByText('Suggested from board');
+    expect(suggestedSection).toBeVisible();
+
+    // Each WIT group header is rendered (alpha-sorted: Bug, Task, User Story)
+    expect(screen.getByText('Bug')).toBeVisible();
+    expect(screen.getByText('Task')).toBeVisible();
+    expect(screen.getByText('User Story')).toBeVisible();
+
+    // State suggestion buttons appear under their WIT groups
+    expect(screen.getByText('+ Active')).toBeVisible();
+    expect(screen.getByText('+ Investigating')).toBeVisible();
+    expect(screen.getByText('+ Resolved')).toBeVisible();
+    expect(screen.getByText('+ In Progress')).toBeVisible();
+    expect(screen.getByText('+ Not Started')).toBeVisible();
+    expect(screen.getByText('+ Done')).toBeVisible();
+    expect(screen.getByText('+ Approved')).toBeVisible();
+    expect(screen.getByText('+ New')).toBeVisible();
+    expect(screen.getByText('+ Closed')).toBeVisible();
+
+    // Verify getBoardStates was called (grouped shape consumed)
+    expect(api.environments.getBoardStates).toHaveBeenCalled();
+  });
+
+  it('selects a board state from grouped suggestion and stores bare state name', async () => {
+    const emptyEnvironment: WorkSourceEnvironmentProfile = {
+      ...environment,
+      completedStates: [],
+    };
+    const api = createApi([emptyEnvironment]);
+    api.environments.getBoardStates.mockResolvedValue({
+      Bug: ['Active', 'Resolved'],
+      Task: ['Done', 'In Progress'],
+    });
+
+    window.history.replaceState({}, '', '/work-source-environments/ado-main/edit');
+    render(App, { client: api.client });
+
+    // Wait for board policy section and suggestions to load
+    expect(await screen.findByText('Board policy')).toBeVisible();
+    const doneButton = await screen.findByText('+ Done');
+    expect(doneButton).toBeVisible();
+
+    // Click a suggestion button from a WIT group
+    await fireEvent.click(doneButton);
+
+    // The + Done suggestion should no longer appear (already selected)
+    expect(screen.queryByText('+ Done')).not.toBeInTheDocument();
+  });
 });
