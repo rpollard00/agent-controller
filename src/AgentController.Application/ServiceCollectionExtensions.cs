@@ -94,6 +94,10 @@ public static class ServiceCollectionExtensions
             RunAzureDevOpsDiagnosticQueryHandler
         >();
         services.AddScoped<
+            IQueryHandler<VerifyWorkSourceConnectivityQuery, WorkSourceConnectivityResult>,
+            VerifyWorkSourceConnectivityQueryHandler
+        >();
+        services.AddScoped<
             IQueryHandler<ListRepositoriesQuery, IReadOnlyList<RepositoryProfile>>,
             ListRepositoriesQueryHandler
         >();
