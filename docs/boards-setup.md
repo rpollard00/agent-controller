@@ -1,25 +1,27 @@
 # Azure DevOps Work Source — Setup Flow and PAT Runtime Requirement
 
-This note documents two user-visible behaviors for configuring an Azure DevOps Work Source environment via the web UI.
+This note documents user-visible behaviors for configuring an Azure DevOps Work Source environment via the web UI.
 
 ---
 
-## 1. Connect-First Flow — Board Policy Requires a Saved Environment
+## 1. Declarative Terminal-State Policy
 
-When creating a new Azure DevOps Work Source environment, the **board policy section** (board states selection, tag prefix, active/completed state) is **not available until the environment is saved**.
+The controller excludes terminal board states from new-work discovery using a **fixed, non-configurable constant** (`BoardTerminalStates`). The excluded states are:
 
-**Create flow:**
+| State |
+|-------|
+| `Closed` |
+| `Removed` |
+| `Resolved` |
+| `Completed` |
 
-1. Enter the connection details: **Organization URL**, **Project**, and **PAT environment variable name**.
-2. Save the environment. This persists the connection configuration.
-3. After save, the board policy section becomes active and can query ADO for available board states.
+These states are matched **case-insensitively** against ADO board item `State` values. This is a declarative policy — there is no per-environment configuration for terminal states, and no UI editor for selecting completed states.
 
-The board states query requires a valid, persisted connection (URL + Project + PAT env var name) to call the ADO Process API. The UI prevents querying ADO before these values are saved.
+This constant is the single source of truth for the terminal-state filter. Every consumer of the discovery query uses `BoardTerminalStates.Values` for `ExcludedStates`.
 
-**Edit flow (after save):**
+### Rework Reactivation Is Unaffected
 
-- The board policy section is fully visible and interactive.
-- Board state suggestions are fetched from ADO and displayed grouped by work item type (Bug, Task, User Story, etc.).
+The rework reactivation flow (e.g., an overriding `rework-requested` tag or state on a pull request) **takes precedence** over the terminal-state filter. When a completed item is moved back to an eligible state for rework, the controller's `ReactivateForReworkAsync` path strips agent lifecycle tags and re-adds `agent-ready`, allowing the item to be re-picked up regardless of its prior terminal state. See [Board Provisioning §6](./board-provisioning.md#6-rework-reactivation---tag-cleanup-guarantee) for the full reactivation contract.
 
 ---
 
@@ -29,15 +31,15 @@ The Personal Access Token (PAT) is **not stored as a secret** by the Agent Contr
 
 - The web UI only stores the **name** of the environment variable that holds the PAT (e.g., `AZURE_DEVOPS_PAT`).
 - At runtime, the API host process reads the PAT from that environment variable.
-- The named env var **must actually be present** in the host process for board-state queries and other ADO operations to work.
+- The named env var **must actually be present** in the host process for polling and other ADO operations to work.
 
 ### What This Means
 
 | Scenario | Result |
 |----------|--------|
-| Env var name is configured but the env var is **not set** in the host process | Board-state query returns a connectivity error: `"Environment variable '{VAR_NAME}' is not set in the host process."` |
+| Env var name is configured but the env var is **not set** in the host process | ADO operations fail with: `"Environment variable '{VAR_NAME}' is not set in the host process."` |
 | Env var is set but contains an **invalid/expired PAT** | ADO returns an HTTP error (e.g., 401), surfaced as a connectivity error. |
-| Env var is set with a **valid PAT** | Board states are fetched successfully via the ADO Process API. |
+| Env var is set with a **valid PAT** | ADO operations (polling, claiming, state projection) work correctly. |
 
 ### Setting the PAT
 
