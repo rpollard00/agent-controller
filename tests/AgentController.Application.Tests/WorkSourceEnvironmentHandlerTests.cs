@@ -8,6 +8,7 @@ using AgentController.Application.Queries;
 using AgentController.Application.Results;
 using AgentController.Domain;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace AgentController.Application.Tests;
 
@@ -369,7 +370,11 @@ public sealed class WorkSourceEnvironmentHandlerTests
             var profile = CreateProfile("ado-dev");
             var store = new FakeWorkSourceEnvironmentStore(profile);
             var factory = new FakeBoardsClientFactory(TestBoardStates);
-            var handler = new Queries.GetBoardStatesQueryHandler(store, factory);
+            var handler = new Queries.GetBoardStatesQueryHandler(
+                store,
+                factory,
+                NullLogger<Queries.GetBoardStatesQueryHandler>.Instance
+            );
 
             var result = await handler.ExecuteAsync(
                 new Queries.GetBoardStatesQuery("  ADO-DEV  "),
@@ -395,7 +400,11 @@ public sealed class WorkSourceEnvironmentHandlerTests
     {
         var store = new FakeWorkSourceEnvironmentStore();
         var factory = new FakeBoardsClientFactory(EmptyStates);
-        var handler = new Queries.GetBoardStatesQueryHandler(store, factory);
+        var handler = new Queries.GetBoardStatesQueryHandler(
+            store,
+            factory,
+            NullLogger<Queries.GetBoardStatesQueryHandler>.Instance
+        );
 
         var result = await handler.ExecuteAsync(
             new Queries.GetBoardStatesQuery("missing"),
@@ -412,7 +421,11 @@ public sealed class WorkSourceEnvironmentHandlerTests
     {
         var store = new FakeWorkSourceEnvironmentStore();
         var factory = new FakeBoardsClientFactory(EmptyStates);
-        var handler = new Queries.GetBoardStatesQueryHandler(store, factory);
+        var handler = new Queries.GetBoardStatesQueryHandler(
+            store,
+            factory,
+            NullLogger<Queries.GetBoardStatesQueryHandler>.Instance
+        );
 
         var result = await handler.ExecuteAsync(
             new Queries.GetBoardStatesQuery("not valid"),
@@ -430,7 +443,11 @@ public sealed class WorkSourceEnvironmentHandlerTests
         var profile = CreateProfile("other") with { Provider = "GitHub" };
         var store = new FakeWorkSourceEnvironmentStore(profile);
         var factory = new FakeBoardsClientFactory(EmptyStates);
-        var handler = new Queries.GetBoardStatesQueryHandler(store, factory);
+        var handler = new Queries.GetBoardStatesQueryHandler(
+            store,
+            factory,
+            NullLogger<Queries.GetBoardStatesQueryHandler>.Instance
+        );
 
         var result = await handler.ExecuteAsync(
             new Queries.GetBoardStatesQuery("other"),
@@ -455,7 +472,11 @@ public sealed class WorkSourceEnvironmentHandlerTests
             var profile = CreateProfile("ado-dev");
             var store = new FakeWorkSourceEnvironmentStore(profile);
             var factory = new FakeBoardsClientFactory(EmptyStates); // empty = no WITs with states
-            var handler = new Queries.GetBoardStatesQueryHandler(store, factory);
+            var handler = new Queries.GetBoardStatesQueryHandler(
+                store,
+                factory,
+                NullLogger<Queries.GetBoardStatesQueryHandler>.Instance
+            );
 
             var result = await handler.ExecuteAsync(
                 new Queries.GetBoardStatesQuery("ado-dev"),
@@ -479,7 +500,11 @@ public sealed class WorkSourceEnvironmentHandlerTests
         var profile = CreateProfile("ado-dev") with { Enabled = false };
         var store = new FakeWorkSourceEnvironmentStore(profile);
         var factory = new FakeBoardsClientFactory(TestBoardStates);
-        var handler = new Queries.GetBoardStatesQueryHandler(store, factory);
+        var handler = new Queries.GetBoardStatesQueryHandler(
+            store,
+            factory,
+            NullLogger<Queries.GetBoardStatesQueryHandler>.Instance
+        );
 
         var result = await handler.ExecuteAsync(
             new Queries.GetBoardStatesQuery("ado-dev"),
@@ -500,7 +525,11 @@ public sealed class WorkSourceEnvironmentHandlerTests
             with { PatEnvironmentVariable = "__NONEXISTENT_TEST_PAT_VAR__" };
         var store = new FakeWorkSourceEnvironmentStore(profile);
         var factory = new FakeBoardsClientFactory(TestBoardStates);
-        var handler = new Queries.GetBoardStatesQueryHandler(store, factory);
+        var handler = new Queries.GetBoardStatesQueryHandler(
+            store,
+            factory,
+            NullLogger<Queries.GetBoardStatesQueryHandler>.Instance
+        );
 
         var result = await handler.ExecuteAsync(
             new Queries.GetBoardStatesQuery("ado-dev"),
@@ -529,7 +558,11 @@ public sealed class WorkSourceEnvironmentHandlerTests
             var factory = new FakeBoardsClientFactory_Throws(
                 new HttpRequestException("Request failed: HTTP 401 Unauthorized")
             );
-            var handler = new Queries.GetBoardStatesQueryHandler(store, factory);
+            var handler = new Queries.GetBoardStatesQueryHandler(
+                store,
+                factory,
+                NullLogger<Queries.GetBoardStatesQueryHandler>.Instance
+            );
 
             var result = await handler.ExecuteAsync(
                 new Queries.GetBoardStatesQuery("ado-dev"),

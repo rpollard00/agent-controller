@@ -1,6 +1,7 @@
 using System.Net;
 using AgentController.Application.Abstractions;
 using AgentController.Application.Results;
+using Microsoft.Extensions.Logging;
 
 namespace AgentController.Application.Queries;
 
@@ -9,13 +10,15 @@ namespace AgentController.Application.Queries;
 /// Uses the boards client factory to create a client from the environment profile
 /// and calls GetValidStatesAsync to discover System.State values.
 /// </summary>
-public sealed class GetBoardStatesQueryHandler(
+public sealed partial class GetBoardStatesQueryHandler(
     IWorkSourceEnvironmentStore environmentStore,
-    IAzureDevOpsBoardsClientFactory boardsClientFactory
+    IAzureDevOpsBoardsClientFactory boardsClientFactory,
+    ILogger<GetBoardStatesQueryHandler> logger
 ) : IQueryHandler<GetBoardStatesQuery, BoardStatesResult>
 {
     private readonly IWorkSourceEnvironmentStore _environmentStore = environmentStore;
     private readonly IAzureDevOpsBoardsClientFactory _boardsClientFactory = boardsClientFactory;
+    private readonly ILogger _logger = logger;
 
     public async Task<BoardStatesResult> ExecuteAsync(
         GetBoardStatesQuery query,
@@ -59,6 +62,7 @@ public sealed class GetBoardStatesQueryHandler(
         // (a) Disabled source — return a clear disabled message.
         if (!profile.Enabled)
         {
+            Log.ConnectivityError(_logger, key.Key, "disabled", null, null);
             return BoardStatesResult.ConnectivityError(
                 $"Work source environment '{key.Key}' is disabled."
             );
@@ -70,6 +74,7 @@ public sealed class GetBoardStatesQueryHandler(
             var envValue = Environment.GetEnvironmentVariable(profile.PatEnvironmentVariable);
             if (string.IsNullOrWhiteSpace(envValue))
             {
+                Log.ConnectivityError(_logger, key.Key, "missing-pat", null, null);
                 return BoardStatesResult.ConnectivityError(
                     $"PAT environment variable '{profile.PatEnvironmentVariable}' " +
                     "is not set in the API host process."
@@ -90,6 +95,7 @@ public sealed class GetBoardStatesQueryHandler(
             // If no states were returned, the process may have no WITs with states.
             if (groupedStates.Count == 0)
             {
+                Log.ConnectivityError(_logger, key.Key, "no-states", null, null);
                 return BoardStatesResult.ConnectivityError(
                     "Unable to retrieve board states. Verify organization URL, project, and PAT."
                 );
@@ -100,12 +106,14 @@ public sealed class GetBoardStatesQueryHandler(
         catch (HttpRequestException ex)
         {
             // (c) HTTP error from ADO — surface the underlying detail.
+            Log.ConnectivityError(_logger, key.Key, "http-error", ex.GetType().Name, ex.Message);
             return BoardStatesResult.ConnectivityError(
                 $"Azure DevOps request failed: {ex.Message}"
             );
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
+            Log.ConnectivityError(_logger, key.Key, "timed-out", ex.GetType().Name, ex.Message);
             return BoardStatesResult.ConnectivityError(
                 "Request to Azure DevOps timed out or was cancelled."
             );
@@ -113,6 +121,7 @@ public sealed class GetBoardStatesQueryHandler(
         catch (InvalidOperationException ex)
         {
             // Unexpected configuration error (e.g. factory threw for an unhandled reason).
+            Log.ConnectivityError(_logger, key.Key, "unexpected", ex.GetType().Name, ex.Message);
             return BoardStatesResult.ConnectivityError(
                 $"Failed to create Azure DevOps client: {ex.Message}"
             );
@@ -120,9 +129,25 @@ public sealed class GetBoardStatesQueryHandler(
         catch (Exception ex)
         {
             // Fallback: surface the detail without leaking secrets.
+            Log.ConnectivityError(_logger, key.Key, "unexpected", ex.GetType().Name, ex.Message);
             return BoardStatesResult.ConnectivityError(
                 $"Unexpected error querying Azure DevOps: {ex.Message}"
             );
         }
+    }
+
+    // ── Source-generated LoggerMessage partials ───────────────────
+
+    private static partial class Log
+    {
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Board-states query failed — environmentKey={EnvironmentKey}, reason={Reason}, exceptionType={ExceptionType}, exceptionMessage={ExceptionMessage}")]
+        public static partial void ConnectivityError(
+            ILogger logger,
+            string environmentKey,
+            string reason,
+            string? exceptionType,
+            string? exceptionMessage);
     }
 }
