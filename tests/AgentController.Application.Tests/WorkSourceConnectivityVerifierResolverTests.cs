@@ -2,6 +2,7 @@ using AgentController.Application;
 using AgentController.Application.Abstractions;
 using AgentController.Application.Results;
 using AgentController.Domain;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace AgentController.Application.Tests;
 
@@ -165,35 +166,17 @@ public sealed class WorkSourceConnectivityVerifierResolverTests
     // ─── Helpers ───
 
     private static WorkSourceConnectivityVerifierResolver CreateResolver(
-        IWorkSourceConnectivityVerifier verifier,
+        FakeConnectivityVerifier verifier,
         IReadOnlyDictionary<string, Type> verifierTypes
     )
     {
-        var serviceProvider = new StubServiceProvider(verifier);
-        return new WorkSourceConnectivityVerifierResolver(serviceProvider, verifierTypes);
-    }
-
-    /// <summary>
-    /// Minimal <see cref="IServiceProvider"/> that returns a pre-configured verifier.
-    /// </summary>
-    private sealed class StubServiceProvider(
-        IWorkSourceConnectivityVerifier verifier
-    ) : IServiceProvider
-    {
-        public object GetService(Type serviceType)
-        {
-            if (serviceType == typeof(IWorkSourceConnectivityVerifier))
-            {
-                return verifier;
-            }
-            if (serviceType.IsInstanceOfType(verifier))
-            {
-                return verifier;
-            }
-            throw new InvalidOperationException(
-                $"Service of type '{serviceType}' is not registered."
-            );
-        }
+        var services = new ServiceCollection();
+        services.AddScoped<FakeConnectivityVerifier>(_ => verifier);
+        var sp = services.BuildServiceProvider(validateScopes: true);
+        return new WorkSourceConnectivityVerifierResolver(
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            verifierTypes
+        );
     }
 
     /// <summary>
