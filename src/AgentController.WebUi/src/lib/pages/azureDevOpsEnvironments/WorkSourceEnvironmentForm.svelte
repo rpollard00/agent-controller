@@ -239,94 +239,104 @@
     {/if}
   </fieldset>
 
-  <fieldset class="space-y-6 border-t border-slate-800 pt-7">
-    <legend class="text-base font-semibold text-white">Board policy</legend>
-
-    <Field
-      id="wse-tagPrefix"
-      label="Tag prefix"
-      hint={tagPrefixHint}
-      error={fieldError('tagPrefix')}
-    >
-      <input
-        id="wse-tagPrefix"
-        name="tagPrefix"
-        class={inputClasses}
-        bind:value={values.tagPrefix}
-        disabled={submitting}
-        autocomplete="off"
-        placeholder="agent"
-        aria-invalid={fieldError('tagPrefix') ? 'true' : undefined}
-        aria-describedby={describedBy('wse-tagPrefix', 'tagPrefix', true)}
-        oninput={() => clearClientError('tagPrefix')}
+  {#if mode === 'create'}
+    <div class="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+      <Alert
+        variant="info"
+        title="Board policy configured after save"
+        message="Save the connection first, then edit the environment to configure board states, active/completed state, and tag prefix."
       />
-    </Field>
-
-    <Field
-      id="wse-completedStates"
-      label="Completed states"
-      hint="Items in these states are considered finished and not picked up."
-      error={fieldError('completedStates')}
-    >
-      {#if boardStatesLoading}
-        <div class="flex items-center gap-2 text-sm text-slate-400" role="status">
-          <span
-            class="size-3.5 animate-spin rounded-full border border-slate-700 border-t-cyan-300"
-            aria-hidden="true"
-          ></span>
-          Loading board states…
-        </div>
-      {:else if boardStatesError}
-        <p class="text-sm text-amber-300">Unable to load board states. You can still enter states manually.</p>
-      {/if}
-      <CompletedStatesEditor
-        selected={values.completedStates}
-        suggestions={boardStates}
-        disabled={submitting || boardStatesLoading}
-        error={Boolean(fieldError('completedStates'))}
-      />
-    </Field>
-
-    <div class="grid gap-6 lg:grid-cols-2">
-      <Field
-        id="wse-activeState"
-        label="Active state"
-        error={fieldError('activeState')}
-      >
-        <input
-          id="wse-activeState"
-          name="activeState"
-          class={inputClasses}
-          bind:value={values.activeState}
-          disabled={submitting}
-          autocomplete="off"
-          placeholder="Active"
-          aria-invalid={fieldError('activeState') ? 'true' : undefined}
-          aria-describedby={describedBy('wse-activeState', 'activeState')}
-          oninput={() => clearClientError('activeState')}
-        />
-      </Field>
-
-      <Field
-        id="wse-completedState"
-        label="Completed state"
-        error={fieldError('completedState')}
-      >
-        <input
-          id="wse-completedState"
-          name="completedState"
-          class={inputClasses}
-          bind:value={values.completedState}
-          disabled={submitting}
-          autocomplete="off"
-          placeholder="Resolved"
-          aria-invalid={fieldError('completedState') ? 'true' : undefined}
-          aria-describedby={describedBy('wse-completedState', 'completedState')}
-          oninput={() => clearClientError('completedState')}
-        />
-      </Field>
     </div>
-  </fieldset>
+  {:else}
+    <fieldset class="space-y-6 border-t border-slate-800 pt-7">
+      <legend class="text-base font-semibold text-white">Board policy</legend>
+
+      <Field
+        id="wse-tagPrefix"
+        label="Tag prefix"
+        hint={tagPrefixHint}
+        error={fieldError('tagPrefix')}
+      >
+        <input
+          id="wse-tagPrefix"
+          name="tagPrefix"
+          class={inputClasses}
+          bind:value={values.tagPrefix}
+          disabled={submitting}
+          autocomplete="off"
+          placeholder="agent"
+          aria-invalid={fieldError('tagPrefix') ? 'true' : undefined}
+          aria-describedby={describedBy('wse-tagPrefix', 'tagPrefix', true)}
+          oninput={() => clearClientError('tagPrefix')}
+        />
+      </Field>
+
+      <Field
+        id="wse-completedStates"
+        label="Completed states"
+        hint="Items in these states are considered finished and not picked up."
+        error={fieldError('completedStates')}
+      >
+        {#if boardStatesLoading}
+          <div class="flex items-center gap-2 text-sm text-slate-400" role="status">
+            <span
+              class="size-3.5 animate-spin rounded-full border border-slate-700 border-t-cyan-300"
+              aria-hidden="true"
+            ></span>
+            Loading board states…
+          </div>
+        {:else if boardStatesError}
+          <p class="text-sm text-amber-300">Unable to load board states. You can still enter states manually.</p>
+        {/if}
+        <CompletedStatesEditor
+          selected={values.completedStates}
+          suggestions={boardStates}
+          disabled={submitting || boardStatesLoading}
+          error={Boolean(fieldError('completedStates'))}
+        />
+      </Field>
+
+      <div class="grid gap-6 lg:grid-cols-2">
+        <Field
+          id="wse-activeState"
+          label="Active state"
+          error={fieldError('activeState')}
+        >
+          <input
+            id="wse-activeState"
+            name="activeState"
+            class={inputClasses}
+            bind:value={values.activeState}
+            disabled={submitting}
+            autocomplete="off"
+            placeholder="Active"
+            aria-invalid={fieldError('activeState') ? 'true' : undefined}
+            aria-describedby={describedBy('wse-activeState', 'activeState')}
+            oninput={() => clearClientError('activeState')}
+          />
+        </Field>
+
+        <Field
+          id="wse-completedState"
+          label="Completed state"
+          error={fieldError('completedState')}
+        >
+          <input
+            id="wse-completedState"
+            name="completedState"
+            class={inputClasses}
+            bind:value={values.completedState}
+            disabled={submitting}
+            autocomplete="off"
+            placeholder="Resolved"
+            aria-invalid={fieldError('completedState') ? 'true' : undefined}
+            aria-describedby={describedBy('wse-completedState', 'completedState')}
+            oninput={() => clearClientError('completedState')}
+          />
+        </Field>
+      </div>
+    </fieldset>
+  {/if}
 
   <div class="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
     <label class="flex min-h-8 cursor-pointer items-start gap-3" for="wse-enabled">

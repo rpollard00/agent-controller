@@ -92,7 +92,7 @@ describe('work source environment screens', () => {
     window.history.replaceState({}, '', '/work-source-environments');
   });
 
-  it('creates an environment with board policy and a credential reference', async () => {
+  it('creates an environment with board policy deferred until after save', async () => {
     window.history.replaceState({}, '', '/work-source-environments/new');
     const api = createApi([]);
     render(App, { client: api.client });
@@ -105,13 +105,12 @@ describe('work source environment screens', () => {
     // Verify provider selector defaults to Azure DevOps
     expect(screen.getByLabelText(/Work source provider/)).toHaveValue('AzureDevOpsBoards');
 
+    // Board policy section is hidden on create — only connection fields are present
+    expect(screen.queryByLabelText(/Active state/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Completed state$/)).not.toBeInTheDocument();
+    expect(screen.getByText('Board policy configured after save')).toBeVisible();
+
     await completeRequiredCreateFields();
-    await fireEvent.input(screen.getByLabelText(/Active state/), {
-      target: { value: 'Active' },
-    });
-    await fireEvent.input(screen.getByLabelText(/^Completed state$/), {
-      target: { value: 'Resolved' },
-    });
     await fireEvent.click(screen.getByRole('button', { name: 'Create environment' }));
 
     await waitFor(() => expect(api.environments.create).toHaveBeenCalledOnce());
@@ -126,6 +125,8 @@ describe('work source environment screens', () => {
         completedStates: [],
         tagPrefix: 'agent',
         patEnvironmentVariable: 'SECONDARY_ADO_PAT',
+        activeState: null,
+        completedState: null,
       }),
       expect.any(AbortSignal),
     );
@@ -285,7 +286,7 @@ describe('work source environment screens', () => {
     expect(screen.getByRole('link', { name: 'Primary boards' })).toBeVisible();
   });
 
-  it('submits provider, completedStates and tagPrefix in create flow', async () => {
+  it('submits provider with board policy fields deferred in create flow', async () => {
     window.history.replaceState({}, '', '/work-source-environments/new');
     const api = createApi([]);
     render(App, { client: api.client });
@@ -294,32 +295,39 @@ describe('work source environment screens', () => {
     const providerSelect = screen.getByLabelText(/Work source provider/);
     expect(providerSelect).toHaveValue('AzureDevOpsBoards');
 
-    // Tag prefix field is present with placeholder
-    const tagPrefixInput = screen.getByLabelText(/Tag prefix/);
-    expect(tagPrefixInput).toHaveAttribute('placeholder', 'agent');
+    // Board policy fields (tagPrefix, activeState, completedState) are hidden on create
+    expect(screen.queryByLabelText(/Tag prefix/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Active state/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Completed state$/)).not.toBeInTheDocument();
 
     await completeRequiredCreateFields();
-    await fireEvent.input(screen.getByLabelText(/Tag prefix/), {
-      target: { value: 'ac' },
-    });
-    await fireEvent.input(screen.getByLabelText(/Active state/), {
-      target: { value: 'Active' },
-    });
-    await fireEvent.input(screen.getByLabelText(/^Completed state$/), {
-      target: { value: 'Resolved' },
-    });
     await fireEvent.click(screen.getByRole('button', { name: 'Create environment' }));
 
     await waitFor(() => expect(api.environments.create).toHaveBeenCalledOnce());
     expect(api.environments.create).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: 'AzureDevOpsBoards',
-        tagPrefix: 'ac',
+        tagPrefix: 'agent',
         completedStates: [],
-        activeState: 'Active',
-        completedState: 'Resolved',
+        activeState: null,
+        completedState: null,
       }),
       expect.any(AbortSignal),
     );
+  });
+
+  it('exposes board policy fields on edit flow for a saved environment', async () => {
+    window.history.replaceState({}, '', '/work-source-environments/ado-main/edit');
+    const api = createApi();
+    render(App, { client: api.client });
+
+    // Board policy fields are visible on edit (saved environment)
+    expect(await screen.findByLabelText(/Tag prefix/)).toBeVisible();
+    expect(screen.getByLabelText(/Active state/)).toBeVisible();
+    expect(screen.getByLabelText(/^Completed state$/)).toBeVisible();
+    expect(screen.getByText('Completed states')).toBeVisible();
+
+    // Board policy info alert is NOT present on edit
+    expect(screen.queryByText('Board policy configured after save')).not.toBeInTheDocument();
   });
 });
