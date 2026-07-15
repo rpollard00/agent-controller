@@ -185,7 +185,6 @@ public static class AgentControllerServiceCollectionExtensions
     )
     {
         services.AddScoped<IRunLifecycleService, RunLifecycleService>();
-        services.AddScoped<IAzureDevOpsDiagnosticConfig, AzureDevOpsDiagnosticConfig>();
         services.TryAddSingleton<IAzureDevOpsBoardsClientFactory, AzureDevOpsBoardsClientFactory>();
 
         return services;

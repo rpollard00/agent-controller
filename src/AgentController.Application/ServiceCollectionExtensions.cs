@@ -90,10 +90,6 @@ public static class ServiceCollectionExtensions
             GetRunByIdQueryHandler
         >();
         services.AddScoped<
-            IQueryHandler<RunAzureDevOpsDiagnosticQuery, AzureDevOpsDiagnosticResult>,
-            RunAzureDevOpsDiagnosticQueryHandler
-        >();
-        services.AddScoped<
             IQueryHandler<VerifyWorkSourceConnectivityQuery, WorkSourceConnectivityResult>,
             VerifyWorkSourceConnectivityQueryHandler
         >();

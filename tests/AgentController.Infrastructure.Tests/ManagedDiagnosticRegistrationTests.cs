@@ -1,7 +1,5 @@
 using AgentController.Application;
 using AgentController.Application.Abstractions;
-using AgentController.Application.Queries;
-using AgentController.Application.Results;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -10,7 +8,7 @@ namespace AgentController.Infrastructure.Tests;
 public sealed class ManagedDiagnosticRegistrationTests
 {
     [Fact]
-    public void DiagnosticHandler_ResolvesWithoutConfiguredBoardsClient()
+    public void ConnectivityVerifierResolver_ResolvesWithoutConfiguredBoardsClient()
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(
@@ -33,9 +31,7 @@ public sealed class ManagedDiagnosticRegistrationTests
         using var scope = serviceProvider.CreateScope();
 
         Assert.NotNull(
-            scope.ServiceProvider.GetRequiredService<
-                IQueryHandler<RunAzureDevOpsDiagnosticQuery, AzureDevOpsDiagnosticResult>
-            >()
+            scope.ServiceProvider.GetRequiredService<IWorkSourceConnectivityVerifierResolver>()
         );
         Assert.Null(scope.ServiceProvider.GetService<IAzureDevOpsBoardsClient>());
     }
