@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Net.Http;
 using AgentController.Application;
 using AgentController.Domain;
 using AgentController.Infrastructure;
@@ -327,6 +328,29 @@ public class AzureDevOpsBoardStateStartupValidatorTests
     }
 
     [Fact]
+    public async Task StartAsync_ClientThrowsHttpRequestException_SkipsValidation()
+    {
+        // When the client throws (e.g., HTTP 401), the validator should skip without crashing.
+        var mockClient = new FakeAzureDevOpsBoardsClient
+        {
+            ThrowOnGetValidStates = new HttpRequestException(
+                "Project lookup failed: HTTP 401 Unauthorized"),
+        };
+
+        var validator = CreateValidatorWithMockClient(
+            mockClient,
+            workSource: CreateWorkSourceOptions(
+                organizationUrl: "https://dev.azure.com/testorg",
+                project: "TestProject",
+                activeState: "Active",
+                completedState: "Resolved",
+                completedStates: ["Resolved"]));
+
+        // Should not throw — connectivity failure means skip with warning
+        await validator.StartAsync(CancellationToken.None);
+    }
+
+    [Fact]
     public async Task StartAsync_NullActiveState_SkipsActiveStateCheck()
     {
         // When ActiveState is null/empty, it should not be validated.
@@ -476,6 +500,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
     private sealed class FakeAzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
     {
         public IReadOnlyList<string> ValidStates { get; init; } = [];
+        public Exception? ThrowOnGetValidStates { get; init; }
 
         public Task<IReadOnlyList<WorkCandidate>> QueryWorkItemsAsync(BoardsQueryParameters parameters, CancellationToken cancellationToken) =>
             throw new NotImplementedException();
@@ -504,6 +529,11 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         public Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> GetValidStatesAsync(
             string project, CancellationToken cancellationToken)
         {
+            if (ThrowOnGetValidStates is not null)
+            {
+                throw ThrowOnGetValidStates;
+            }
+
             // Auto-convert flat ValidStates to grouped shape for interface compatibility.
             IReadOnlyDictionary<string, IReadOnlyList<string>> grouped = ValidStates.Count > 0
                 ? (IReadOnlyDictionary<string, IReadOnlyList<string>>)

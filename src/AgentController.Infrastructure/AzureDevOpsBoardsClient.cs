@@ -1263,115 +1263,102 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             return new Dictionary<string, IReadOnlyList<string>>();
         }
 
-        try
+        // (1) GET project → read capabilities.processTemplate.templateTypeId.
+        var projectResponse = await _http.GetAsync(
+            $"_apis/projects/{Uri.EscapeDataString(project)}?api-version=7.1&includeProcessSettings=true",
+            cancellationToken
+        );
+
+        if (!projectResponse.IsSuccessStatusCode)
         {
-            // (1) GET project → read capabilities.processTemplate.templateTypeId.
-            var projectResponse = await _http.GetAsync(
-                $"_apis/projects/{Uri.EscapeDataString(project)}?api-version=7.1&includeProcessSettings=true",
-                cancellationToken
+            throw new HttpRequestException(
+                $"Project lookup failed: HTTP {(int)projectResponse.StatusCode} {projectResponse.ReasonPhrase}"
             );
+        }
 
-            if (!projectResponse.IsSuccessStatusCode)
-            {
-                return new Dictionary<string, IReadOnlyList<string>>();
-            }
+        var projectJson = await projectResponse.Content.ReadAsStringAsync(cancellationToken);
+        using var projectDoc = JsonDocument.Parse(projectJson);
 
-            var projectJson = await projectResponse.Content.ReadAsStringAsync(cancellationToken);
-            using var projectDoc = JsonDocument.Parse(projectJson);
+        // Extract processId from capabilities.processTemplate.templateTypeId.
+        var processTypeId = ExtractProcessTypeId(projectDoc.RootElement);
 
-            // Extract processId from capabilities.processTemplate.templateTypeId.
-            var processTypeId = ExtractProcessTypeId(projectDoc.RootElement);
-
-            if (string.IsNullOrWhiteSpace(processTypeId))
-            {
-                return new Dictionary<string, IReadOnlyList<string>>();
-            }
-
-            // (2) GET process WITs for that process type id.
-            var witListResponse = await _http.GetAsync(
-                $"_apis/work/processes/{Uri.EscapeDataString(processTypeId)}/workItemTypes?api-version=7.1-preview.3",
-                cancellationToken
+        if (string.IsNullOrWhiteSpace(processTypeId))
+        {
+            throw new HttpRequestException(
+                "Project response does not contain a process template type ID."
             );
+        }
 
-            if (!witListResponse.IsSuccessStatusCode)
+        // (2) GET process WITs for that process type id.
+        var witListResponse = await _http.GetAsync(
+            $"_apis/work/processes/{Uri.EscapeDataString(processTypeId)}/workItemTypes?api-version=7.1-preview.3",
+            cancellationToken
+        );
+
+        if (!witListResponse.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException(
+                $"Work item types lookup failed: HTTP {(int)witListResponse.StatusCode} {witListResponse.ReasonPhrase}"
+            );
+        }
+
+        var witListJson = await witListResponse.Content.ReadAsStringAsync(cancellationToken);
+        using var witListDoc = JsonDocument.Parse(witListJson);
+
+        // Collect WIT names.
+        var witNames = new List<string>();
+        if (
+            witListDoc.RootElement.TryGetProperty("value", out var witArray)
+            && witArray.ValueKind == JsonValueKind.Array
+        )
+        {
+            foreach (var wit in witArray.EnumerateArray())
             {
-                return new Dictionary<string, IReadOnlyList<string>>();
-            }
-
-            var witListJson = await witListResponse.Content.ReadAsStringAsync(cancellationToken);
-            using var witListDoc = JsonDocument.Parse(witListJson);
-
-            // Collect WIT names.
-            var witNames = new List<string>();
-            if (
-                witListDoc.RootElement.TryGetProperty("value", out var witArray)
-                && witArray.ValueKind == JsonValueKind.Array
-            )
-            {
-                foreach (var wit in witArray.EnumerateArray())
+                if (
+                    wit.TryGetProperty("name", out var nameEl)
+                    && nameEl.ValueKind == JsonValueKind.String
+                )
                 {
-                    if (
-                        wit.TryGetProperty("name", out var nameEl)
-                        && nameEl.ValueKind == JsonValueKind.String
-                    )
+                    var name = nameEl.GetString();
+                    if (!string.IsNullOrWhiteSpace(name))
                     {
-                        var name = nameEl.GetString();
-                        if (!string.IsNullOrWhiteSpace(name))
-                        {
-                            witNames.Add(name);
-                        }
+                        witNames.Add(name);
                     }
                 }
             }
+        }
 
-            if (witNames.Count == 0)
+        if (witNames.Count == 0)
+        {
+            return new Dictionary<string, IReadOnlyList<string>>();
+        }
+
+        // (3) For each WIT, GET its states — fetch in parallel.
+        var stateTasks = witNames
+            .Select(witName => FetchStatesForWitAsync(processTypeId, witName, cancellationToken))
+            .ToArray();
+
+        await Task.WhenAll(stateTasks);
+
+        // Build the grouped result: WIT name → sorted list of bare state names.
+        // Only include WITs that returned at least one state.
+        var grouped = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+        foreach (var (witName, states) in stateTasks.Select((task, i) => (witNames[i], task.Result)))
+        {
+            if (states.Count > 0)
             {
-                return new Dictionary<string, IReadOnlyList<string>>();
+                grouped[witName] = states;
             }
-
-            // (3) For each WIT, GET its states — fetch in parallel.
-            var stateTasks = witNames
-                .Select(witName => FetchStatesForWitAsync(processTypeId, witName, cancellationToken))
-                .ToArray();
-
-            await Task.WhenAll(stateTasks);
-
-            // Build the grouped result: WIT name → sorted list of bare state names.
-            // Only include WITs that returned at least one state.
-            var grouped = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
-            foreach (var (witName, states) in stateTasks.Select((task, i) => (witNames[i], task.Result)))
-            {
-                if (states.Count > 0)
-                {
-                    grouped[witName] = states;
-                }
-            }
-
-            // Sort WITs alphabetically (return as ordered dictionary via SortedDictionary).
-            var sorted = new SortedDictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
-            foreach (var kvp in grouped)
-            {
-                sorted[kvp.Key] = kvp.Value;
-            }
-
-            return sorted;
         }
-        catch (OperationCanceledException)
+
+        // Sort WITs alphabetically (return as ordered dictionary via SortedDictionary).
+        var sorted = new SortedDictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+        foreach (var kvp in grouped)
         {
-            return new Dictionary<string, IReadOnlyList<string>>();
+            sorted[kvp.Key] = kvp.Value;
         }
-        catch (HttpRequestException)
-        {
-            return new Dictionary<string, IReadOnlyList<string>>();
-        }
-        catch (JsonException)
-        {
-            return new Dictionary<string, IReadOnlyList<string>>();
-        }
-        catch
-        {
-            return new Dictionary<string, IReadOnlyList<string>>();
-        }
+
+        return sorted;
     }
 
     /// <summary>

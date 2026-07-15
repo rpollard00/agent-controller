@@ -1,3 +1,4 @@
+using System.Net;
 using AgentController.Application.Abstractions;
 using AgentController.Application.Results;
 
@@ -55,19 +56,73 @@ public sealed class GetBoardStatesQueryHandler(
             );
         }
 
-        // Create a boards client from the profile and discover valid states.
-        // GetValidStatesAsync now returns states grouped by work item type.
-        var client = _boardsClientFactory.Create(profile);
-        var groupedStates = await client.GetValidStatesAsync(profile.Project, cancellationToken);
-
-        // If no states were returned, the board may be misconfigured or unreachable.
-        if (groupedStates.Count == 0)
+        // (a) Disabled source — return a clear disabled message.
+        if (!profile.Enabled)
         {
             return BoardStatesResult.ConnectivityError(
-                "Unable to retrieve board states. Verify organization URL, project, and PAT."
+                $"Work source environment '{key.Key}' is disabled."
             );
         }
 
-        return BoardStatesResult.Succeeded(groupedStates);
+        // (b) Missing PAT env var in the host process.
+        if (!string.IsNullOrWhiteSpace(profile.PatEnvironmentVariable))
+        {
+            var envValue = Environment.GetEnvironmentVariable(profile.PatEnvironmentVariable);
+            if (string.IsNullOrWhiteSpace(envValue))
+            {
+                return BoardStatesResult.ConnectivityError(
+                    $"PAT environment variable '{profile.PatEnvironmentVariable}' " +
+                    "is not set in the API host process."
+                );
+            }
+        }
+
+        try
+        {
+            // Create a boards client from the profile and discover valid states.
+            // GetValidStatesAsync now returns states grouped by work item type.
+            var client = _boardsClientFactory.Create(profile);
+            var groupedStates = await client.GetValidStatesAsync(
+                profile.Project,
+                cancellationToken
+            );
+
+            // If no states were returned, the process may have no WITs with states.
+            if (groupedStates.Count == 0)
+            {
+                return BoardStatesResult.ConnectivityError(
+                    "Unable to retrieve board states. Verify organization URL, project, and PAT."
+                );
+            }
+
+            return BoardStatesResult.Succeeded(groupedStates);
+        }
+        catch (HttpRequestException ex)
+        {
+            // (c) HTTP error from ADO — surface the underlying detail.
+            return BoardStatesResult.ConnectivityError(
+                $"Azure DevOps request failed: {ex.Message}"
+            );
+        }
+        catch (OperationCanceledException)
+        {
+            return BoardStatesResult.ConnectivityError(
+                "Request to Azure DevOps timed out or was cancelled."
+            );
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Unexpected configuration error (e.g. factory threw for an unhandled reason).
+            return BoardStatesResult.ConnectivityError(
+                $"Failed to create Azure DevOps client: {ex.Message}"
+            );
+        }
+        catch (Exception ex)
+        {
+            // Fallback: surface the detail without leaking secrets.
+            return BoardStatesResult.ConnectivityError(
+                $"Unexpected error querying Azure DevOps: {ex.Message}"
+            );
+        }
     }
 }

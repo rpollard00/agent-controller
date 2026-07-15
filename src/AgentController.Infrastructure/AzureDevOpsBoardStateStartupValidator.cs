@@ -90,7 +90,18 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
         // The client is registered with the correct base URL and PAT from options.
         // GetValidStatesAsync returns states grouped by work item type;
         // flatten to a union of all bare state names for validation.
-        var groupedStates = await FetchValidStatesGroupedAsync(project!, cancellationToken);
+        // On connectivity failure the client throws — skip validation with a warning.
+        IReadOnlyDictionary<string, IReadOnlyList<string>> groupedStates;
+        try
+        {
+            groupedStates = await FetchValidStatesGroupedAsync(project!, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            // Any failure (HTTP error, JSON parse, network, cancellation) skips validation.
+            WarnStateQueryFailed(_logger, project!, ex.Message);
+            return;
+        }
 
         // Flatten grouped map: union all state-name lists across types.
         var validStates = groupedStates
@@ -208,6 +219,12 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
     [LoggerMessage(Level = LogLevel.Warning,
         Message = "Skipping ADO board state validation: organizationUrl or project is not configured.")]
     private static partial void SkipValidationMissingConfig(ILogger logger);
+
+    [LoggerMessage(Level = LogLevel.Warning,
+        Message = "ADO state query failed for project='{Project}': {Error}. " +
+                  "Skipping board state validation.")]
+    private static partial void WarnStateQueryFailed(
+        ILogger logger, string project, string error);
 
     [LoggerMessage(Level = LogLevel.Warning,
         Message = "Could not enumerate valid ADO states for project='{Project}'. " +

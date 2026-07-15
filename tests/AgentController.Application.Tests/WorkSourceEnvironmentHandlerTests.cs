@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Net;
 using System.Text.Json;
 using AgentController.Application;
 using AgentController.Application.Abstractions;
@@ -358,23 +359,35 @@ public sealed class WorkSourceEnvironmentHandlerTests
     [Fact]
     public async Task GetBoardStates_ReturnsStatesForAzureDevOpsBoardsProvider()
     {
-        var profile = CreateProfile("ado-dev");
-        var store = new FakeWorkSourceEnvironmentStore(profile);
-        var factory = new FakeBoardsClientFactory(TestBoardStates);
-        var handler = new Queries.GetBoardStatesQueryHandler(store, factory);
+        // Set the PAT env var so the handler passes the PAT check.
+        const string envName = "ADO_TEST_PAT";
+        var originalPat = Environment.GetEnvironmentVariable(envName);
+        try
+        {
+            Environment.SetEnvironmentVariable(envName, "test-pat-value");
 
-        var result = await handler.ExecuteAsync(
-            new Queries.GetBoardStatesQuery("  ADO-DEV  "),
-            CancellationToken.None
-        );
+            var profile = CreateProfile("ado-dev");
+            var store = new FakeWorkSourceEnvironmentStore(profile);
+            var factory = new FakeBoardsClientFactory(TestBoardStates);
+            var handler = new Queries.GetBoardStatesQueryHandler(store, factory);
 
-        Assert.Equal(Results.BoardStatesStatus.Succeeded, result.Status);
-        // States are returned grouped by work item type.
-        Assert.Single(result.StatesByType);
-        Assert.True(result.StatesByType.ContainsKey("Default"));
-        Assert.Equal(["New", "Active", "Resolved", "Closed"], result.StatesByType["Default"]);
-        Assert.Null(result.Error);
-        Assert.Equal("ado-dev", store.LastReadKey);
+            var result = await handler.ExecuteAsync(
+                new Queries.GetBoardStatesQuery("  ADO-DEV  "),
+                CancellationToken.None
+            );
+
+            Assert.Equal(Results.BoardStatesStatus.Succeeded, result.Status);
+            // States are returned grouped by work item type.
+            Assert.Single(result.StatesByType);
+            Assert.True(result.StatesByType.ContainsKey("Default"));
+            Assert.Equal(["New", "Active", "Resolved", "Closed"], result.StatesByType["Default"]);
+            Assert.Null(result.Error);
+            Assert.Equal("ado-dev", store.LastReadKey);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envName, originalPat);
+        }
     }
 
     [Fact]
@@ -432,9 +445,40 @@ public sealed class WorkSourceEnvironmentHandlerTests
     [Fact]
     public async Task GetBoardStates_ReturnsConnectivityErrorWhenNoStatesDiscovered()
     {
-        var profile = CreateProfile("ado-dev");
+        // Set the PAT env var so the handler passes the PAT check.
+        const string envName = "ADO_TEST_PAT";
+        var originalPat = Environment.GetEnvironmentVariable(envName);
+        try
+        {
+            Environment.SetEnvironmentVariable(envName, "test-pat-value");
+
+            var profile = CreateProfile("ado-dev");
+            var store = new FakeWorkSourceEnvironmentStore(profile);
+            var factory = new FakeBoardsClientFactory(EmptyStates); // empty = no WITs with states
+            var handler = new Queries.GetBoardStatesQueryHandler(store, factory);
+
+            var result = await handler.ExecuteAsync(
+                new Queries.GetBoardStatesQuery("ado-dev"),
+                CancellationToken.None
+            );
+
+            Assert.Equal(Results.BoardStatesStatus.ConnectivityError, result.Status);
+            Assert.Empty(result.StatesByType);
+            Assert.NotNull(result.Error);
+            Assert.Contains("Unable to retrieve board states", result.Error);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envName, originalPat);
+        }
+    }
+
+    [Fact]
+    public async Task GetBoardStates_ReturnsConnectivityErrorWhenDisabled()
+    {
+        var profile = CreateProfile("ado-dev") with { Enabled = false };
         var store = new FakeWorkSourceEnvironmentStore(profile);
-        var factory = new FakeBoardsClientFactory(EmptyStates); // empty = connectivity failure
+        var factory = new FakeBoardsClientFactory(TestBoardStates);
         var handler = new Queries.GetBoardStatesQueryHandler(store, factory);
 
         var result = await handler.ExecuteAsync(
@@ -445,6 +489,63 @@ public sealed class WorkSourceEnvironmentHandlerTests
         Assert.Equal(Results.BoardStatesStatus.ConnectivityError, result.Status);
         Assert.Empty(result.StatesByType);
         Assert.NotNull(result.Error);
+        Assert.Contains("disabled", result.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GetBoardStates_ReturnsConnectivityErrorWhenPatEnvVarMissing()
+    {
+        // Profile references an env var that does not exist in the test process.
+        var profile = CreateProfile("ado-dev")
+            with { PatEnvironmentVariable = "__NONEXISTENT_TEST_PAT_VAR__" };
+        var store = new FakeWorkSourceEnvironmentStore(profile);
+        var factory = new FakeBoardsClientFactory(TestBoardStates);
+        var handler = new Queries.GetBoardStatesQueryHandler(store, factory);
+
+        var result = await handler.ExecuteAsync(
+            new Queries.GetBoardStatesQuery("ado-dev"),
+            CancellationToken.None
+        );
+
+        Assert.Equal(Results.BoardStatesStatus.ConnectivityError, result.Status);
+        Assert.Empty(result.StatesByType);
+        Assert.NotNull(result.Error);
+        Assert.Contains("__NONEXISTENT_TEST_PAT_VAR__", result.Error);
+        Assert.Contains("not set", result.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GetBoardStates_ReturnsConnectivityErrorWithHttpErrorDetail()
+    {
+        // Set the PAT env var so the handler passes the PAT check.
+        const string envName = "ADO_TEST_PAT";
+        var originalPat = Environment.GetEnvironmentVariable(envName);
+        try
+        {
+            Environment.SetEnvironmentVariable(envName, "test-pat-value");
+
+            var profile = CreateProfile("ado-dev");
+            var store = new FakeWorkSourceEnvironmentStore(profile);
+            var factory = new FakeBoardsClientFactory_Throws(
+                new HttpRequestException("Request failed: HTTP 401 Unauthorized")
+            );
+            var handler = new Queries.GetBoardStatesQueryHandler(store, factory);
+
+            var result = await handler.ExecuteAsync(
+                new Queries.GetBoardStatesQuery("ado-dev"),
+                CancellationToken.None
+            );
+
+            Assert.Equal(Results.BoardStatesStatus.ConnectivityError, result.Status);
+            Assert.Empty(result.StatesByType);
+            Assert.NotNull(result.Error);
+            Assert.Contains("Azure DevOps request failed", result.Error);
+            Assert.Contains("401", result.Error);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envName, originalPat);
+        }
     }
 
     private static WorkSourceEnvironmentProfile CreateProfile(string key) =>
@@ -628,5 +729,60 @@ public sealed class WorkSourceEnvironmentHandlerTests
         public Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> GetValidStatesAsync(
             string project, CancellationToken cancellationToken)
             => Task.FromResult(_groupedStates);
+    }
+
+    /// <summary>Fake factory whose client throws on GetValidStatesAsync.</summary>
+    private sealed class FakeBoardsClientFactory_Throws(Exception exception)
+        : IAzureDevOpsBoardsClientFactory
+    {
+        public IAzureDevOpsBoardsClient Create(WorkSourceEnvironmentProfile profile)
+        {
+            return new FakeBoardsClient_Throws(exception);
+        }
+    }
+
+    private sealed class FakeBoardsClient_Throws(Exception exception)
+        : IAzureDevOpsBoardsClient
+    {
+        private readonly Exception _exception = exception;
+
+        public Task<IReadOnlyList<WorkCandidate>> QueryWorkItemsAsync(
+            BoardsQueryParameters parameters, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<ClaimResult> TryClaimWorkItemAsync(
+            ExternalWorkRef workRef, ClaimRequest request, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<bool> UpdateWorkItemStatusAsync(
+            ExternalWorkRef workRef, ExternalWorkStatus status, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task AddCommentAsync(
+            ExternalWorkRef workRef, string comment, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<RepositoryInfo>> ListRepositoriesAsync(
+            string project, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<AzureDevOpsConnectivityResult> VerifyConnectivityAsync(
+            string organizationUrl, string project, string personalAccessToken,
+            CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<WorkItemComment>> GetCommentsAsync(
+            ExternalWorkRef workRef, int maxComments, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task ReleaseClaimWorkItemAsync(
+            ReleaseClaimRequest request, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> GetValidStatesAsync(
+            string project, CancellationToken cancellationToken)
+        {
+            throw _exception;
+        }
     }
 }
