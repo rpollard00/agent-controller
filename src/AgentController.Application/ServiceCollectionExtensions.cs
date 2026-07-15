@@ -13,7 +13,8 @@ namespace AgentController.Application;
 public static class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers all application-layer command and query handlers as scoped services.
+    /// Registers all application-layer command and query handlers with the DI container,
+    /// including the work-source connectivity verifier resolver infrastructure.
     /// </summary>
     public static IServiceCollection AddApplicationHandlers(this IServiceCollection services)
     {
@@ -122,6 +123,52 @@ public static class ServiceCollectionExtensions
             IQueryHandler<GetRuntimeEnvironmentByKeyQuery, RuntimeEnvironmentOperationResult>,
             GetRuntimeEnvironmentByKeyQueryHandler
         >();
+        // Work-source connectivity verifier resolver
+        services.AddWorkSourceConnectivityVerifierResolver();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers the work-source connectivity verifier resolver and its backing registry.
+    /// Individual providers register their verifiers via
+    /// <see cref="AddWorkSourceConnectivityVerifier{TVerifier}(IServiceCollection, string[])"/>.
+    /// </summary>
+    public static IServiceCollection AddWorkSourceConnectivityVerifierResolver(
+        this IServiceCollection services
+    )
+    {
+        // Build the type-keyed dictionary from the static registry at container build time.
+        // Provider-to-type mappings are accumulated via AddWorkSourceConnectivityVerifier<T>()
+        // calls before the container is built.
+        services.AddSingleton<IReadOnlyDictionary<string, Type>>(_ =>
+            WorkSourceConnectivityVerifierRegistry.Build());
+        services.AddSingleton<IWorkSourceConnectivityVerifierResolver, WorkSourceConnectivityVerifierResolver>();
+        return services;
+    }
+
+    /// <summary>
+    /// Registers a provider-specific connectivity verifier for one or more provider strings.
+    /// The verifier is registered as scoped and keyed into the resolver's type dictionary.
+    /// </summary>
+    /// <typeparam name="TVerifier">The verifier implementation type.</typeparam>
+    /// <param name="services">The service collection.</param>
+    /// <param name="providerKeys">
+    /// Provider discriminator strings (e.g. "AzureDevOpsBoards", "AzureDevOpsRepos").
+    /// </param>
+    public static IServiceCollection AddWorkSourceConnectivityVerifier<TVerifier>(
+        this IServiceCollection services,
+        params string[] providerKeys
+    ) where TVerifier : class, IWorkSourceConnectivityVerifier
+    {
+        // Register the verifier implementation as a scoped service so it can be resolved
+        // by the resolver at runtime through the scoped service provider.
+        services.AddScoped<TVerifier>();
+
+        // Accumulate the provider key → implementation type mapping in the static registry.
+        // The registry is consumed once at container build time by the resolver registration.
+        WorkSourceConnectivityVerifierRegistry.Register(typeof(TVerifier), providerKeys);
+
         return services;
     }
 }
