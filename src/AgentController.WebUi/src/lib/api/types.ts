@@ -52,6 +52,15 @@ export interface RuntimeEnvironmentProfile {
   updatedAt: string;
 }
 
+/** Provider-neutral connectivity verification result. */
+export interface WorkSourceConnectivityResult {
+  success: boolean;
+  authMechanism: string;
+  httpStatus?: number;
+  errors: string[];
+  payload?: Record<string, unknown>;
+}
+
 /** RFC 9457 problem details, including ASP.NET validation extensions. */
 export interface ProblemDetails {
   type?: string;

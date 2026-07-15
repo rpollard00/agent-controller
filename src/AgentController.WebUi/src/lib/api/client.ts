@@ -2,6 +2,7 @@ import type {
   ProblemDetails,
   RepositoryProfile,
   RuntimeEnvironmentProfile,
+  WorkSourceConnectivityResult,
   WorkSourceEnvironmentProfile,
 } from './types';
 
@@ -15,9 +16,14 @@ export interface ResourceClient<T> {
   delete(key: string, signal?: AbortSignal): Promise<void>;
 }
 
+export interface WorkSourceEnvironmentResourceClient
+  extends ResourceClient<WorkSourceEnvironmentProfile> {
+  verifyConnection(key: string, signal?: AbortSignal): Promise<WorkSourceConnectivityResult>;
+}
+
 export interface WebUiApiClient {
   repositories: ResourceClient<RepositoryProfile>;
-  workSourceEnvironments: ResourceClient<WorkSourceEnvironmentProfile>;
+  workSourceEnvironments: WorkSourceEnvironmentResourceClient;
   runtimeEnvironments: ResourceClient<RuntimeEnvironmentProfile>;
 }
 
@@ -118,7 +124,14 @@ export function createWebUiApiClient(options: ApiClientOptions = {}): WebUiApiCl
 
   return {
     repositories: resource<RepositoryProfile>('/repositories'),
-    workSourceEnvironments: resource<WorkSourceEnvironmentProfile>('/work-source-environments'),
+    workSourceEnvironments: {
+      ...resource<WorkSourceEnvironmentProfile>('/work-source-environments'),
+      verifyConnection: (key, signal) =>
+        request<WorkSourceConnectivityResult>(
+          `/work-source-environments/${encodeURIComponent(key)}:verify`,
+          { method: 'POST', signal },
+        ),
+    },
     runtimeEnvironments: resource<RuntimeEnvironmentProfile>('/runtime-environments'),
   };
 }
