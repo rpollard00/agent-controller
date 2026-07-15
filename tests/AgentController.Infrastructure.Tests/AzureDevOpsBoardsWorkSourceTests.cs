@@ -29,8 +29,8 @@ public class AzureDevOpsBoardsWorkSourceTests
     [Fact]
     public async Task FindEligibleAsync_PollsAllEnabledManagedEnvironmentsWithProfileSettings()
     {
-        var alphaProfile = ManagedEnvironment("alpha", "AlphaProject", ["Ready"], ["agent-ready"]);
-        var zetaProfile = ManagedEnvironment("zeta", "ZetaProject", ["Approved"], ["autonomous"]);
+        var alphaProfile = ManagedEnvironment("alpha", "AlphaProject");
+        var zetaProfile = ManagedEnvironment("zeta", "ZetaProject");
         var alphaClient = new MockAzureDevOpsBoardsClient
         {
             QueryResults =
@@ -671,9 +671,7 @@ public class AzureDevOpsBoardsWorkSourceTests
 
     private static WorkSourceEnvironmentProfile ManagedEnvironment(
         string key,
-        string project,
-        IReadOnlyList<string> states,
-        IReadOnlyList<string> tags
+        string project
     )
     {
         return new WorkSourceEnvironmentProfile
@@ -685,7 +683,6 @@ public class AzureDevOpsBoardsWorkSourceTests
             TagPrefix = "agent",
             OrganizationUrl = $"https://dev.azure.com/{key}",
             Project = project,
-            CompletedStates = states,
             PatEnvironmentVariable = "TEST_ADO_PAT",
         };
     }

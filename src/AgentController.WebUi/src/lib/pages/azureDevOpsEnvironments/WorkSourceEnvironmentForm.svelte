@@ -4,7 +4,6 @@
   import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
   import Field from '../../components/ui/Field.svelte';
-  import CompletedStatesEditor from './CompletedStatesEditor.svelte';
   import {
     createWorkSourceEnvironmentFormValues,
     toWorkSourceEnvironmentProfile,
@@ -19,10 +18,6 @@
     serverErrors = {},
     onsave,
     oncancel,
-    boardStates = {},
-    boardStatesLoading = false,
-    boardStatesError = false,
-    boardStatesErrorMessage,
   }: {
     mode: 'create' | 'edit';
     profile?: WorkSourceEnvironmentProfile;
@@ -30,10 +25,6 @@
     serverErrors?: Readonly<Record<string, string[]>>;
     onsave: (profile: WorkSourceEnvironmentProfile) => void;
     oncancel: () => void;
-    boardStates?: Record<string, string[]>;
-    boardStatesLoading?: boolean;
-    boardStatesError?: boolean;
-    boardStatesErrorMessage?: string;
   } = $props();
 
   let values = $state(untrack(() => createWorkSourceEnvironmentFormValues(profile)));
@@ -270,34 +261,6 @@
           aria-invalid={fieldError('tagPrefix') ? 'true' : undefined}
           aria-describedby={describedBy('wse-tagPrefix', 'tagPrefix', true)}
           oninput={() => clearClientError('tagPrefix')}
-        />
-      </Field>
-
-      <Field
-        id="wse-completedStates"
-        label="Completed states"
-        hint="Items in these states are considered finished and not picked up."
-        error={fieldError('completedStates')}
-      >
-        {#if boardStatesLoading}
-          <div class="flex items-center gap-2 text-sm text-slate-400" role="status">
-            <span
-              class="size-3.5 animate-spin rounded-full border border-slate-700 border-t-cyan-300"
-              aria-hidden="true"
-            ></span>
-            Loading board states…
-          </div>
-        {:else if boardStatesError}
-          <p class="text-sm text-amber-300">Unable to load board states. You can still enter states manually.</p>
-          {#if boardStatesErrorMessage}
-            <p class="mt-1 text-xs text-amber-400">{boardStatesErrorMessage}</p>
-          {/if}
-        {/if}
-        <CompletedStatesEditor
-          selected={values.completedStates}
-          suggestions={boardStates}
-          disabled={submitting || boardStatesLoading}
-          error={Boolean(fieldError('completedStates'))}
         />
       </Field>
 

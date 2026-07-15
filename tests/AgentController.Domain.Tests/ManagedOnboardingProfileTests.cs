@@ -17,7 +17,6 @@ public class ManagedOnboardingProfileTests
         Assert.True(profile.Enabled);
         Assert.Equal("AzureDevOpsBoards", profile.Provider);
         Assert.Equal("agent", profile.TagPrefix);
-        Assert.Empty(profile.CompletedStates);
         Assert.Null(profile.ActiveState);
         Assert.Null(profile.CompletedState);
         Assert.Empty(profile.PatEnvironmentVariable);
@@ -76,7 +75,6 @@ public class ManagedOnboardingProfileTests
             TagPrefix = "ac",
             OrganizationUrl = "https://dev.azure.com/example",
             Project = "Agent Controller",
-            CompletedStates = ["Closed", "Done"],
             ActiveState = "Active",
             CompletedState = "Closed",
             PatEnvironmentVariable = "AZURE_DEVOPS_PAT_PRIMARY",
@@ -102,7 +100,6 @@ public class ManagedOnboardingProfileTests
         Assert.Equal(profile.TagPrefix, roundTripped.TagPrefix);
         Assert.Equal(profile.OrganizationUrl, roundTripped.OrganizationUrl);
         Assert.Equal(profile.Project, roundTripped.Project);
-        Assert.Equal(profile.CompletedStates, roundTripped.CompletedStates);
         Assert.Equal(profile.ActiveState, roundTripped.ActiveState);
         Assert.Equal(profile.CompletedState, roundTripped.CompletedState);
         Assert.Equal(profile.PatEnvironmentVariable, roundTripped.PatEnvironmentVariable);

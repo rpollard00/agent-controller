@@ -83,7 +83,6 @@ public sealed class WorkSourceEnvironmentStoreTests
             TagPrefix = "ac",
             OrganizationUrl = "https://dev.azure.com/updated-organization",
             Project = "Updated Project",
-            CompletedStates = ["Closed", "Removed"],
             ActiveState = "Doing",
             CompletedState = "Done",
             PatEnvironmentVariable = "ADO_STAGING_PAT_V2",
@@ -148,7 +147,7 @@ public sealed class WorkSourceEnvironmentStoreTests
         Assert.DoesNotContain("Pat", columns);
         Assert.Contains("Provider", columns);
         Assert.Contains("TagPrefix", columns);
-        Assert.Contains("CompletedStatesJson", columns);
+        Assert.DoesNotContain("CompletedStatesJson", columns);
         Assert.DoesNotContain("WorkItemType", columns);
         Assert.DoesNotContain("EligibleTagsJson", columns);
         Assert.DoesNotContain("ExcludedTagsJson", columns);
@@ -191,7 +190,6 @@ public sealed class WorkSourceEnvironmentStoreTests
             TagPrefix = "agent",
             OrganizationUrl = "https://dev.azure.com/example",
             Project = "Agent Controller",
-            CompletedStates = ["Closed", "Removed"],
             ActiveState = "Active",
             CompletedState = "Resolved",
             PatEnvironmentVariable = "ADO_PRODUCTION_PAT",
@@ -211,7 +209,6 @@ public sealed class WorkSourceEnvironmentStoreTests
         Assert.Equal(expected.TagPrefix, actual.TagPrefix);
         Assert.Equal(expected.OrganizationUrl, actual.OrganizationUrl);
         Assert.Equal(expected.Project, actual.Project);
-        Assert.Equal(expected.CompletedStates, actual.CompletedStates);
         Assert.Equal(expected.ActiveState, actual.ActiveState);
         Assert.Equal(expected.CompletedState, actual.CompletedState);
         Assert.Equal(expected.PatEnvironmentVariable, actual.PatEnvironmentVariable);

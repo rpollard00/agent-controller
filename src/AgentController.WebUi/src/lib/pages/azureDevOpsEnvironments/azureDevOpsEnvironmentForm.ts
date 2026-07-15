@@ -7,7 +7,6 @@ export interface WorkSourceEnvironmentFormValues {
   provider: string;
   organizationUrl: string;
   project: string;
-  completedStates: string[];
   tagPrefix: string;
   activeState: string;
   completedState: string;
@@ -26,7 +25,6 @@ export function createWorkSourceEnvironmentFormValues(
     provider: profile?.provider ?? 'AzureDevOpsBoards',
     organizationUrl: profile?.organizationUrl ?? '',
     project: profile?.project ?? '',
-    completedStates: profile?.completedStates ?? [],
     tagPrefix: profile?.tagPrefix ?? '',
     activeState: profile?.activeState ?? '',
     completedState: profile?.completedState ?? '',
@@ -97,7 +95,6 @@ export function toWorkSourceEnvironmentProfile(
     provider: values.provider.trim() || 'AzureDevOpsBoards',
     organizationUrl: values.organizationUrl.trim().replace(/\/+$/, ''),
     project: values.project.trim(),
-    completedStates: values.completedStates.filter((s) => s.length > 0),
     tagPrefix: values.tagPrefix.trim() || 'agent',
     activeState: nullableText(values.activeState),
     completedState: nullableText(values.completedState),

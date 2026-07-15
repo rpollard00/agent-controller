@@ -586,7 +586,6 @@ public sealed class WorkSourceEnvironmentHandlerTests
             TagPrefix = "agent",
             OrganizationUrl = "https://dev.azure.com/example",
             Project = "Agent Controller",
-            CompletedStates = ["Removed"],
             ActiveState = "Active",
             CompletedState = "Resolved",
             PatEnvironmentVariable = "ADO_TEST_PAT",

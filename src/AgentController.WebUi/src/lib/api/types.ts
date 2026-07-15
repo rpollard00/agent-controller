@@ -19,7 +19,6 @@ export interface WorkSourceEnvironmentProfile {
   provider: string;
   organizationUrl: string;
   project: string;
-  completedStates: string[];
   tagPrefix: string;
   activeState: string | null;
   completedState: string | null;

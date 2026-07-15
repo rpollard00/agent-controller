@@ -17,10 +17,6 @@
     ondelete: (profile: WorkSourceEnvironmentProfile) => void;
   } = $props();
 
-  function listLabel(values: string[], emptyLabel: string): string {
-    return values.length > 0 ? values.join(', ') : emptyLabel;
-  }
-
   function formatTimestamp(value: string): string {
     const date = new Date(value);
     return Number.isNaN(date.valueOf()) ? value : date.toLocaleString();
@@ -74,12 +70,6 @@
       <div>
         <dt class="text-sm font-medium text-slate-400">Provider</dt>
         <dd class="mt-1 text-slate-100">{environment.provider}</dd>
-      </div>
-      <div>
-        <dt class="text-sm font-medium text-slate-400">Completed states</dt>
-        <dd class="mt-1 text-slate-100">
-          {listLabel(environment.completedStates, 'Any')}
-        </dd>
       </div>
       <div>
         <dt class="text-sm font-medium text-slate-400">Tag prefix</dt>

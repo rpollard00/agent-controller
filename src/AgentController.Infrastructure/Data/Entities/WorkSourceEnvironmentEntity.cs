@@ -21,8 +21,6 @@ internal sealed class WorkSourceEnvironmentEntity
 
     public string Project { get; set; } = string.Empty;
 
-    public string CompletedStatesJson { get; set; } = "[]";
-
     public string? ActiveState { get; set; }
 
     public string? CompletedState { get; set; }

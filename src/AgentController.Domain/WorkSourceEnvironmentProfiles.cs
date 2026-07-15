@@ -37,13 +37,6 @@ public sealed record WorkSourceEnvironmentProfile
     /// <summary>Azure DevOps project name (provider: AzureDevOpsBoards).</summary>
     public string Project { get; init; } = string.Empty;
 
-    /// <summary>
-    /// Board states that indicate a work item is finished.
-    /// Items in these states are excluded from autonomous execution.
-    /// When empty, any non-lifecycle state is eligible.
-    /// </summary>
-    public IReadOnlyList<string> CompletedStates { get; init; } = [];
-
     /// <summary>State applied when work begins, if configured.</summary>
     public string? ActiveState { get; init; }
 

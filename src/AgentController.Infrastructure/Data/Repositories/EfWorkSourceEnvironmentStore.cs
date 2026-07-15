@@ -1,4 +1,3 @@
-using System.Text.Json;
 using AgentController.Application;
 using AgentController.Domain;
 using AgentController.Infrastructure.Data.Entities;
@@ -88,7 +87,6 @@ internal sealed class EfWorkSourceEnvironmentStore : IWorkSourceEnvironmentStore
         entity.TagPrefix = profile.TagPrefix;
         entity.OrganizationUrl = profile.OrganizationUrl;
         entity.Project = profile.Project;
-        entity.CompletedStatesJson = SerializeList(profile.CompletedStates);
         entity.ActiveState = profile.ActiveState;
         entity.CompletedState = profile.CompletedState;
         entity.PatEnvironmentVariable = profile.PatEnvironmentVariable;
@@ -128,7 +126,6 @@ internal sealed class EfWorkSourceEnvironmentStore : IWorkSourceEnvironmentStore
             TagPrefix = profile.TagPrefix,
             OrganizationUrl = profile.OrganizationUrl,
             Project = profile.Project,
-            CompletedStatesJson = SerializeList(profile.CompletedStates),
             ActiveState = profile.ActiveState,
             CompletedState = profile.CompletedState,
             PatEnvironmentVariable = profile.PatEnvironmentVariable,
@@ -149,23 +146,12 @@ internal sealed class EfWorkSourceEnvironmentStore : IWorkSourceEnvironmentStore
             TagPrefix = entity.TagPrefix,
             OrganizationUrl = entity.OrganizationUrl,
             Project = entity.Project,
-            CompletedStates = DeserializeList(entity.CompletedStatesJson),
             ActiveState = entity.ActiveState,
             CompletedState = entity.CompletedState,
             PatEnvironmentVariable = entity.PatEnvironmentVariable,
             CreatedAt = entity.CreatedAt,
             UpdatedAt = entity.UpdatedAt,
         };
-    }
-
-    private static string SerializeList(IReadOnlyList<string> values)
-    {
-        return JsonSerializer.Serialize(values);
-    }
-
-    private static List<string> DeserializeList(string json)
-    {
-        return JsonSerializer.Deserialize<List<string>>(json) ?? [];
     }
 
     private static bool IsUniqueConstraintViolation(DbUpdateException exception)

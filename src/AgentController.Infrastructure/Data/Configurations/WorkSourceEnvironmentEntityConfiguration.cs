@@ -42,9 +42,6 @@ internal sealed class WorkSourceEnvironmentEntityConfiguration
             .IsRequired()
             .HasMaxLength(256);
 
-        builder.Property(x => x.CompletedStatesJson)
-            .IsRequired();
-
         builder.Property(x => x.ActiveState)
             .HasMaxLength(256);
 
