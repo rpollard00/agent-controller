@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -895,10 +896,12 @@ public class AzureDevOpsBoardsWorkSourceTests
             CancellationToken ct
         ) => Task.FromResult(new AzureDevOpsConnectivityResult { Success = false });
 
-        public Task<IReadOnlyList<string>> GetValidStatesAsync(
+        public Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> GetValidStatesAsync(
             string project,
             CancellationToken ct
-        ) => Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
+        ) => Task.FromResult<IReadOnlyDictionary<string, IReadOnlyList<string>>>(
+            new Dictionary<string, IReadOnlyList<string>>());
+
     }
 
     /// <summary>

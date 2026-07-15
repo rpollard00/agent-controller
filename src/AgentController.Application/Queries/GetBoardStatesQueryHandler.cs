@@ -1,3 +1,4 @@
+using System.Linq;
 using AgentController.Application.Abstractions;
 using AgentController.Application.Results;
 
@@ -56,17 +57,26 @@ public sealed class GetBoardStatesQueryHandler(
         }
 
         // Create a boards client from the profile and discover valid states.
+        // GetValidStatesAsync now returns states grouped by work item type.
         var client = _boardsClientFactory.Create(profile);
-        var states = await client.GetValidStatesAsync(profile.Project, cancellationToken);
+        var groupedStates = await client.GetValidStatesAsync(profile.Project, cancellationToken);
 
         // If no states were returned, the board may be misconfigured or unreachable.
-        if (states.Count == 0)
+        if (groupedStates.Count == 0)
         {
             return BoardStatesResult.ConnectivityError(
                 "Unable to retrieve board states. Verify organization URL, project, and PAT."
             );
         }
 
-        return BoardStatesResult.Succeeded(states);
+        // Flatten grouped states into a sorted union for the current flat result shape.
+        // Work item 3 will update BoardStatesResult to carry the grouped shape directly.
+        var flatStates = groupedStates
+            .SelectMany(kvp => kvp.Value)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return BoardStatesResult.Succeeded(flatStates);
     }
 }

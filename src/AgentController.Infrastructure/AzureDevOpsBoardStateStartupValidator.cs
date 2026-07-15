@@ -1,3 +1,4 @@
+using System.Linq;
 using AgentController.Application;
 using AgentController.Infrastructure.Options;
 using Microsoft.Extensions.DependencyInjection;
@@ -87,8 +88,16 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
 
         // Query ADO for valid states via the scoped IAzureDevOpsBoardsClient.
         // The client is registered with the correct base URL and PAT from options.
-        // Note: WorkItemType removed; state discovery no longer targets a specific type.
-        var validStates = await FetchValidStatesViaClientAsync(project!, cancellationToken);
+        // GetValidStatesAsync returns states grouped by work item type;
+        // flatten to a union of all bare state names for validation.
+        var groupedStates = await FetchValidStatesGroupedAsync(project!, cancellationToken);
+
+        // Flatten grouped map: union all state-name lists across types.
+        var validStates = groupedStates
+            .SelectMany(kvp => kvp.Value)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
         if (validStates.Count == 0)
         {
@@ -158,10 +167,10 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
     }
 
     /// <summary>
-    /// Fetches valid states by resolving the scoped <see cref="IAzureDevOpsBoardsClient"/>
-    /// through <see cref="IServiceScopeFactory"/>.
+    /// Fetches valid states grouped by work item type by resolving the scoped
+    /// <see cref="IAzureDevOpsBoardsClient"/> through <see cref="IServiceScopeFactory"/>.
     /// </summary>
-    private async Task<IReadOnlyList<string>> FetchValidStatesViaClientAsync(
+    private async Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> FetchValidStatesGroupedAsync(
         string project,
         CancellationToken cancellationToken)
     {

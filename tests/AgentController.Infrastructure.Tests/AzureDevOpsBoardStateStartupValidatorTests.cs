@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using AgentController.Application;
 using AgentController.Domain;
 using AgentController.Infrastructure;
@@ -500,8 +501,17 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         public Task ReleaseClaimWorkItemAsync(ReleaseClaimRequest request, CancellationToken cancellationToken) =>
             throw new NotImplementedException();
 
-        public Task<IReadOnlyList<string>> GetValidStatesAsync(string project, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<string>>(ValidStates);
+        public Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> GetValidStatesAsync(
+            string project, CancellationToken cancellationToken)
+        {
+            // Auto-convert flat ValidStates to grouped shape for interface compatibility.
+            IReadOnlyDictionary<string, IReadOnlyList<string>> grouped = ValidStates.Count > 0
+                ? (IReadOnlyDictionary<string, IReadOnlyList<string>>)
+                    new Dictionary<string, IReadOnlyList<string>> { ["Default"] = ValidStates }
+                : (IReadOnlyDictionary<string, IReadOnlyList<string>>)
+                    new Dictionary<string, IReadOnlyList<string>>();
+            return Task.FromResult(grouped);
+        }
     }
 
     /// <summary>

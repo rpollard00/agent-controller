@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text.Json;
 using AgentController.Application;
 using AgentController.Application.Abstractions;
@@ -368,7 +369,8 @@ public sealed class WorkSourceEnvironmentHandlerTests
         );
 
         Assert.Equal(Results.BoardStatesStatus.Succeeded, result.Status);
-        Assert.Equal(["New", "Active", "Resolved", "Closed"], result.States);
+        // States are flattened from grouped response and sorted alphabetically.
+        Assert.Equal(["Active", "Closed", "New", "Resolved"], result.States);
         Assert.Null(result.Error);
         Assert.Equal("ado-dev", store.LastReadKey);
     }
@@ -571,18 +573,22 @@ public sealed class WorkSourceEnvironmentHandlerTests
     private sealed class FakeBoardsClientFactory(IReadOnlyList<string> states)
         : IAzureDevOpsBoardsClientFactory
     {
-        private readonly IReadOnlyList<string> _states = states;
+        // Convert flat states to grouped shape (single WIT group) for interface compatibility.
+        private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _grouped =
+            states.Count > 0
+                ? new Dictionary<string, IReadOnlyList<string>> { ["Default"] = states }
+                : new Dictionary<string, IReadOnlyList<string>>();
 
         public IAzureDevOpsBoardsClient Create(WorkSourceEnvironmentProfile profile)
         {
-            return new FakeBoardsClient(_states);
+            return new FakeBoardsClient(_grouped);
         }
     }
 
-    private sealed class FakeBoardsClient(IReadOnlyList<string> states)
+    private sealed class FakeBoardsClient(IReadOnlyDictionary<string, IReadOnlyList<string>> groupedStates)
         : IAzureDevOpsBoardsClient
     {
-        private readonly IReadOnlyList<string> _states = states;
+        private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _groupedStates = groupedStates;
 
         public Task<IReadOnlyList<WorkCandidate>> QueryWorkItemsAsync(
             BoardsQueryParameters parameters, CancellationToken cancellationToken)
@@ -617,8 +623,8 @@ public sealed class WorkSourceEnvironmentHandlerTests
             ReleaseClaimRequest request, CancellationToken cancellationToken)
             => throw new NotSupportedException();
 
-        public Task<IReadOnlyList<string>> GetValidStatesAsync(
+        public Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> GetValidStatesAsync(
             string project, CancellationToken cancellationToken)
-            => Task.FromResult(_states);
+            => Task.FromResult(_groupedStates);
     }
 }

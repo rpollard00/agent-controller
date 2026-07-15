@@ -1253,24 +1253,19 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         }
     }
 
-    public async Task<IReadOnlyList<string>> GetValidStatesAsync(
+    public async Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> GetValidStatesAsync(
         string project,
         CancellationToken cancellationToken
     )
     {
         if (string.IsNullOrWhiteSpace(project))
         {
-            return Array.Empty<string>();
+            return new Dictionary<string, IReadOnlyList<string>>();
         }
-
-        // Use a default work item type for state discovery.
-        // States are process-level, not WIT-specific in most configurations.
-        const string discoveryWorkItemType = "User Story";
 
         try
         {
-            // (1) Find the process for the project by querying project details.
-            //     The project response includes a "processId" GUID.
+            // (1) GET project → read capabilities.processTemplate.templateTypeId.
             var projectResponse = await _http.GetAsync(
                 $"_apis/projects/{Uri.EscapeDataString(project)}?api-version=7.1&includeProcessSettings=true",
                 cancellationToken
@@ -1278,117 +1273,180 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
 
             if (!projectResponse.IsSuccessStatusCode)
             {
-                return Array.Empty<string>();
+                return new Dictionary<string, IReadOnlyList<string>>();
             }
 
             var projectJson = await projectResponse.Content.ReadAsStringAsync(cancellationToken);
             using var projectDoc = JsonDocument.Parse(projectJson);
 
-            // Extract processId from the project response.
-            var processId =
-                projectDoc.RootElement.TryGetProperty("processSettings", out var processSettings)
-                && processSettings.TryGetProperty("processId", out var processIdEl)
-                && processIdEl.ValueKind == JsonValueKind.String
-                    ? processIdEl.GetString()
-                    : null;
+            // Extract processId from capabilities.processTemplate.templateTypeId.
+            var processTypeId = ExtractProcessTypeId(projectDoc.RootElement);
 
-            if (string.IsNullOrWhiteSpace(processId))
+            if (string.IsNullOrWhiteSpace(processTypeId))
             {
-                // Fallback: try top-level processId (some API versions place it there).
-                processId =
-                    projectDoc.RootElement.TryGetProperty("processId", out var topProcessIdEl)
-                    && topProcessIdEl.ValueKind == JsonValueKind.String
-                        ? topProcessIdEl.GetString()
-                        : null;
+                return new Dictionary<string, IReadOnlyList<string>>();
             }
 
-            if (string.IsNullOrWhiteSpace(processId))
+            // (2) GET process WITs for that process type id.
+            var witListResponse = await _http.GetAsync(
+                $"_apis/work/processes/{Uri.EscapeDataString(processTypeId)}/workItemTypes?api-version=7.1-preview.3",
+                cancellationToken
+            );
+
+            if (!witListResponse.IsSuccessStatusCode)
             {
-                // Cannot determine process — enumerate processes and find the one for this project.
-                var processesResponse = await _http.GetAsync(
-                    "_apis/work/processes?api-version=7.1-preview.3",
-                    cancellationToken
-                );
+                return new Dictionary<string, IReadOnlyList<string>>();
+            }
 
-                if (!processesResponse.IsSuccessStatusCode)
+            var witListJson = await witListResponse.Content.ReadAsStringAsync(cancellationToken);
+            using var witListDoc = JsonDocument.Parse(witListJson);
+
+            // Collect WIT names.
+            var witNames = new List<string>();
+            if (
+                witListDoc.RootElement.TryGetProperty("value", out var witArray)
+                && witArray.ValueKind == JsonValueKind.Array
+            )
+            {
+                foreach (var wit in witArray.EnumerateArray())
                 {
-                    return Array.Empty<string>();
-                }
-
-                var processesJson = await processesResponse.Content.ReadAsStringAsync(
-                    cancellationToken
-                );
-                using var processesDoc = JsonDocument.Parse(processesJson);
-
-                // Find the process associated with this project.
-                if (
-                    processesDoc.RootElement.TryGetProperty("value", out var processesArray)
-                    && processesArray.ValueKind == JsonValueKind.Array
-                )
-                {
-                    foreach (var process in processesArray.EnumerateArray())
+                    if (
+                        wit.TryGetProperty("name", out var nameEl)
+                        && nameEl.ValueKind == JsonValueKind.String
+                    )
                     {
-                        if (
-                            process.TryGetProperty("id", out var pidEl)
-                            && pidEl.ValueKind == JsonValueKind.String
-                        )
+                        var name = nameEl.GetString();
+                        if (!string.IsNullOrWhiteSpace(name))
                         {
-                            var pid = pidEl.GetString();
-                            // Check if this process has the project.
-                            if (
-                                process.TryGetProperty("defaultTemplate", out var templateEl)
-                                && templateEl.ValueKind == JsonValueKind.Object
-                                && templateEl.TryGetProperty("projectPools", out var poolsEl)
-                                && poolsEl.ValueKind == JsonValueKind.Array
-                            )
-                            {
-                                foreach (var pool in poolsEl.EnumerateArray())
-                                {
-                                    if (
-                                        pool.TryGetProperty("name", out var poolNameEl)
-                                        && poolNameEl.ValueKind == JsonValueKind.String
-                                        && poolNameEl
-                                            .GetString()!
-                                            .Equals(project, StringComparison.OrdinalIgnoreCase)
-                                    )
-                                    {
-                                        processId = pid;
-                                        break;
-                                    }
-                                }
-                            }
-
-                            if (!string.IsNullOrWhiteSpace(processId))
-                                break;
+                            witNames.Add(name);
                         }
                     }
                 }
             }
 
-            if (string.IsNullOrWhiteSpace(processId))
+            if (witNames.Count == 0)
             {
-                return Array.Empty<string>();
+                return new Dictionary<string, IReadOnlyList<string>>();
             }
 
-            // (2) Get the work item type definition to find System.State allowed values.
-            var witResponse = await _http.GetAsync(
-                $"_apis/work/processes/{Uri.EscapeDataString(processId)}/workItemTypes/{Uri.EscapeDataString(discoveryWorkItemType)}?api-version=7.1-preview.3&fields=System.State",
+            // (3) For each WIT, GET its states — fetch in parallel.
+            var stateTasks = witNames
+                .Select(witName => FetchStatesForWitAsync(processTypeId, witName, cancellationToken))
+                .ToArray();
+
+            await Task.WhenAll(stateTasks);
+
+            // Build the grouped result: WIT name → sorted list of bare state names.
+            // Only include WITs that returned at least one state.
+            var grouped = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+            foreach (var (witName, states) in stateTasks.Select((task, i) => (witNames[i], task.Result)))
+            {
+                if (states.Count > 0)
+                {
+                    grouped[witName] = states;
+                }
+            }
+
+            // Sort WITs alphabetically (return as ordered dictionary via SortedDictionary).
+            var sorted = new SortedDictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+            foreach (var kvp in grouped)
+            {
+                sorted[kvp.Key] = kvp.Value;
+            }
+
+            return sorted;
+        }
+        catch (OperationCanceledException)
+        {
+            return new Dictionary<string, IReadOnlyList<string>>();
+        }
+        catch (HttpRequestException)
+        {
+            return new Dictionary<string, IReadOnlyList<string>>();
+        }
+        catch (JsonException)
+        {
+            return new Dictionary<string, IReadOnlyList<string>>();
+        }
+        catch
+        {
+            return new Dictionary<string, IReadOnlyList<string>>();
+        }
+    }
+
+    /// <summary>
+    /// Extract the process template type ID from a project JSON document.
+    /// Tries capabilities.processTemplate.templateTypeId first (Process API path),
+    /// then falls back to processSettings.processId.
+    /// </summary>
+    private static string? ExtractProcessTypeId(JsonElement projectRoot)
+    {
+        // Primary: capabilities.processTemplate.templateTypeId
+        if (
+            projectRoot.TryGetProperty("capabilities", out var capabilities)
+            && capabilities.ValueKind == JsonValueKind.Object
+            && capabilities.TryGetProperty("processTemplate", out var processTemplate)
+            && processTemplate.ValueKind == JsonValueKind.Object
+            && processTemplate.TryGetProperty("templateTypeId", out var templateTypeId)
+            && templateTypeId.ValueKind == JsonValueKind.String
+        )
+        {
+            return templateTypeId.GetString();
+        }
+
+        // Fallback: processSettings.processId
+        if (
+            projectRoot.TryGetProperty("processSettings", out var processSettings)
+            && processSettings.ValueKind == JsonValueKind.Object
+            && processSettings.TryGetProperty("processId", out var processId)
+            && processId.ValueKind == JsonValueKind.String
+        )
+        {
+            return processId.GetString();
+        }
+
+        // Fallback: top-level processId
+        if (
+            projectRoot.TryGetProperty("processId", out var topProcessId)
+            && topProcessId.ValueKind == JsonValueKind.String
+        )
+        {
+            return topProcessId.GetString();
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Fetch the allowed state values for a single work item type via the Process API.
+    /// Returns a sorted list of bare state names.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> FetchStatesForWitAsync(
+        string processTypeId,
+        string witName,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            var response = await _http.GetAsync(
+                $"_apis/work/processes/{Uri.EscapeDataString(processTypeId)}/workItemTypes/{Uri.EscapeDataString(witName)}?api-version=7.1-preview.3&fields=System.State",
                 cancellationToken
             );
 
-            if (!witResponse.IsSuccessStatusCode)
+            if (!response.IsSuccessStatusCode)
             {
                 return Array.Empty<string>();
             }
 
-            var witJson = await witResponse.Content.ReadAsStringAsync(cancellationToken);
-            using var witDoc = JsonDocument.Parse(witJson);
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            using var doc = JsonDocument.Parse(json);
 
-            // Navigate to fields -> System.State -> name -> allowedValues
-            var allowedValues = new List<string>();
+            // Navigate to fields → System.State → name → allowedValues.
+            var states = new List<string>();
 
             if (
-                witDoc.RootElement.TryGetProperty("fields", out var fields)
+                doc.RootElement.TryGetProperty("fields", out var fields)
                 && fields.ValueKind == JsonValueKind.Object
                 && fields.TryGetProperty("System.State", out var stateField)
                 && stateField.ValueKind == JsonValueKind.Object
@@ -1405,13 +1463,15 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                         var state = value.GetString();
                         if (!string.IsNullOrWhiteSpace(state))
                         {
-                            allowedValues.Add(state);
+                            states.Add(state);
                         }
                     }
                 }
             }
 
-            return allowedValues;
+            // Sort states alphabetically.
+            states.Sort(StringComparer.Ordinal);
+            return states;
         }
         catch (OperationCanceledException)
         {

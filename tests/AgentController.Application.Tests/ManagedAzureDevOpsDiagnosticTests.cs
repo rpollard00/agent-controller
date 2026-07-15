@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using AgentController.Application.Abstractions;
 using AgentController.Application.Queries;
 using AgentController.Application.Results;
@@ -152,7 +153,7 @@ public sealed class ManagedAzureDevOpsDiagnosticTests
             CancellationToken cancellationToken
         ) => throw new NotSupportedException();
 
-        public Task<IReadOnlyList<string>> GetValidStatesAsync(
+        public Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> GetValidStatesAsync(
             string project,
             CancellationToken cancellationToken
         ) => throw new NotSupportedException();
