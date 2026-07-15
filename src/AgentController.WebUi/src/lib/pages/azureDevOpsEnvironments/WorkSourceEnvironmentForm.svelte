@@ -22,6 +22,7 @@
     boardStates = {},
     boardStatesLoading = false,
     boardStatesError = false,
+    boardStatesErrorMessage,
   }: {
     mode: 'create' | 'edit';
     profile?: WorkSourceEnvironmentProfile;
@@ -32,6 +33,7 @@
     boardStates?: Record<string, string[]>;
     boardStatesLoading?: boolean;
     boardStatesError?: boolean;
+    boardStatesErrorMessage?: string;
   } = $props();
 
   let values = $state(untrack(() => createWorkSourceEnvironmentFormValues(profile)));
@@ -287,6 +289,9 @@
           </div>
         {:else if boardStatesError}
           <p class="text-sm text-amber-300">Unable to load board states. You can still enter states manually.</p>
+          {#if boardStatesErrorMessage}
+            <p class="mt-1 text-xs text-amber-400">{boardStatesErrorMessage}</p>
+          {/if}
         {/if}
         <CompletedStatesEditor
           selected={values.completedStates}

@@ -400,4 +400,34 @@ describe('work source environment screens', () => {
     // The + Done suggestion should no longer appear (already selected)
     expect(screen.queryByText('+ Done')).not.toBeInTheDocument();
   });
+
+  it('renders board-states connectivity error detail on 502 response', async () => {
+    const api = createApi();
+    api.environments.getBoardStates.mockRejectedValueOnce(
+      new ApiError({
+        title: 'Board states unavailable.',
+        status: 502,
+        detail:
+          'Could not reach Azure DevOps API for project "Agent Controller". Ensure the PAT has Work item tracking (Read) scope.',
+      }),
+    );
+
+    window.history.replaceState({}, '', '/work-source-environments/ado-main/edit');
+    render(App, { client: api.client });
+
+    // Wait for board policy section to render
+    expect(await screen.findByText('Board policy')).toBeVisible();
+
+    // Generic fallback message is visible
+    expect(await screen.findByText(/Unable to load board states/)).toBeVisible();
+    expect(screen.getByText(/You can still enter states manually/)).toBeVisible();
+
+    // Backend problem.detail is rendered inline
+    expect(
+      screen.getByText(
+        /Could not reach Azure DevOps API for project "Agent Controller"/,
+      ),
+    ).toBeVisible();
+    expect(screen.getByText(/Ensure the PAT has Work item tracking \(Read\) scope/)).toBeVisible();
+  });
 });

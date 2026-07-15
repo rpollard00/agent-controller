@@ -41,6 +41,7 @@
   let boardStates = $state<Record<string, string[]>>({});
   let boardStatesLoading = $state(false);
   let boardStatesError = $state(false);
+  let boardStatesErrorMessage = $state<string>();
   let successNotice = $state<{ path: string; title: string; message: string }>();
 
   const route = $derived(parseWorkSourceEnvironmentRoute(pathname));
@@ -77,6 +78,7 @@
     boardStates = {};
     boardStatesLoading = false;
     boardStatesError = false;
+    boardStatesErrorMessage = undefined;
     void loadRoute(currentRoute, loadController.signal);
   }
 
@@ -97,6 +99,7 @@
       if (boardStatesController.signal.aborted) return;
       boardStatesLoading = false;
       boardStatesError = true;
+      boardStatesErrorMessage = getErrorMessage(error);
     }
   }
 
@@ -389,6 +392,7 @@
         oncancel={cancelForm}
         boardStatesLoading={boardStatesLoading}
         boardStatesError={boardStatesError}
+        boardStatesErrorMessage={boardStatesErrorMessage}
       />
     </Card>
   {:else if route?.view === 'edit' && environment}
@@ -417,6 +421,7 @@
           boardStates={boardStates}
           boardStatesLoading={boardStatesLoading}
           boardStatesError={boardStatesError}
+          boardStatesErrorMessage={boardStatesErrorMessage}
         />
       {/key}
     </Card>
