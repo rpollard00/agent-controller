@@ -1,0 +1,138 @@
+using AgentController.Application;
+using AgentController.Application.Abstractions;
+using AgentController.Application.Results;
+using AgentController.Domain;
+
+namespace AgentController.Infrastructure;
+
+/// <summary>
+/// Azure DevOps implementation of <see cref="IWorkSourceConnectivityVerifier"/>.
+/// Uses <see cref="IAzureDevOpsBoardsClientFactory"/> to build a client from the
+/// resolved <see cref="WorkSourceEnvironmentProfile"/>, then calls
+/// <see cref="IAzureDevOpsBoardsClient.VerifyConnectivityAsync"/> and maps the
+/// result (including enumerated repositories) into the provider-neutral
+/// <see cref="WorkSourceConnectivityResult"/>.
+/// </summary>
+internal sealed class AzureDevOpsConnectivityVerifier(
+    IAzureDevOpsBoardsClientFactory boardsClientFactory
+) : IWorkSourceConnectivityVerifier
+{
+    public async Task<WorkSourceConnectivityResult> VerifyAsync(
+        WorkSourceEnvironmentProfile profile,
+        CancellationToken cancellationToken
+    )
+    {
+        // Validate required configuration fields.
+        var errors = new List<string>();
+        if (string.IsNullOrWhiteSpace(profile.OrganizationUrl))
+        {
+            errors.Add("Azure DevOps organization URL is not configured.");
+        }
+        if (string.IsNullOrWhiteSpace(profile.Project))
+        {
+            errors.Add("Azure DevOps project is not configured.");
+        }
+
+        // Resolve PAT from the environment variable reference.
+        string? resolvedPat;
+        try
+        {
+            resolvedPat = ResolveManagedPat(profile.PatEnvironmentVariable);
+        }
+        catch (InvalidOperationException ex)
+        {
+            errors.Add($"PAT resolution failed: {ex.Message}");
+            resolvedPat = null;
+        }
+
+        if (
+            string.IsNullOrWhiteSpace(resolvedPat)
+            && errors.TrueForAll(error =>
+                !error.StartsWith("PAT resolution failed:", StringComparison.Ordinal)
+            )
+        )
+        {
+            errors.Add("Azure DevOps PAT is not configured.");
+        }
+
+        if (errors.Count > 0)
+        {
+            return WorkSourceConnectivityResult.FailureResult(
+                errors,
+                authMechanism: "PersonalAccessToken"
+            );
+        }
+
+        // Build client via factory and verify connectivity.
+        var boardsClient = boardsClientFactory.Create(profile);
+        using var disposableClient = boardsClient as IDisposable;
+
+        var connectivityResult = await boardsClient.VerifyConnectivityAsync(
+            profile.OrganizationUrl,
+            profile.Project,
+            resolvedPat!,
+            cancellationToken
+        );
+
+        // Map repositories into a serializable payload.
+        var repositories = connectivityResult.Repositories.Select(repo =>
+            new Dictionary<string, object?>
+            {
+                ["id"] = repo.Id,
+                ["name"] = repo.Name,
+                ["defaultBranch"] = repo.DefaultBranch,
+                ["remoteUrl"] = repo.RemoteUrl,
+            }
+        ).ToList();
+
+        if (connectivityResult.Success)
+        {
+            var payload = new Dictionary<string, object>
+            {
+                ["repositories"] = repositories,
+            };
+
+            return WorkSourceConnectivityResult.SuccessResult(
+                "PersonalAccessToken",
+                connectivityResult.Status is { } statusCode ? (int)statusCode : null,
+                payload
+            );
+        }
+
+        // Connectivity failed — collect errors from the ADO result.
+        var connectErrors = new List<string>();
+        if (!string.IsNullOrEmpty(connectivityResult.Error))
+        {
+            connectErrors.Add(connectivityResult.Error);
+        }
+
+        return WorkSourceConnectivityResult.FailureResult(
+            connectErrors,
+            authMechanism: "PersonalAccessToken",
+            httpStatus: connectivityResult.Status is { } failedStatusCode
+                ? (int)failedStatusCode
+                : null,
+            payload: new Dictionary<string, object> { ["repositories"] = repositories }
+        );
+    }
+
+    private static string ResolveManagedPat(string environmentVariable)
+    {
+        if (string.IsNullOrWhiteSpace(environmentVariable))
+        {
+            throw new InvalidOperationException(
+                "The managed profile has no PAT environment-variable reference."
+            );
+        }
+
+        var value = Environment.GetEnvironmentVariable(environmentVariable);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new InvalidOperationException(
+                $"PAT environment variable '{environmentVariable}' is missing or empty."
+            );
+        }
+
+        return value;
+    }
+}

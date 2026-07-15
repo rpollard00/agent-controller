@@ -434,6 +434,13 @@ public static class AgentControllerServiceCollectionExtensions
         // Throws during startup if any configured state is invalid.
         services.AddHostedService<AzureDevOpsBoardStateStartupValidator>();
 
+        // Register the Azure DevOps connectivity verifier with the provider-keyed resolver.
+        // Keyed by "AzureDevOpsBoards" and "AzureDevOpsRepos" provider strings.
+        services.AddWorkSourceConnectivityVerifier<AzureDevOpsConnectivityVerifier>(
+            "AzureDevOpsBoards",
+            "AzureDevOpsRepos"
+        );
+
         return services;
     }
 
