@@ -7,13 +7,16 @@ namespace AgentController.Application.Commands;
 public sealed class CreateRepositoryCommandHandler(
     IRepositoryStore repositoryStore,
     IWorkSourceEnvironmentStore workSourceEnvironmentStore,
-    IRuntimeEnvironmentStore runtimeEnvironmentStore
+    IRuntimeEnvironmentStore runtimeEnvironmentStore,
+    IRepositoryHostConnectionStore? repositoryHostConnectionStore
 ) : ICommandHandler<CreateRepositoryCommand, RepositoryOperationResult>
 {
     private readonly IRepositoryStore _repositoryStore = repositoryStore;
     private readonly IWorkSourceEnvironmentStore _workSourceEnvironmentStore =
         workSourceEnvironmentStore;
     private readonly IRuntimeEnvironmentStore _runtimeEnvironmentStore = runtimeEnvironmentStore;
+    private readonly IRepositoryHostConnectionStore? _repositoryHostConnectionStore =
+        repositoryHostConnectionStore;
 
     public async Task<RepositoryOperationResult> HandleAsync(
         CreateRepositoryCommand command,
@@ -34,6 +37,7 @@ public sealed class CreateRepositoryCommandHandler(
             command.Profile,
             _workSourceEnvironmentStore,
             _runtimeEnvironmentStore,
+            _repositoryHostConnectionStore,
             cancellationToken
         );
 

@@ -1,4 +1,5 @@
 using AgentController.Application;
+using AgentController.Application.Abstractions;
 using AgentController.Domain;
 
 namespace AgentController.Application.Tests;
@@ -165,6 +166,7 @@ public sealed class ManagedProfileResolverTests
             new RepositoryStore(repositories),
             new WorkSourceStore(workSourceEnvironments),
             new RuntimeStore(runtimes),
+            new HostConnectionStore(),
             configuredProfiles
         );
     }
@@ -181,7 +183,9 @@ public sealed class ManagedProfileResolverTests
             Key = key,
             CloneUrl = cloneUrl,
             DefaultBranch = "main",
+#pragma warning disable CS0618 // Type or member is obsolete
             AzureDevOpsEnvironmentKey = azureDevOpsKey,
+#pragma warning restore CS0618
             RuntimeEnvironmentKey = runtimeKey,
         };
     }
@@ -314,6 +318,31 @@ public sealed class ManagedProfileResolverTests
 
         public Task<bool> UpdateAsync(
             RuntimeEnvironmentProfile profile,
+            CancellationToken cancellationToken
+        ) => throw new NotSupportedException();
+
+        public Task<bool> DeleteAsync(string key, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class HostConnectionStore : IRepositoryHostConnectionStore
+    {
+        public Task<IReadOnlyList<RepositoryHostConnectionProfile>> ListAsync(
+            CancellationToken cancellationToken
+        ) => throw new NotSupportedException();
+
+        public Task<RepositoryHostConnectionProfile?> GetByKeyAsync(
+            string key,
+            CancellationToken cancellationToken
+        ) => Task.FromResult<RepositoryHostConnectionProfile?>(null);
+
+        public Task<bool> CreateAsync(
+            RepositoryHostConnectionProfile profile,
+            CancellationToken cancellationToken
+        ) => throw new NotSupportedException();
+
+        public Task<bool> UpdateAsync(
+            RepositoryHostConnectionProfile profile,
             CancellationToken cancellationToken
         ) => throw new NotSupportedException();
 

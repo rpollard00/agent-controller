@@ -58,7 +58,9 @@ public class ManagedOnboardingProfileTests
 
         Assert.Equal("legacy-environment", profile.EnvironmentProfile);
         Assert.Equal("legacy-runtime", profile.RuntimeProfile);
+#pragma warning disable CS0618 // Type or member is obsolete
         Assert.Null(profile.AzureDevOpsEnvironmentKey);
+#pragma warning restore CS0618
         Assert.Null(profile.RuntimeEnvironmentKey);
     }
 
@@ -189,19 +191,25 @@ public class ManagedOnboardingProfileTests
         Assert.NotNull(legacy);
         Assert.Equal("legacy-environment", legacy.EnvironmentProfile);
         Assert.Equal("legacy-runtime", legacy.RuntimeProfile);
+#pragma warning disable CS0618 // Type or member is obsolete
         Assert.Null(legacy.AzureDevOpsEnvironmentKey);
+#pragma warning restore CS0618
         Assert.Null(legacy.RuntimeEnvironmentKey);
 
         var managed = legacy with
         {
+#pragma warning disable CS0618 // Type or member is obsolete
             AzureDevOpsEnvironmentKey = "primary-ado",
+#pragma warning restore CS0618
             RuntimeEnvironmentKey = "local-pi",
         };
         var json = JsonSerializer.Serialize(managed, JsonOptions);
         var roundTripped = JsonSerializer.Deserialize<RepositoryProfile>(json, JsonOptions);
 
         Assert.NotNull(roundTripped);
+#pragma warning disable CS0618 // Type or member is obsolete
         Assert.Equal("primary-ado", roundTripped.AzureDevOpsEnvironmentKey);
+#pragma warning restore CS0618
         Assert.Equal("local-pi", roundTripped.RuntimeEnvironmentKey);
         Assert.Equal("legacy-environment", roundTripped.EnvironmentProfile);
         Assert.Equal("legacy-runtime", roundTripped.RuntimeProfile);

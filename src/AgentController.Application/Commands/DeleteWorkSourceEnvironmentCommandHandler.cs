@@ -36,11 +36,13 @@ public sealed class DeleteWorkSourceEnvironmentCommandHandler(
         var repositories = await _repositoryStore.ListAsync(cancellationToken);
         var referencingRepository = repositories
             .Where(repository =>
+#pragma warning disable CS0618 // Type or member is obsolete
                 string.Equals(
                     repository.AzureDevOpsEnvironmentKey?.Trim(),
                     key.Key,
                     StringComparison.OrdinalIgnoreCase
                 )
+#pragma warning restore CS0618
             )
             .OrderBy(repository => repository.Key, StringComparer.Ordinal)
             .FirstOrDefault();

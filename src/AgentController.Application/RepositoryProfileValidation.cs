@@ -15,6 +15,7 @@ internal static class RepositoryProfileValidation
         RepositoryProfile profile,
         IWorkSourceEnvironmentStore workSourceEnvironmentStore,
         IRuntimeEnvironmentStore runtimeEnvironmentStore,
+        IRepositoryHostConnectionStore? repositoryHostConnectionStore,
         CancellationToken cancellationToken
     )
     {
@@ -34,14 +35,42 @@ internal static class RepositoryProfileValidation
         }
 
         var allowedPaths = NormalizeAllowedPaths(profile.AllowedPaths, errors);
+#pragma warning disable CS0618 // Type or member is obsolete
         var azureDevOpsEnvironmentKey = NormalizeOptionalKey(profile.AzureDevOpsEnvironmentKey);
+#pragma warning restore CS0618
+        var repositoryHostConnectionKey = NormalizeOptionalKey(profile.RepositoryHostConnectionKey);
+        var remoteIdentity = NormalizeRemoteIdentity(profile.RemoteIdentity);
         var runtimeEnvironmentKey = NormalizeOptionalKey(profile.RuntimeEnvironmentKey);
 
-        ValidateOptionalKey(azureDevOpsEnvironmentKey, "azureDevOpsEnvironmentKey", errors);
+        // Legacy field: no existence check (deprecated, kept for migration backfill only)
+        // ValidateOptionalKey(azureDevOpsEnvironmentKey, "azureDevOpsEnvironmentKey", errors);
+
+        ValidateOptionalKey(repositoryHostConnectionKey, "repositoryHostConnectionKey", errors);
+        ValidateOptionalKey(remoteIdentity, "remoteIdentity", errors);
         ValidateOptionalKey(runtimeEnvironmentKey, "runtimeEnvironmentKey", errors);
 
+        // Validate that the repository host connection exists when specified.
         if (
-            azureDevOpsEnvironmentKey is not null
+            repositoryHostConnectionKey is not null
+            && !errors.Contains("repositoryHostConnectionKey")
+            && repositoryHostConnectionStore is not null
+            && await repositoryHostConnectionStore.GetByKeyAsync(
+                repositoryHostConnectionKey,
+                cancellationToken
+            )
+                is null
+        )
+        {
+            errors.Add(
+                "repositoryHostConnectionKey",
+                $"Repository host connection '{repositoryHostConnectionKey}' does not exist."
+            );
+        }
+
+        // Legacy: validate work source environment reference only when the new field is absent.
+        if (
+            repositoryHostConnectionKey is null
+            && azureDevOpsEnvironmentKey is not null
             && !errors.Contains("azureDevOpsEnvironmentKey")
             && await workSourceEnvironmentStore.GetByKeyAsync(
                 azureDevOpsEnvironmentKey,
@@ -76,7 +105,11 @@ internal static class RepositoryProfileValidation
             DefaultBranch = branch,
             EnvironmentProfile = profile.EnvironmentProfile?.Trim() ?? string.Empty,
             RuntimeProfile = profile.RuntimeProfile?.Trim() ?? string.Empty,
+#pragma warning disable CS0618 // Type or member is obsolete
             AzureDevOpsEnvironmentKey = azureDevOpsEnvironmentKey,
+#pragma warning restore CS0618
+            RepositoryHostConnectionKey = repositoryHostConnectionKey,
+            RemoteIdentity = remoteIdentity,
             RuntimeEnvironmentKey = runtimeEnvironmentKey,
             AllowedPaths = allowedPaths,
         };
@@ -98,6 +131,12 @@ internal static class RepositoryProfileValidation
     private static string? NormalizeOptionalKey(string? value)
     {
         var normalized = NormalizeKey(value);
+        return normalized.Length == 0 ? null : normalized;
+    }
+
+    private static string? NormalizeRemoteIdentity(string? value)
+    {
+        var normalized = (value ?? string.Empty).Trim();
         return normalized.Length == 0 ? null : normalized;
     }
 

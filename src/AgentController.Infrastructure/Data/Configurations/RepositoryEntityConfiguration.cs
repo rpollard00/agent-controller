@@ -27,7 +27,13 @@ internal sealed class RepositoryEntityConfiguration : IEntityTypeConfiguration<R
 
         builder.Property(x => x.RuntimeProfile).IsRequired().HasMaxLength(128);
 
+#pragma warning disable CS0618 // Type or member is obsolete
         builder.Property(x => x.AzureDevOpsEnvironmentKey).HasMaxLength(128);
+#pragma warning restore CS0618
+
+        builder.Property(x => x.RepositoryHostConnectionKey).HasMaxLength(128);
+
+        builder.Property(x => x.RemoteIdentity).HasMaxLength(256);
 
         builder.Property(x => x.RuntimeEnvironmentKey).HasMaxLength(128);
 

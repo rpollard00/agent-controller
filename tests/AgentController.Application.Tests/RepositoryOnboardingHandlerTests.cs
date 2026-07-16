@@ -1,3 +1,4 @@
+using AgentController.Application;
 using AgentController.Application.Abstractions;
 using AgentController.Application.Commands;
 using AgentController.Application.Queries;
@@ -61,10 +62,12 @@ public sealed class RepositoryOnboardingHandlerTests
         var repositories = new FakeRepositoryStore();
         var azureDevOpsEnvironments = new FakeWorkSourceEnvironmentStore("ado-primary");
         var runtimeEnvironments = new FakeRuntimeEnvironmentStore("runtime-local");
+        var hostConnections = new FakeRepositoryHostConnectionStore();
         var handler = new CreateRepositoryCommandHandler(
             repositories,
             azureDevOpsEnvironments,
-            runtimeEnvironments
+            runtimeEnvironments,
+            hostConnections
         );
         var profile = new RepositoryProfile
         {
@@ -74,7 +77,9 @@ public sealed class RepositoryOnboardingHandlerTests
             Transport = CloneTransport.HttpsPat,
             EnvironmentProfile = " legacy-environment ",
             RuntimeProfile = " legacy-runtime ",
+#pragma warning disable CS0618 // Type or member is obsolete
             AzureDevOpsEnvironmentKey = " ADO-PRIMARY ",
+#pragma warning restore CS0618
             RuntimeEnvironmentKey = " RUNTIME-LOCAL ",
             AllowedPaths = [" ./src//Features/ ", "src\\Features", " tests/ "],
         };
@@ -92,7 +97,9 @@ public sealed class RepositoryOnboardingHandlerTests
         Assert.Equal("feature/onboarding", persisted.DefaultBranch);
         Assert.Equal("legacy-environment", persisted.EnvironmentProfile);
         Assert.Equal("legacy-runtime", persisted.RuntimeProfile);
+#pragma warning disable CS0618 // Type or member is obsolete
         Assert.Equal("ado-primary", persisted.AzureDevOpsEnvironmentKey);
+#pragma warning restore CS0618
         Assert.Equal("runtime-local", persisted.RuntimeEnvironmentKey);
         Assert.Equal(["src/Features", "tests"], persisted.AllowedPaths);
     }
@@ -104,7 +111,8 @@ public sealed class RepositoryOnboardingHandlerTests
         var handler = new CreateRepositoryCommandHandler(
             repositories,
             new FakeWorkSourceEnvironmentStore(),
-            new FakeRuntimeEnvironmentStore()
+            new FakeRuntimeEnvironmentStore(),
+            new FakeRepositoryHostConnectionStore()
         );
         var profile = CreateProfile("invalid") with
         {
@@ -134,11 +142,14 @@ public sealed class RepositoryOnboardingHandlerTests
         var handler = new CreateRepositoryCommandHandler(
             repositories,
             new FakeWorkSourceEnvironmentStore(),
-            new FakeRuntimeEnvironmentStore()
+            new FakeRuntimeEnvironmentStore(),
+            new FakeRepositoryHostConnectionStore()
         );
         var profile = CreateProfile("referencing") with
         {
+#pragma warning disable CS0618 // Type or member is obsolete
             AzureDevOpsEnvironmentKey = "missing-ado",
+#pragma warning restore CS0618
             RuntimeEnvironmentKey = "missing-runtime",
         };
 
@@ -160,7 +171,8 @@ public sealed class RepositoryOnboardingHandlerTests
         var handler = new CreateRepositoryCommandHandler(
             repositories,
             new FakeWorkSourceEnvironmentStore(),
-            new FakeRuntimeEnvironmentStore()
+            new FakeRuntimeEnvironmentStore(),
+            new FakeRepositoryHostConnectionStore()
         );
 
         var result = await handler.HandleAsync(
@@ -180,7 +192,8 @@ public sealed class RepositoryOnboardingHandlerTests
         var handler = new UpdateRepositoryCommandHandler(
             repositories,
             new FakeWorkSourceEnvironmentStore(),
-            new FakeRuntimeEnvironmentStore()
+            new FakeRuntimeEnvironmentStore(),
+            new FakeRepositoryHostConnectionStore()
         );
         var update = CreateProfile(" SERVICE ") with
         {
@@ -207,7 +220,8 @@ public sealed class RepositoryOnboardingHandlerTests
         var handler = new UpdateRepositoryCommandHandler(
             repositories,
             new FakeWorkSourceEnvironmentStore(),
-            new FakeRuntimeEnvironmentStore()
+            new FakeRuntimeEnvironmentStore(),
+            new FakeRepositoryHostConnectionStore()
         );
 
         var result = await handler.HandleAsync(
@@ -231,7 +245,8 @@ public sealed class RepositoryOnboardingHandlerTests
         var handler = new UpdateRepositoryCommandHandler(
             repositories,
             new FakeWorkSourceEnvironmentStore(),
-            new FakeRuntimeEnvironmentStore()
+            new FakeRuntimeEnvironmentStore(),
+            new FakeRepositoryHostConnectionStore()
         );
 
         var result = await handler.HandleAsync(
@@ -445,6 +460,31 @@ public sealed class RepositoryOnboardingHandlerTests
 
         public Task<bool> UpdateAsync(
             RuntimeEnvironmentProfile profile,
+            CancellationToken cancellationToken
+        ) => throw new NotSupportedException();
+
+        public Task<bool> DeleteAsync(string key, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class FakeRepositoryHostConnectionStore : IRepositoryHostConnectionStore
+    {
+        public Task<IReadOnlyList<RepositoryHostConnectionProfile>> ListAsync(
+            CancellationToken cancellationToken
+        ) => throw new NotSupportedException();
+
+        public Task<RepositoryHostConnectionProfile?> GetByKeyAsync(
+            string key,
+            CancellationToken cancellationToken
+        ) => Task.FromResult<RepositoryHostConnectionProfile?>(null);
+
+        public Task<bool> CreateAsync(
+            RepositoryHostConnectionProfile profile,
+            CancellationToken cancellationToken
+        ) => throw new NotSupportedException();
+
+        public Task<bool> UpdateAsync(
+            RepositoryHostConnectionProfile profile,
             CancellationToken cancellationToken
         ) => throw new NotSupportedException();
 

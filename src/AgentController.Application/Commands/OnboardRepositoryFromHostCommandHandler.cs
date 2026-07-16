@@ -21,7 +21,8 @@ public sealed class OnboardRepositoryFromHostCommandHandler(
     private readonly IRepositoryStore _repositoryStore = repositoryStore;
     private readonly IWorkSourceEnvironmentStore _workSourceEnvironmentStore =
         workSourceEnvironmentStore;
-    private readonly IRuntimeEnvironmentStore _runtimeEnvironmentStore = runtimeEnvironmentStore;
+    private readonly IRuntimeEnvironmentStore _runtimeEnvironmentStore =
+        runtimeEnvironmentStore;
 
     public async Task<RepositoryOperationResult> HandleAsync(
         OnboardRepositoryFromHostCommand command,
@@ -69,6 +70,8 @@ public sealed class OnboardRepositoryFromHostCommandHandler(
             CloneUrl = selected.RemoteUrl,
             DefaultBranch = selected.DefaultBranch,
             Transport = transport,
+            RepositoryHostConnectionKey = keyValidation.Key,
+            RemoteIdentity = selected.Id,
             AllowedPaths = [],
         };
 
@@ -77,6 +80,7 @@ public sealed class OnboardRepositoryFromHostCommandHandler(
             draftProfile,
             _workSourceEnvironmentStore,
             _runtimeEnvironmentStore,
+            _connectionStore,
             cancellationToken
         );
 

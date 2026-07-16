@@ -75,8 +75,26 @@ public sealed record RepositoryProfile
     /// </summary>
     public string RuntimeProfile { get; init; } = string.Empty;
 
-    /// <summary>Optional key of the managed Azure DevOps environment profile.</summary>
+    /// <summary>
+    /// Legacy key referencing a managed work source environment profile.
+    /// Retained for backward compatibility and migration backfill only.
+    /// New profiles should use <see cref="RepositoryHostConnectionKey"/> instead.
+    /// </summary>
+    [System.Obsolete(
+        "Use RepositoryHostConnectionKey instead. This field is retained for migration backfill only.",
+        error: false
+    )]
     public string? AzureDevOpsEnvironmentKey { get; init; }
+
+    /// <summary>Optional key of the managed repository host connection profile.</summary>
+    public string? RepositoryHostConnectionKey { get; init; }
+
+    /// <summary>
+    /// Optional provider-specific remote identity for this repository
+    /// (e.g. ADO repo GUID or name). Used to correlate the local profile
+    /// with the remote repository on the connected host.
+    /// </summary>
+    public string? RemoteIdentity { get; init; }
 
     /// <summary>Optional key of the managed runtime environment profile.</summary>
     public string? RuntimeEnvironmentKey { get; init; }

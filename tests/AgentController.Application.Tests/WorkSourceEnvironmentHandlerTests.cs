@@ -252,8 +252,10 @@ public sealed class WorkSourceEnvironmentHandlerTests
     {
         var environments = new FakeWorkSourceEnvironmentStore(CreateProfile("shared"));
         var repositories = new FakeRepositoryStore(
+#pragma warning disable CS0618 // Type or member is obsolete
             new RepositoryProfile { Key = "service-b", AzureDevOpsEnvironmentKey = " SHARED " },
             new RepositoryProfile { Key = "service-a", AzureDevOpsEnvironmentKey = "shared" }
+#pragma warning restore CS0618
         );
         var handler = new DeleteWorkSourceEnvironmentCommandHandler(environments, repositories);
 

@@ -67,7 +67,9 @@ public sealed class RepositoryStoreTests
             Transport = CloneTransport.Local,
             EnvironmentProfile = "legacy-environment-v2",
             RuntimeProfile = "legacy-runtime-v2",
+#pragma warning disable CS0618 // Type or member is obsolete
             AzureDevOpsEnvironmentKey = "ado-staging",
+#pragma warning restore CS0618
             RuntimeEnvironmentKey = null,
             AllowedPaths = ["src", "tests", "Directory.Build.props"],
         };
@@ -118,7 +120,9 @@ public sealed class RepositoryStoreTests
         var updated = original with
         {
             DefaultBranch = "release",
+#pragma warning disable CS0618 // Type or member is obsolete
             AzureDevOpsEnvironmentKey = null,
+#pragma warning restore CS0618
             RuntimeEnvironmentKey = "runtime-production",
             AllowedPaths = [],
         };
@@ -168,7 +172,9 @@ public sealed class RepositoryStoreTests
         var profile = await store.GetByKeyAsync("legacy", CancellationToken.None);
 
         Assert.NotNull(profile);
+#pragma warning disable CS0618 // Type or member is obsolete
         Assert.Null(profile.AzureDevOpsEnvironmentKey);
+#pragma warning restore CS0618
         Assert.Null(profile.RuntimeEnvironmentKey);
         Assert.Equal(CloneTransport.Ssh, profile.Transport);
         Assert.Equal(["src", "tests"], profile.AllowedPaths);
@@ -189,7 +195,9 @@ public sealed class RepositoryStoreTests
             Transport = CloneTransport.Ssh,
             EnvironmentProfile = "legacy-environment",
             RuntimeProfile = "legacy-runtime",
+#pragma warning disable CS0618 // Type or member is obsolete
             AzureDevOpsEnvironmentKey = "ado-production",
+#pragma warning restore CS0618
             RuntimeEnvironmentKey = "runtime-local",
             AllowedPaths = ["src", "tests"],
         };
@@ -203,7 +211,9 @@ public sealed class RepositoryStoreTests
         Assert.Equal(expected.Transport, actual.Transport);
         Assert.Equal(expected.EnvironmentProfile, actual.EnvironmentProfile);
         Assert.Equal(expected.RuntimeProfile, actual.RuntimeProfile);
+#pragma warning disable CS0618 // Type or member is obsolete
         Assert.Equal(expected.AzureDevOpsEnvironmentKey, actual.AzureDevOpsEnvironmentKey);
+#pragma warning restore CS0618
         Assert.Equal(expected.RuntimeEnvironmentKey, actual.RuntimeEnvironmentKey);
         Assert.Equal(expected.AllowedPaths, actual.AllowedPaths);
     }

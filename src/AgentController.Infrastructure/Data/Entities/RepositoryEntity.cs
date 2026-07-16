@@ -27,8 +27,15 @@ internal sealed class RepositoryEntity
     /// <summary>Name of the runtime profile to use for this repository.</summary>
     public string RuntimeProfile { get; set; } = string.Empty;
 
-    /// <summary>Optional key of the managed Azure DevOps environment profile.</summary>
+    /// <summary>Legacy key referencing a managed work source environment profile.</summary>
+    [System.Obsolete("Use RepositoryHostConnectionKey instead.", error: false)]
     public string? AzureDevOpsEnvironmentKey { get; set; }
+
+    /// <summary>Optional key of the managed repository host connection profile.</summary>
+    public string? RepositoryHostConnectionKey { get; set; }
+
+    /// <summary>Optional provider-specific remote identity (e.g. ADO repo GUID).</summary>
+    public string? RemoteIdentity { get; set; }
 
     /// <summary>Optional key of the managed runtime environment profile.</summary>
     public string? RuntimeEnvironmentKey { get; set; }

@@ -11,6 +11,8 @@ public sealed record ResolvedControllerProfiles
 
     public WorkSourceEnvironmentProfile? WorkSourceEnvironment { get; init; }
 
+    public ResolvedRepositoryHostConnection? RepositoryHostConnection { get; init; }
+
     public bool RepositoryIsManaged { get; init; }
 
     public bool RuntimeEnvironmentIsManaged { get; init; }
