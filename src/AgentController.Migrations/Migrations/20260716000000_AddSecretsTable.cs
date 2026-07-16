@@ -8,7 +8,7 @@ namespace AgentController.Migrations.Migrations
     /// <inheritdoc />
     /// <summary>
     /// Adds the Secrets table for Db-backed secret storage.
-    /// Used by DbSecretStore (IManagedSecretStore implementation).
+    /// Used by DbNamedSecretProvider (ISecretStore/ISecretManager implementation).
     /// </summary>
     public partial class AddSecretsTable : Migration
     {
