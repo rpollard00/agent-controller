@@ -58,6 +58,39 @@ npm run dev
 
 Set `API_URL` before `npm run dev` to proxy `/api` to a different API endpoint.
 
+## KEK Setup (Required for Secrets)
+
+The secrets system requires a Key Encryption Key (KEK) to encrypt/decrypt secret values. Without a valid KEK, the application will fail to start.
+
+For local development, generate a random 32-byte KEK file:
+
+```bash
+openssl rand 32 > ~/.agent-work-controller/kek.key
+chmod 600 ~/.agent-work-controller/kek.key
+```
+
+Then set the environment variable:
+
+```bash
+export AGENT_CONTROLLER_SECRET_KEK_FILE_PATH=~/.agent-work-controller/kek.key
+```
+
+Or configure it in `appsettings.Development.json`:
+
+```json
+{
+  "secrets": {
+    "keyEncryptionKey": {
+      "file": {
+        "filePath": "~/.agent-work-controller/kek.key"
+      }
+    }
+  }
+}
+```
+
+See the [KEK Setup Guide](./kek-setup.md) for production provisioning options including systemd-creds.
+
 ## Production Web UI
 
 Publishing the API performs a clean Web UI dependency install and production

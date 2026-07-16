@@ -47,6 +47,19 @@ The MVP should evolve the same design into a durable internal service using stro
 - `AzureDevOpsBoardsOptions` with `env:` prefix PAT resolution
 - Remote → local `UpsertAsync` path for persisting ADO work items before claiming
 
+### Secrets Management ✓
+
+- Provider-neutral `ISecretStore` (read port) and `ISecretManager` (admin port) in Domain layer.
+- `SecretReference` value object replaces legacy `patEnvironmentVariable` for work-source credentials.
+- DB-backed `DbNamedSecretProvider` with envelope encryption (AES-256-GCM DEK/KEK).
+- `IKeyEncryptionKeySource` injectable interface; `FileKeyEncryptionKeySource` reads KEK from file.
+- Provider selection via `secrets:provider` config (default: `Db`), fail-fast on misconfiguration.
+- NamedSecrets/SecretVersions tables with EF Core migrations.
+- Secrets management page (list, create, version) with write-only value entry.
+- Secret name combobox picker in work-source and repository host forms.
+- All "secrets are not stored" messaging removed and replaced with accurate copy.
+- See [Secrets Management](./secrets.md) and [KEK Setup Guide](./kek-setup.md) for details.
+
 ## 0.2 Incomplete
 
 ### Phase 3: Azure DevOps Repos Clone — NoOp only, local-git implemented
