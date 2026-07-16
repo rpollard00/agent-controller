@@ -6,6 +6,8 @@ import type {
   RepositoryHostConnectionProfile,
   RepositoryProfile,
   RuntimeEnvironmentProfile,
+  SecretInfo,
+  SecretsResourceClient,
   WorkSourceConnectivityResult,
   WorkSourceEnvironmentProfile,
 } from '../../api/types';
@@ -20,7 +22,7 @@ const environment: WorkSourceEnvironmentProfile = {
   tagPrefix: 'agent',
   activeState: 'Active',
   completedState: 'Resolved',
-  patEnvironmentVariable: 'ADO_PAT',
+  personalAccessTokenReference: { name: 'ADO_PAT', version: null },
   createdAt: '2026-07-13T00:00:00Z',
   updatedAt: '2026-07-13T00:00:00Z',
 };
@@ -28,8 +30,10 @@ const environment: WorkSourceEnvironmentProfile = {
 function createApi(
   initialEnvironments: WorkSourceEnvironmentProfile[] = [environment],
   verifyResult?: WorkSourceConnectivityResult,
+  initialSecrets: SecretInfo[] = [{ name: 'ADO_PAT', latestVersion: 1, createdAt: '2026-07-13T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z' }],
 ) {
   let profiles = [...initialEnvironments];
+  let secrets = [...initialSecrets];
 
   const defaultVerifyResult: WorkSourceConnectivityResult = {
     success: true,
@@ -61,6 +65,13 @@ function createApi(
     ),
   };
 
+  const secretsClient: SecretsResourceClient = {
+    list: vi.fn(async () => [...secrets]),
+    listVersions: vi.fn(async () => []),
+    create: vi.fn(async (req) => { secrets.push({ name: req.name, latestVersion: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }); return { name: req.name }; }),
+    createVersion: vi.fn(async (name) => ({ name, version: 2 })),
+  };
+
   const client: WebUiApiClient = {
     repositories: staticResource<RepositoryProfile>([]),
     workSourceEnvironments,
@@ -75,9 +86,10 @@ function createApi(
       onboardRepository: async () => ({} as RepositoryProfile),
     },
     runtimeEnvironments: staticResource<RuntimeEnvironmentProfile>([]),
+    secrets: secretsClient,
   };
 
-  return { client, environments: workSourceEnvironments };
+  return { client, environments: workSourceEnvironments, secrets: secretsClient };
 }
 
 function staticResource<T>(profiles: T[]): ResourceClient<T> {
@@ -103,9 +115,10 @@ async function completeRequiredCreateFields(): Promise<void> {
   await fireEvent.input(screen.getByLabelText(/^Project/), {
     target: { value: 'Secondary Project' },
   });
-  await fireEvent.input(screen.getByLabelText(/PAT environment-variable reference/), {
-    target: { value: 'SECONDARY_ADO_PAT' },
-  });
+  // Select a secret from the combobox picker
+  await fireEvent.click(screen.getByRole('button', { name: 'PAT secret (required)' }));
+  await waitFor(() => expect(screen.getByText('ADO_PAT')).toBeVisible());
+  fireEvent.click(screen.getByRole('option', { name: /ADO_PAT/ }));
 }
 
 describe('work source environment screens', () => {
@@ -121,7 +134,7 @@ describe('work source environment screens', () => {
     expect(
       await screen.findByRole('heading', { level: 1, name: 'Add work source environment' }),
     ).toBeVisible();
-    expect(screen.getByText('Secret values are not stored')).toBeVisible();
+    expect(screen.getByText('Secrets are stored encrypted')).toBeVisible();
 
     // Verify provider selector defaults to Azure DevOps
     expect(screen.getByLabelText(/Work source provider/)).toHaveValue('AzureDevOpsBoards');
@@ -144,7 +157,7 @@ describe('work source environment screens', () => {
         organizationUrl: 'https://dev.azure.com/example',
         project: 'Secondary Project',
         tagPrefix: 'agent',
-        patEnvironmentVariable: 'SECONDARY_ADO_PAT',
+        personalAccessTokenReference: { name: 'ADO_PAT', version: null },
         activeState: null,
         completedState: null,
       }),
@@ -166,7 +179,7 @@ describe('work source environment screens', () => {
     expect(await screen.findByText('Correct the highlighted fields')).toBeVisible();
     expect(screen.getByText('A key is required.')).toBeVisible();
     expect(screen.getByText('An Azure DevOps organization URL is required.')).toBeVisible();
-    expect(screen.getByText('The PAT environment-variable name is required.')).toBeVisible();
+    expect(screen.getByText('A secret reference for the PAT is required.')).toBeVisible();
     expect(api.environments.create).not.toHaveBeenCalled();
   });
 
@@ -227,12 +240,12 @@ describe('work source environment screens', () => {
     expect(screen.getByLabelText(/Organization URL/)).toHaveAttribute('aria-invalid', 'true');
   });
 
-  it('renders only the PAT environment-variable reference, never a returned secret value', async () => {
+  it('renders only the secret name reference, never a returned secret value', async () => {
     window.history.replaceState({}, '', '/work-source-environments/ado-main');
     const responseWithUnexpectedSecret = {
       ...environment,
       personalAccessToken: 'super-secret-value',
-    } as WorkSourceEnvironmentProfile;
+    } as unknown as WorkSourceEnvironmentProfile;
     const api = createApi([responseWithUnexpectedSecret]);
     render(App, { client: api.client });
 

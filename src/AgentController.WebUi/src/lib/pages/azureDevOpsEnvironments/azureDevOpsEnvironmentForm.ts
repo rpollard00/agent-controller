@@ -1,4 +1,4 @@
-import type { WorkSourceEnvironmentProfile } from '../../api/types';
+import type { PersonalAccessTokenSecretReference, WorkSourceEnvironmentProfile } from '../../api/types';
 
 export interface WorkSourceEnvironmentFormValues {
   key: string;
@@ -10,7 +10,8 @@ export interface WorkSourceEnvironmentFormValues {
   tagPrefix: string;
   activeState: string;
   completedState: string;
-  patEnvironmentVariable: string;
+  secretName: string;
+  secretVersion: number | null;
 }
 
 export type WorkSourceEnvironmentFormErrors = Record<string, string[]>;
@@ -18,6 +19,7 @@ export type WorkSourceEnvironmentFormErrors = Record<string, string[]>;
 export function createWorkSourceEnvironmentFormValues(
   profile?: WorkSourceEnvironmentProfile,
 ): WorkSourceEnvironmentFormValues {
+  const ref = profile?.personalAccessTokenReference ?? { name: '', version: null };
   return {
     key: profile?.key ?? '',
     displayName: profile?.displayName ?? '',
@@ -28,7 +30,8 @@ export function createWorkSourceEnvironmentFormValues(
     tagPrefix: profile?.tagPrefix ?? '',
     activeState: profile?.activeState ?? '',
     completedState: profile?.completedState ?? '',
-    patEnvironmentVariable: profile?.patEnvironmentVariable ?? '',
+    secretName: ref.name ?? '',
+    secretVersion: ref.version ?? null,
   };
 }
 
@@ -51,9 +54,9 @@ export function validateWorkSourceEnvironmentForm(
     addRequiredError(errors, 'project', values.project, 'An Azure DevOps project is required.');
     addRequiredError(
       errors,
-      'patEnvironmentVariable',
-      values.patEnvironmentVariable,
-      'The PAT environment-variable name is required.',
+      'secretName',
+      values.secretName,
+      'A secret reference for the PAT is required.',
     );
 
     if (values.organizationUrl.trim() && !isValidOrganizationUrl(values.organizationUrl)) {
@@ -63,11 +66,12 @@ export function validateWorkSourceEnvironmentForm(
     }
 
     if (
-      values.patEnvironmentVariable.trim() &&
-      !/^[A-Za-z_][A-Za-z0-9_]*$/.test(values.patEnvironmentVariable.trim())
+      values.secretVersion !== null &&
+      values.secretVersion !== undefined &&
+      values.secretVersion < 1
     ) {
-      errors.patEnvironmentVariable = [
-        'Use an environment-variable name containing letters, numbers, and underscores that does not start with a number.',
+      errors.secretVersion = [
+        'The secret version must be 1 or greater.',
       ];
     }
   }
@@ -88,6 +92,10 @@ export function toWorkSourceEnvironmentProfile(
   original?: WorkSourceEnvironmentProfile,
 ): WorkSourceEnvironmentProfile {
   const now = new Date().toISOString();
+  const secretRef: PersonalAccessTokenSecretReference = {
+    name: values.secretName.trim(),
+    version: values.secretVersion ?? null,
+  };
   return {
     key: values.key.trim(),
     displayName: values.displayName.trim(),
@@ -98,7 +106,7 @@ export function toWorkSourceEnvironmentProfile(
     tagPrefix: values.tagPrefix.trim() || 'agent',
     activeState: nullableText(values.activeState),
     completedState: nullableText(values.completedState),
-    patEnvironmentVariable: values.patEnvironmentVariable.trim(),
+    personalAccessTokenReference: secretRef,
     createdAt: original?.createdAt ?? now,
     updatedAt: original?.updatedAt ?? now,
   };

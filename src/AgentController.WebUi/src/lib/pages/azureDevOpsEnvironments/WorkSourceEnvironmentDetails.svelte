@@ -153,12 +153,20 @@
     </dl>
   </Card>
 
-  <Card title="Credential reference" description="The Azure DevOps PAT itself is never stored in this profile.">
-    <dl>
+  <Card title="Credential reference" description="The PAT is stored as a named, versioned secret encrypted at rest.">
+    <dl class="grid gap-x-8 gap-y-6 sm:grid-cols-2">
       <div>
-        <dt class="text-sm font-medium text-slate-400">PAT environment variable</dt>
-        <dd class="mt-2 break-all font-mono text-sm text-cyan-200">
-          {environment.patEnvironmentVariable}
+        <dt class="text-sm font-medium text-slate-400">Secret name</dt>
+        <dd class="mt-1 break-all font-mono text-sm text-cyan-200">
+          {environment.personalAccessTokenReference.name || 'Not configured'}
+        </dd>
+      </div>
+      <div>
+        <dt class="text-sm font-medium text-slate-400">Pinned version</dt>
+        <dd class="mt-1 text-slate-100">
+          {environment.personalAccessTokenReference.version
+            ? `v${environment.personalAccessTokenReference.version}`
+            : 'Latest'}
         </dd>
       </div>
     </dl>
@@ -166,7 +174,7 @@
       <Alert
         variant="info"
         title="Secret value redacted"
-        message="Only the environment-variable name is shown. Configure its secret value outside Agent Controller."
+        message="The PAT is stored as a named, versioned secret encrypted at rest. The value is never shown in this profile."
       />
     </div>
   </Card>

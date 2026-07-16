@@ -44,7 +44,7 @@ const workSourceEnvironment: WorkSourceEnvironmentProfile = {
   tagPrefix: 'agent',
   activeState: 'Active',
   completedState: 'Done',
-  patEnvironmentVariable: 'ADO_PAT',
+  personalAccessTokenReference: { name: 'ADO_PAT', version: null },
   createdAt: '2026-07-13T00:00:00Z',
   updatedAt: '2026-07-13T00:00:00Z',
 };

@@ -23,9 +23,15 @@ export interface WorkSourceEnvironmentProfile {
   tagPrefix: string;
   activeState: string | null;
   completedState: string | null;
-  patEnvironmentVariable: string;
+  personalAccessTokenReference: PersonalAccessTokenSecretReference;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Reference to a named, versioned secret (used by work-source environments). */
+export interface PersonalAccessTokenSecretReference {
+  name: string;
+  version: number | null;
 }
 
 export interface EnvironmentProviderSettings {
@@ -62,7 +68,7 @@ export interface WorkSourceConnectivityResult {
   payload?: Record<string, unknown>;
 }
 
-/** Opaque reference to a secret value stored outside the profile. */
+/** Opaque reference to a secret value stored outside the profile (used by repository host connections). */
 export interface SecretReference {
   kind: string;
   id: string;

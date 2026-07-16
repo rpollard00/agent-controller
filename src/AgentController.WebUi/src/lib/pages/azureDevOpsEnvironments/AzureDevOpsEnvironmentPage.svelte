@@ -244,7 +244,7 @@
       return 'Manage work source connections, credential references, and board policies.';
     }
     if (currentRoute.view === 'create') {
-      return 'Connect a work source without storing its personal access token.';
+      return 'Connect a work source by referencing a named secret holding the personal access token.';
     }
     if (currentRoute.view === 'edit') {
       return 'Update connection settings, work-selection rules, and environment availability.';
@@ -351,6 +351,7 @@
       <WorkSourceEnvironmentForm
         mode="create"
         {submitting}
+        {client}
         serverErrors={getFieldErrors(mutationError)}
         onsave={(profile) => void saveEnvironment(profile)}
         oncancel={cancelForm}
@@ -376,6 +377,7 @@
           mode="edit"
           profile={environment}
           {submitting}
+          {client}
           serverErrors={getFieldErrors(mutationError)}
           onsave={(profile) => void saveEnvironment(profile)}
           oncancel={cancelForm}

@@ -294,7 +294,7 @@
       return 'Manage connected repository hosts for discovering and onboarding repositories.';
     }
     if (currentRoute.view === 'create') {
-      return 'Connect a repository host without storing its credentials in this profile.';
+      return 'Connect a repository host by referencing a named secret or environment variable for the personal access token.';
     }
     if (currentRoute.view === 'edit') {
       return 'Update connection settings and credential references.';
@@ -410,6 +410,7 @@
       <RepositoryHostConnectionForm
         mode="create"
         {submitting}
+        {client}
         serverErrors={getFieldErrors(mutationError)}
         onsave={(profile) => void saveConnection(profile)}
         oncancel={cancelForm}
@@ -435,6 +436,7 @@
           mode="edit"
           profile={connection}
           {submitting}
+          {client}
           serverErrors={getFieldErrors(mutationError)}
           onsave={(profile) => void saveConnection(profile)}
           oncancel={cancelForm}

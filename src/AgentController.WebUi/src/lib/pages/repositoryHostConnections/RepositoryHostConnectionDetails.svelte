@@ -150,7 +150,7 @@
     </dl>
   </Card>
 
-  <Card title="Credential reference" description="The personal access token itself is never stored in this profile.">
+  <Card title="Credential reference" description="The PAT is resolved at runtime from the referenced secret or environment variable.">
     <dl>
       <div>
         <dt class="text-sm font-medium text-slate-400">Secret reference</dt>

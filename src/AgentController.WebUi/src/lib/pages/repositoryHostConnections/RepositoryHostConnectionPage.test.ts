@@ -131,7 +131,7 @@ describe('repository host connection screens', () => {
     expect(
       await screen.findByRole('heading', { level: 1, name: 'Add repository host connection' }),
     ).toBeVisible();
-    expect(screen.getByText('Secret values are not stored')).toBeVisible();
+    expect(screen.getByText('Secrets are stored encrypted')).toBeVisible();
 
     // Verify provider selector defaults to Azure DevOps Repos
     expect(screen.getByLabelText(/Repository host provider/)).toHaveValue('AzureDevOpsRepos');

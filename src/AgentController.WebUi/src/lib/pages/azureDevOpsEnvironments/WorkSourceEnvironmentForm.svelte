@@ -1,9 +1,11 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import type { WorkSourceEnvironmentProfile } from '../../api/types';
+  import { type WebUiApiClient } from '../../api/client';
   import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
   import Field from '../../components/ui/Field.svelte';
+  import SecretPicker from '../../components/ui/SecretPicker.svelte';
   import {
     createWorkSourceEnvironmentFormValues,
     toWorkSourceEnvironmentProfile,
@@ -17,6 +19,7 @@
     submitting = false,
     serverErrors = {},
     onsave,
+    client,
     oncancel,
   }: {
     mode: 'create' | 'edit';
@@ -24,11 +27,13 @@
     submitting?: boolean;
     serverErrors?: Readonly<Record<string, string[]>>;
     onsave: (profile: WorkSourceEnvironmentProfile) => void;
+    client: WebUiApiClient;
     oncancel: () => void;
   } = $props();
 
   let values = $state(untrack(() => createWorkSourceEnvironmentFormValues(profile)));
   let clientErrors = $state<WorkSourceEnvironmentFormErrors>({});
+  const secretsClient = client.secrets;
 
   const tagPrefixHint =
     'Namespace for controller-owned tags like prefix-ready, prefix-active, prefix-failed, prefix-needs-human. Defaults to \'agent\' when blank.';
@@ -61,6 +66,13 @@
     delete nextErrors[field];
     clientErrors = nextErrors;
   }
+
+  $effect(() => {
+    // Clear client-side errors when secret name/version changes via the picker
+    void values.secretName;
+    if (values.secretName && clientErrors.secretName) clearClientError('secretName');
+    if (values.secretVersion !== null && clientErrors.secretVersion) clearClientError('secretVersion');
+  });
 </script>
 
 <form class="space-y-8" novalidate onsubmit={handleSubmit}>
@@ -195,32 +207,26 @@
           </Field>
         </div>
 
-        <Field
-          id="wse-patEnvironmentVariable"
-          label="PAT environment-variable reference"
-          error={fieldError('patEnvironmentVariable')}
-          required
-        >
-          <input
-            id="wse-patEnvironmentVariable"
-            name="patEnvironmentVariable"
-            class={inputClasses}
-            bind:value={values.patEnvironmentVariable}
+        <div class="space-y-2">
+          <label class="block text-sm font-medium text-slate-200" for="wse-secretName-input">
+            PAT secret
+            <span class="text-rose-300" aria-hidden="true"> *</span>
+            <span class="sr-only"> (required)</span>
+          </label>
+          <SecretPicker
+            id="wse-secretName"
+            client={secretsClient}
+            bind:secretName={values.secretName}
+            bind:secretVersion={values.secretVersion}
             disabled={submitting}
-            required
-            spellcheck="false"
-            autocomplete="off"
-            placeholder="ADO_PAT"
-            aria-invalid={fieldError('patEnvironmentVariable') ? 'true' : undefined}
-            aria-describedby={describedBy('wse-patEnvironmentVariable', 'patEnvironmentVariable')}
-            oninput={() => clearClientError('patEnvironmentVariable')}
+            error={fieldError('secretName')}
           />
-        </Field>
+        </div>
 
         <Alert
           variant="info"
-          title="Secret values are not stored"
-          message="Agent Controller stores only the environment-variable name. Enter the PAT in the runtime environment, never in this form."
+          title="Secrets are stored encrypted"
+          message="The PAT is stored as a named, versioned secret encrypted at rest. Select the secret holding the token value; the value itself is never shown in this form."
         />
       </fieldset>
     {:else}

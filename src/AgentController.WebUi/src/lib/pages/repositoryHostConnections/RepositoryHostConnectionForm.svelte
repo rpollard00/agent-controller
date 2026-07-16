@@ -1,9 +1,11 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import type { RepositoryHostConnectionProfile } from '../../api/types';
+  import { type WebUiApiClient } from '../../api/client';
   import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
   import Field from '../../components/ui/Field.svelte';
+  import SecretPicker from '../../components/ui/SecretPicker.svelte';
   import {
     createRepositoryHostConnectionFormValues,
     toRepositoryHostConnectionProfile,
@@ -17,6 +19,7 @@
     submitting = false,
     serverErrors = {},
     onsave,
+    client,
     oncancel,
   }: {
     mode: 'create' | 'edit';
@@ -24,11 +27,13 @@
     submitting?: boolean;
     serverErrors?: Readonly<Record<string, string[]>>;
     onsave: (profile: RepositoryHostConnectionProfile) => void;
+    client: WebUiApiClient;
     oncancel: () => void;
   } = $props();
 
   let values = $state(untrack(() => createRepositoryHostConnectionFormValues(profile)));
   let clientErrors = $state<RepositoryHostConnectionFormErrors>({});
+  const secretsClient = client.secrets;
 
   const inputClasses =
     'min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 placeholder:text-slate-600 disabled:cursor-not-allowed disabled:bg-slate-900 disabled:text-slate-400';
@@ -58,6 +63,12 @@
     delete nextErrors[field];
     clientErrors = nextErrors;
   }
+
+  $effect(() => {
+    // Clear client-side errors when secret id changes via the picker
+    void values.secretId;
+    if (values.secretId && clientErrors.secretId) clearClientError('secretId');
+  });
 </script>
 
 <form class="space-y-8" novalidate onsubmit={handleSubmit}>
@@ -194,7 +205,7 @@
         <fieldset class="space-y-4">
           <legend class="text-sm font-semibold text-slate-300">Secret reference</legend>
           <p class="text-sm leading-6 text-slate-400">
-            Reference the secret holding the personal access token. The secret value itself is never stored in this profile.
+            Reference the secret holding the personal access token. Only the reference is stored; the PAT value is resolved at runtime.
           </p>
 
           <div class="grid gap-6 lg:grid-cols-2">
@@ -218,37 +229,53 @@
               </select>
             </Field>
 
-            <Field
-              id="rhc-secretId"
-              label={values.secretKind === 'EnvVar' ? 'Environment variable name' : 'Secret identifier'}
-              hint={values.secretKind === 'EnvVar'
-                ? 'Name of the environment variable holding the PAT (e.g. ADO_PAT).'
-                : 'Identifier of the database-stored secret.'}
-              error={fieldError('secretId')}
-              required
-            >
-              <input
+            {#if values.secretKind === 'Db'}
+              <div class="space-y-2">
+                <label class="block text-sm font-medium text-slate-200" for="rhc-secretId-input">
+                  Secret name
+                  <span class="text-rose-300" aria-hidden="true"> *</span>
+                  <span class="sr-only"> (required)</span>
+                </label>
+                <SecretPicker
+                  id="rhc-secretId"
+                  client={secretsClient}
+                  bind:secretName={values.secretId}
+                  secretVersion={null}
+                  disabled={submitting}
+                  error={fieldError('secretId')}
+                />
+              </div>
+            {:else}
+              <Field
                 id="rhc-secretId"
-                name="secretId"
-                class={inputClasses}
-                bind:value={values.secretId}
-                disabled={submitting}
+                label="Environment variable name"
+                hint="Name of the environment variable holding the PAT (e.g. ADO_PAT)."
+                error={fieldError('secretId')}
                 required
-                spellcheck="false"
-                autocomplete="off"
-                placeholder={values.secretKind === 'EnvVar' ? 'ADO_PAT' : 'secret-guid'}
-                aria-invalid={fieldError('secretId') ? 'true' : undefined}
-                aria-describedby={describedBy('rhc-secretId', 'secretId', true)}
-                oninput={() => clearClientError('secretId')}
-              />
-            </Field>
+              >
+                <input
+                  id="rhc-secretId"
+                  name="secretId"
+                  class={inputClasses}
+                  bind:value={values.secretId}
+                  disabled={submitting}
+                  required
+                  spellcheck="false"
+                  autocomplete="off"
+                  placeholder="ADO_PAT"
+                  aria-invalid={fieldError('secretId') ? 'true' : undefined}
+                  aria-describedby={describedBy('rhc-secretId', 'secretId', true)}
+                  oninput={() => clearClientError('secretId')}
+                />
+              </Field>
+            {/if}
           </div>
         </fieldset>
 
         <Alert
           variant="info"
-          title="Secret values are not stored"
-          message="Agent Controller stores only a reference to the secret. The PAT value is resolved at runtime through the configured secret store."
+          title="Secrets are stored encrypted"
+          message="Named secrets are stored encrypted at rest in the database. Select a secret by name, or reference an environment variable for runtime resolution."
         />
       </fieldset>
     {:else}
