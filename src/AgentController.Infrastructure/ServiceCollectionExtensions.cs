@@ -552,27 +552,27 @@ public static class AgentControllerServiceCollectionExtensions
     /// <see cref="AzureDevOpsReposFeedbackSource"/> as <see cref="IFeedbackSource"/>
     /// and <see cref="AzureDevOpsReposPrLabelSource"/> as <see cref="IPrLabelSource"/>.
     ///
-    /// Both use the same HttpClient and AzureDevOpsBoardsOptions wiring as the
-    /// Azure DevOps Boards work source.
+    /// The feedback source resolves its PAT per-PR from the repo-host connection
+    /// profile that owns the PR's repository (via IRepositoryStore →
+    /// IRepositoryHostConnectionStore → ISecretStore).
     ///
-    /// Requires <see cref="AddAgentControllerOptions"/> to be called first
-    /// (for <see cref="AzureDevOpsBoardsOptions"/> and <see cref="WorkSourceOptions"/>).
+    /// Requires <see cref="AddAgentControllerRepositories"/> to be called first
+    /// (for <see cref="IRepositoryStore"/> and <see cref="IRepositoryHostConnectionStore"/>).
+    /// Requires secrets infrastructure (for <see cref="ISecretStore"/>).
     /// </summary>
     public static IServiceCollection AddAgentControllerAzureDevOpsReposFeedbackSource(
         this IServiceCollection services
     )
     {
         // Register the feedback source (thread fetcher) as scoped.
+        // PAT is resolved per-PR from the owning repo-host connection profile.
         services.AddScoped<IFeedbackSource>(sp =>
         {
-            var boardsOptions = sp.GetRequiredService<IOptions<AzureDevOpsBoardsOptions>>().Value;
-            var workSourceOptions = sp.GetRequiredService<IOptions<WorkSourceOptions>>().Value;
+            var repositoryStore = sp.GetRequiredService<IRepositoryStore>();
+            var connectionStore = sp.GetRequiredService<IRepositoryHostConnectionStore>();
+            var secretStore = sp.GetRequiredService<ISecretStore>();
 
-            boardsOptions.BaseUrl = workSourceOptions.OrganizationUrl;
-            boardsOptions.Project = workSourceOptions.Project;
-
-            var http = new HttpClient();
-            return new AzureDevOpsReposFeedbackSource(http, boardsOptions);
+            return new AzureDevOpsReposFeedbackSource(repositoryStore, connectionStore, secretStore);
         });
 
         // Register the PR label source (marker gate) as singleton.

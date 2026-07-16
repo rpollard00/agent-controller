@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Json;
 using AgentController.Application;
 using AgentController.Domain;
-using AgentController.Infrastructure.Options;
+using AgentController.Domain.Secrets;
 
 namespace AgentController.Infrastructure;
 
@@ -14,14 +14,20 @@ namespace AgentController.Infrastructure;
 /// for each PR in the query and maps the ADO thread model into
 /// <see cref="ReviewThread"/> domain records.
 ///
+/// PAT resolution: for each PR, looks up the repository profile via
+/// <see cref="IRepositoryStore"/>, resolves the owning repo-host connection
+/// via <see cref="IRepositoryHostConnectionStore"/>, then obtains the PAT
+/// from the connection's named secret reference through <see cref="ISecretStore"/>.
+///
 /// This source is a pure fetcher — it returns raw threads without any filtering.
 /// All filtering (marker gate, allowlist, status, author, content) is the
 /// responsibility of the upstream worker filter pipeline.
 /// </summary>
 internal sealed class AzureDevOpsReposFeedbackSource : IFeedbackSource
 {
-    private readonly HttpClient _http;
-    private readonly AzureDevOpsBoardsOptions _options;
+    private readonly IRepositoryStore _repositoryStore;
+    private readonly IRepositoryHostConnectionStore _connectionStore;
+    private readonly ISecretStore _secretStore;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -43,25 +49,14 @@ internal sealed class AzureDevOpsReposFeedbackSource : IFeedbackSource
         { "bydesign", ReviewThreadStatus.ByDesign },
     };
 
-    public AzureDevOpsReposFeedbackSource(HttpClient http, AzureDevOpsBoardsOptions options)
+    public AzureDevOpsReposFeedbackSource(
+        IRepositoryStore repositoryStore,
+        IRepositoryHostConnectionStore connectionStore,
+        ISecretStore secretStore)
     {
-        _http = http;
-        _options = options;
-
-        // Configure the base address from options (same pattern as AzureDevOpsBoardsClient).
-        if (!string.IsNullOrWhiteSpace(options.BaseUrl))
-        {
-            _http.BaseAddress = new Uri(options.BaseUrl.TrimEnd('/') + "/");
-        }
-
-        // Set Basic auth header with PAT.
-        var pat = options.ResolvePersonalAccessToken();
-        if (!string.IsNullOrWhiteSpace(pat))
-        {
-            var authBytes = Encoding.ASCII.GetBytes($":{pat}");
-            _http.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
-        }
+        _repositoryStore = repositoryStore;
+        _connectionStore = connectionStore;
+        _secretStore = secretStore;
     }
 
     public async Task<IReadOnlyList<ReworkSignal>> PollAsync(
@@ -77,20 +72,31 @@ internal sealed class AzureDevOpsReposFeedbackSource : IFeedbackSource
 
         foreach (var pr in query.OpenPrs)
         {
-            // Parse project and repository from the ADO PR URL.
-            var urlParts = ParsePullRequestUrl(pr.PullRequestUrl);
-            if (urlParts is null)
+            // Parse project, repository and derive base URL from the PR URL.
+            var parsed = ParsePullRequestUrlWithOrg(pr.PullRequestUrl);
+            if (parsed is null)
             {
                 // Cannot determine project/repo from URL — skip this PR.
                 continue;
             }
 
-            var (project, repository) = urlParts.Value;
+            var (organizationUrl, project, repository) = parsed.Value;
+
+            // Resolve PAT from the repo-host connection profile that owns this repo.
+            var pat = await ResolvePatForRepoAsync(pr.RepoKey, cancellationToken);
+            if (string.IsNullOrWhiteSpace(pat))
+            {
+                // No PAT available for this repo — skip.
+                continue;
+            }
+
+            // Build per-PR HTTP client with the resolved PAT.
+            using var http = CreateAuthenticatedClient(organizationUrl, pat);
 
             // Build the threads API endpoint.
             var endpoint = $"{project}/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullRequests/{Uri.EscapeDataString(pr.PullRequestId)}/threads?api-version=7.1";
 
-            var threads = await FetchThreadsAsync(endpoint, cancellationToken);
+            var threads = await FetchThreadsAsync(http, endpoint, cancellationToken);
 
             if (threads.Count == 0)
             {
@@ -120,16 +126,67 @@ internal sealed class AzureDevOpsReposFeedbackSource : IFeedbackSource
     }
 
     /// <summary>
+    /// Resolve the PAT for a repository by looking up its owning repo-host connection
+    /// profile and resolving the connection's named secret reference through ISecretStore.
+    /// </summary>
+    private async Task<string?> ResolvePatForRepoAsync(
+        string repoKey,
+        CancellationToken cancellationToken)
+    {
+        // Step 1: Look up the repository profile.
+        var repository = await _repositoryStore.GetByKeyAsync(repoKey, cancellationToken);
+        if (repository is null || string.IsNullOrWhiteSpace(repository.RepositoryHostConnectionKey))
+        {
+            return null;
+        }
+
+        // Step 2: Look up the repo-host connection profile.
+        var connection = await _connectionStore.GetByKeyAsync(
+            repository.RepositoryHostConnectionKey,
+            cancellationToken);
+
+        if (connection is null || !connection.Enabled)
+        {
+            return null;
+        }
+
+        // Step 3: Resolve the PAT from the connection's named secret reference.
+        var secretName = connection.PersonalAccessTokenReference.Id;
+        if (string.IsNullOrWhiteSpace(secretName))
+        {
+            return null;
+        }
+
+        return await _secretStore.ResolveAsync(secretName.Trim(), cancellationToken: cancellationToken);
+    }
+
+    /// <summary>
+    /// Create an HTTP client configured with the Azure DevOps base URL and PAT auth.
+    /// </summary>
+    private static HttpClient CreateAuthenticatedClient(string organizationUrl, string pat)
+    {
+        var http = new HttpClient();
+        http.BaseAddress = new Uri(organizationUrl.TrimEnd('/') + "/");
+
+        var authBytes = Encoding.ASCII.GetBytes($":{pat}");
+        http.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+
+        return http;
+    }
+
+    /// <summary>
     /// Fetch and parse threads from the ADO Threads API endpoint.
     /// Returns an empty list on HTTP failure rather than throwing.
     /// </summary>
-    private async Task<IReadOnlyList<ReviewThread>> FetchThreadsAsync(
+    private static async Task<IReadOnlyList<ReviewThread>> FetchThreadsAsync(
+        HttpClient http,
         string endpoint,
         CancellationToken cancellationToken)
     {
         try
         {
-            var response = await _http.GetAsync(endpoint, cancellationToken);
+            var response = await http.GetAsync(endpoint, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -315,7 +372,8 @@ internal sealed class AzureDevOpsReposFeedbackSource : IFeedbackSource
     }
 
     /// <summary>
-    /// Parse an Azure DevOps pull request URL to extract project and repository name.
+    /// Parse an Azure DevOps pull request URL to extract organization base URL,
+    /// project and repository name.
     ///
     /// Supported URL formats:
     /// <list type="bullet">
@@ -329,37 +387,72 @@ internal sealed class AzureDevOpsReposFeedbackSource : IFeedbackSource
     ///
     /// Returns <c>null</c> when the URL cannot be parsed.
     /// </summary>
-    private static (string Project, string Repository)? ParsePullRequestUrl(string url)
+    private static (string OrganizationUrl, string Project, string Repository)? ParsePullRequestUrlWithOrg(
+        string url)
     {
-        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
         {
-            var segments = uri.Segments;
+            return null;
+        }
 
-            // dev.azure.com format: /{org}/{project}/_git/{repo}/pullrequest/{id}/
-            //   segments: ["{org}/", "{project}/", "_git/", "{repo}/", "pullrequest/", "{id}/"]
-            // visualstudio.com format: /{project}/_git/{repo}/pullrequest/{id}/
-            //   segments: ["{project}/", "_git/", "{repo}/", "pullrequest/", "{id}/"]
+        var segments = uri.Segments;
 
-            // Find the "_git/" segment to anchor the parse.
-            for (int i = 0; i < segments.Length; i++)
+        // Find the "_git/" segment to anchor the parse.
+        for (int i = 0; i < segments.Length; i++)
+        {
+            if (!segments[i].Equals("_git/", StringComparison.Ordinal))
             {
-                if (segments[i].Equals("_git/", StringComparison.Ordinal))
+                continue;
+            }
+
+            if (i <= 0 || i + 1 >= segments.Length)
+            {
+                break;
+            }
+
+            var project = segments[i - 1].TrimEnd('/');
+            var repository = segments[i + 1].TrimEnd('/');
+
+            if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(repository))
+            {
+                break;
+            }
+
+            // Derive the organization base URL from the PR URL.
+            var organizationUrl = DeriveOrganizationUrl(uri);
+            if (organizationUrl is null)
+            {
+                break;
+            }
+
+            return (organizationUrl, project, repository);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Derive the Azure DevOps organization base URL from a PR URI.
+    /// </summary>
+    private static string? DeriveOrganizationUrl(Uri uri)
+    {
+        if (uri.Host.Equals("dev.azure.com", StringComparison.Ordinal))
+        {
+            // https://dev.azure.com/{organization}/...
+            var segments = uri.Segments;
+            if (segments.Length > 0)
+            {
+                var organization = segments[0].TrimEnd('/');
+                if (!string.IsNullOrWhiteSpace(organization))
                 {
-                    // Project is the segment before "_git/".
-                    if (i > 0 && i + 1 < segments.Length)
-                    {
-                        var project = segments[i - 1].TrimEnd('/');
-                        var repository = segments[i + 1].TrimEnd('/');
-
-                        if (!string.IsNullOrWhiteSpace(project) && !string.IsNullOrWhiteSpace(repository))
-                        {
-                            return (project, repository);
-                        }
-                    }
-
-                    break;
+                    return $"{uri.Scheme}://{uri.Host}/{organization}";
                 }
             }
+        }
+        else if (uri.Host.EndsWith(".visualstudio.com", StringComparison.Ordinal))
+        {
+            // https://{organization}.visualstudio.com/...
+            return $"{uri.Scheme}://{uri.Host}";
         }
 
         return null;
