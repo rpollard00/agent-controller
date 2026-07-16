@@ -147,14 +147,23 @@ export AGENT_CONTROLLER_SECRET_KEK_BASE64=$(openssl rand 32 | base64)
 
 ## Fail-Fast Behavior
 
-The controller validates the KEK at startup and fails fast if it is unavailable:
+The controller validates the KEK at startup and fails fast if it is unavailable.
+A critical log entry is always emitted before the exception, so the failure is
+unmissable in log output.
 
 ### Missing KEK File Path
 
-If neither `secrets:keyEncryptionKey:file:filePath` nor `AGENT_CONTROLLER_SECRET_KEK_FILE_PATH` is configured:
+If neither `secrets:keyEncryptionKey:file:filePath` nor `AGENT_CONTROLLER_SECRET_KEK_FILE_PATH` is configured, a critical log is emitted (category `AgentController.Secrets.Startup`) followed by `InvalidOperationException`:
 
 ```
-InvalidOperationException: Secret provider 'Db' requires a KEK file path.
+[crit] AgentController.Secrets.Startup: KEK (Key Encryption Key) is not configured. The application cannot start.
+To fix this, do one of the following:
+  1. Generate a 32-byte key file: openssl rand 32 > kek.key
+  2. Set the AGENT_CONTROLLER_SECRET_KEK_FILE_PATH environment variable to the path of the key file,
+     OR configure 'secrets:keyEncryptionKey:file:filePath' in appsettings.json/appsettings.{{Environment}}.json.
+The KEK file must contain exactly 32 bytes of binary data (e.g., from openssl rand 32).
+
+Exception: InvalidOperationException: Secret provider 'Db' requires a KEK file path.
 Configure 'secrets:keyEncryptionKey:file:filePath' in appsettings or set the
 AGENT_CONTROLLER_SECRET_KEK_FILE_PATH environment variable.
 The KEK file must contain exactly 32 bytes of binary data.

@@ -79,7 +79,7 @@ public interface ISecretManager
 
 ### InMemorySecretStore (Test Double)
 
-`InMemorySecretStore` implements both `ISecretStore` and `ISecretManager` in memory. It is registered as a fallback in DI and used in unit tests to verify consumer behavior without a real database or encryption provider.
+`InMemorySecretStore` implements both `ISecretStore` and `ISecretManager` in memory. It is **not registered in production DI** — it is instantiated directly only in unit tests to verify consumer behavior without a real database or encryption provider.
 
 ## SecretReference Value Object
 
@@ -193,11 +193,26 @@ The KEK file must contain exactly 32 bytes of binary data. See the [KEK Setup Gu
 
 ## Fail-Fast Behavior
 
-The secrets system fails fast at startup rather than silently degrading:
+The secrets system fails fast at startup rather than silently degrading. There is no fallback to plaintext or in-memory storage.
 
 1. **Unknown provider**: If `secrets:provider` is set to an unrecognized value, `AddAgentControllerNamedSecrets` throws `InvalidOperationException` listing supported providers.
-2. **Missing KEK file path**: If neither `secrets:keyEncryptionKey:file:filePath` nor `AGENT_CONTROLLER_SECRET_KEK_FILE_PATH` is configured, the provider throws with instructions for how to configure it.
+2. **Missing KEK file path**: If neither `secrets:keyEncryptionKey:file:filePath` nor `AGENT_CONTROLLER_SECRET_KEK_FILE_PATH` is configured, a **critical log entry** is emitted (logger category `AgentController.Secrets.Startup`) with actionable setup guidance, and then `InvalidOperationException` is thrown. The application **will not start**.
 3. **Invalid KEK file**: If the KEK file is missing, unreadable, or not exactly 32 bytes, `FileKeyEncryptionKeySource` throws `InvalidOperationException` at construction time.
+
+### Critical Log on Missing KEK
+
+When the KEK is not configured, the following critical log line is emitted before the exception:
+
+```
+KEK (Key Encryption Key) is not configured. The application cannot start.
+To fix this, do one of the following:
+  1. Generate a 32-byte key file: openssl rand 32 > kek.key
+  2. Set the AGENT_CONTROLLER_SECRET_KEK_FILE_PATH environment variable to the path of the key file,
+     OR configure 'secrets:keyEncryptionKey:file:filePath' in appsettings.json/appsettings.{{Environment}}.json.
+The KEK file must contain exactly 32 bytes of binary data (e.g., from openssl rand 32).
+```
+
+This ensures the failure is unmissable in log output. The subsequent `InvalidOperationException` carries the same configuration key names for programmatic handling.
 
 ## Related Documentation
 
