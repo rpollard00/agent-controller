@@ -20,10 +20,6 @@ namespace AgentController.Infrastructure;
 ///   <item><b>Local</b>: native git clone for local paths and <c>file://</c> URLs.</item>
 /// </list>
 ///
-/// Resolved environment variables from the secrets manifest are returned in the
-/// materialization result so downstream consumers (e.g. <see cref="PiMateriaRuntime"/>)
-/// can forward them to the agent process.
-///
 /// Registered as a singleton via DI extensions.
 /// </summary>
 public sealed partial class LocalGitRepositoryMaterializer : IRepositoryMaterializer
@@ -78,9 +74,6 @@ public sealed partial class LocalGitRepositoryMaterializer : IRepositoryMaterial
 
         Log.MaterializingRepository(_logger, profile.Key, cloneUrl, targetDir, transport);
 
-        // Resolve environment variables from the manifest for downstream forwarding.
-        var resolvedEnvVars = BuildResolvedEnvVars(manifest, transport);
-
         try
         {
             var checkout = await CloneWithCredentialsAsync(
@@ -97,8 +90,7 @@ public sealed partial class LocalGitRepositoryMaterializer : IRepositoryMaterial
                 checkout.LocalPath,
                 checkout.Branch,
                 checkout.CommitSha,
-                checkout.Transport,
-                resolvedEnvVars);
+                checkout.Transport);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -209,70 +201,6 @@ public sealed partial class LocalGitRepositoryMaterializer : IRepositoryMaterial
         return manifest.Secrets
             .Select(s => s.Value)
             .FirstOrDefault(v => !string.IsNullOrEmpty(v));
-    }
-
-    /// <summary>
-    /// Build the resolved environment variables dictionary from the manifest.
-    /// These are the env vars that downstream consumers should inject into
-    /// the agent process (e.g. AZURE_DEVOPS_PAT for the az CLI).
-    /// </summary>
-    private static Dictionary<string, string> BuildResolvedEnvVars(
-        ResolvedSecretsManifest manifest,
-        CloneTransport transport)
-    {
-        var envVars = new Dictionary<string, string>();
-
-        if (transport == CloneTransport.HttpsPat)
-        {
-            // For HTTPS+PAT, forward the resolved PAT as environment variables
-            // so downstream tools (e.g. az devops CLI) can authenticate.
-            foreach (var secret in manifest.Secrets)
-            {
-                if (secret.Value is null)
-                    continue;
-
-                // Map secret references to well-known env var names.
-                // Convention: SecretReference.Id "ADO_PAT" → env var "AZURE_DEVOPS_PAT"
-                var envVarName = ResolveEnvVarName(secret.Reference);
-                if (!string.IsNullOrEmpty(envVarName))
-                {
-                    envVars[envVarName] = secret.Value;
-
-                    // Also set AZURE_DEVOPS_EXT_PAT for Azure DevOps CLI extension.
-                    if (envVarName.Equals("AZURE_DEVOPS_PAT", StringComparison.OrdinalIgnoreCase))
-                    {
-                        envVars["AZURE_DEVOPS_EXT_PAT"] = secret.Value;
-                    }
-                }
-            }
-        }
-
-        return envVars;
-    }
-
-    /// <summary>
-    /// Resolve a secret reference to an environment variable name for forwarding.
-    /// Maps both the reference ID and common PAT naming conventions to
-    /// well-known downstream env var names.
-    /// </summary>
-    private static string? ResolveEnvVarName(SecretReference reference)
-    {
-        var id = reference.Id.ToUpperInvariant();
-
-        // Normalize common PAT env var names to their downstream standard names.
-        // Both EnvVar and Db-backed secrets follow the same mapping convention.
-        return id switch
-        {
-            // Azure DevOps PAT variants → AZURE_DEVOPS_PAT
-            var _ when id.Contains("ADO") || id.Contains("AZURE_DEVOPS") => "AZURE_DEVOPS_PAT",
-            // GitHub token variants → GITHUB_TOKEN
-            var _ when id.Contains("GITHUB") => "GITHUB_TOKEN",
-            // GitLab token variants → GITLAB_TOKEN
-            var _ when id.Contains("GITLAB") || id.Contains("FORGEJO") => "GITLAB_TOKEN",
-            // Generic PAT/TOKEN references — use the ID as the env var name
-            var _ when id.Contains("PAT") || id.Contains("TOKEN") => reference.Id,
-            _ => null, // Unknown mapping — skip
-        };
     }
 
     /// <summary>

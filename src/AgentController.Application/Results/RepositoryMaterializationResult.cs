@@ -4,8 +4,9 @@ namespace AgentController.Application.Results;
 
 /// <summary>
 /// Result of materializing a repository into a local workspace.
-/// Carries the checkout metadata and any resolved environment variables
-/// that downstream consumers (e.g. agent runtimes) should inject.
+/// Carries the checkout metadata (path, branch, commit SHA, transport).
+/// Environment-variable forwarding is handled by runtime:forwardEnvironmentVariables,
+/// not by the materializer.
 /// </summary>
 public sealed record RepositoryMaterializationResult
 {
@@ -31,14 +32,6 @@ public sealed record RepositoryMaterializationResult
     public DateTimeOffset CompletedAt { get; init; } = DateTimeOffset.UtcNow;
 
     /// <summary>
-    /// Environment variables resolved from the secrets manifest that should
-    /// be forwarded to the agent process (e.g. PAT values for downstream tools).
-    /// Empty when no secrets require forwarding.
-    /// </summary>
-    public IReadOnlyDictionary<string, string> ResolvedEnvVars { get; init; } =
-        new Dictionary<string, string>();
-
-    /// <summary>
     /// Error messages if materialization failed.
     /// Empty when successful.
     /// </summary>
@@ -50,8 +43,7 @@ public sealed record RepositoryMaterializationResult
         string localPath,
         string branch,
         string? commitSha,
-        CloneTransport transport,
-        IReadOnlyDictionary<string, string> resolvedEnvVars
+        CloneTransport transport
     ) => new()
     {
         Success = true,
@@ -60,7 +52,6 @@ public sealed record RepositoryMaterializationResult
         Branch = branch,
         CommitSha = commitSha,
         Transport = transport,
-        ResolvedEnvVars = resolvedEnvVars,
     };
 
     /// <summary>Create a failure result.</summary>

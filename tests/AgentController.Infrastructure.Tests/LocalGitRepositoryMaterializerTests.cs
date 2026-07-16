@@ -110,91 +110,8 @@ public class LocalGitRepositoryMaterializerTests : IAsyncLifetime
         Assert.NotNull(result.CommitSha);
         Assert.NotEmpty(result.CommitSha);
         Assert.Equal(CloneTransport.Local, result.Transport);
-        Assert.Empty(result.ResolvedEnvVars);
         Assert.True(Directory.Exists(Path.Combine(result.LocalPath, ".git")));
         Assert.True(File.Exists(Path.Combine(result.LocalPath, "README.md")));
-    }
-
-    [Fact]
-    public async Task MaterializeAsync_LocalTransport_NoEnvVarsForwarded()
-    {
-        // Arrange
-        var materializer = CreateMaterializer();
-        var env = CreateEnvironment("run-local-env");
-        var profile = new RepositoryProfile
-        {
-            Key = "test-repo",
-            CloneUrl = _sourceRepo,
-            Transport = CloneTransport.Local,
-        };
-        var manifest = CreateManifest("test-repo",
-            (SecretReference.EnvironmentVariable("ADO_PAT"), "fake-pat-value"));
-
-        // Act
-        var result = await materializer.MaterializeAsync(profile, manifest, env, CancellationToken.None);
-
-        // Assert
-        Assert.True(result.Success);
-        // Local transport should NOT forward env vars (no PAT needed for local clones).
-        Assert.Empty(result.ResolvedEnvVars);
-    }
-
-    // ── HTTPS+PAT transport materialization ─────────────────────────
-
-    [Fact]
-    public async Task MaterializeAsync_HttpsPat_ResolvesEnvVarsFromManifest()
-    {
-        // Arrange
-        var materializer = CreateMaterializer();
-        var env = CreateEnvironment("run-https");
-        var profile = new RepositoryProfile
-        {
-            Key = "test-repo",
-            CloneUrl = _sourceRepo, // Using local path but specifying HTTPS transport for env var test
-            Transport = CloneTransport.HttpsPat,
-        };
-        var manifest = CreateManifest("test-repo",
-            (SecretReference.EnvironmentVariable("ADO_PAT"), "fake-pat-123"));
-
-        // Act
-        var result = await materializer.MaterializeAsync(profile, manifest, env, CancellationToken.None);
-
-        // Assert
-        // Note: The clone will succeed because we're using a local path, but the
-        // transport is specified as HttpsPat, so env vars should be resolved.
-        Assert.True(result.Success);
-        Assert.Equal(CloneTransport.HttpsPat, result.Transport);
-
-        // Verify env vars are resolved for downstream forwarding.
-        Assert.Contains("AZURE_DEVOPS_PAT", result.ResolvedEnvVars.Keys);
-        Assert.Equal("fake-pat-123", result.ResolvedEnvVars["AZURE_DEVOPS_PAT"]);
-        Assert.Contains("AZURE_DEVOPS_EXT_PAT", result.ResolvedEnvVars.Keys);
-        Assert.Equal("fake-pat-123", result.ResolvedEnvVars["AZURE_DEVOPS_EXT_PAT"]);
-    }
-
-    [Fact]
-    public async Task MaterializeAsync_HttpsPat_DbSecretMappedToEnvVar()
-    {
-        // Arrange
-        var materializer = CreateMaterializer();
-        var env = CreateEnvironment("run-https-db");
-        var profile = new RepositoryProfile
-        {
-            Key = "test-repo",
-            CloneUrl = _sourceRepo,
-            Transport = CloneTransport.HttpsPat,
-        };
-        // Db-backed secret with "ADO" in the ID should map to AZURE_DEVOPS_PAT.
-        var manifest = CreateManifest("test-repo",
-            (SecretReference.Database("ado-pat-guid-123"), "db-stored-pat"));
-
-        // Act
-        var result = await materializer.MaterializeAsync(profile, manifest, env, CancellationToken.None);
-
-        // Assert
-        Assert.True(result.Success);
-        Assert.Contains("AZURE_DEVOPS_PAT", result.ResolvedEnvVars.Keys);
-        Assert.Equal("db-stored-pat", result.ResolvedEnvVars["AZURE_DEVOPS_PAT"]);
     }
 
     [Fact]
@@ -247,8 +164,6 @@ public class LocalGitRepositoryMaterializerTests : IAsyncLifetime
         // Assert
         Assert.True(result.Success);
         Assert.Equal(CloneTransport.Ssh, result.Transport);
-        // SSH transport should NOT forward PAT env vars (SSH keys are used instead).
-        Assert.Empty(result.ResolvedEnvVars);
     }
 
     // ── Error handling ──────────────────────────────────────────────
@@ -357,7 +272,7 @@ public class LocalGitRepositoryMaterializerTests : IAsyncLifetime
         // Act
         var result = RepositoryMaterializationResult.SuccessResult(
             "repo-key", "/path/to/repo", "main", "abc123",
-            CloneTransport.Ssh, new Dictionary<string, string> { ["VAR"] = "value" });
+            CloneTransport.Ssh);
 
         // Assert
         Assert.True(result.Success);
@@ -366,7 +281,6 @@ public class LocalGitRepositoryMaterializerTests : IAsyncLifetime
         Assert.Equal("main", result.Branch);
         Assert.Equal("abc123", result.CommitSha);
         Assert.Equal(CloneTransport.Ssh, result.Transport);
-        Assert.Equal("value", result.ResolvedEnvVars["VAR"]);
         Assert.Empty(result.Errors);
     }
 
@@ -383,7 +297,6 @@ public class LocalGitRepositoryMaterializerTests : IAsyncLifetime
         Assert.Equal(2, result.Errors.Count);
         Assert.Equal("error 1", result.Errors[0]);
         Assert.Equal("error 2", result.Errors[1]);
-        Assert.Empty(result.ResolvedEnvVars);
     }
 
     // ── Interface conformance ───────────────────────────────────────

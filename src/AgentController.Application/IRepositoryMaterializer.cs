@@ -10,8 +10,6 @@ namespace AgentController.Application;
 /// <list type="bullet">
 ///   <item>Resolving credentials from the secrets manifest.</item>
 ///   <item>Cloning the repository using the appropriate transport (HTTPS+PAT, SSH, Local).</item>
-///   <item>Producing resolved environment variables for downstream consumers
-///   (e.g. agent runtimes that need PAT values for CLI tools).</item>
 /// </list>
 ///
 /// Implementations are transport-agnostic at the contract level but may be
@@ -31,8 +29,7 @@ public interface IRepositoryMaterializer
     ///   <item>For HTTPS+PAT: injects credentials via <c>git http.extraHeader</c>
     ///   (not URL embedding).</item>
     ///   <item>For SSH: uses the configured SSH key and <c>GIT_SSH_COMMAND</c>.</item>
-    ///   <item>Returns the local checkout path and any resolved environment variables
-    ///   that should be forwarded to downstream processes (e.g. agent runtimes).</item>
+    ///   <item>Returns the local checkout path and checkout metadata.</item>
     /// </list>
     /// </summary>
     /// <param name="profile">
@@ -48,7 +45,7 @@ public interface IRepositoryMaterializer
     /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>
-    /// A result containing the local path, checkout metadata, and resolved env vars.
+    /// A result containing the local path and checkout metadata.
     /// </returns>
     Task<RepositoryMaterializationResult> MaterializeAsync(
         RepositoryProfile profile,
