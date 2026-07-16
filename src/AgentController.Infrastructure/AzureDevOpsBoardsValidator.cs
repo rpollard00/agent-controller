@@ -58,8 +58,9 @@ internal static class AzureDevOpsBoardsValidator
         if (resolvedPat is null)
         {
             failures.Add(
-                "Azure DevOps Personal Access Token (PAT) is required. " +
-                "Configure 'azureDevOps:personalAccessToken' with the PAT value.");
+                "Azure DevOps PAT secret name is required. " +
+                "Configure 'azureDevOps:personalAccessToken' with the name of a named secret " +
+                "holding the PAT (resolved at runtime via ISecretStore).");
         }
 
         if (failures.Count > 0)
@@ -72,14 +73,14 @@ internal static class AzureDevOpsBoardsValidator
 
     /// <summary>
     /// Validates Azure DevOps Boards configuration asynchronously, routing PAT
-    /// resolution through <see cref="IManagedSecretStore"/>.
+    /// resolution through <see cref="Domain.Secrets.ISecretStore"/>.
     /// Throws <see cref="InvalidOperationException"/> with a clear message on
     /// the first validation failure.
     /// </summary>
     public static async Task ValidateAsync(
         WorkSourceOptions workSource,
         AzureDevOpsBoardsOptions boards,
-        IManagedSecretStore secretStore,
+        Domain.Secrets.ISecretStore secretStore,
         CancellationToken cancellationToken
     )
     {
@@ -108,7 +109,7 @@ internal static class AzureDevOpsBoardsValidator
                 "Configure 'workSource:project'.");
         }
 
-        // Personal Access Token — resolved through IManagedSecretStore.
+        // Personal Access Token — resolved through ISecretStore.
         string? resolvedPat = null;
         try
         {
@@ -125,8 +126,9 @@ internal static class AzureDevOpsBoardsValidator
         if (resolvedPat is null)
         {
             failures.Add(
-                "Azure DevOps Personal Access Token (PAT) is required. " +
-                "Configure 'azureDevOps:personalAccessToken' with the PAT value.");
+                "Azure DevOps PAT could not be resolved. " +
+                "Ensure 'azureDevOps:personalAccessToken' contains the name of a named secret " +
+                "that exists in the secret store and holds a valid PAT.");
         }
 
         if (failures.Count > 0)

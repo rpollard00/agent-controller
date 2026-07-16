@@ -943,31 +943,58 @@ public class OptionsSmokeTests
     // ──────────────────────────────────────────────
 
     [Fact]
-    public async Task AzureDevOpsBoardsOptions_ResolvePatAsync_ReturnsDirectValue()
+    public async Task AzureDevOpsBoardsOptions_ResolvePatAsync_ResolvesThroughISecretStore()
     {
+        var secretName = "boards-pat";
+        var secretValue = "actual-pat-token-from-store";
+        var secretStore = new InMemoryFakeSecretStoreForBoards(
+            new Dictionary<string, string> { [secretName] = secretValue });
+
         var options = new AzureDevOpsBoardsOptions
         {
-            PersonalAccessToken = "my-direct-pat",
+            PersonalAccessToken = secretName,
         };
 
         var resolved = await options.ResolvePersonalAccessTokenAsync(
-            new InMemoryFakeSecretStore(new Dictionary<string, string>()),
+            secretStore,
             CancellationToken.None
         );
 
-        Assert.Equal("my-direct-pat", resolved);
+        Assert.Equal(secretValue, resolved);
     }
 
     [Fact]
     public async Task AzureDevOpsBoardsOptions_ResolvePatAsync_ReturnsNullForEmptyValue()
     {
+        var secretStore = new InMemoryFakeSecretStoreForBoards(
+            new Dictionary<string, string>());
+
         var options = new AzureDevOpsBoardsOptions
         {
             PersonalAccessToken = "",
         };
 
         var resolved = await options.ResolvePersonalAccessTokenAsync(
-            new InMemoryFakeSecretStore(new Dictionary<string, string>()),
+            secretStore,
+            CancellationToken.None
+        );
+
+        Assert.Null(resolved);
+    }
+
+    [Fact]
+    public async Task AzureDevOpsBoardsOptions_ResolvePatAsync_ReturnsNullForMissingSecret()
+    {
+        var secretStore = new InMemoryFakeSecretStoreForBoards(
+            new Dictionary<string, string> { ["other-secret"] = "other-value" });
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            PersonalAccessToken = "nonexistent-secret",
+        };
+
+        var resolved = await options.ResolvePersonalAccessTokenAsync(
+            secretStore,
             CancellationToken.None
         );
 
@@ -997,6 +1024,24 @@ public class OptionsSmokeTests
             ct.ThrowIfCancellationRequested();
             secrets[$"{reference.Kind}:{reference.Id}"] = value;
             return Task.FromResult(SecretWriteResult.SuccessResult());
+        }
+    }
+
+    /// <summary>
+    /// In-memory fake implementing Domain.Secrets.ISecretStore for Boards options tests.
+    /// </summary>
+    private sealed class InMemoryFakeSecretStoreForBoards(Dictionary<string, string> secrets)
+        : Domain.Secrets.ISecretStore
+    {
+        public Task<string?> ResolveAsync(
+            string name,
+            int? version = null,
+            CancellationToken cancellationToken = default
+        )
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            secrets.TryGetValue(name, out var value);
+            return Task.FromResult(value);
         }
     }
 }

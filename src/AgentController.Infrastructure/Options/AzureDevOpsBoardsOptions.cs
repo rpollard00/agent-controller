@@ -18,7 +18,11 @@ public sealed class AzureDevOpsBoardsOptions : IAzureDevOpsBoardsOptions
     public const string SectionName = "azureDevOps";
 
     /// <summary>
-    /// Azure DevOps Personal Access Token (PAT) for REST API authentication.
+    /// Name of the named, envelope-encrypted secret holding the Azure DevOps
+    /// Personal Access Token (PAT) for REST API authentication.
+    ///
+    /// The secret value is resolved at runtime via <see cref="Domain.Secrets.ISecretStore"/>
+    /// using this property as the secret name.
     ///
     /// Validation is deferred to <see cref="AzureDevOpsBoardsValidator.Validate"/>,
     /// which runs only when the work source provider is "AzureDevOpsBoards".
@@ -43,13 +47,14 @@ public sealed class AzureDevOpsBoardsOptions : IAzureDevOpsBoardsOptions
     public string? Project { get; set; }
 
     /// <summary>
-    /// Resolves the effective PAT value.
+    /// Returns the configured secret name for the PAT.
     /// Returns null when the configured value is empty or whitespace.
-    /// Returns the configured PAT value directly for non-empty values.
     ///
-    /// For new managed profiles, prefer
-    /// <see cref="ResolvePersonalAccessTokenAsync"/> which routes through
-    /// <see cref="IManagedSecretStore"/>.
+    /// This does NOT resolve the actual PAT value — use
+    /// <see cref="ResolvePersonalAccessTokenAsync"/> with an
+    /// <see cref="Domain.Secrets.ISecretStore"/> to obtain the plaintext PAT.
+    /// This sync method is suitable for presence checks (e.g., "is a secret
+    /// name configured?") but not for obtaining the credential itself.
     /// </summary>
     public string? ResolvePersonalAccessToken()
     {
@@ -61,18 +66,19 @@ public sealed class AzureDevOpsBoardsOptions : IAzureDevOpsBoardsOptions
     }
 
     /// <summary>
-    /// Resolves the effective PAT value asynchronously.
-    /// Returns null when the configured value is empty or whitespace.
-    /// Returns the configured PAT value directly for non-empty values.
+    /// Resolves the PAT value asynchronously by looking up the named secret
+    /// through <see cref="Domain.Secrets.ISecretStore"/>.
+    /// Returns null when the configured secret name is empty or whitespace,
+    /// or when the secret does not exist in the store.
     /// </summary>
     /// <param name="secretStore">
-    /// Reserved for future secret store integration.
+    /// The provider-neutral secret store used to resolve the named secret.
     /// </param>
     /// <param name="cancellationToken">
     /// Cancellation token.
     /// </param>
     public Task<string?> ResolvePersonalAccessTokenAsync(
-        IManagedSecretStore secretStore,
+        Domain.Secrets.ISecretStore secretStore,
         CancellationToken cancellationToken
     )
     {
@@ -82,7 +88,7 @@ public sealed class AzureDevOpsBoardsOptions : IAzureDevOpsBoardsOptions
         if (string.IsNullOrWhiteSpace(configured))
             return Task.FromResult<string?>(null);
 
-        // Direct PAT value — return as-is.
-        return Task.FromResult<string?>(configured);
+        // Resolve the named secret through ISecretStore.
+        return secretStore.ResolveAsync(configured.Trim(), cancellationToken: cancellationToken);
     }
 }

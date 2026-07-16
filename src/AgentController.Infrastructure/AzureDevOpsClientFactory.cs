@@ -18,7 +18,7 @@ internal sealed class AzureDevOpsClientFactory(ILoggerFactory loggerFactory)
     /// </summary>
     /// <param name="organizationUrl">The Azure DevOps organization URL.</param>
     /// <param name="project">The Azure DevOps project name.</param>
-    /// <param name="personalAccessToken">The resolved PAT value (already resolved through IManagedSecretStore).</param>
+    /// <param name="personalAccessToken">The resolved PAT value (already resolved through ISecretStore).</param>
     public IAzureDevOpsBoardsClient Create(
         string organizationUrl,
         string project,

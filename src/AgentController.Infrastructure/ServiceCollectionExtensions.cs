@@ -449,6 +449,7 @@ public static class AgentControllerServiceCollectionExtensions
     {
         // Register the Azure DevOps Boards HTTP client as scoped.
         // Each operation (poll cycle, request) gets a fresh client.
+        // PAT is resolved from a named secret via ISecretStore.
         services.AddScoped<IAzureDevOpsBoardsClient>(sp =>
         {
             var boardsOptions = sp.GetRequiredService<IOptions<AzureDevOpsBoardsOptions>>().Value;
@@ -463,9 +464,16 @@ public static class AgentControllerServiceCollectionExtensions
                 AzureDevOpsBoardsValidator.Validate(workSourceOptions, boardsOptions);
             }
 
+            // Resolve PAT from a named, envelope-encrypted secret via ISecretStore.
+            var secretStore = sp.GetRequiredService<ISecretStore>();
+            var resolvedPat = secretStore
+                .ResolveAsync(boardsOptions.PersonalAccessToken, cancellationToken: CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
             var http = new HttpClient();
             var logger = sp.GetRequiredService<ILogger<AzureDevOpsBoardsClient>>();
-            return new AzureDevOpsBoardsClient(http, boardsOptions, logger);
+            return new AzureDevOpsBoardsClient(http, boardsOptions, logger, resolvedPat);
         });
 
         // Register the work source implementation as singleton.
