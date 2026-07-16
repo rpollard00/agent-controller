@@ -1,6 +1,7 @@
 using AgentController.Application;
 using AgentController.Application.Abstractions;
 using AgentController.Application.Services;
+using AgentController.Domain.Secrets;
 using AgentController.Infrastructure;
 using AgentController.Infrastructure.Data;
 using AgentController.Infrastructure.Data.Repositories;
@@ -105,6 +106,12 @@ public static class AgentControllerServiceCollectionExtensions
         services
             .AddOptions<FeedbackOptions>()
             .Bind(configuration.GetSection(FeedbackOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        services
+            .AddOptions<SecretProviderOptions>()
+            .Bind(configuration.GetSection(SecretProviderOptions.SectionName))
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
@@ -727,5 +734,92 @@ public static class AgentControllerServiceCollectionExtensions
         services.AddSingleton<IManagedSecretStore, SecretStoreResolver>();
 
         return services;
+    }
+
+    /// <summary>
+    /// Registers the provider-neutral secret ports (<see cref="Domain.Secrets.ISecretStore"/> and
+    /// <see cref="Domain.Secrets.ISecretManager"/>) backed by the selected provider.
+    ///
+    /// Provider selection is driven by <c>secrets:provider</c> configuration
+    /// (<see cref="SecretProviderOptions.Provider">), defaulting to <c>"Db"</c>.
+    ///
+    /// Currently supported providers:
+    /// <list type="bullet">
+    ///   <item><description><c>"Db"</c> — <see cref="Secrets.DbNamedSecretProvider"/> with envelope encryption
+    ///     (AES-256-GCM DEK/KEK). Requires <see cref="AddAgentControllerDbContext"/> to be called first.
+    ///     The KEK is sourced from a file configured via
+    ///     <c>secrets:keyEncryptionKey:file:filePath</c> or the
+    ///     <c>AGENT_CONTROLLER_SECRET_KEK_FILE_PATH</c> environment variable.</description></item>
+    /// </list>
+    ///
+    /// Fails fast at startup if:
+    /// <list type="bullet">
+    ///   <item><description>The provider selection is unknown or misconfigured.</description></item>
+    ///   <item><description>The KEK file is missing, unreadable, or not exactly 32 bytes.</description></item>
+    /// </list>
+    ///
+    /// Requires <see cref="AddAgentControllerOptions"/> to be called first (for options binding).
+    /// Requires <see cref="AddAgentControllerDbContext"/> to be called first (for Db provider).
+    /// </summary>
+    public static IServiceCollection AddAgentControllerNamedSecrets(
+        this IServiceCollection services,
+        IConfiguration configuration
+    )
+    {
+        var options = configuration
+            .GetSection(SecretProviderOptions.SectionName)
+            .Get<SecretProviderOptions>()
+            ?? new SecretProviderOptions();
+
+        return options.Provider switch
+        {
+            "Db" => RegisterDbNamedSecretProvider(services, configuration),
+            _ => ThrowUnknownSecretProvider(options.Provider),
+        };
+    }
+
+    /// <summary>
+    /// Registers the DB-backed named secret provider with envelope encryption.
+    /// </summary>
+    private static IServiceCollection RegisterDbNamedSecretProvider(
+        IServiceCollection services,
+        IConfiguration configuration
+    )
+    {
+        // Resolve the KEK file path from config or environment variable.
+        var kekFilePath = configuration["secrets:keyEncryptionKey:file:filePath"]
+            ?? Environment.GetEnvironmentVariable("AGENT_CONTROLLER_SECRET_KEK_FILE_PATH");
+
+        if (string.IsNullOrWhiteSpace(kekFilePath))
+        {
+            throw new InvalidOperationException(
+                "Secret provider 'Db' requires a KEK file path. " +
+                "Configure 'secrets:keyEncryptionKey:file:filePath' in appsettings " +
+                "or set the AGENT_CONTROLLER_SECRET_KEK_FILE_PATH environment variable. " +
+                "The KEK file must contain exactly 32 bytes of binary data.");
+        }
+
+        // Register the file-based KEK source as a singleton.
+        // FileKeyEncryptionKeySource validates the file at construction (fail fast).
+        services.AddSingleton<IKeyEncryptionKeySource>(_ =>
+            new FileKeyEncryptionKeySource(kekFilePath!));
+
+        // Register DbNamedSecretProvider as both ISecretStore (read) and ISecretManager (admin).
+        // Scoped because it depends on the scoped AgentControllerDbContext.
+        services.AddScoped<ISecretStore, DbNamedSecretProvider>();
+        services.AddScoped<ISecretManager, DbNamedSecretProvider>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Throws an <see cref="InvalidOperationException"/> for an unknown secret provider.
+    /// </summary>
+    private static IServiceCollection ThrowUnknownSecretProvider(string provider)
+    {
+        throw new InvalidOperationException(
+            $"Unknown secret provider '{provider}'. " +
+            $"Supported providers: Db. " +
+            $"Configure 'secrets:provider' in appsettings.");
     }
 }
