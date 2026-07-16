@@ -2,6 +2,13 @@
   <ItemGroup>
     <ProjectReference Include="..\AgentController.Application\AgentController.Application.csproj" />
     <ProjectReference Include="..\AgentController.Infrastructure\AgentController.Infrastructure.csproj" />
+    <!--
+      The API applies EF Core migrations at startup via SecretsDatabaseStartupService
+      (DbContext is configured with MigrationsAssembly("AgentController.Migrations")).
+      The migrations assembly must therefore be present in the API's output directory
+      at runtime, otherwise MigrateAsync throws FileNotFoundException.
+    -->
+    <ProjectReference Include="..\AgentController.Migrations\AgentController.Migrations.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
