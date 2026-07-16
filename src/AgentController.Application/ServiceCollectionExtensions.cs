@@ -126,6 +126,9 @@ public static class ServiceCollectionExtensions
         // Work-source connectivity verifier resolver
         services.AddWorkSourceConnectivityVerifierResolver();
 
+        // Repository host resolver
+        services.AddRepositoryHostResolver();
+
         return services;
     }
 
@@ -168,6 +171,53 @@ public static class ServiceCollectionExtensions
         // Accumulate the provider key → implementation type mapping in the static registry.
         // The registry is consumed once at container build time by the resolver registration.
         WorkSourceConnectivityVerifierRegistry.Register(typeof(TVerifier), providerKeys);
+
+        return services;
+    }
+
+    // ─── Repository host resolver ───
+
+    /// <summary>
+    /// Registers the repository host resolver and its backing registry.
+    /// Individual providers register their hosts via
+    /// <see cref="AddRepositoryHost{THost}(IServiceCollection, string[])"/>.
+    /// </summary>
+    public static IServiceCollection AddRepositoryHostResolver(
+        this IServiceCollection services
+    )
+    {
+        // Build the type-keyed dictionary from the static registry at container build time.
+        // Provider-to-type mappings are accumulated via AddRepositoryHost<T>()
+        // calls before the container is built.
+        // We capture the dictionary inline to avoid conflicting with the
+        // WorkSourceConnectivityVerifierResolver which also registers IReadOnlyDictionary<string, Type>.
+        var hostTypes = RepositoryHostConnectionRegistry.Build();
+        services.AddSingleton<IRepositoryHostResolver>(sp =>
+            new RepositoryHostResolver(sp.GetRequiredService<IServiceScopeFactory>(), hostTypes));
+        return services;
+    }
+
+    /// <summary>
+    /// Registers a provider-specific repository host for one or more provider strings.
+    /// The host is registered as scoped and keyed into the resolver's type dictionary.
+    /// </summary>
+    /// <typeparam name="THost">The host implementation type.</typeparam>
+    /// <param name="services">The service collection.</param>
+    /// <param name="providerKeys">
+    /// Provider discriminator strings (e.g. "AzureDevOpsRepos", "GitHub", "GitLab").
+    /// </param>
+    public static IServiceCollection AddRepositoryHost<THost>(
+        this IServiceCollection services,
+        params string[] providerKeys
+    ) where THost : class, IRepositoryHostConnection
+    {
+        // Register the host implementation as a scoped service so it can be resolved
+        // by the resolver at runtime through the scoped service provider.
+        services.AddScoped<THost>();
+
+        // Accumulate the provider key → implementation type mapping in the static registry.
+        // The registry is consumed once at container build time by the resolver registration.
+        RepositoryHostConnectionRegistry.Register(typeof(THost), providerKeys);
 
         return services;
     }
