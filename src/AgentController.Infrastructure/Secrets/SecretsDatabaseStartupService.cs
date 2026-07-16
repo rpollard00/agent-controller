@@ -7,11 +7,14 @@ using Microsoft.Extensions.Logging;
 namespace AgentController.Infrastructure.Secrets;
 
 /// <summary>
-/// Ensures the secrets tables (NamedSecrets, SecretVersions) exist at startup.
+/// Applies pending EF Core migrations for the secrets tables (NamedSecrets, SecretVersions)
+/// at startup so the schema is versioned and migration history is tracked.
 ///
 /// This service is registered only when the Db secret provider is active and
 /// a KEK is configured (i.e., after the KEK check in RegisterDbNamedSecretProvider passes).
 /// It runs once during application startup before any secret writes occur.
+/// Uses MigrateAsync() (not EnsureCreatedAsync()) so that schema changes are
+/// versioned through the AgentController.Migrations assembly.
 /// </summary>
 internal sealed partial class SecretsDatabaseStartupService : IHostedService
 {
@@ -31,16 +34,16 @@ internal sealed partial class SecretsDatabaseStartupService : IHostedService
         using var scope = _scopeFactory.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
 
-        EnsuringTables(_logger);
+        ApplyingMigrations(_logger);
 
         try
         {
-            await context.Database.EnsureCreatedAsync(cancellationToken);
-            TablesVerified(_logger);
+            await context.Database.MigrateAsync(cancellationToken);
+            MigrationsApplied(_logger);
         }
         catch (Exception ex)
         {
-            TableCreationFailed(_logger, ex.Message);
+            MigrationFailed(_logger, ex.Message);
             throw;
         }
     }
@@ -53,15 +56,15 @@ internal sealed partial class SecretsDatabaseStartupService : IHostedService
     // ─── LoggerMessage definitions ───────────────────────────────
 
     [LoggerMessage(Level = LogLevel.Information,
-        Message = "Ensuring secrets database tables exist...")]
-    private static partial void EnsuringTables(ILogger logger);
+        Message = "Applying pending secrets database migrations...")]
+    private static partial void ApplyingMigrations(ILogger logger);
 
     [LoggerMessage(Level = LogLevel.Information,
-        Message = "Secrets database tables verified.")]
-    private static partial void TablesVerified(ILogger logger);
+        Message = "Secrets database migrations applied.")]
+    private static partial void MigrationsApplied(ILogger logger);
 
     [LoggerMessage(Level = LogLevel.Error,
-        Message = "Failed to ensure secrets database tables exist: {Error}. " +
+        Message = "Failed to apply secrets database migrations: {Error}. " +
                   "Secret persistence will fail.")]
-    private static partial void TableCreationFailed(ILogger logger, string error);
+    private static partial void MigrationFailed(ILogger logger, string error);
 }

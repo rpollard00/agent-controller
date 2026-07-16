@@ -797,7 +797,7 @@ public static class AgentControllerServiceCollectionExtensions
         services.AddScoped<ISecretStore, DbNamedSecretProvider>();
         services.AddScoped<ISecretManager, DbNamedSecretProvider>();
 
-        // Ensure the secrets tables (NamedSecrets, SecretVersions) exist at startup.
+        // Apply pending EF Core migrations for the secrets tables at startup.
         // This runs after the KEK check passes so it is gated on valid KEK configuration.
         services.AddHostedService<SecretsDatabaseStartupService>();
 
