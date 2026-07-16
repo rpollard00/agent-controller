@@ -22,11 +22,7 @@ internal sealed class RepositoryHostConnectionEntityConfiguration
         ConnectionEntityConfigurationHelper.ApplyCommonConfigurations(builder);
 
         // Repository-host-specific fields.
-        builder.Property(x => x.PersonalAccessTokenReferenceKind)
-            .IsRequired()
-            .HasMaxLength(64);
-
-        builder.Property(x => x.PersonalAccessTokenReferenceId)
+        builder.Property(x => x.PersonalAccessTokenSecretName)
             .IsRequired()
             .HasMaxLength(256);
     }

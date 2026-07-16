@@ -151,7 +151,7 @@ internal sealed class AzureDevOpsReposFeedbackSource : IFeedbackSource
         }
 
         // Step 3: Resolve the PAT from the connection's named secret reference.
-        var secretName = connection.PersonalAccessTokenReference.Id;
+        var secretName = connection.PersonalAccessTokenReference.Name;
         if (string.IsNullOrWhiteSpace(secretName))
         {
             return null;

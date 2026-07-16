@@ -9,8 +9,7 @@ internal static class RepositoryHostConnectionProfileValidation
     private const int MaximumDisplayNameLength = 256;
     private const int MaximumOrganizationUrlLength = 2048;
     private const int MaximumProjectLength = 256;
-    private const int MaximumSecretReferenceKindLength = 64;
-    private const int MaximumSecretReferenceIdLength = 256;
+    private const int MaximumSecretReferenceNameLength = 256;
 
     public static RepositoryHostConnectionProfileValidationResult ValidateAndNormalize(
         RepositoryHostConnectionProfile profile
@@ -181,45 +180,29 @@ internal static class RepositoryHostConnectionProfileValidation
         }
     }
 
-    private static SecretReference NormalizeSecretReference(
-        SecretReference reference,
+    private static Domain.Secrets.SecretReference NormalizeSecretReference(
+        Domain.Secrets.SecretReference reference,
         ValidationErrors errors
     )
     {
-        var kind = NormalizeText(reference?.Kind ?? string.Empty);
-        var id = NormalizeText(reference?.Id ?? string.Empty);
+        var name = NormalizeText(reference?.Name ?? string.Empty);
 
-        if (kind.Length == 0)
+        if (name.Length == 0)
         {
             errors.Add(
-                "personalAccessTokenReference.kind",
-                "A secret reference kind is required (e.g. 'EnvVar' or 'Db')."
+                "personalAccessTokenReference.name",
+                "A named secret reference is required (e.g. 'ado-repos-pat')."
             );
         }
-        else if (kind.Length > MaximumSecretReferenceKindLength)
+        else if (name.Length > MaximumSecretReferenceNameLength)
         {
             errors.Add(
-                "personalAccessTokenReference.kind",
-                $"The secret reference kind must be {MaximumSecretReferenceKindLength} characters or fewer."
-            );
-        }
-
-        if (id.Length == 0)
-        {
-            errors.Add(
-                "personalAccessTokenReference.id",
-                "A secret reference identifier is required (e.g. environment variable name or database id)."
-            );
-        }
-        else if (id.Length > MaximumSecretReferenceIdLength)
-        {
-            errors.Add(
-                "personalAccessTokenReference.id",
-                $"The secret reference identifier must be {MaximumSecretReferenceIdLength} characters or fewer."
+                "personalAccessTokenReference.name",
+                $"The secret reference name must be {MaximumSecretReferenceNameLength} characters or fewer."
             );
         }
 
-        return new SecretReference { Kind = kind, Id = id };
+        return Domain.Secrets.SecretReference.ByName(name);
     }
 
     private sealed class ValidationErrors

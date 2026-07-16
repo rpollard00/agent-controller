@@ -131,8 +131,7 @@ public sealed class RepositoryHostDiscoveryEndpointTests : IAsyncLifetime
             project = "TestProject",
             personalAccessTokenReference = new
             {
-                kind = "EnvVar",
-                id = "GITHUB_TOKEN",
+                name = "github-token",
             },
         };
         using var createResponse = await _client.PostAsJsonAsync(
@@ -307,8 +306,7 @@ public sealed class RepositoryHostDiscoveryEndpointTests : IAsyncLifetime
             project = "TestProject",
             personalAccessTokenReference = new
             {
-                kind = "EnvVar",
-                id = "TEST_PAT_VAR",
+                name = "test-pat-secret",
             },
         };
 

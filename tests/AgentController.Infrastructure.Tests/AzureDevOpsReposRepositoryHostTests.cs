@@ -10,12 +10,13 @@ namespace AgentController.Infrastructure.Tests;
 /// <summary>
 /// Integration-style tests for <see cref="AzureDevOpsReposRepositoryHost"/>
 /// using a fake ADO client and in-memory secret store.
+/// PAT is resolved through ISecretStore (named envelope-encrypted secrets).
 /// </summary>
 public sealed class AzureDevOpsReposRepositoryHostTests
 {
     private const string OrgUrl = "https://dev.azure.com/testorg";
     private const string Project = "TestProject";
-    private const string PatId = "test-pat-id";
+    private const string PatSecretName = "test-pat-secret";
 
     // ─── VerifyConnectivityAsync: success path ───
 
@@ -23,7 +24,7 @@ public sealed class AzureDevOpsReposRepositoryHostTests
     public async Task VerifyConnectivityAsync_ConnectivitySucceeds_ReturnsSuccessWithReposInPayload()
     {
         // Arrange
-        var secretStore = CreateSecretStore(PatId, "test-token");
+        var secretStore = CreateSecretStore(PatSecretName, "test-token");
         var fakeClient = new FakeAdoClientForReposHost
         {
             ConnectivityResult = new AzureDevOpsConnectivityResult
@@ -58,7 +59,7 @@ public sealed class AzureDevOpsReposRepositoryHostTests
         Assert.Equal("refs/heads/main", repositories[0]["defaultBranch"]);
         Assert.Equal("repo-2", repositories[1]["id"]);
 
-        // Assert: PAT was resolved through IManagedSecretStore
+        // Assert: PAT was resolved through ISecretStore
         Assert.True(fakeClient.WasCreated);
         Assert.Equal("test-token", fakeClient.ResolvedPat);
     }
@@ -69,7 +70,7 @@ public sealed class AzureDevOpsReposRepositoryHostTests
     public async Task VerifyConnectivityAsync_ConnectivityFails_ReturnsFailureWithErrors()
     {
         // Arrange
-        var secretStore = CreateSecretStore(PatId, "test-token");
+        var secretStore = CreateSecretStore(PatSecretName, "test-token");
         var fakeClient = new FakeAdoClientForReposHost
         {
             ConnectivityResult = new AzureDevOpsConnectivityResult
@@ -100,7 +101,7 @@ public sealed class AzureDevOpsReposRepositoryHostTests
     public async Task VerifyConnectivityAsync_MissingOrganizationUrl_ReturnsConfigError()
     {
         // Arrange
-        var secretStore = CreateSecretStore(PatId, "test-token");
+        var secretStore = CreateSecretStore(PatSecretName, "test-token");
         var fakeClient = new FakeAdoClientForReposHost();
         var host = CreateHost(secretStore, fakeClient);
         var profile = CreateProfile();
@@ -120,7 +121,7 @@ public sealed class AzureDevOpsReposRepositoryHostTests
     public async Task VerifyConnectivityAsync_MissingProject_ReturnsConfigError()
     {
         // Arrange
-        var secretStore = CreateSecretStore(PatId, "test-token");
+        var secretStore = CreateSecretStore(PatSecretName, "test-token");
         var fakeClient = new FakeAdoClientForReposHost();
         var host = CreateHost(secretStore, fakeClient);
         var profile = CreateProfile();
@@ -140,7 +141,7 @@ public sealed class AzureDevOpsReposRepositoryHostTests
     public async Task VerifyConnectivityAsync_PatResolutionFails_ReturnsFailure()
     {
         // Arrange: secret store returns null for the reference
-        var secretStore = CreateSecretStore("other-id", "other-token"); // different id
+        var secretStore = CreateSecretStore("other-secret", "other-token"); // different name
         var fakeClient = new FakeAdoClientForReposHost();
         var host = CreateHost(secretStore, fakeClient);
         var profile = CreateProfile();
@@ -159,7 +160,7 @@ public sealed class AzureDevOpsReposRepositoryHostTests
     public async Task VerifyConnectivityAsync_DisabledProfile_ThrowsInvalidOperationException()
     {
         // Arrange
-        var secretStore = CreateSecretStore(PatId, "test-token");
+        var secretStore = CreateSecretStore(PatSecretName, "test-token");
         var fakeClient = new FakeAdoClientForReposHost();
         var host = CreateHost(secretStore, fakeClient);
         var profile = CreateProfile();
@@ -177,7 +178,7 @@ public sealed class AzureDevOpsReposRepositoryHostTests
     public async Task ListRepositoriesAsync_Success_ReturnsMappedHostRepositories()
     {
         // Arrange
-        var secretStore = CreateSecretStore(PatId, "test-token");
+        var secretStore = CreateSecretStore(PatSecretName, "test-token");
         var fakeClient = new FakeAdoClientForReposHost
         {
             Repositories = new List<RepositoryInfo>
@@ -203,7 +204,7 @@ public sealed class AzureDevOpsReposRepositoryHostTests
         Assert.Equal("repo-2", result[1].Id);
         Assert.Equal("develop", result[1].DefaultBranch); // refs/heads/ stripped
 
-        // Assert: PAT was resolved through IManagedSecretStore
+        // Assert: PAT was resolved through ISecretStore
         Assert.True(fakeClient.WasCreated);
         Assert.Equal("test-token", fakeClient.ResolvedPat);
     }
@@ -214,7 +215,7 @@ public sealed class AzureDevOpsReposRepositoryHostTests
     public async Task ListRepositoriesAsync_EmptyProject_ReturnsEmptyList()
     {
         // Arrange
-        var secretStore = CreateSecretStore(PatId, "test-token");
+        var secretStore = CreateSecretStore(PatSecretName, "test-token");
         var fakeClient = new FakeAdoClientForReposHost();
         var host = CreateHost(secretStore, fakeClient);
         var profile = CreateProfile();
@@ -233,7 +234,7 @@ public sealed class AzureDevOpsReposRepositoryHostTests
     public async Task ListRepositoriesAsync_PatResolutionFails_ReturnsEmptyList()
     {
         // Arrange: secret store returns null
-        var secretStore = CreateSecretStore("other-id", "other-token");
+        var secretStore = CreateSecretStore("other-secret", "other-token");
         var fakeClient = new FakeAdoClientForReposHost();
         var host = CreateHost(secretStore, fakeClient);
         var profile = CreateProfile();
@@ -251,7 +252,7 @@ public sealed class AzureDevOpsReposRepositoryHostTests
     public async Task ListRepositoriesAsync_DefaultBranchStripsRefsHeads()
     {
         // Arrange
-        var secretStore = CreateSecretStore(PatId, "test-token");
+        var secretStore = CreateSecretStore(PatSecretName, "test-token");
         var fakeClient = new FakeAdoClientForReposHost
         {
             Repositories = new List<RepositoryInfo>
@@ -279,7 +280,7 @@ public sealed class AzureDevOpsReposRepositoryHostTests
     public async Task VerifyConnectivityAsync_PassesCancellationToken()
     {
         // Arrange
-        var secretStore = CreateSecretStore(PatId, "test-token");
+        var secretStore = CreateSecretStore(PatSecretName, "test-token");
         var fakeClient = new FakeAdoClientForReposHost
         {
             ConnectivityResult = new AzureDevOpsConnectivityResult
@@ -306,7 +307,7 @@ public sealed class AzureDevOpsReposRepositoryHostTests
     public async Task ListRepositoriesAsync_PassesCancellationToken()
     {
         // Arrange
-        var secretStore = CreateSecretStore(PatId, "test-token");
+        var secretStore = CreateSecretStore(PatSecretName, "test-token");
         var fakeClient = new FakeAdoClientForReposHost
         {
             Repositories = new List<RepositoryInfo>
@@ -337,49 +338,67 @@ public sealed class AzureDevOpsReposRepositoryHostTests
             Provider = "AzureDevOpsRepos",
             OrganizationUrl = OrgUrl,
             Project = Project,
-            PersonalAccessTokenReference = SecretReference.Database(PatId),
+            PersonalAccessTokenReference =
+                AgentController.Domain.Secrets.SecretReference.ByName(PatSecretName),
         };
     }
 
-    private static InMemorySecretStore CreateSecretStore(string id, string value)
+    private static InMemorySecretStore CreateSecretStore(string name, string value)
     {
         var store = new InMemorySecretStore();
-        store.Set(id, value);
+        store.Set(name, value);
         return store;
     }
 
     private static AzureDevOpsReposRepositoryHost CreateHost(
-        IManagedSecretStore secretStore,
+        InMemorySecretStore secretStore,
         FakeAdoClientForReposHost fakeClient
     )
     {
         var factory = new TestReposClientFactory(fakeClient);
-        return new AzureDevOpsReposRepositoryHost(factory, secretStore);
+        // AzureDevOpsPatResolver depends on both IManagedSecretStore and ISecretStore.
+        // For repo-host tests we only need ISecretStore path.
+        var patResolver = new AzureDevOpsPatResolver(
+            NullManagedSecretStore.Instance,
+            secretStore);
+        return new AzureDevOpsReposRepositoryHost(factory, patResolver);
     }
 
     // ─── Test doubles ───
 
     /// <summary>
-    /// In-memory IManagedSecretStore for tests.
+    /// In-memory ISecretStore for tests (named secret resolution).
     /// </summary>
-    private sealed class InMemorySecretStore : IManagedSecretStore
+    private sealed class InMemorySecretStore : AgentController.Domain.Secrets.ISecretStore
     {
         private readonly Dictionary<string, string> _store = new();
 
-        public void Set(string id, string value) => _store[id] = value;
+        public void Set(string name, string value) => _store[name] = value;
 
-        public Task<string?> ResolveAsync(SecretReference reference, CancellationToken cancellationToken)
+        public Task<string?> ResolveAsync(
+            string name,
+            int? version = null,
+            CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult(_store.GetValueOrDefault(reference.Id));
+            return Task.FromResult(_store.GetValueOrDefault(name));
         }
+    }
 
-        public Task<SecretWriteResult> WriteAsync(SecretReference reference, string value, CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            _store[reference.Id] = value;
-            return Task.FromResult(SecretWriteResult.SuccessResult());
-        }
+    /// <summary>
+    /// Null implementation of IManagedSecretStore for tests that only use ISecretStore path.
+    /// </summary>
+    private sealed class NullManagedSecretStore : IManagedSecretStore
+    {
+        public static NullManagedSecretStore Instance { get; } = new();
+
+        private NullManagedSecretStore() { }
+
+        public Task<string?> ResolveAsync(SecretReference reference, CancellationToken cancellationToken) =>
+            Task.FromResult<string?>(null);
+
+        public Task<SecretWriteResult> WriteAsync(SecretReference reference, string value, CancellationToken cancellationToken) =>
+            Task.FromResult(SecretWriteResult.FailureResult("Not implemented."));
     }
 
     /// <summary>

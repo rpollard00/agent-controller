@@ -13,7 +13,7 @@ namespace AgentController.Api.Tests;
 
 /// <summary>
 /// End-to-end coverage for the repository host connection web UI API.
-/// Mirrors the WorkSourceEnvironment endpoint tests with SecretReference-based PAT.
+/// Uses named-secret reference shape for PAT configuration.
 /// </summary>
 [System.Diagnostics.CodeAnalysis.SuppressMessage(
     "Design",
@@ -22,8 +22,7 @@ namespace AgentController.Api.Tests;
 )]
 public sealed class RepositoryHostConnectionEndpointTests : IAsyncLifetime
 {
-    private const string TestPatEnvVar = "TEST_REPO_HOST_ADO_PAT";
-    private const string TestPatValue = "test-repo-host-personal-access-token";
+    private const string TestSecretName = "test-repo-host-ado-pat";
 
     private string _databasePath = null!;
     private WebUiApiFactory _factory = null!;
@@ -35,9 +34,6 @@ public sealed class RepositoryHostConnectionEndpointTests : IAsyncLifetime
             Path.GetTempPath(),
             $"agent-controller-repo-host-{Guid.NewGuid():N}.db"
         );
-
-        // Set the PAT env var for tests that need it.
-        Environment.SetEnvironmentVariable(TestPatEnvVar, TestPatValue);
 
         _factory = new WebUiApiFactory(_databasePath);
 
@@ -52,8 +48,6 @@ public sealed class RepositoryHostConnectionEndpointTests : IAsyncLifetime
     {
         _client.Dispose();
         _factory.Dispose();
-
-        Environment.SetEnvironmentVariable(TestPatEnvVar, null);
 
         DeleteDatabaseFile(_databasePath);
         DeleteDatabaseFile($"{_databasePath}-shm");
@@ -74,8 +68,7 @@ public sealed class RepositoryHostConnectionEndpointTests : IAsyncLifetime
             project = "Agent Controller",
             personalAccessTokenReference = new
             {
-                kind = "EnvVar",
-                id = TestPatEnvVar,
+                name = TestSecretName,
             },
         };
 
@@ -89,7 +82,6 @@ public sealed class RepositoryHostConnectionEndpointTests : IAsyncLifetime
             "/api/webui/repository-host-connections/ado.repos",
             createResponse.Headers.Location?.ToString()
         );
-        await AssertCredentialRedactedAsync(createResponse, TestPatValue);
 
         // ─── POST: duplicate ───
         using var duplicateResponse = await _client.PostAsJsonAsync(
@@ -105,7 +97,7 @@ public sealed class RepositoryHostConnectionEndpointTests : IAsyncLifetime
         // ─── GET: list ───
         using var listResponse = await _client.GetAsync("/api/webui/repository-host-connections");
         Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
-        var listBody = await AssertCredentialRedactedAsync(listResponse, TestPatValue);
+        var listBody = await listResponse.Content.ReadAsStringAsync();
         using var listJson = JsonDocument.Parse(listBody);
         Assert.Contains(
             listJson.RootElement.EnumerateArray(),
@@ -117,15 +109,11 @@ public sealed class RepositoryHostConnectionEndpointTests : IAsyncLifetime
             "/api/webui/repository-host-connections/ADO.REPOS"
         );
         Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
-        var getBody = await AssertCredentialRedactedAsync(getResponse, TestPatValue);
+        var getBody = await getResponse.Content.ReadAsStringAsync();
         using var getJson = JsonDocument.Parse(getBody);
         Assert.Equal(
-            "EnvVar",
-            getJson.RootElement.GetProperty("personalAccessTokenReference").GetProperty("kind").GetString()
-        );
-        Assert.Equal(
-            TestPatEnvVar,
-            getJson.RootElement.GetProperty("personalAccessTokenReference").GetProperty("id").GetString()
+            TestSecretName,
+            getJson.RootElement.GetProperty("personalAccessTokenReference").GetProperty("name").GetString()
         );
 
         // ─── PUT: update ───
@@ -139,8 +127,7 @@ public sealed class RepositoryHostConnectionEndpointTests : IAsyncLifetime
             project = "Agent Controller",
             personalAccessTokenReference = new
             {
-                kind = "EnvVar",
-                id = TestPatEnvVar,
+                name = TestSecretName,
             },
         };
         using var updateResponse = await _client.PutAsJsonAsync(
@@ -148,7 +135,7 @@ public sealed class RepositoryHostConnectionEndpointTests : IAsyncLifetime
             update
         );
         Assert.Equal(HttpStatusCode.OK, updateResponse.StatusCode);
-        var updateBody = await AssertCredentialRedactedAsync(updateResponse, TestPatValue);
+        var updateBody = await updateResponse.Content.ReadAsStringAsync();
         using var updateJson = JsonDocument.Parse(updateBody);
         Assert.Equal(
             "Updated Azure DevOps Repos",
@@ -184,8 +171,7 @@ public sealed class RepositoryHostConnectionEndpointTests : IAsyncLifetime
             project = "",
             personalAccessTokenReference = new
             {
-                kind = "",
-                id = "",
+                name = "",
             },
         };
 
@@ -201,7 +187,7 @@ public sealed class RepositoryHostConnectionEndpointTests : IAsyncLifetime
         Assert.True(validationProblem.GetProperty("errors").TryGetProperty("key", out _));
         Assert.True(validationProblem.GetProperty("errors").TryGetProperty("displayName", out _));
         Assert.True(
-            validationProblem.GetProperty("errors").TryGetProperty("personalAccessTokenReference.kind", out _)
+            validationProblem.GetProperty("errors").TryGetProperty("personalAccessTokenReference.name", out _)
         );
     }
 
@@ -219,8 +205,7 @@ public sealed class RepositoryHostConnectionEndpointTests : IAsyncLifetime
             project = "TestProject",
             personalAccessTokenReference = new
             {
-                kind = "EnvVar",
-                id = TestPatEnvVar,
+                name = TestSecretName,
             },
         };
 
@@ -241,8 +226,7 @@ public sealed class RepositoryHostConnectionEndpointTests : IAsyncLifetime
             project = "TestProject",
             personalAccessTokenReference = new
             {
-                kind = "EnvVar",
-                id = TestPatEnvVar,
+                name = TestSecretName,
             },
         };
         using var updateResponse = await _client.PutAsJsonAsync(
@@ -276,16 +260,6 @@ public sealed class RepositoryHostConnectionEndpointTests : IAsyncLifetime
         Assert.Equal((int)expectedStatus, problem.GetProperty("status").GetInt32());
         Assert.Equal(expectedTitle, problem.GetProperty("title").GetString());
         return problem;
-    }
-
-    private static async Task<string> AssertCredentialRedactedAsync(
-        HttpResponseMessage response,
-        string credentialValue
-    )
-    {
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.DoesNotContain(credentialValue, body, StringComparison.Ordinal);
-        return body;
     }
 
     private static void DeleteDatabaseFile(string path)

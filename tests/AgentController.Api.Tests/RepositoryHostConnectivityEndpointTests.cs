@@ -113,8 +113,7 @@ public sealed class RepositoryHostConnectivityEndpointTests : IAsyncLifetime
             project = "TestProject",
             personalAccessTokenReference = new
             {
-                kind = "EnvVar",
-                id = "NONEXISTENT_VAR_FOR_TEST",
+                name = "nonexistent-secret-for-test",
             },
         };
 
@@ -185,8 +184,7 @@ public sealed class RepositoryHostConnectivityEndpointTests : IAsyncLifetime
             project = "TestProject",
             personalAccessTokenReference = new
             {
-                kind = "EnvVar",
-                id = "GITHUB_TOKEN",
+                name = "github-token",
             },
         };
 
@@ -237,8 +235,7 @@ public sealed class RepositoryHostConnectivityEndpointTests : IAsyncLifetime
             project = "TestProject",
             personalAccessTokenReference = new
             {
-                kind = "EnvVar",
-                id = "TEST_PAT_VAR",
+                name = "test-pat-secret",
             },
         };
 

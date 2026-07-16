@@ -20,8 +20,9 @@ public class RepositoryHostConnectionProfileTests
         Assert.Empty(profile.DisplayName);
         Assert.Empty(profile.OrganizationUrl);
         Assert.Empty(profile.Project);
-        Assert.Empty(profile.PersonalAccessTokenReference.Kind);
-        Assert.Empty(profile.PersonalAccessTokenReference.Id);
+        Assert.Empty(profile.PersonalAccessTokenReference.Name);
+        Assert.Null(profile.PersonalAccessTokenReference.Version);
+        Assert.False(profile.PersonalAccessTokenReference.IsSpecified);
         Assert.InRange(profile.CreatedAt, before, after);
         Assert.InRange(profile.UpdatedAt, profile.CreatedAt, after);
     }
@@ -30,7 +31,7 @@ public class RepositoryHostConnectionProfileTests
     public void RepositoryHostConnectionProfile_RecordEquality()
     {
         var timestamp = new DateTimeOffset(2026, 7, 16, 12, 0, 0, TimeSpan.Zero);
-        var patRef = SecretReference.EnvironmentVariable("ADO_REPOS_PAT");
+        var patRef = AgentController.Domain.Secrets.SecretReference.ByName("ado-repos-pat");
         var profileA = new RepositoryHostConnectionProfile
         {
             Key = "ado-primary",
@@ -70,7 +71,7 @@ public class RepositoryHostConnectionProfileTests
     [Fact]
     public void RepositoryHostConnectionProfile_WithExpressionDoesNotMutateOriginal()
     {
-        var patRef = SecretReference.Database("guid-123");
+        var patRef = AgentController.Domain.Secrets.SecretReference.ByName("ado-repos-pat");
         var original = new RepositoryHostConnectionProfile
         {
             Key = "ado-repos",
@@ -100,7 +101,7 @@ public class RepositoryHostConnectionProfileTests
             Provider = "AzureDevOpsRepos",
             OrganizationUrl = "https://dev.azure.com/myorg",
             Project = "MyProject",
-            PersonalAccessTokenReference = SecretReference.EnvironmentVariable("ADO_PAT"),
+            PersonalAccessTokenReference = AgentController.Domain.Secrets.SecretReference.ByName("ado-pat"),
             CreatedAt = createdAt,
             UpdatedAt = createdAt.AddHours(1),
         };
@@ -112,8 +113,7 @@ public class RepositoryHostConnectionProfileTests
 
         // Verify the secret reference is serialized as structured data, not a raw token.
         var patRef = root.GetProperty("personalAccessTokenReference");
-        Assert.Equal("EnvVar", patRef.GetProperty("kind").GetString());
-        Assert.Equal("ADO_PAT", patRef.GetProperty("id").GetString());
+        Assert.Equal("ado-pat", patRef.GetProperty("name").GetString());
 
         // Verify no raw secret value leaks into the JSON (only the reference is present).
         Assert.DoesNotContain("secretValue", json, StringComparison.OrdinalIgnoreCase);
@@ -128,8 +128,7 @@ public class RepositoryHostConnectionProfileTests
         Assert.Equal(profile.Provider, roundTripped.Provider);
         Assert.Equal(profile.OrganizationUrl, roundTripped.OrganizationUrl);
         Assert.Equal(profile.Project, roundTripped.Project);
-        Assert.Equal(profile.PersonalAccessTokenReference.Kind, roundTripped.PersonalAccessTokenReference.Kind);
-        Assert.Equal(profile.PersonalAccessTokenReference.Id, roundTripped.PersonalAccessTokenReference.Id);
+        Assert.Equal(profile.PersonalAccessTokenReference.Name, roundTripped.PersonalAccessTokenReference.Name);
         Assert.Equal(profile.CreatedAt, roundTripped.CreatedAt);
         Assert.Equal(profile.UpdatedAt, roundTripped.UpdatedAt);
     }
@@ -137,21 +136,25 @@ public class RepositoryHostConnectionProfileTests
     [Fact]
     public void SecretReference_FactoryMethods()
     {
-        var envRef = SecretReference.EnvironmentVariable("MY_SECRET");
-        Assert.Equal("EnvVar", envRef.Kind);
-        Assert.Equal("MY_SECRET", envRef.Id);
+        var namedRef = AgentController.Domain.Secrets.SecretReference.ByName("MY_SECRET");
+        Assert.Equal("MY_SECRET", namedRef.Name);
+        Assert.True(namedRef.IsSpecified);
 
-        var dbRef = SecretReference.Database("abc-123");
-        Assert.Equal("Db", dbRef.Kind);
-        Assert.Equal("abc-123", dbRef.Id);
+        var versionedRef = AgentController.Domain.Secrets.SecretReference.ByNameAndVersion("MY_SECRET", 2);
+        Assert.Equal("MY_SECRET", versionedRef.Name);
+        Assert.Equal(2, versionedRef.Version);
+
+        var emptyRef = AgentController.Domain.Secrets.SecretReference.Empty;
+        Assert.Empty(emptyRef.Name);
+        Assert.False(emptyRef.IsSpecified);
     }
 
     [Fact]
     public void SecretReference_RecordEquality()
     {
-        var a = SecretReference.EnvironmentVariable("PAT");
-        var b = SecretReference.EnvironmentVariable("PAT");
-        var c = SecretReference.Database("PAT");
+        var a = AgentController.Domain.Secrets.SecretReference.ByName("PAT");
+        var b = AgentController.Domain.Secrets.SecretReference.ByName("PAT");
+        var c = AgentController.Domain.Secrets.SecretReference.ByName("OTHER");
 
         Assert.Equal(a, b);
         Assert.NotEqual(a, c);

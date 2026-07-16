@@ -1,5 +1,3 @@
-using AgentController.Domain;
-
 namespace AgentController.Application.Tests;
 
 public class ResolvedRepositoryHostConnectionTests
@@ -7,13 +5,14 @@ public class ResolvedRepositoryHostConnectionTests
     [Fact]
     public void ResolvedRepositoryHostConnection_RecordEquality()
     {
-        var profile = new RepositoryHostConnectionProfile
+        var profile = new AgentController.Domain.RepositoryHostConnectionProfile
         {
             Key = "ado-repos",
             Provider = "AzureDevOpsRepos",
             OrganizationUrl = "https://dev.azure.com/org",
             Project = "Project",
-            PersonalAccessTokenReference = SecretReference.EnvironmentVariable("ADO_PAT"),
+            PersonalAccessTokenReference =
+                AgentController.Domain.Secrets.SecretReference.ByName("ado-pat"),
         };
 
         var resolvedManaged = new ResolvedRepositoryHostConnection(profile, true);
@@ -29,24 +28,26 @@ public class ResolvedRepositoryHostConnectionTests
     public void ResolvedRepositoryHostConnection_EqualProfilesWithSameManagedFlag()
     {
         var timestamp = new DateTimeOffset(2026, 7, 16, 12, 0, 0, TimeSpan.Zero);
-        var profileA = new RepositoryHostConnectionProfile
+        var profileA = new AgentController.Domain.RepositoryHostConnectionProfile
         {
             Key = "ado-repos",
             Provider = "AzureDevOpsRepos",
             OrganizationUrl = "https://dev.azure.com/org",
             Project = "Project",
-            PersonalAccessTokenReference = SecretReference.EnvironmentVariable("ADO_PAT"),
+            PersonalAccessTokenReference =
+                AgentController.Domain.Secrets.SecretReference.ByName("ado-pat"),
             CreatedAt = timestamp,
             UpdatedAt = timestamp,
         };
 
-        var profileB = new RepositoryHostConnectionProfile
+        var profileB = new AgentController.Domain.RepositoryHostConnectionProfile
         {
             Key = "ado-repos",
             Provider = "AzureDevOpsRepos",
             OrganizationUrl = "https://dev.azure.com/org",
             Project = "Project",
-            PersonalAccessTokenReference = SecretReference.EnvironmentVariable("ADO_PAT"),
+            PersonalAccessTokenReference =
+                AgentController.Domain.Secrets.SecretReference.ByName("ado-pat"),
             CreatedAt = timestamp,
             UpdatedAt = timestamp,
         };

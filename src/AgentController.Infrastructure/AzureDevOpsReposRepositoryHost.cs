@@ -9,11 +9,11 @@ namespace AgentController.Infrastructure;
 /// Azure DevOps Repos implementation of <see cref="IRepositoryHostConnection"/>.
 /// Reuses the existing <see cref="AzureDevOpsBoardsClient"/> for HTTP operations
 /// without reimplementing any HTTP machinery. PAT is resolved through
-/// <see cref="IManagedSecretStore"/> from the profile's <c>PersonalAccessTokenReference</c>.
+/// <see cref="Domain.Secrets.ISecretStore"/> from the profile's named secret reference.
 /// </summary>
 internal sealed class AzureDevOpsReposRepositoryHost(
     IAzureDevOpsReposClientFactory clientFactory,
-    IManagedSecretStore secretStore
+    AzureDevOpsPatResolver patResolver
 ) : IRepositoryHostConnection
 {
     /// <inheritdoc />
@@ -33,11 +33,11 @@ internal sealed class AzureDevOpsReposRepositoryHost(
             errors.Add("Azure DevOps project is not configured.");
         }
 
-        // Resolve PAT through IManagedSecretStore.
+        // Resolve PAT through ISecretStore via the shared PAT resolver.
         string? resolvedPat;
         try
         {
-            resolvedPat = await secretStore.ResolveAsync(
+            resolvedPat = await patResolver.ResolveFromSecretReferenceAsync(
                 profile.PersonalAccessTokenReference,
                 cancellationToken
             );
@@ -50,7 +50,11 @@ internal sealed class AzureDevOpsReposRepositoryHost(
 
         if (string.IsNullOrWhiteSpace(resolvedPat) && errors.Count == 0)
         {
-            errors.Add("Azure DevOps PAT could not be resolved.");
+            errors.Add(
+                profile.PersonalAccessTokenReference.IsSpecified
+                    ? $"Secret '{profile.PersonalAccessTokenReference.Name}' could not be resolved."
+                    : "Azure DevOps PAT is not configured."
+            );
         }
 
         if (errors.Count > 0)
@@ -127,11 +131,11 @@ internal sealed class AzureDevOpsReposRepositoryHost(
             return Array.Empty<HostRepository>();
         }
 
-        // Resolve PAT through IManagedSecretStore.
+        // Resolve PAT through ISecretStore via the shared PAT resolver.
         string? resolvedPat;
         try
         {
-            resolvedPat = await secretStore.ResolveAsync(
+            resolvedPat = await patResolver.ResolveFromSecretReferenceAsync(
                 profile.PersonalAccessTokenReference,
                 cancellationToken
             );

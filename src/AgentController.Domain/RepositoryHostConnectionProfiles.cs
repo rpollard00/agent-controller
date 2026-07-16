@@ -1,25 +1,6 @@
+
+
 namespace AgentController.Domain;
-
-/// <summary>
-/// Opaque reference to a secret value stored outside the profile itself.
-/// Resolved at runtime by an <c>IManagedSecretStore</c> implementation.
-/// </summary>
-public sealed record SecretReference
-{
-    /// <summary>Kind of secret store (e.g. "EnvVar", "Db").</summary>
-    public string Kind { get; init; } = string.Empty;
-
-    /// <summary>Identifier within the store (e.g. environment variable name or database row id).</summary>
-    public string Id { get; init; } = string.Empty;
-
-    /// <summary>Create a reference to an environment variable secret.</summary>
-    public static SecretReference EnvironmentVariable(string name) =>
-        new() { Kind = "EnvVar", Id = name };
-
-    /// <summary>Create a reference to a database-stored secret.</summary>
-    public static SecretReference Database(string id) =>
-        new() { Kind = "Db", Id = id };
-}
 
 /// <summary>
 /// Managed configuration for a repository host connection (e.g. Azure DevOps Repos, GitHub, GitLab).
@@ -53,10 +34,12 @@ public sealed record RepositoryHostConnectionProfile
     public string Project { get; init; } = string.Empty;
 
     /// <summary>
-    /// Reference to the secret holding the personal access token.
+    /// Reference to the named secret holding the personal access token.
+    /// Resolved at runtime via <see cref="Secrets.ISecretStore"/>.
     /// The credential value itself must never be stored on the profile.
     /// </summary>
-    public SecretReference PersonalAccessTokenReference { get; init; } = new();
+    public Secrets.SecretReference PersonalAccessTokenReference { get; init; } =
+        Secrets.SecretReference.Empty;
 
     /// <summary>When the managed profile was created.</summary>
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;

@@ -86,8 +86,7 @@ internal sealed class EfRepositoryHostConnectionStore : IRepositoryHostConnectio
         entity.Provider = profile.Provider;
         entity.OrganizationUrl = profile.OrganizationUrl;
         entity.Project = profile.Project;
-        entity.PersonalAccessTokenReferenceKind = profile.PersonalAccessTokenReference.Kind;
-        entity.PersonalAccessTokenReferenceId = profile.PersonalAccessTokenReference.Id;
+        entity.PersonalAccessTokenSecretName = profile.PersonalAccessTokenReference.Name;
         entity.UpdatedAt = profile.UpdatedAt;
 
         await _db.SaveChangesAsync(cancellationToken);
@@ -123,8 +122,7 @@ internal sealed class EfRepositoryHostConnectionStore : IRepositoryHostConnectio
             Provider = profile.Provider,
             OrganizationUrl = profile.OrganizationUrl,
             Project = profile.Project,
-            PersonalAccessTokenReferenceKind = profile.PersonalAccessTokenReference.Kind,
-            PersonalAccessTokenReferenceId = profile.PersonalAccessTokenReference.Id,
+            PersonalAccessTokenSecretName = profile.PersonalAccessTokenReference.Name,
             CreatedAt = profile.CreatedAt,
             UpdatedAt = profile.UpdatedAt,
         };
@@ -141,11 +139,10 @@ internal sealed class EfRepositoryHostConnectionStore : IRepositoryHostConnectio
             Provider = entity.Provider,
             OrganizationUrl = entity.OrganizationUrl,
             Project = entity.Project,
-            PersonalAccessTokenReference = new SecretReference
-            {
-                Kind = entity.PersonalAccessTokenReferenceKind,
-                Id = entity.PersonalAccessTokenReferenceId,
-            },
+            PersonalAccessTokenReference =
+                string.IsNullOrWhiteSpace(entity.PersonalAccessTokenSecretName)
+                    ? Domain.Secrets.SecretReference.Empty
+                    : Domain.Secrets.SecretReference.ByName(entity.PersonalAccessTokenSecretName),
             CreatedAt = entity.CreatedAt,
             UpdatedAt = entity.UpdatedAt,
         };
