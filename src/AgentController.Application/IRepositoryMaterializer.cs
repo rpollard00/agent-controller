@@ -8,7 +8,7 @@ namespace AgentController.Application;
 /// 
 /// Materialization encompasses:
 /// <list type="bullet">
-///   <item>Resolving credentials from the secrets manifest.</item>
+///   <item>Resolving the clone PAT from a named secret via <c>ISecretStore</c>.</item>
 ///   <item>Cloning the repository using the appropriate transport (HTTPS+PAT, SSH, Local).</item>
 /// </list>
 ///
@@ -24,6 +24,8 @@ public interface IRepositoryMaterializer
     /// 
     /// This method:
     /// <list type="number">
+    ///   <item>Resolves the clone PAT from <c>profile.PersonalAccessTokenSecretName</c>
+    ///   via <c>ISecretStore</c> (for HTTPS+PAT transport).</item>
     ///   <item>Clones the repository into <c>{environment.RootPath}/repo</c>
     ///   using the configured transport.</item>
     ///   <item>For HTTPS+PAT: injects credentials via <c>git http.extraHeader</c>
@@ -33,11 +35,8 @@ public interface IRepositoryMaterializer
     /// </list>
     /// </summary>
     /// <param name="profile">
-    /// The resolved repository profile containing clone URL, branch, and transport.
-    /// </param>
-    /// <param name="manifest">
-    /// The resolved secrets manifest containing credential material for this scope.
-    /// Secrets are consumed atomically and must not leak across process boundaries.
+    /// The resolved repository profile containing clone URL, branch, transport,
+    /// and optional <c>PersonalAccessTokenSecretName</c> for HTTPS+PAT auth.
     /// </param>
     /// <param name="environment">
     /// The target environment workspace where the repository will be cloned.
@@ -49,7 +48,6 @@ public interface IRepositoryMaterializer
     /// </returns>
     Task<RepositoryMaterializationResult> MaterializeAsync(
         RepositoryProfile profile,
-        ResolvedSecretsManifest manifest,
         EnvironmentHandle environment,
         CancellationToken cancellationToken
     );

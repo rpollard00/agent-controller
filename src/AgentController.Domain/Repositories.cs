@@ -89,6 +89,13 @@ public sealed record RepositoryProfile
     public string? RuntimeEnvironmentKey { get; init; }
 
     /// <summary>
+    /// Optional named secret reference for the Personal Access Token used for
+    /// HTTPS+PAT clone authentication. Resolved at materialization time via
+    /// <see cref="Secrets.ISecretStore"/> by name.
+    /// </summary>
+    public string? PersonalAccessTokenSecretName { get; init; }
+
+    /// <summary>
     /// Allowed paths within the repository that the agent may modify.
     /// An empty list means no path restrictions.
     /// </summary>

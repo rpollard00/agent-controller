@@ -2,6 +2,7 @@ using System.Diagnostics;
 using AgentController.Application;
 using AgentController.Application.Results;
 using AgentController.Domain;
+using AgentController.Domain.Secrets;
 using AgentController.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -54,7 +55,7 @@ public class LocalGitRepositoryMaterializerTests : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    private static LocalGitRepositoryMaterializer CreateMaterializer(IManagedSecretStore? secretStore = null)
+    private static LocalGitRepositoryMaterializer CreateMaterializer(ISecretStore? secretStore = null)
     {
         return new LocalGitRepositoryMaterializer(
             secretStore ?? new FakeSecretStore(),
@@ -74,15 +75,6 @@ public class LocalGitRepositoryMaterializerTests : IAsyncLifetime
         };
     }
 
-    private static ResolvedSecretsManifest CreateManifest(
-        string scope,
-        params (SecretReference Ref, string? Value)[] secrets)
-    {
-        return new ResolvedSecretsManifest(
-            scope,
-            secrets.Select(s => new ResolvedSecret(s.Ref, s.Value)).ToArray());
-    }
-
     // ── Local transport materialization ─────────────────────────────
 
     [Fact]
@@ -98,10 +90,9 @@ public class LocalGitRepositoryMaterializerTests : IAsyncLifetime
             DefaultBranch = "main",
             Transport = CloneTransport.Local,
         };
-        var manifest = CreateManifest("test-repo");
 
         // Act
-        var result = await materializer.MaterializeAsync(profile, manifest, env, CancellationToken.None);
+        var result = await materializer.MaterializeAsync(profile, env, CancellationToken.None);
 
         // Assert
         Assert.True(result.Success);
@@ -122,7 +113,11 @@ public class LocalGitRepositoryMaterializerTests : IAsyncLifetime
         // using a local path with HTTPS transport specified.
         // The http.extraHeader config is only applied during the git clone command,
         // and won't affect local clones — but the test proves the code path runs.
-        var materializer = CreateMaterializer();
+        var fakeSecretStore = new FakeSecretStore
+        {
+            Secrets = { ["clone-pat"] = "test-pat-value" }
+        };
+        var materializer = CreateMaterializer(fakeSecretStore);
         var env = CreateEnvironment("run-extraheader");
         var profile = new RepositoryProfile
         {
@@ -130,15 +125,37 @@ public class LocalGitRepositoryMaterializerTests : IAsyncLifetime
             CloneUrl = _sourceRepo,
             DefaultBranch = "main",
             Transport = CloneTransport.HttpsPat,
+            PersonalAccessTokenSecretName = "clone-pat",
         };
-        var manifest = CreateManifest("test-repo",
-            (SecretReference.EnvironmentVariable("ADO_PAT"), "test-pat-value"));
 
-        var result = await materializer.MaterializeAsync(profile, manifest, env, CancellationToken.None);
+        var result = await materializer.MaterializeAsync(profile, env, CancellationToken.None);
 
         Assert.True(result.Success);
         Assert.Equal(CloneTransport.HttpsPat, result.Transport);
         Assert.True(Directory.Exists(Path.Combine(result.LocalPath, ".git")));
+    }
+
+    [Fact]
+    public async Task MaterializeAsync_HttpsPat_MissingSecretName_ReturnsNullPat()
+    {
+        // Verify that when no PersonalAccessTokenSecretName is configured,
+        // the materializer does not crash and proceeds without PAT injection.
+        var materializer = CreateMaterializer();
+        var env = CreateEnvironment("run-missing-pat");
+        var profile = new RepositoryProfile
+        {
+            Key = "test-repo",
+            CloneUrl = _sourceRepo,
+            DefaultBranch = "main",
+            Transport = CloneTransport.HttpsPat,
+            // PersonalAccessTokenSecretName intentionally omitted
+        };
+
+        var result = await materializer.MaterializeAsync(profile, env, CancellationToken.None);
+
+        // Clone still succeeds (local path ignores the extraHeader)
+        Assert.True(result.Success);
+        Assert.Equal(CloneTransport.HttpsPat, result.Transport);
     }
 
     // ── SSH transport materialization ───────────────────────────────
@@ -155,11 +172,9 @@ public class LocalGitRepositoryMaterializerTests : IAsyncLifetime
             CloneUrl = _sourceRepo, // Using local path but specifying SSH transport
             Transport = CloneTransport.Ssh,
         };
-        var manifest = CreateManifest("test-repo",
-            (SecretReference.EnvironmentVariable("ADO_PAT"), "fake-pat"));
 
         // Act
-        var result = await materializer.MaterializeAsync(profile, manifest, env, CancellationToken.None);
+        var result = await materializer.MaterializeAsync(profile, env, CancellationToken.None);
 
         // Assert
         Assert.True(result.Success);
@@ -179,10 +194,9 @@ public class LocalGitRepositoryMaterializerTests : IAsyncLifetime
             Key = "test-repo",
             CloneUrl = "",
         };
-        var manifest = CreateManifest("test-repo");
 
         // Act
-        var result = await materializer.MaterializeAsync(profile, manifest, env, CancellationToken.None);
+        var result = await materializer.MaterializeAsync(profile, env, CancellationToken.None);
 
         // Assert
         Assert.False(result.Success);
@@ -206,10 +220,9 @@ public class LocalGitRepositoryMaterializerTests : IAsyncLifetime
             Key = "test-repo",
             CloneUrl = _sourceRepo,
         };
-        var manifest = CreateManifest("test-repo");
 
         // Act
-        var result = await materializer.MaterializeAsync(profile, manifest, env, CancellationToken.None);
+        var result = await materializer.MaterializeAsync(profile, env, CancellationToken.None);
 
         // Assert
         Assert.False(result.Success);
@@ -227,10 +240,9 @@ public class LocalGitRepositoryMaterializerTests : IAsyncLifetime
             Key = "test-repo",
             CloneUrl = Path.Combine(_tempRoot, "nonexistent-repo"),
         };
-        var manifest = CreateManifest("test-repo");
 
         // Act
-        var result = await materializer.MaterializeAsync(profile, manifest, env, CancellationToken.None);
+        var result = await materializer.MaterializeAsync(profile, env, CancellationToken.None);
 
         // Assert
         Assert.False(result.Success);
@@ -255,11 +267,10 @@ public class LocalGitRepositoryMaterializerTests : IAsyncLifetime
             CloneUrl = _sourceRepo,
             Transport = CloneTransport.Local,
         };
-        var manifest = CreateManifest("test-repo");
 
         // Act & Assert
         var ex = await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => materializer.MaterializeAsync(profile, manifest, env, cts.Token));
+            () => materializer.MaterializeAsync(profile, env, cts.Token));
 
         Assert.True(ex.CancellationToken.IsCancellationRequested);
     }
@@ -315,7 +326,7 @@ public class LocalGitRepositoryMaterializerTests : IAsyncLifetime
     {
         var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
         services.AddLogging();
-        services.AddSingleton<IManagedSecretStore, FakeSecretStore>();
+        services.AddSingleton<ISecretStore, FakeSecretStore>();
         services.AddAgentControllerLocalGitRepositoryMaterializer();
 
         var provider = services.BuildServiceProvider();
@@ -360,37 +371,33 @@ public class LocalGitRepositoryMaterializerTests : IAsyncLifetime
 // ─── Fakes ───
 
 /// <summary>
-/// Simple in-memory fake for <see cref="IManagedSecretStore"/>.
+/// Simple in-memory fake for <see cref="ISecretStore"/> (Domain.Secrets).
 /// </summary>
-internal sealed class FakeSecretStore : IManagedSecretStore
+internal sealed class FakeSecretStore : ISecretStore
 {
-    public Task<string?> ResolveAsync(SecretReference reference, CancellationToken cancellationToken)
-    {
-        return Task.FromResult<string?>(null);
-    }
+    public Dictionary<string, string> Secrets { get; } = new();
 
-    public Task<AgentController.Application.Results.SecretWriteResult> WriteAsync(
-        SecretReference reference, string value, CancellationToken cancellationToken)
+    public Task<string?> ResolveAsync(
+        string name,
+        int? version = null,
+        CancellationToken cancellationToken = default)
     {
-        return Task.FromResult(AgentController.Application.Results.SecretWriteResult.SuccessResult());
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(Secrets.TryGetValue(name, out var value) ? value : (string?)null);
     }
 }
 
 /// <summary>
 /// Fake that tracks cancellation token receipt.
 /// </summary>
-internal sealed class CancellationTrackingSecretStore : IManagedSecretStore
+internal sealed class CancellationTrackingSecretStore : ISecretStore
 {
-    public Task<string?> ResolveAsync(SecretReference reference, CancellationToken cancellationToken)
+    public Task<string?> ResolveAsync(
+        string name,
+        int? version = null,
+        CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult<string?>(null);
-    }
-
-    public Task<AgentController.Application.Results.SecretWriteResult> WriteAsync(
-        SecretReference reference, string value, CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(AgentController.Application.Results.SecretWriteResult.SuccessResult());
     }
 }

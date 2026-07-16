@@ -3,6 +3,7 @@ using System.Text;
 using AgentController.Application;
 using AgentController.Application.Results;
 using AgentController.Domain;
+using AgentController.Domain.Secrets;
 using Microsoft.Extensions.Logging;
 
 namespace AgentController.Infrastructure;
@@ -13,7 +14,8 @@ namespace AgentController.Infrastructure;
 /// Clones repositories into the local filesystem using <c>git clone</c> with
 /// transport-appropriate credential injection:
 /// <list type="bullet">
-///   <item><b>HTTPS+PAT</b>: injects credentials via <c>git http.extraHeader</c>
+///   <item><b>HTTPS+PAT</b>: resolves the PAT from a named secret via
+///   <see cref="ISecretStore"/> and injects credentials via <c>git http.extraHeader</c>
 ///   config (not URL embedding), avoiding PAT leakage in process listings or logs.</item>
 ///   <item><b>SSH</b>: uses the configured SSH key with <c>GIT_SSH_COMMAND</c>
 ///   for non-interactive batch mode.</item>
@@ -24,7 +26,7 @@ namespace AgentController.Infrastructure;
 /// </summary>
 public sealed partial class LocalGitRepositoryMaterializer : IRepositoryMaterializer
 {
-    private readonly IManagedSecretStore _secretStore;
+    private readonly ISecretStore _secretStore;
     private readonly ILogger<LocalGitRepositoryMaterializer> _logger;
 
     /// <summary>
@@ -33,7 +35,7 @@ public sealed partial class LocalGitRepositoryMaterializer : IRepositoryMaterial
     private static readonly TimeSpan CloneTimeout = TimeSpan.FromMinutes(10);
 
     public LocalGitRepositoryMaterializer(
-        IManagedSecretStore secretStore,
+        ISecretStore secretStore,
         ILogger<LocalGitRepositoryMaterializer> logger)
     {
         _secretStore = secretStore;
@@ -43,7 +45,6 @@ public sealed partial class LocalGitRepositoryMaterializer : IRepositoryMaterial
     /// <inheritdoc />
     public async Task<RepositoryMaterializationResult> MaterializeAsync(
         RepositoryProfile profile,
-        ResolvedSecretsManifest manifest,
         EnvironmentHandle environment,
         CancellationToken cancellationToken)
     {
@@ -82,7 +83,7 @@ public sealed partial class LocalGitRepositoryMaterializer : IRepositoryMaterial
                 transport,
                 profile.DefaultBranch,
                 targetDir,
-                manifest,
+                profile.PersonalAccessTokenSecretName,
                 cancellationToken);
 
             return RepositoryMaterializationResult.SuccessResult(
@@ -114,7 +115,7 @@ public sealed partial class LocalGitRepositoryMaterializer : IRepositoryMaterial
         CloneTransport transport,
         string defaultBranch,
         string targetDir,
-        ResolvedSecretsManifest manifest,
+        string? personalAccessTokenSecretName,
         CancellationToken cancellationToken)
     {
         // Build git clone arguments.
@@ -125,7 +126,7 @@ public sealed partial class LocalGitRepositoryMaterializer : IRepositoryMaterial
         string? extraHeaderConfig = null;
         if (transport == CloneTransport.HttpsPat)
         {
-            var pat = ExtractPatFromManifest(manifest);
+            var pat = await ResolvePatAsync(personalAccessTokenSecretName, cancellationToken);
             if (!string.IsNullOrEmpty(pat))
             {
                 // Git expects: Authorization: Basic base64(user:pat)
@@ -177,30 +178,19 @@ public sealed partial class LocalGitRepositoryMaterializer : IRepositoryMaterial
     }
 
     /// <summary>
-    /// Extract the PAT value from the resolved secrets manifest.
-    /// Looks for the first secret with a non-null value.
+    /// Resolve the PAT for cloning by secret name through <see cref="ISecretStore"/>.
     /// </summary>
-    private static string? ExtractPatFromManifest(ResolvedSecretsManifest manifest)
+    private async Task<string?> ResolvePatAsync(
+        string? secretName,
+        CancellationToken cancellationToken)
     {
-        // The manifest may contain multiple secrets; find the PAT.
-        // Convention: PAT secrets have Kind "EnvVar" or "Db" with an Id
-        // containing "PAT" or "TOKEN" (case-insensitive).
-        foreach (var secret in manifest.Secrets)
+        if (string.IsNullOrWhiteSpace(secretName))
         {
-            if (secret.Value is not null)
-            {
-                var id = secret.Reference.Id.ToUpperInvariant();
-                if (id.Contains("PAT") || id.Contains("TOKEN"))
-                {
-                    return secret.Value;
-                }
-            }
+            Log.MissingClonePatSecretName(_logger);
+            return null;
         }
 
-        // Fallback: return the first non-null secret value.
-        return manifest.Secrets
-            .Select(s => s.Value)
-            .FirstOrDefault(v => !string.IsNullOrEmpty(v));
+        return await _secretStore.ResolveAsync(secretName, cancellationToken: cancellationToken);
     }
 
     /// <summary>
@@ -326,5 +316,12 @@ public sealed partial class LocalGitRepositoryMaterializer : IRepositoryMaterial
         )]
         public static partial void MaterializationFailed(
             ILogger logger, string repoKey, Exception ex);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "HTTPS+PAT clone requested but no PersonalAccessTokenSecretName is configured on the repository profile. Clone may fail."
+        )]
+        public static partial void MissingClonePatSecretName(
+            ILogger logger);
     }
 }

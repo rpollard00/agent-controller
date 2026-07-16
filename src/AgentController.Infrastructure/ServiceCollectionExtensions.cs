@@ -312,8 +312,8 @@ public static class AgentControllerServiceCollectionExtensions
     ///   <item><b>Local</b>: native git clone for local paths</item>
     /// </list>
     ///
-    /// Requires <see cref="AddAgentControllerSecretStores"/> to be called first
-    /// (for <see cref="IManagedSecretStore"/> dependency).
+    /// Requires <see cref="RegisterDbNamedSecretProvider"/> or equivalent
+    /// <see cref="Domain.Secrets.ISecretStore"/> registration to be called first.
     ///
     /// Callers should register this <em>after</em>
     /// <see cref="AddAgentControllerNoOpProviders"/> so the last-registered
