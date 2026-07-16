@@ -25,37 +25,48 @@ The rework reactivation flow (e.g., an overriding `rework-requested` tag or stat
 
 ---
 
-## 2. PAT Is a Runtime Environment Variable — Not Stored by the App
+## 2. PAT Is Stored as a Named, Versioned Secret
 
-The Personal Access Token (PAT) is **not stored as a secret** by the Agent Controller application. Instead:
+The Personal Access Token (PAT) is stored as a **named, versioned secret encrypted at rest** in the Agent Controller database. Each secret has:
 
-- The web UI only stores the **name** of the environment variable that holds the PAT (e.g., `AZURE_DEVOPS_PAT`).
-- At runtime, the API host process reads the PAT from that environment variable.
-- The named env var **must actually be present** in the host process for polling and other ADO operations to work.
+- A unique **name** used to reference it from work source and repository host configurations.
+- One or more **versions**, each carrying an encrypted copy of the PAT value.
+- Write-only value entry — the plaintext value is never displayed after storage.
+
+### Configuring the PAT Secret
+
+1. Navigate to the **Secrets** management page in the web UI.
+2. Create a new secret with a descriptive name (e.g., `azure-devops-pat`) and enter the PAT value.
+3. In the work source environment form, select the secret by name from the combobox picker.
+
+The secret value is encrypted at rest using envelope encryption (AES-256-GCM) and is resolved at runtime by the controller when making ADO API calls.
+
+### Rotating the PAT
+
+To rotate a PAT without updating every configuration that references it:
+
+1. Navigate to the secret's detail page.
+2. Create a **new version** with the updated PAT value.
+3. All configurations referencing the secret by name (without a pinned version) automatically resolve to the latest version.
 
 ### What This Means
 
 | Scenario | Result |
 |----------|--------|
-| Env var name is configured but the env var is **not set** in the host process | ADO operations fail with: `"Environment variable '{VAR_NAME}' is not set in the host process."` |
-| Env var is set but contains an **invalid/expired PAT** | ADO returns an HTTP error (e.g., 401), surfaced as a connectivity error. |
-| Env var is set with a **valid PAT** | ADO operations (polling, claiming, state projection) work correctly. |
+| Secret is configured with a **valid PAT** | ADO operations (polling, claiming, state projection) work correctly. |
+| Secret holds an **invalid/expired PAT** | ADO returns an HTTP error (e.g., 401), surfaced as a connectivity error. |
+| Secret name is configured but **no secret exists** with that name | ADO operations fail with a secret resolution error. |
 
-### Setting the PAT
+### Key Encryption Key (KEK) Setup
 
-Ensure the environment variable is set in the process that runs the Agent Controller API. For example:
+The secret store requires a Key Encryption Key (KEK) to encrypt/decrypt secret values. The KEK can be provisioned via:
 
-```bash
-# Linux / macOS
-export AZURE_DEVOPS_PAT="your-pat-token-here"
-dotnet run --project AgentController.Api
+- A **user-secrets file** pointed to by `AGENT_CONTROLLER_SECRET_KEK_FILE_PATH` environment variable (the file must contain exactly 32 bytes of key material).
+- **systemd-creds** on supported Linux systems.
 
-# Windows (PowerShell)
-$env:AZURE_DEVOPS_PAT="your-pat-token-here"
-dotnet run --project AgentController.Api
-```
+If the KEK is missing or invalid at startup, the controller fails fast with a clear error message indicating the required configuration.
 
-The PAT value is never sent to or stored by the web UI — only the variable name is persisted.
+See the [KEK Setup Guide](./kek-setup.md) for detailed provisioning instructions.
 
 ---
 
