@@ -23,3 +23,9 @@ public sealed record ResolvedWorkSourceEnvironment(
     WorkSourceEnvironmentProfile Profile,
     bool IsManaged
 );
+
+/// <summary>A repository host connection profile together with its managed/configured origin.</summary>
+public sealed record ResolvedRepositoryHostConnection(
+    RepositoryHostConnectionProfile Profile,
+    bool IsManaged
+);
