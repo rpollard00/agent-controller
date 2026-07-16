@@ -803,6 +803,25 @@ public static class AgentControllerServiceCollectionExtensions
 
         if (string.IsNullOrWhiteSpace(kekFilePath))
         {
+            // Emit a critical log before throwing so the failure is unmissable in logs.
+            // We build a temporary provider from the current service collection to resolve ILoggerFactory.
+            // This is safe because logging is already registered by the WebApplication builder at this point.
+            using var tempProvider = services.BuildServiceProvider();
+            var loggerFactory = tempProvider.GetService<Microsoft.Extensions.Logging.ILoggerFactory>();
+            var logger = loggerFactory?.CreateLogger("AgentController.Secrets.Startup")
+                ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+
+            // CA1848 suppression: this is a one-off startup message, not a hot path.
+#pragma warning disable CA1848
+            logger.LogCritical(
+                "KEK (Key Encryption Key) is not configured. The application cannot start.\n" +
+                "To fix this, do one of the following:\n" +
+                "  1. Generate a 32-byte key file: openssl rand 32 > kek.key\n" +
+                "  2. Set the AGENT_CONTROLLER_SECRET_KEK_FILE_PATH environment variable to the path of the key file,\n" +
+                "     OR configure 'secrets:keyEncryptionKey:file:filePath' in appsettings.json/appsettings.{{Environment}}.json.\n" +
+                "The KEK file must contain exactly 32 bytes of binary data (e.g., from openssl rand 32).");
+#pragma warning restore CA1848
+
             throw new InvalidOperationException(
                 "Secret provider 'Db' requires a KEK file path. " +
                 "Configure 'secrets:keyEncryptionKey:file:filePath' in appsettings " +
