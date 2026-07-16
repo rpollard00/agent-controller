@@ -68,10 +68,6 @@
     return undefined;
   }
 
-  function getSecretLabel(ref: { kind: string; id: string }): string {
-    return ref.kind === 'EnvVar' ? ref.id : `${ref.kind}:${ref.id}`;
-  }
-
   onDestroy(() => {
     verifyController?.abort();
   });
@@ -150,12 +146,20 @@
     </dl>
   </Card>
 
-  <Card title="Credential reference" description="The PAT is resolved at runtime from the referenced secret or environment variable.">
-    <dl>
+  <Card title="Credential reference" description="The PAT is stored as a named, versioned secret encrypted at rest.">
+    <dl class="grid gap-x-8 gap-y-6 sm:grid-cols-2">
       <div>
-        <dt class="text-sm font-medium text-slate-400">Secret reference</dt>
-        <dd class="mt-2 break-all font-mono text-sm text-cyan-200">
-          {getSecretLabel(connection.personalAccessTokenReference)}
+        <dt class="text-sm font-medium text-slate-400">Secret name</dt>
+        <dd class="mt-1 break-all font-mono text-sm text-cyan-200">
+          {connection.personalAccessTokenReference.name || 'Not configured'}
+        </dd>
+      </div>
+      <div>
+        <dt class="text-sm font-medium text-slate-400">Pinned version</dt>
+        <dd class="mt-1 text-slate-100">
+          {connection.personalAccessTokenReference.version
+            ? `v${connection.personalAccessTokenReference.version}`
+            : 'Latest'}
         </dd>
       </div>
     </dl>
