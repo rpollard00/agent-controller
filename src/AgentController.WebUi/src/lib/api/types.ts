@@ -68,12 +68,6 @@ export interface WorkSourceConnectivityResult {
   payload?: Record<string, unknown>;
 }
 
-/** Opaque reference to a secret value stored outside the profile (used by repository host connections). */
-export interface SecretReference {
-  kind: string;
-  id: string;
-}
-
 /** Managed configuration for a repository host connection. */
 export interface RepositoryHostConnectionProfile {
   key: string;
@@ -82,7 +76,7 @@ export interface RepositoryHostConnectionProfile {
   provider: string;
   organizationUrl: string;
   project: string;
-  personalAccessTokenReference: SecretReference;
+  personalAccessTokenReference: PersonalAccessTokenSecretReference;
   createdAt: string;
   updatedAt: string;
 }
