@@ -195,9 +195,6 @@ public static class AgentControllerServiceCollectionExtensions
     {
         services.AddScoped<IRunLifecycleService, RunLifecycleService>();
 
-        // Ensure secret stores are registered for AzureDevOpsPatResolver dependency.
-        AddAgentControllerSecretStores(services);
-
         // Shared ADO client factory — used by both work-source (Boards) and repo-host (Repos) paths.
         services.AddSingleton<AzureDevOpsClientFactory>();
 
@@ -487,15 +484,11 @@ public static class AgentControllerServiceCollectionExtensions
         // Throws during startup if any configured state is invalid.
         services.AddHostedService<AzureDevOpsBoardStateStartupValidator>();
 
-        // Register secret stores so IManagedSecretStore is available for PAT resolution.
-        AddAgentControllerSecretStores(services);
-
         // Shared ADO client factory — used by both work-source (Boards) and repo-host (Repos) paths.
         services.TryAddSingleton<AzureDevOpsClientFactory>();
 
         // Register the shared PAT resolver used by both work-source (Boards)
-        // and repo-host (Repos) ADO paths. Routes resolution through IManagedSecretStore
-        // and Domain.Secrets.ISecretStore.
+        // and repo-host (Repos) ADO paths. Routes resolution through ISecretStore.
         // Scoped because it depends on ISecretStore which is scoped (DbNamedSecretProvider).
         services.TryAddScoped<AzureDevOpsPatResolver>();
 
@@ -710,45 +703,6 @@ public static class AgentControllerServiceCollectionExtensions
         }
 
         return true;
-    }
-
-    /// <summary>
-    /// Registers <see cref="IManagedSecretStore"/> implementations backed by the database
-    /// (EF Core <see cref="Data.Entities.SecretEntity"/> table).
-    ///
-    /// A <see cref="Secrets.SecretStoreResolver"/> dispatches to the correct store
-    /// based on <see cref="Domain.SecretReference.Kind"/>:
-    /// <list type="bullet">
-    ///   <item><description><c>"Db"</c> → <see cref="Secrets.DbSecretStore"/> (read/write, persisted in Secrets table)</description></item>
-    /// </list>
-    ///
-    /// Optionally accepts an <see cref="Secrets.ISecretProtector"/> for encrypted-at-rest
-    /// storage of database-backed secrets. If no protector is registered, values are
-    /// stored as plaintext (with a TODO for key rotation).
-    ///
-    /// Requires <see cref="AddAgentControllerDbContext"/> to be called first (for DbSecretStore).
-    /// </summary>
-    public static IServiceCollection AddAgentControllerSecretStores(
-        this IServiceCollection services
-    )
-    {
-        // Register the Db-backed store (read/write, persisted via EF Core).
-        // Optionally uses ISecretProtector for encrypted-at-rest storage.
-        services.AddScoped<DbSecretStore>();
-
-        // Register the resolver that dispatches by SecretReference.Kind.
-        // Uses lazy resolution from IServiceProvider to support scoped stores
-        // (e.g., DbSecretStore which depends on scoped DbContext).
-        services.AddSingleton<IManagedSecretStore, SecretStoreResolver>();
-
-        // ISecretStore / ISecretManager are registered by AddAgentControllerNamedSecrets
-        // which selects the provider (default: "Db"). That method fails fast if the
-        // configured provider's prerequisites are not met (e.g. missing KEK for Db).
-        // Do NOT register a fallback here — a silent in-memory fallback would mask
-        // missing KEK configuration and cause writes to appear to succeed while
-        // never persisting to the database.
-
-        return services;
     }
 
     /// <summary>

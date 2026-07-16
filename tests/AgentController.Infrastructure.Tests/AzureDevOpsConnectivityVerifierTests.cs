@@ -381,13 +381,11 @@ public sealed class AzureDevOpsConnectivityVerifierTests
 
     private static AzureDevOpsConnectivityVerifier CreateVerifier(
         IAzureDevOpsBoardsClient mockClient,
-        IManagedSecretStore? managedSecretStore = null,
         Domain.Secrets.ISecretStore? namedSecretStore = null
     )
     {
         var factory = new MockAzureDevOpsBoardsClientFactory(mockClient);
         var patResolver = new AzureDevOpsPatResolver(
-            managedSecretStore ?? (IManagedSecretStore)new EnvVarBackedFakeSecretStore(),
             namedSecretStore ?? new Domain.Secrets.InMemorySecretStore()
         );
         return new AzureDevOpsConnectivityVerifier(factory, patResolver);
@@ -434,34 +432,6 @@ public sealed class AzureDevOpsConnectivityVerifierTests
         {
             CreatedProfile = profile;
             return client;
-        }
-    }
-
-    /// <summary>
-    /// Fake IManagedSecretStore that resolves "EnvVar" kind references by reading
-    /// the actual environment variable.
-    /// Kept for backward compatibility with other consumers of IManagedSecretStore.
-    /// </summary>
-    private sealed class EnvVarBackedFakeSecretStore : IManagedSecretStore
-    {
-        public Task<string?> ResolveAsync(SecretReference reference, CancellationToken ct)
-        {
-            ct.ThrowIfCancellationRequested();
-            if (reference.Kind != "EnvVar")
-                return Task.FromResult<string?>(null);
-            return Task.FromResult(Environment.GetEnvironmentVariable(reference.Id));
-        }
-
-        public Task<SecretWriteResult> WriteAsync(
-            SecretReference reference,
-            string value,
-            CancellationToken ct
-        )
-        {
-            ct.ThrowIfCancellationRequested();
-            return Task.FromResult(
-                SecretWriteResult.FailureResult("Fake store is read-only.")
-            );
         }
     }
 

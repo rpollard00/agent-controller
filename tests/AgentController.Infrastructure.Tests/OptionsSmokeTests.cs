@@ -1005,28 +1005,6 @@ public class OptionsSmokeTests
     // Fake secret store implementations for tests
     // ──────────────────────────────────────────────
 
-    private sealed class InMemoryFakeSecretStore(Dictionary<string, string> secrets)
-        : IManagedSecretStore
-    {
-        public Task<string?> ResolveAsync(SecretReference reference, CancellationToken ct)
-        {
-            ct.ThrowIfCancellationRequested();
-            secrets.TryGetValue($"{reference.Kind}:{reference.Id}", out var value);
-            return Task.FromResult(value);
-        }
-
-        public Task<SecretWriteResult> WriteAsync(
-            SecretReference reference,
-            string value,
-            CancellationToken ct
-        )
-        {
-            ct.ThrowIfCancellationRequested();
-            secrets[$"{reference.Kind}:{reference.Id}"] = value;
-            return Task.FromResult(SecretWriteResult.SuccessResult());
-        }
-    }
-
     /// <summary>
     /// In-memory fake implementing Domain.Secrets.ISecretStore for Boards options tests.
     /// </summary>

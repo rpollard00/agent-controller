@@ -6,7 +6,7 @@ namespace AgentController.Infrastructure;
 
 /// <summary>
 /// Creates short-lived Azure DevOps clients from enabled effective profiles.
-/// Resolves the PAT through <see cref="IManagedSecretStore"/> using the shared
+/// Resolves the PAT through <see cref="Domain.Secrets.ISecretStore"/> using the shared
 /// <see cref="AzureDevOpsPatResolver"/>, then delegates client construction
 /// to the shared <see cref="AzureDevOpsClientFactory"/>.
 /// </summary>

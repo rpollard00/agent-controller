@@ -14,8 +14,7 @@ namespace AgentController.Infrastructure;
 /// <see cref="WorkSourceConnectivityResult"/>.
 ///
 /// PAT resolution is routed through <see cref="AzureDevOpsPatResolver"/> which
-/// dispatches via <see cref="IManagedSecretStore"/>, replacing the previous direct
-/// <c>Environment.GetEnvironmentVariable</c> call.
+/// resolves named secrets via <see cref="Domain.Secrets.ISecretStore"/>.
 /// </summary>
 internal sealed class AzureDevOpsConnectivityVerifier(
     IAzureDevOpsBoardsClientFactory boardsClientFactory,

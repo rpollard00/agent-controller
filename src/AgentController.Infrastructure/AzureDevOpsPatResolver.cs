@@ -1,26 +1,24 @@
-using AgentController.Application;
-using AgentController.Domain;
+using AgentController.Domain.Secrets;
 
 namespace AgentController.Infrastructure;
 
 /// <summary>
 /// Shared helper for resolving Azure DevOps Personal Access Tokens.
-/// Routes resolution through <see cref="Domain.Secrets.ISecretStore"/> for work-source
-/// profiles and through <see cref="IManagedSecretStore"/> for legacy managed profiles.
+/// Routes resolution through <see cref="ISecretStore"/> for named,
+/// envelope-encrypted secrets.
 ///
 /// Used by both the work-source (Boards) and repo-host (Repos) ADO paths
 /// so they share the same resolution logic.
 /// </summary>
 internal sealed class AzureDevOpsPatResolver(
-    IManagedSecretStore managedSecretStore,
-    Domain.Secrets.ISecretStore secretStore)
+    ISecretStore secretStore)
 {
     /// <summary>
-    /// Resolves a PAT from a <see cref="Domain.Secrets.SecretReference"/> (named + versioned)
-    /// via <see cref="Domain.Secrets.ISecretStore"/>.
+    /// Resolves a PAT from a <see cref="SecretReference"/> (named + versioned)
+    /// via <see cref="ISecretStore"/>.
     /// </summary>
     public Task<string?> ResolveFromSecretReferenceAsync(
-        Domain.Secrets.SecretReference reference,
+        SecretReference reference,
         CancellationToken cancellationToken
     )
     {
@@ -33,17 +31,6 @@ internal sealed class AzureDevOpsPatResolver(
             reference.Name,
             reference.Version,
             cancellationToken);
-    }
-
-    /// <summary>
-    /// Resolves a PAT from a legacy <see cref="SecretReference"/> via <see cref="IManagedSecretStore"/>.
-    /// </summary>
-    public Task<string?> ResolveAsync(
-        SecretReference reference,
-        CancellationToken cancellationToken
-    )
-    {
-        return managedSecretStore.ResolveAsync(reference, cancellationToken);
     }
 
     /// <summary>

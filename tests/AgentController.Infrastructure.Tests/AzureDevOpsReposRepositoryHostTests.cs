@@ -356,11 +356,7 @@ public sealed class AzureDevOpsReposRepositoryHostTests
     )
     {
         var factory = new TestReposClientFactory(fakeClient);
-        // AzureDevOpsPatResolver depends on both IManagedSecretStore and ISecretStore.
-        // For repo-host tests we only need ISecretStore path.
-        var patResolver = new AzureDevOpsPatResolver(
-            NullManagedSecretStore.Instance,
-            secretStore);
+        var patResolver = new AzureDevOpsPatResolver(secretStore);
         return new AzureDevOpsReposRepositoryHost(factory, patResolver);
     }
 
@@ -383,22 +379,6 @@ public sealed class AzureDevOpsReposRepositoryHostTests
             cancellationToken.ThrowIfCancellationRequested();
             return Task.FromResult(_store.GetValueOrDefault(name));
         }
-    }
-
-    /// <summary>
-    /// Null implementation of IManagedSecretStore for tests that only use ISecretStore path.
-    /// </summary>
-    private sealed class NullManagedSecretStore : IManagedSecretStore
-    {
-        public static NullManagedSecretStore Instance { get; } = new();
-
-        private NullManagedSecretStore() { }
-
-        public Task<string?> ResolveAsync(SecretReference reference, CancellationToken cancellationToken) =>
-            Task.FromResult<string?>(null);
-
-        public Task<SecretWriteResult> WriteAsync(SecretReference reference, string value, CancellationToken cancellationToken) =>
-            Task.FromResult(SecretWriteResult.FailureResult("Not implemented."));
     }
 
     /// <summary>

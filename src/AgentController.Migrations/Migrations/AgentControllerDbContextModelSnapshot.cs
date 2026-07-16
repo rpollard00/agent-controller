@@ -519,32 +519,6 @@ namespace AgentController.Migrations.Migrations
                     b.ToTable("RuntimeEnvironments", (string)null);
                 });
 
-            modelBuilder.Entity("AgentController.Infrastructure.Data.Entities.SecretEntity", b =>
-                {
-                    b.Property<string>("Id")
-                        .HasMaxLength(256)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Label")
-                        .HasMaxLength(256)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Value")
-                        .IsRequired()
-                        .HasMaxLength(4096)
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("Secrets", (string)null);
-                });
-
             modelBuilder.Entity("AgentController.Infrastructure.Data.Entities.SecretVersionEntity", b =>
                 {
                     b.Property<string>("Id")
