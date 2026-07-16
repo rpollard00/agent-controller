@@ -65,9 +65,10 @@
   }
 
   $effect(() => {
-    // Clear client-side errors when secret id changes via the picker
-    void values.secretId;
-    if (values.secretId && clientErrors.secretId) clearClientError('secretId');
+    // Clear client-side errors when secret name/version changes via the picker
+    void values.secretName;
+    if (values.secretName && clientErrors.secretName) clearClientError('secretName');
+    if (values.secretVersion !== null && clientErrors.secretVersion) clearClientError('secretVersion');
   });
 </script>
 
@@ -202,81 +203,21 @@
           </Field>
         </div>
 
-        <fieldset class="space-y-4">
-          <legend class="text-sm font-semibold text-slate-300">Secret reference</legend>
-          <p class="text-sm leading-6 text-slate-400">
-            Reference the secret holding the personal access token. Only the reference is stored; the PAT value is resolved at runtime.
-          </p>
-
-          <div class="grid gap-6 lg:grid-cols-2">
-            <Field
-              id="rhc-secretKind"
-              label="Secret kind"
-              error={fieldError('secretKind')}
-            >
-              <select
-                id="rhc-secretKind"
-                name="secretKind"
-                class={inputClasses}
-                bind:value={values.secretKind}
-                disabled={submitting}
-                aria-invalid={fieldError('secretKind') ? 'true' : undefined}
-                aria-describedby={describedBy('rhc-secretKind', 'secretKind')}
-                onchange={() => clearClientError('secretKind')}
-              >
-                <option value="EnvVar">Environment variable</option>
-                <option value="Db">Database</option>
-              </select>
-            </Field>
-
-            {#if values.secretKind === 'Db'}
-              <div class="space-y-2">
-                <label class="block text-sm font-medium text-slate-200" for="rhc-secretId-input">
-                  Secret name
-                  <span class="text-rose-300" aria-hidden="true"> *</span>
-                  <span class="sr-only"> (required)</span>
-                </label>
-                <SecretPicker
-                  id="rhc-secretId"
-                  client={secretsClient}
-                  bind:secretName={values.secretId}
-                  secretVersion={null}
-                  disabled={submitting}
-                  error={fieldError('secretId')}
-                />
-              </div>
-            {:else}
-              <Field
-                id="rhc-secretId"
-                label="Environment variable name"
-                hint="Name of the environment variable holding the PAT (e.g. ADO_PAT)."
-                error={fieldError('secretId')}
-                required
-              >
-                <input
-                  id="rhc-secretId"
-                  name="secretId"
-                  class={inputClasses}
-                  bind:value={values.secretId}
-                  disabled={submitting}
-                  required
-                  spellcheck="false"
-                  autocomplete="off"
-                  placeholder="ADO_PAT"
-                  aria-invalid={fieldError('secretId') ? 'true' : undefined}
-                  aria-describedby={describedBy('rhc-secretId', 'secretId', true)}
-                  oninput={() => clearClientError('secretId')}
-                />
-              </Field>
-            {/if}
-          </div>
-        </fieldset>
-
-        <Alert
-          variant="info"
-          title="Secrets are stored encrypted"
-          message="Named secrets are stored encrypted at rest in the database. Select a secret by name, or reference an environment variable for runtime resolution."
-        />
+        <div class="space-y-2">
+          <label class="block text-sm font-medium text-slate-200" for="rhc-secretName-input">
+            PAT secret
+            <span class="text-rose-300" aria-hidden="true"> *</span>
+            <span class="sr-only"> (required)</span>
+          </label>
+          <SecretPicker
+            id="rhc-secretName"
+            client={secretsClient}
+            bind:secretName={values.secretName}
+            bind:secretVersion={values.secretVersion}
+            disabled={submitting}
+            error={fieldError('secretName')}
+          />
+        </div>
       </fieldset>
     {:else}
       <Alert
