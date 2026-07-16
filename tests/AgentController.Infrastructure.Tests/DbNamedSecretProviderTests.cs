@@ -40,11 +40,23 @@ public sealed class DbNamedSecretProviderTests : IDisposable
 
     private IServiceScope CreateScope()
     {
+        return CreateScopeWithConnection(_connection, _testKek);
+    }
+
+    private static byte[] CreateTestKek()
+    {
+        var kek = new byte[32];
+        for (int i = 0; i < 32; i++) kek[i] = (byte)i;
+        return kek;
+    }
+
+    private static IServiceScope CreateScopeWithConnection(SqliteConnection connection, byte[] kek)
+    {
         var services = new ServiceCollection();
         services.AddDbContext<AgentControllerDbContext>(options =>
-            options.UseSqlite(_connection));
+            options.UseSqlite(connection));
         services.AddSingleton<IKeyEncryptionKeySource>(_ =>
-            new TestKeyEncryptionKeySource(_testKek));
+            new TestKeyEncryptionKeySource(kek));
         services.AddScoped<ISecretStore, DbNamedSecretProvider>();
         services.AddScoped<ISecretManager, DbNamedSecretProvider>();
 
@@ -263,6 +275,55 @@ public sealed class DbNamedSecretProviderTests : IDisposable
         var result = await manager.ListVersionsAsync("no-such-secret-2", CancellationToken.None);
 
         Assert.Null(result);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Round-trip persistence through a fresh DbContext (reboot simulation)
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task RoundTripPersistence_FreshDbContextAfterReboot_ReturnsPlaintext()
+    {
+        // Arrange: use a file-based temp SQLite DB so it survives connection close/reopen
+        var tempDbPath = Path.Combine(Path.GetTempPath(), $"secrets-reboot-test-{Guid.NewGuid():N}.db");
+        var kek = CreateTestKek();
+        try
+        {
+            // ── Phase 1: "first run" — create schema, create the secret, persist ──
+            var connection1 = new SqliteConnection($"Data Source={tempDbPath}");
+            connection1.Open();
+            using (var scope1 = CreateScopeWithConnection(connection1, kek))
+            {
+                // Simulate startup migration/table creation
+                var ctx1 = scope1.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
+                ctx1.Database.EnsureCreated();
+
+                var manager = scope1.ServiceProvider.GetRequiredService<ISecretManager>();
+                await manager.CreateAsync("reboot-secret", "persisted-value-abc123", CancellationToken.None);
+            }
+            // Dispose the scope (and its DbContext), then close the connection entirely
+            connection1.Dispose();
+
+            // ── Phase 2: "after reboot" — fresh connection, fresh DbContext ──
+            var connection2 = new SqliteConnection($"Data Source={tempDbPath}");
+            connection2.Open();
+            using (var scope2 = CreateScopeWithConnection(connection2, kek))
+            {
+                var store = scope2.ServiceProvider.GetRequiredService<ISecretStore>();
+                var result = await store.ResolveAsync("reboot-secret", cancellationToken: CancellationToken.None);
+
+                Assert.Equal("persisted-value-abc123", result);
+            }
+            connection2.Dispose();
+        }
+        finally
+        {
+            // Cleanup temp file
+            if (File.Exists(tempDbPath))
+            {
+                File.Delete(tempDbPath);
+            }
+        }
     }
 
     // ═══════════════════════════════════════════════════════════
