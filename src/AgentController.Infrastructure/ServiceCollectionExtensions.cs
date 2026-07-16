@@ -487,7 +487,7 @@ public static class AgentControllerServiceCollectionExtensions
 
         // Register the shared PAT resolver used by both work-source (Boards)
         // and repo-host (Repos) ADO paths. Routes resolution through IManagedSecretStore
-        // with backward compatibility for legacy "ENV:NAME" and direct PAT forms.
+        // and Domain.Secrets.ISecretStore.
         // Scoped because it depends on ISecretStore which is scoped (DbNamedSecretProvider).
         services.TryAddScoped<AzureDevOpsPatResolver>();
 
@@ -705,13 +705,12 @@ public static class AgentControllerServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers <see cref="IManagedSecretStore"/> implementations backed by environment variables
-    /// and the database (EF Core <see cref="Data.Entities.SecretEntity"/> table).
+    /// Registers <see cref="IManagedSecretStore"/> implementations backed by the database
+    /// (EF Core <see cref="Data.Entities.SecretEntity"/> table).
     ///
     /// A <see cref="Secrets.SecretStoreResolver"/> dispatches to the correct store
     /// based on <see cref="Domain.SecretReference.Kind"/>:
     /// <list type="bullet">
-    ///   <item><description><c>"EnvVar"</c> → <see cref="Secrets.EnvVarSecretStore"/> (read-only, reads environment variables)</description></item>
     ///   <item><description><c>"Db"</c> → <see cref="Secrets.DbSecretStore"/> (read/write, persisted in Secrets table)</description></item>
     /// </list>
     ///
@@ -725,9 +724,6 @@ public static class AgentControllerServiceCollectionExtensions
         this IServiceCollection services
     )
     {
-        // Register the EnvVar-backed store (read-only, reads Environment.GetEnvironmentVariable).
-        services.AddSingleton<EnvVarSecretStore>();
-
         // Register the Db-backed store (read/write, persisted via EF Core).
         // Optionally uses ISecretProtector for encrypted-at-rest storage.
         services.AddScoped<DbSecretStore>();

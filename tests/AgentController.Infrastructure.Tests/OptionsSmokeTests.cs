@@ -524,65 +524,6 @@ public class OptionsSmokeTests
     }
 
     [Fact]
-    public void AzureDevOpsBoardsOptions_ResolvePat_ExpandsEnvReference()
-    {
-        var envName = "TEST_AZURE_DEVOPS_PAT_SMOKE";
-        var expected = "env-resolved-pat-value";
-
-        try
-        {
-            Environment.SetEnvironmentVariable(envName, expected);
-
-            var options = new AzureDevOpsBoardsOptions
-            {
-                PersonalAccessToken = $"ENV:{envName}",
-            };
-
-            var resolved = options.ResolvePersonalAccessToken();
-
-            Assert.Equal(expected, resolved);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(envName, null);
-        }
-    }
-
-    [Fact]
-    public void AzureDevOpsBoardsOptions_ResolvePat_ThrowsWhenEnvVarMissing()
-    {
-        var envName = "MISSING_ENV_VAR_FOR_AZDO_PAT";
-
-        // Ensure the variable is not set
-        Environment.SetEnvironmentVariable(envName, null);
-
-        var options = new AzureDevOpsBoardsOptions
-        {
-            PersonalAccessToken = $"ENV:{envName}",
-        };
-
-        var ex = Assert.Throws<InvalidOperationException>(
-            () => options.ResolvePersonalAccessToken());
-
-        Assert.Contains(envName, ex.Message);
-        Assert.Contains("missing or empty", ex.Message, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public void AzureDevOpsBoardsOptions_ResolvePat_ThrowsWhenEnvRefHasNoVariableName()
-    {
-        var options = new AzureDevOpsBoardsOptions
-        {
-            PersonalAccessToken = "ENV:",
-        };
-
-        var ex = Assert.Throws<InvalidOperationException>(
-            () => options.ResolvePersonalAccessToken());
-
-        Assert.Contains("no environment variable name", ex.Message, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
     public void AzureDevOpsBoardsOptions_ResolvePat_ReturnsNullForEmptyValue()
     {
         var options = new AzureDevOpsBoardsOptions
@@ -637,33 +578,23 @@ public class OptionsSmokeTests
     [Fact]
     public void AzureDevOpsBoardsValidator_ValidConfig_Passes()
     {
-        var envName = "AZDO_VALIDATOR_TEST_PAT";
-        try
+        var workSource = new WorkSourceOptions
         {
-            Environment.SetEnvironmentVariable(envName, "test-pat");
+            Provider = "AzureDevOpsBoards",
+            OrganizationUrl = "https://dev.azure.com/myorg",
+            Project = "MyProject",
+        };
 
-            var workSource = new WorkSourceOptions
-            {
-                Provider = "AzureDevOpsBoards",
-                OrganizationUrl = "https://dev.azure.com/myorg",
-                Project = "MyProject",
-            };
-
-            var boards = new AzureDevOpsBoardsOptions
-            {
-                PersonalAccessToken = $"ENV:{envName}",
-            };
-
-            // Should not throw
-            var ex = Record.Exception(() =>
-                AzureDevOpsBoardsValidator.Validate(workSource, boards));
-
-            Assert.Null(ex);
-        }
-        finally
+        var boards = new AzureDevOpsBoardsOptions
         {
-            Environment.SetEnvironmentVariable(envName, null);
-        }
+            PersonalAccessToken = "test-pat",
+        };
+
+        // Should not throw
+        var ex = Record.Exception(() =>
+            AzureDevOpsBoardsValidator.Validate(workSource, boards));
+
+        Assert.Null(ex);
     }
 
     [Fact]
@@ -973,10 +904,9 @@ public class OptionsSmokeTests
     // ──────────────────────────────────────────────
 
     [Fact]
-    public async Task AzureDevOpsPatResolver_ResolveFromLegacyValue_ReturnsDirectPat()
+    public async Task AzureDevOpsPatResolver_ResolveFromLegacyValue_ReturnsDirectValue()
     {
-        var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore(), new AgentController.Domain.Secrets.InMemorySecretStore());
-        var result = await resolver.ResolveFromLegacyValueAsync(
+        var result = await AzureDevOpsPatResolver.ResolveFromLegacyValueAsync(
             "my-direct-pat-token",
             CancellationToken.None
         );
@@ -985,32 +915,9 @@ public class OptionsSmokeTests
     }
 
     [Fact]
-    public async Task AzureDevOpsPatResolver_ResolveFromLegacyValue_ExpandsEnvReference()
-    {
-        var envName = "PAT_RESOLVER_LEGACY_ENV";
-        try
-        {
-            Environment.SetEnvironmentVariable(envName, "env-expanded-token");
-
-            var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore(), new AgentController.Domain.Secrets.InMemorySecretStore());
-            var result = await resolver.ResolveFromLegacyValueAsync(
-                $"ENV:{envName}",
-                CancellationToken.None
-            );
-
-            Assert.Equal("env-expanded-token", result);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(envName, null);
-        }
-    }
-
-    [Fact]
     public async Task AzureDevOpsPatResolver_ResolveFromLegacyValue_ReturnsNullForEmptyValue()
     {
-        var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore(), new AgentController.Domain.Secrets.InMemorySecretStore());
-        var result = await resolver.ResolveFromLegacyValueAsync(
+        var result = await AzureDevOpsPatResolver.ResolveFromLegacyValueAsync(
             "",
             CancellationToken.None
         );
@@ -1019,15 +926,16 @@ public class OptionsSmokeTests
     }
 
     [Fact]
-    public async Task AzureDevOpsPatResolver_ResolveFromLegacyValue_ReturnsNullForEnvVarMissing()
+    public async Task AzureDevOpsPatResolver_ResolveFromLegacyValue_ReturnsValueAsIsForEnvPrefix()
     {
-        var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore(), new AgentController.Domain.Secrets.InMemorySecretStore());
-        var result = await resolver.ResolveFromLegacyValueAsync(
+        // ENV: prefix is no longer parsed — returned as-is (treated as a direct PAT value).
+        var result = await AzureDevOpsPatResolver.ResolveFromLegacyValueAsync(
             "ENV:NONEXISTENT_VAR_XYZ",
             CancellationToken.None
         );
 
-        Assert.Null(result);
+        // The string is returned as-is since ENV: parsing was removed.
+        Assert.Equal("ENV:NONEXISTENT_VAR_XYZ", result);
     }
 
     // ──────────────────────────────────────────────
@@ -1043,59 +951,11 @@ public class OptionsSmokeTests
         };
 
         var resolved = await options.ResolvePersonalAccessTokenAsync(
-            new EnvVarFakeSecretStore(),
+            new InMemoryFakeSecretStore(new Dictionary<string, string>()),
             CancellationToken.None
         );
 
         Assert.Equal("my-direct-pat", resolved);
-    }
-
-    [Fact]
-    public async Task AzureDevOpsBoardsOptions_ResolvePatAsync_ExpandsEnvReference()
-    {
-        var envName = "TEST_AZURE_DEVOPS_PAT_ASYNC";
-        try
-        {
-            Environment.SetEnvironmentVariable(envName, "async-resolved-pat-value");
-
-            var options = new AzureDevOpsBoardsOptions
-            {
-                PersonalAccessToken = $"ENV:{envName}",
-            };
-
-            var resolved = await options.ResolvePersonalAccessTokenAsync(
-                new EnvVarFakeSecretStore(),
-                CancellationToken.None
-            );
-
-            Assert.Equal("async-resolved-pat-value", resolved);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(envName, null);
-        }
-    }
-
-    [Fact]
-    public async Task AzureDevOpsBoardsOptions_ResolvePatAsync_ThrowsWhenEnvVarMissing()
-    {
-        var envName = "MISSING_ENV_VAR_FOR_AZDO_PAT_ASYNC";
-        Environment.SetEnvironmentVariable(envName, null);
-
-        var options = new AzureDevOpsBoardsOptions
-        {
-            PersonalAccessToken = $"ENV:{envName}",
-        };
-
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => options.ResolvePersonalAccessTokenAsync(
-                new EnvVarFakeSecretStore(),
-                CancellationToken.None
-            )
-        );
-
-        Assert.Contains(envName, ex.Message);
-        Assert.Contains("missing or empty", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -1107,7 +967,7 @@ public class OptionsSmokeTests
         };
 
         var resolved = await options.ResolvePersonalAccessTokenAsync(
-            new EnvVarFakeSecretStore(),
+            new InMemoryFakeSecretStore(new Dictionary<string, string>()),
             CancellationToken.None
         );
 
@@ -1115,55 +975,8 @@ public class OptionsSmokeTests
     }
 
     // ──────────────────────────────────────────────
-    // Db-backed secret authentication tests
-    // ──────────────────────────────────────────────
-
-    [Fact]
-    public async Task AzureDevOpsBoardsOptions_ResolvePatAsync_DbBackedSecret_ResolvesPat()
-    {
-        var secrets = new Dictionary<string, string>
-        {
-            ["EnvVar:DB_ADO_PAT"] = "db-ado-pat-token",
-        };
-        var options = new AzureDevOpsBoardsOptions
-        {
-            PersonalAccessToken = "ENV:DB_ADO_PAT",
-        };
-
-        var resolved = await options.ResolvePersonalAccessTokenAsync(
-            new InMemoryFakeSecretStore(secrets),
-            CancellationToken.None
-        );
-
-        Assert.Equal("db-ado-pat-token", resolved);
-    }
-
-    // ──────────────────────────────────────────────
     // Fake secret store implementations for tests
     // ──────────────────────────────────────────────
-
-    private sealed class EnvVarFakeSecretStore : IManagedSecretStore
-    {
-        public Task<string?> ResolveAsync(SecretReference reference, CancellationToken ct)
-        {
-            ct.ThrowIfCancellationRequested();
-            if (reference.Kind != "EnvVar")
-                return Task.FromResult<string?>(null);
-            return Task.FromResult(Environment.GetEnvironmentVariable(reference.Id));
-        }
-
-        public Task<SecretWriteResult> WriteAsync(
-            SecretReference reference,
-            string value,
-            CancellationToken ct
-        )
-        {
-            ct.ThrowIfCancellationRequested();
-            return Task.FromResult(
-                SecretWriteResult.FailureResult("Fake store is read-only.")
-            );
-        }
-    }
 
     private sealed class InMemoryFakeSecretStore(Dictionary<string, string> secrets)
         : IManagedSecretStore

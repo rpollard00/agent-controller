@@ -62,51 +62,31 @@ public class AzureDevOpsBoardStateStartupValidatorTests
     [Fact]
     public async Task StartAsync_MissingOrganizationUrl_SkipsValidation()
     {
-        var envName = "TEST_ADO_PAT_STATE_VALIDATOR";
-        try
-        {
-            Environment.SetEnvironmentVariable(envName, "test-pat");
+        var validator = CreateValidator(
+            workSource: CreateWorkSourceOptions(organizationUrl: null),
+            boards: CreateBoardsOptions(pat: "test-pat"));
 
-            var validator = CreateValidator(
-                workSource: CreateWorkSourceOptions(organizationUrl: null),
-                boards: CreateBoardsOptions(pat: $"ENV:{envName}"));
-
-            await validator.StartAsync(CancellationToken.None);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(envName, null);
-        }
+        await validator.StartAsync(CancellationToken.None);
     }
 
     [Fact]
     public async Task StartAsync_MissingProject_SkipsValidation()
     {
-        var envName = "TEST_ADO_PAT_STATE_VALIDATOR2";
-        try
-        {
-            Environment.SetEnvironmentVariable(envName, "test-pat");
+        var validator = CreateValidator(
+            workSource: CreateWorkSourceOptions(project: null),
+            boards: CreateBoardsOptions(pat: "test-pat"));
 
-            var validator = CreateValidator(
-                workSource: CreateWorkSourceOptions(project: null),
-                boards: CreateBoardsOptions(pat: $"ENV:{envName}"));
-
-            await validator.StartAsync(CancellationToken.None);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(envName, null);
-        }
+        await validator.StartAsync(CancellationToken.None);
     }
 
     [Fact]
-    public async Task StartAsync_EnvPatResolutionFailed_SkipsValidation()
+    public async Task StartAsync_EmptyPat_SkipsValidation()
     {
         var validator = CreateValidator(
             workSource: CreateWorkSourceOptions(
                 organizationUrl: "https://dev.azure.com/testorg",
                 project: "TestProject"),
-            boards: CreateBoardsOptions(pat: "ENV:NONEXISTENT_VAR_XYZ"));
+            boards: CreateBoardsOptions(pat: string.Empty));
 
         await validator.StartAsync(CancellationToken.None);
     }

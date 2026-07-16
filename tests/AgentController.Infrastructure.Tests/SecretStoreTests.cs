@@ -3,156 +3,14 @@ using AgentController.Application.Results;
 using AgentController.Domain;
 using AgentController.Infrastructure.Secrets;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AgentController.Infrastructure.Tests;
 
 /// <summary>
-/// Unit tests for EnvVarSecretStore, DbSecretStore, and SecretStoreResolver.
+/// Unit tests for DbSecretStore and SecretStoreResolver.
 /// </summary>
 public sealed class SecretStoreTests
 {
-    // ─── EnvVarSecretStore: resolve existing env var ───
-
-    [Fact]
-    public async Task EnvVarSecretStore_ResolveAsync_ExistingEnvVar_ReturnsValue()
-    {
-        // Arrange
-        var envName = "SECRET_STORE_TEST_PAT";
-        var expected = "test-token-abc";
-
-        try
-        {
-            Environment.SetEnvironmentVariable(envName, expected);
-            var store = new EnvVarSecretStore();
-            var reference = SecretReference.EnvironmentVariable(envName);
-
-            // Act
-            var value = await store.ResolveAsync(reference, CancellationToken.None);
-
-            // Assert
-            Assert.Equal(expected, value);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(envName, null);
-        }
-    }
-
-    // ─── EnvVarSecretStore: resolve missing env var returns null ───
-
-    [Fact]
-    public async Task EnvVarSecretStore_ResolveAsync_MissingEnvVar_ReturnsNull()
-    {
-        // Arrange
-        var store = new EnvVarSecretStore();
-        var reference = SecretReference.EnvironmentVariable("__NONEXISTENT_VAR_XYZ__");
-
-        // Act
-        var value = await store.ResolveAsync(reference, CancellationToken.None);
-
-        // Assert
-        Assert.Null(value);
-    }
-
-    // ─── EnvVarSecretStore: resolve non-EnvVar kind returns null ───
-
-    [Fact]
-    public async Task EnvVarSecretStore_ResolveAsync_NonEnvVarKind_ReturnsNull()
-    {
-        // Arrange
-        var store = new EnvVarSecretStore();
-        var reference = SecretReference.Database("some-guid");
-
-        // Act
-        var value = await store.ResolveAsync(reference, CancellationToken.None);
-
-        // Assert
-        Assert.Null(value);
-    }
-
-    // ─── EnvVarSecretStore: write always fails ───
-
-    [Fact]
-    public async Task EnvVarSecretStore_WriteAsync_ReturnsFailure()
-    {
-        // Arrange
-        var store = new EnvVarSecretStore();
-        var reference = SecretReference.EnvironmentVariable("SOME_VAR");
-
-        // Act
-        var result = await store.WriteAsync(reference, "some-value", CancellationToken.None);
-
-        // Assert
-        Assert.False(result.Success);
-        Assert.NotEmpty(result.Errors);
-        Assert.Contains("read-only", result.Errors[0], StringComparison.OrdinalIgnoreCase);
-    }
-
-    // ─── EnvVarSecretStore: resolve passes cancellation token ───
-
-    [Fact]
-    public async Task EnvVarSecretStore_ResolveAsync_CancellationToken_ThrowsWhenCancelled()
-    {
-        // Arrange
-        var store = new EnvVarSecretStore();
-        var cts = new CancellationTokenSource();
-        cts.Cancel();
-
-        // Act & Assert
-        await Assert.ThrowsAsync<OperationCanceledException>(() =>
-            store.ResolveAsync(SecretReference.EnvironmentVariable("X"), cts.Token)
-        );
-    }
-
-    // ─── EnvVarSecretStore: write passes cancellation token ───
-
-    [Fact]
-    public async Task EnvVarSecretStore_WriteAsync_CancellationToken_ThrowsWhenCancelled()
-    {
-        // Arrange
-        var store = new EnvVarSecretStore();
-        var cts = new CancellationTokenSource();
-        cts.Cancel();
-
-        // Act & Assert
-        await Assert.ThrowsAsync<OperationCanceledException>(() =>
-            store.WriteAsync(SecretReference.EnvironmentVariable("X"), "v", cts.Token)
-        );
-    }
-
-    // ─── SecretStoreResolver: dispatches EnvVar to EnvVarSecretStore ───
-
-    [Fact]
-    public async Task SecretStoreResolver_ResolveAsync_EnvVarKind_DelegatesToEnvVarStore()
-    {
-        // Arrange
-        var envName = "SECRET_STORE_RESOLVER_TEST";
-        var expected = "resolved-by-envvar-store";
-
-        try
-        {
-            Environment.SetEnvironmentVariable(envName, expected);
-            var services = new ServiceCollection();
-            services.AddSingleton<EnvVarSecretStore>();
-            services.AddSingleton<IManagedSecretStore, SecretStoreResolver>();
-            var provider = services.BuildServiceProvider();
-            var resolver = provider.GetRequiredService<IManagedSecretStore>();
-            var reference = SecretReference.EnvironmentVariable(envName);
-
-            // Act
-            var value = await resolver.ResolveAsync(reference, CancellationToken.None);
-
-            // Assert
-            Assert.Equal(expected, value);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(envName, null);
-        }
-    }
-
     // ─── SecretStoreResolver: resolves unknown kind returns null ───
 
     [Fact]
@@ -160,7 +18,6 @@ public sealed class SecretStoreTests
     {
         // Arrange
         var services = new ServiceCollection();
-        services.AddSingleton<EnvVarSecretStore>();
         services.AddSingleton<IManagedSecretStore, SecretStoreResolver>();
         var provider = services.BuildServiceProvider();
         var resolver = provider.GetRequiredService<IManagedSecretStore>();
@@ -180,7 +37,6 @@ public sealed class SecretStoreTests
     {
         // Arrange
         var services = new ServiceCollection();
-        services.AddSingleton<EnvVarSecretStore>();
         services.AddSingleton<IManagedSecretStore, SecretStoreResolver>();
         var provider = services.BuildServiceProvider();
         var resolver = provider.GetRequiredService<IManagedSecretStore>();
@@ -193,27 +49,6 @@ public sealed class SecretStoreTests
         Assert.False(result.Success);
         Assert.NotEmpty(result.Errors);
         Assert.Contains("Unknown", result.Errors[0]);
-    }
-
-    // ─── SecretStoreResolver: write delegates to EnvVar store (read-only) ───
-
-    [Fact]
-    public async Task SecretStoreResolver_WriteAsync_EnvVarKind_DelegatesToStore()
-    {
-        // Arrange
-        var services = new ServiceCollection();
-        services.AddSingleton<EnvVarSecretStore>();
-        services.AddSingleton<IManagedSecretStore, SecretStoreResolver>();
-        var provider = services.BuildServiceProvider();
-        var resolver = provider.GetRequiredService<IManagedSecretStore>();
-        var reference = SecretReference.EnvironmentVariable("TEST_VAR");
-
-        // Act
-        var result = await resolver.WriteAsync(reference, "secret-value", CancellationToken.None);
-
-        // Assert: EnvVar store is read-only, so write should fail
-        Assert.False(result.Success);
-        Assert.NotEmpty(result.Errors);
     }
 
     // ─── ISecretProtector: contract verification ───
@@ -243,24 +78,5 @@ public sealed class SecretStoreTests
         // is correctly implemented.
         var type = typeof(DbSecretStore);
         Assert.True(typeof(IManagedSecretStore).IsAssignableFrom(type));
-    }
-}
-
-/// <summary>
-/// Simple in-memory fake for testing SecretStoreResolver dispatch.
-/// </summary>
-internal sealed class InMemoryFakeSecretStore : IManagedSecretStore
-{
-    private readonly Dictionary<string, string> _store = new();
-
-    public Task<string?> ResolveAsync(SecretReference reference, CancellationToken cancellationToken)
-    {
-        return Task.FromResult(_store.GetValueOrDefault(reference.Id));
-    }
-
-    public Task<SecretWriteResult> WriteAsync(SecretReference reference, string value, CancellationToken cancellationToken)
-    {
-        _store[reference.Id] = value;
-        return Task.FromResult(SecretWriteResult.SuccessResult());
     }
 }

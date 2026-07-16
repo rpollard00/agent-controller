@@ -47,40 +47,25 @@ internal sealed class AzureDevOpsPatResolver(
     }
 
     /// <summary>
-    /// Resolves a PAT from a legacy "ENV:NAME" string or a direct PAT value.
-    /// For "ENV:NAME" references, converts to a <c>SecretReference</c> and resolves
-    /// through <see cref="IManagedSecretStore"/>. For direct values, returns as-is.
-    ///
-    /// This provides backward compatibility for the existing <c>ENV:</c> convention
-    /// used in <c>appsettings</c> and <c>AzureDevOpsBoardsOptions.PersonalAccessToken</c>.
+    /// Resolves a PAT from a direct PAT value.
+    /// Returns the value as-is when non-empty; returns null for empty/whitespace input.
     /// </summary>
     /// <param name="patValue">
-    /// Either a direct PAT value or an "ENV:VARIABLE_NAME" reference.
+    /// A direct PAT value.
     /// </param>
-    public async Task<string?> ResolveFromLegacyValueAsync(
+    public static Task<string?> ResolveFromLegacyValueAsync(
         string patValue,
         CancellationToken cancellationToken
     )
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (string.IsNullOrWhiteSpace(patValue))
         {
-            return null;
-        }
-
-        const string envPrefix = "ENV:";
-        if (patValue.StartsWith(envPrefix, StringComparison.OrdinalIgnoreCase))
-        {
-            var envName = patValue[envPrefix.Length..].Trim();
-            if (string.IsNullOrWhiteSpace(envName))
-            {
-                return null;
-            }
-
-            var reference = SecretReference.EnvironmentVariable(envName);
-            return await ResolveAsync(reference, cancellationToken);
+            return Task.FromResult<string?>(null);
         }
 
         // Direct PAT value — return as-is.
-        return patValue;
+        return Task.FromResult<string?>(patValue);
     }
 }

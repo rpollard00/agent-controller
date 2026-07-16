@@ -439,7 +439,7 @@ public sealed class AzureDevOpsConnectivityVerifierTests
 
     /// <summary>
     /// Fake IManagedSecretStore that resolves "EnvVar" kind references by reading
-    /// the actual environment variable (mimicking EnvVarSecretStore).
+    /// the actual environment variable.
     /// Kept for backward compatibility with other consumers of IManagedSecretStore.
     /// </summary>
     private sealed class EnvVarBackedFakeSecretStore : IManagedSecretStore

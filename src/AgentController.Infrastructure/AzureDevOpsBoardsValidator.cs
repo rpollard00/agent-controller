@@ -59,8 +59,7 @@ internal static class AzureDevOpsBoardsValidator
         {
             failures.Add(
                 "Azure DevOps Personal Access Token (PAT) is required. " +
-                "Configure 'azureDevOps:personalAccessToken' directly or use the 'ENV:VARIABLE_NAME' " +
-                "prefix to read from an environment variable.");
+                "Configure 'azureDevOps:personalAccessToken' with the PAT value.");
         }
 
         if (failures.Count > 0)
@@ -73,7 +72,7 @@ internal static class AzureDevOpsBoardsValidator
 
     /// <summary>
     /// Validates Azure DevOps Boards configuration asynchronously, routing PAT
-    /// resolution through <see cref="IManagedSecretStore"/> for "ENV:" references.
+    /// resolution through <see cref="IManagedSecretStore"/>.
     /// Throws <see cref="InvalidOperationException"/> with a clear message on
     /// the first validation failure.
     /// </summary>
@@ -127,8 +126,7 @@ internal static class AzureDevOpsBoardsValidator
         {
             failures.Add(
                 "Azure DevOps Personal Access Token (PAT) is required. " +
-                "Configure 'azureDevOps:personalAccessToken' directly or use the 'ENV:VARIABLE_NAME' " +
-                "prefix to read from an environment variable.");
+                "Configure 'azureDevOps:personalAccessToken' with the PAT value.");
         }
 
         if (failures.Count > 0)

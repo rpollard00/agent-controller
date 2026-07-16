@@ -11,7 +11,6 @@ namespace AgentController.Infrastructure.Secrets;
 ///
 /// Dispatches to registered store implementations:
 /// <list type="bullet">
-///   <item><description><c>"EnvVar"</c> → <see cref="EnvVarSecretStore"/></description></item>
 ///   <item><description><c>"Db"</c> → <see cref="DbSecretStore"/></description></item>
 /// </list>
 ///
@@ -39,9 +38,6 @@ internal sealed class SecretStoreResolver : IManagedSecretStore
     {
         return reference.Kind switch
         {
-            "EnvVar" => _serviceProvider
-                .GetRequiredService<EnvVarSecretStore>()
-                .ResolveAsync(reference, cancellationToken),
             "Db" => ResolveScopedAsync(store =>
                 store.ResolveAsync(reference, cancellationToken)),
             _ => Task.FromResult<string?>(null),
@@ -57,9 +53,6 @@ internal sealed class SecretStoreResolver : IManagedSecretStore
     {
         return reference.Kind switch
         {
-            "EnvVar" => _serviceProvider
-                .GetRequiredService<EnvVarSecretStore>()
-                .WriteAsync(reference, value, cancellationToken),
             "Db" => ResolveScopedAsync(store =>
                 store.WriteAsync(reference, value, cancellationToken)),
             _ => Task.FromResult(

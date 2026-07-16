@@ -120,16 +120,7 @@ internal sealed class ConfiguredProfileSource : IConfiguredProfileSource
             return Domain.Secrets.SecretReference.Empty;
         }
 
-        const string prefix = "ENV:";
-        if (configuredValue.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-        {
-            var name = configuredValue[prefix.Length..].Trim();
-            return string.IsNullOrWhiteSpace(name)
-                ? Domain.Secrets.SecretReference.Empty
-                : Domain.Secrets.SecretReference.ByName(name);
-        }
-
-        // Direct value — not a reference.
-        return Domain.Secrets.SecretReference.Empty;
+        // Treat the configured value as a named secret reference.
+        return Domain.Secrets.SecretReference.ByName(configuredValue.Trim());
     }
 }

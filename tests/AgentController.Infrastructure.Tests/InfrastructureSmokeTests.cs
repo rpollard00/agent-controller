@@ -541,36 +541,6 @@ public class InfrastructureSmokeTests
     }
 
     [Fact]
-    public void AzureDevOpsBoardsOptions_ResolvePat_EnvPrefixIsCaseInsensitive()
-    {
-        var envName = "AZDO_CASE_TEST_PAT";
-        var expected = "case-insensitive-pat";
-
-        try
-        {
-            Environment.SetEnvironmentVariable(envName, expected);
-
-            // Lowercase 'env:' prefix
-            var lowerOpt = new AzureDevOpsBoardsOptions
-            {
-                PersonalAccessToken = $"env:{envName}",
-            };
-            Assert.Equal(expected, lowerOpt.ResolvePersonalAccessToken());
-
-            // Mixed case 'Env:' prefix
-            var mixedOpt = new AzureDevOpsBoardsOptions
-            {
-                PersonalAccessToken = $"Env:{envName}",
-            };
-            Assert.Equal(expected, mixedOpt.ResolvePersonalAccessToken());
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(envName, null);
-        }
-    }
-
-    [Fact]
     public void IAzureDevOpsBoardsClient_IsDefinedInApplicationLayer()
     {
         var type = typeof(IAzureDevOpsBoardsClient);
@@ -583,38 +553,28 @@ public class InfrastructureSmokeTests
     {
         // Test that DI registration succeeds when validateConnection=false
         // (used in test/development scenarios without real Azure DevOps creds)
-        var envName = "AZDO_DI_TEST_PAT";
-        try
+        var configValues = new Dictionary<string, string?>
         {
-            Environment.SetEnvironmentVariable(envName, "test-pat-value");
+            ["workSource:provider"] = "AzureDevOpsBoards",
+            ["workSource:organizationUrl"] = "https://dev.azure.com/testorg",
+            ["workSource:project"] = "TestProject",
+            ["azureDevOps:personalAccessToken"] = "test-pat-value",
+        };
 
-            var configValues = new Dictionary<string, string?>
-            {
-                ["workSource:provider"] = "AzureDevOpsBoards",
-                ["workSource:organizationUrl"] = "https://dev.azure.com/testorg",
-                ["workSource:project"] = "TestProject",
-                ["azureDevOps:personalAccessToken"] = $"ENV:{envName}",
-            };
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(configValues)
+            .Build();
 
-            var config = new ConfigurationBuilder()
-                .AddInMemoryCollection(configValues)
-                .Build();
+        var services = new ServiceCollection();
+        services.AddSingleton<IConfiguration>(config);
+        services.AddAgentControllerOptions(config);
+        services.AddAgentControllerAzureDevOpsBoardsWorkSource(validateConnection: false);
 
-            var services = new ServiceCollection();
-            services.AddSingleton<IConfiguration>(config);
-            services.AddAgentControllerOptions(config);
-            services.AddAgentControllerAzureDevOpsBoardsWorkSource(validateConnection: false);
+        var provider = services.BuildServiceProvider();
 
-            var provider = services.BuildServiceProvider();
-
-            // Should be able to resolve IWorkSource as AzureDevOpsBoardsWorkSource
-            var workSource = provider.GetRequiredService<IWorkSource>();
-            Assert.IsType<AzureDevOpsBoardsWorkSource>(workSource);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(envName, null);
-        }
+        // Should be able to resolve IWorkSource as AzureDevOpsBoardsWorkSource
+        var workSource = provider.GetRequiredService<IWorkSource>();
+        Assert.IsType<AzureDevOpsBoardsWorkSource>(workSource);
     }
 
     [Fact]

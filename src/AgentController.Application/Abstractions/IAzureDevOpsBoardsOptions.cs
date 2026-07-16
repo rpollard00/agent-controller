@@ -8,10 +8,8 @@ namespace AgentController.Application.Abstractions;
 public interface IAzureDevOpsBoardsOptions
 {
     /// <summary>
-    /// Resolves the effective PAT value by expanding "ENV:VARIABLE_NAME" references.
+    /// Resolves the effective PAT value.
     /// Returns <c>null</c> when the configured value is empty or whitespace.
-    /// Throws <see cref="InvalidOperationException"/> when an ENV: reference points
-    /// to a missing or empty environment variable.
     /// </summary>
     string? ResolvePersonalAccessToken();
 }
