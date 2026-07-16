@@ -1,10 +1,16 @@
 import type {
+  CreatedSecretResponse,
+  CreatedSecretVersionResponse,
+  CreateSecretRequest,
+  CreateSecretVersionRequest,
   HostRepository,
   ProblemDetails,
   RepositoryHostConnectionProfile,
   RepositoryHostConnectivityResult,
   RepositoryProfile,
   RuntimeEnvironmentProfile,
+  SecretInfo,
+  SecretVersionInfo,
   WorkSourceConnectivityResult,
   WorkSourceEnvironmentProfile,
 } from './types';
@@ -36,11 +42,19 @@ export interface RepositoryHostConnectionResourceClient
   ): Promise<RepositoryProfile>;
 }
 
+export interface SecretsResourceClient {
+  list(signal?: AbortSignal): Promise<SecretInfo[]>;
+  listVersions(name: string, signal?: AbortSignal): Promise<SecretVersionInfo[]>;
+  create(request: CreateSecretRequest, signal?: AbortSignal): Promise<CreatedSecretResponse>;
+  createVersion(name: string, request: CreateSecretVersionRequest, signal?: AbortSignal): Promise<CreatedSecretVersionResponse>;
+}
+
 export interface WebUiApiClient {
   repositories: ResourceClient<RepositoryProfile>;
   workSourceEnvironments: WorkSourceEnvironmentResourceClient;
   repositoryHostConnections: RepositoryHostConnectionResourceClient;
   runtimeEnvironments: ResourceClient<RuntimeEnvironmentProfile>;
+  secrets: SecretsResourceClient;
 }
 
 export interface ApiClientOptions {
@@ -175,6 +189,31 @@ export function createWebUiApiClient(options: ApiClientOptions = {}): WebUiApiCl
         ),
     },
     runtimeEnvironments: resource<RuntimeEnvironmentProfile>('/runtime-environments'),
+    secrets: {
+      list: (signal) => request<SecretInfo[]>('/secrets', { signal }),
+      listVersions: (name, signal) =>
+        request<SecretVersionInfo[]>(
+          `/secrets/${encodeURIComponent(name)}/versions`,
+          { signal },
+        ),
+      create: (req, signal) =>
+        request<CreatedSecretResponse>('/secrets', {
+          method: 'POST',
+          signal,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(req),
+        }),
+      createVersion: (name, req, signal) =>
+        request<CreatedSecretVersionResponse>(
+          `/secrets/${encodeURIComponent(name)}/versions`,
+          {
+            method: 'POST',
+            signal,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(req),
+          },
+        ),
+    },
   };
 }
 

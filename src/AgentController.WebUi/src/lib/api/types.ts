@@ -102,6 +102,42 @@ export interface HostRepository {
   cloneTransportHint: CloneTransportHint;
 }
 
+/** Metadata for a named secret (no plaintext values). */
+export interface SecretInfo {
+  name: string;
+  latestVersion: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Metadata for a single secret version (no plaintext value). */
+export interface SecretVersionInfo {
+  version: number;
+  createdAt: string;
+}
+
+/** Request payload for creating a new secret. */
+export interface CreateSecretRequest {
+  name: string;
+  value: string;
+}
+
+/** Request payload for creating a new version of an existing secret. */
+export interface CreateSecretVersionRequest {
+  value: string;
+}
+
+/** Response after successfully creating a secret. */
+export interface CreatedSecretResponse {
+  name: string;
+}
+
+/** Response after successfully creating a secret version. */
+export interface CreatedSecretVersionResponse {
+  name: string;
+  version: number;
+}
+
 /** RFC 9457 problem details, including ASP.NET validation extensions. */
 export interface ProblemDetails {
   type?: string;

@@ -173,6 +173,27 @@ public static class ServiceCollectionExtensions
             ICommandHandler<OnboardRepositoryFromHostCommand, RepositoryOperationResult>,
             OnboardRepositoryFromHostCommandHandler
         >();
+
+        // Secrets management command handlers
+        services.AddScoped<
+            ICommandHandler<CreateSecretCommand, CreateSecretResult>,
+            CreateSecretCommandHandler
+        >();
+        services.AddScoped<
+            ICommandHandler<CreateSecretVersionCommand, CreateSecretVersionResult>,
+            CreateSecretVersionCommandHandler
+        >();
+
+        // Secrets management query handlers
+        services.AddScoped<
+            IQueryHandler<ListSecretsQuery, IReadOnlyList<Domain.Secrets.SecretInfo>>,
+            ListSecretsQueryHandler
+        >();
+        services.AddScoped<
+            IQueryHandler<ListSecretVersionsQuery, IReadOnlyList<Domain.Secrets.SecretVersionInfo>?>,
+            ListSecretVersionsQueryHandler
+        >();
+
         // Work-source connectivity verifier resolver
         services.AddWorkSourceConnectivityVerifierResolver();
 

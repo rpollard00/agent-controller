@@ -16,6 +16,7 @@ public static class WebUiControllers
     private const string WorkSourceEnvironmentsPath = "/api/webui/work-source-environments";
     private const string RuntimeEnvironmentsPath = "/api/webui/runtime-environments";
     private const string RepositoryHostConnectionsPath = "/api/webui/repository-host-connections";
+    private const string SecretsPath = "/api/webui/secrets";
 
     public static IEndpointRouteBuilder MapWebUiControllers(this IEndpointRouteBuilder app)
     {
@@ -23,6 +24,7 @@ public static class WebUiControllers
         MapWorkSourceEnvironmentControllers(app.MapGroup(WorkSourceEnvironmentsPath));
         MapRuntimeEnvironmentControllers(app.MapGroup(RuntimeEnvironmentsPath));
         MapRepositoryHostConnectionControllers(app.MapGroup(RepositoryHostConnectionsPath));
+        MapSecretsControllers(app.MapGroup(SecretsPath));
         return app;
     }
 
@@ -513,4 +515,106 @@ public static class WebUiControllers
             title: "Resource conflict.",
             detail: detail
         );
+
+    // ── Secrets management endpoints ──
+
+    private static void MapSecretsControllers(RouteGroupBuilder group)
+    {
+        // GET /api/webui/secrets — list all secrets (metadata only)
+        group.MapGet(
+            "",
+            async (
+                IQueryHandler<ListSecretsQuery, IReadOnlyList<Domain.Secrets.SecretInfo>> handler,
+                CancellationToken cancellationToken
+            ) =>
+                Results.Ok(
+                    await handler.ExecuteAsync(new ListSecretsQuery(), cancellationToken)
+                )
+        );
+
+        // GET /api/webui/secrets/{name}/versions — list versions of a secret (metadata only)
+        group.MapGet(
+            "/{name}/versions",
+            async (
+                string name,
+                IQueryHandler<ListSecretVersionsQuery, IReadOnlyList<Domain.Secrets.SecretVersionInfo>?> handler,
+                CancellationToken cancellationToken
+            ) =>
+            {
+                var versions = await handler.ExecuteAsync(
+                    new ListSecretVersionsQuery(name),
+                    cancellationToken
+                );
+                return versions is null ? Results.NotFound() : Results.Ok(versions);
+            }
+        );
+
+        // POST /api/webui/secrets — create a new secret
+        group.MapPost(
+            "",
+            async (
+                CreateSecretRequest request,
+                ICommandHandler<CreateSecretCommand, CreateSecretResult> handler,
+                CancellationToken cancellationToken
+            ) =>
+            {
+                var result = await handler.HandleAsync(
+                    new CreateSecretCommand(request.Name, request.Value),
+                    cancellationToken
+                );
+                return MapSecretResult(result);
+            }
+        );
+
+        // POST /api/webui/secrets/{name}/versions — create a new version of an existing secret
+        group.MapPost(
+            "/{name}/versions",
+            async (
+                string name,
+                CreateSecretVersionRequest request,
+                ICommandHandler<CreateSecretVersionCommand, CreateSecretVersionResult> handler,
+                CancellationToken cancellationToken
+            ) =>
+            {
+                var result = await handler.HandleAsync(
+                    new CreateSecretVersionCommand(name, request.Value),
+                    cancellationToken
+                );
+                return MapSecretVersionResult(result);
+            }
+        );
+    }
+
+    private static IResult MapSecretResult(CreateSecretResult result) =>
+        result.Status switch
+        {
+            SecretOperationStatus.Succeeded => Results.Created(
+                $"{SecretsPath}/{Uri.EscapeDataString(result.SecretName!)}",
+                new { name = result.SecretName }
+            ),
+            SecretOperationStatus.ValidationFailed => ValidationProblem(result.ValidationErrors),
+            SecretOperationStatus.Conflict => ConflictProblem(result.Detail),
+            SecretOperationStatus.NotFound => NotFoundProblem(result.Detail),
+            _ => throw new InvalidOperationException(
+                $"Unsupported secret operation status '{result.Status}'."
+            ),
+        };
+
+    private static IResult MapSecretVersionResult(CreateSecretVersionResult result) =>
+        result.Status switch
+        {
+            SecretOperationStatus.Succeeded => Results.Ok(
+                new { name = result.SecretName, version = result.Version }
+            ),
+            SecretOperationStatus.ValidationFailed => ValidationProblem(result.ValidationErrors),
+            SecretOperationStatus.Conflict => ConflictProblem(result.Detail),
+            SecretOperationStatus.NotFound => NotFoundProblem(result.Detail),
+            _ => throw new InvalidOperationException(
+                $"Unsupported secret version operation status '{result.Status}'."
+            ),
+        };
+
+    // Request DTOs for secrets management
+    private sealed record CreateSecretRequest(string Name, string Value);
+    private sealed record CreateSecretVersionRequest(string Value);
 }

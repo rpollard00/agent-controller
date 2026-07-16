@@ -1,4 +1,4 @@
-export type RouteId = 'overview' | 'repositories' | 'work-source-environments' | 'repository-host-connections' | 'runtime-environments';
+export type RouteId = 'overview' | 'repositories' | 'work-source-environments' | 'repository-host-connections' | 'runtime-environments' | 'secrets';
 
 export interface AppRoute {
   id: RouteId;
@@ -50,6 +50,14 @@ export const routes: readonly AppRoute[] = [
     title: 'Runtime Environments',
     description: 'Configure workspace providers and the runtimes that execute agent work.',
   },
+  {
+    id: 'secrets',
+    path: '/secrets',
+    label: 'Secrets',
+    shortLabel: 'Secrets',
+    title: 'Secrets',
+    description: 'Manage named, versioned, encrypted secrets for integrated platforms.',
+  },
 ] as const;
 
 export function matchRoute(pathname: string): AppRoute | undefined {
@@ -71,6 +79,10 @@ export function matchRoute(pathname: string): AppRoute | undefined {
 
   if (/^\/runtime-environments\/(?:new|[^/]+(?:\/edit)?)$/.test(normalizedPath)) {
     return routes.find((route) => route.id === 'runtime-environments');
+  }
+
+  if (/^\/secrets\/(?:new|[^/]+(?:\/versions|\/new-version)?)$/.test(normalizedPath)) {
+    return routes.find((route) => route.id === 'secrets');
   }
 
   return undefined;
