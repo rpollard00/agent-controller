@@ -6,6 +6,7 @@ namespace AgentController.Infrastructure.Data.Configurations;
 
 /// <summary>
 /// EF Core configuration for managed work-source environment profiles.
+/// Uses <see cref="ConnectionEntityConfigurationHelper"/> for shared connection fields.
 /// </summary>
 internal sealed class WorkSourceEnvironmentEntityConfiguration
     : IEntityTypeConfiguration<WorkSourceEnvironmentEntity>
@@ -16,31 +17,14 @@ internal sealed class WorkSourceEnvironmentEntityConfiguration
 
         builder.HasKey(x => x.Key);
 
-        builder.Property(x => x.Key)
-            .HasMaxLength(128);
+        // Apply common connection entity configurations (Key, DisplayName, Enabled,
+        // Provider, OrganizationUrl, Project, CreatedAt, UpdatedAt).
+        ConnectionEntityConfigurationHelper.ApplyCommonConfigurations(builder);
 
-        builder.Property(x => x.DisplayName)
-            .IsRequired()
-            .HasMaxLength(256);
-
-        builder.Property(x => x.Enabled)
-            .IsRequired();
-
-        builder.Property(x => x.Provider)
-            .IsRequired()
-            .HasMaxLength(128);
-
+        // Work-source-specific fields.
         builder.Property(x => x.TagPrefix)
             .IsRequired()
             .HasMaxLength(64);
-
-        builder.Property(x => x.OrganizationUrl)
-            .IsRequired()
-            .HasMaxLength(2048);
-
-        builder.Property(x => x.Project)
-            .IsRequired()
-            .HasMaxLength(256);
 
         builder.Property(x => x.ActiveState)
             .HasMaxLength(256);
@@ -51,11 +35,5 @@ internal sealed class WorkSourceEnvironmentEntityConfiguration
         builder.Property(x => x.PatEnvironmentVariable)
             .IsRequired()
             .HasMaxLength(256);
-
-        builder.Property(x => x.CreatedAt)
-            .IsRequired();
-
-        builder.Property(x => x.UpdatedAt)
-            .IsRequired();
     }
 }

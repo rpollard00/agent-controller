@@ -65,7 +65,7 @@
             </th>
             <td class="px-4 py-4 text-slate-300">{profile.defaultBranch}</td>
             <td class="px-4 py-4 text-slate-300">
-              <span class="block">Work source: {profile.azureDevOpsEnvironmentKey ?? 'None'}</span>
+              <span class="block">Host connection: {profile.repositoryHostConnectionKey ?? 'None'}</span>
               <span class="mt-1 block">Runtime: {profile.runtimeEnvironmentKey ?? 'None'}</span>
             </td>
             <td class="px-4 py-3">

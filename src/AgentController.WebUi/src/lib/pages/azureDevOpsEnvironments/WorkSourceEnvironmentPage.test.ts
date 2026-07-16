@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../../../App.svelte';
 import { ApiError, type ResourceClient, type WebUiApiClient } from '../../api/client';
 import type {
+  RepositoryHostConnectionProfile,
   RepositoryProfile,
   RuntimeEnvironmentProfile,
   WorkSourceConnectivityResult,
@@ -63,6 +64,16 @@ function createApi(
   const client: WebUiApiClient = {
     repositories: staticResource<RepositoryProfile>([]),
     workSourceEnvironments,
+    repositoryHostConnections: {
+      ...staticResource<RepositoryHostConnectionProfile>([]),
+      verifyConnection: async () => ({
+        success: true,
+        authMechanism: 'PersonalAccessToken',
+        errors: [],
+      }),
+      listRepositories: async () => [],
+      onboardRepository: async () => ({} as RepositoryProfile),
+    },
     runtimeEnvironments: staticResource<RuntimeEnvironmentProfile>([]),
   };
 

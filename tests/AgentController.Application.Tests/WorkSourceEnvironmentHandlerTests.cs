@@ -248,40 +248,10 @@ public sealed class WorkSourceEnvironmentHandlerTests
     }
 
     [Fact]
-    public async Task Delete_ReturnsConflictWhileARepositoryReferencesEnvironment()
-    {
-        var environments = new FakeWorkSourceEnvironmentStore(CreateProfile("shared"));
-        var repositories = new FakeRepositoryStore(
-#pragma warning disable CS0618 // Type or member is obsolete
-            new RepositoryProfile { Key = "service-b", AzureDevOpsEnvironmentKey = " SHARED " },
-            new RepositoryProfile { Key = "service-a", AzureDevOpsEnvironmentKey = "shared" }
-#pragma warning restore CS0618
-        );
-        var handler = new DeleteWorkSourceEnvironmentCommandHandler(environments, repositories);
-
-        var result = await handler.HandleAsync(
-            new DeleteWorkSourceEnvironmentCommand(" SHARED "),
-            CancellationToken.None
-        );
-
-        Assert.Equal(WorkSourceEnvironmentOperationStatus.Conflict, result.Status);
-        Assert.Contains(
-            "service-a",
-            Assert.IsType<string>(result.Detail),
-            StringComparison.Ordinal
-        );
-        Assert.Null(environments.LastDeletedKey);
-        Assert.NotNull(await environments.GetByKeyAsync("shared", CancellationToken.None));
-    }
-
-    [Fact]
-    public async Task Delete_RemovesUnreferencedEnvironmentAndReturnsTypedMissingOutcome()
+    public async Task Delete_RemovesEnvironmentAndReturnsTypedMissingOutcome()
     {
         var environments = new FakeWorkSourceEnvironmentStore(CreateProfile("temporary"));
-        var handler = new DeleteWorkSourceEnvironmentCommandHandler(
-            environments,
-            new FakeRepositoryStore()
-        );
+        var handler = new DeleteWorkSourceEnvironmentCommandHandler(environments);
 
         var deleted = await handler.HandleAsync(
             new DeleteWorkSourceEnvironmentCommand(" TEMPORARY "),
@@ -291,15 +261,11 @@ public sealed class WorkSourceEnvironmentHandlerTests
             new DeleteWorkSourceEnvironmentCommand("temporary"),
             CancellationToken.None
         );
-        var invalid = await handler.HandleAsync(
-            new DeleteWorkSourceEnvironmentCommand("bad key"),
-            CancellationToken.None
-        );
 
         Assert.Equal(WorkSourceEnvironmentOperationStatus.Succeeded, deleted.Status);
         Assert.Equal("temporary", environments.LastDeletedKey);
         Assert.Equal(WorkSourceEnvironmentOperationStatus.NotFound, missing.Status);
-        Assert.Equal(WorkSourceEnvironmentOperationStatus.ValidationFailed, invalid.Status);
+        Assert.Null(await environments.GetByKeyAsync("temporary", CancellationToken.None));
     }
 
     [Fact]

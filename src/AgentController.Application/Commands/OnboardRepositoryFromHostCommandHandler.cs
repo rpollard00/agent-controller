@@ -12,17 +12,13 @@ public sealed class OnboardRepositoryFromHostCommandHandler(
     IRepositoryHostConnectionStore connectionStore,
     IRepositoryHostResolver hostResolver,
     IRepositoryStore repositoryStore,
-    IWorkSourceEnvironmentStore workSourceEnvironmentStore,
     IRuntimeEnvironmentStore runtimeEnvironmentStore
 ) : ICommandHandler<OnboardRepositoryFromHostCommand, RepositoryOperationResult>
 {
     private readonly IRepositoryHostConnectionStore _connectionStore = connectionStore;
     private readonly IRepositoryHostResolver _hostResolver = hostResolver;
     private readonly IRepositoryStore _repositoryStore = repositoryStore;
-    private readonly IWorkSourceEnvironmentStore _workSourceEnvironmentStore =
-        workSourceEnvironmentStore;
-    private readonly IRuntimeEnvironmentStore _runtimeEnvironmentStore =
-        runtimeEnvironmentStore;
+    private readonly IRuntimeEnvironmentStore _runtimeEnvironmentStore = runtimeEnvironmentStore;
 
     public async Task<RepositoryOperationResult> HandleAsync(
         OnboardRepositoryFromHostCommand command,
@@ -78,7 +74,6 @@ public sealed class OnboardRepositoryFromHostCommandHandler(
         // 5. Validate and normalize the draft profile.
         var validation = await RepositoryProfileValidation.ValidateAndNormalizeAsync(
             draftProfile,
-            _workSourceEnvironmentStore,
             _runtimeEnvironmentStore,
             _connectionStore,
             cancellationToken

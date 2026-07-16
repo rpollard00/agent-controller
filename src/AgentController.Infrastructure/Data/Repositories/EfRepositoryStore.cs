@@ -144,9 +144,6 @@ internal sealed class EfRepositoryStore : IRepositoryStore
         entity.Transport = profile.Transport;
         entity.EnvironmentProfile = profile.EnvironmentProfile;
         entity.RuntimeProfile = profile.RuntimeProfile;
-#pragma warning disable CS0618 // Type or member is obsolete
-        entity.AzureDevOpsEnvironmentKey = profile.AzureDevOpsEnvironmentKey;
-#pragma warning restore CS0618
         entity.RepositoryHostConnectionKey = profile.RepositoryHostConnectionKey;
         entity.RemoteIdentity = profile.RemoteIdentity;
         entity.RuntimeEnvironmentKey = profile.RuntimeEnvironmentKey;
@@ -163,9 +160,6 @@ internal sealed class EfRepositoryStore : IRepositoryStore
             Transport = entity.Transport,
             EnvironmentProfile = entity.EnvironmentProfile,
             RuntimeProfile = entity.RuntimeProfile,
-#pragma warning disable CS0618 // Type or member is obsolete
-            AzureDevOpsEnvironmentKey = entity.AzureDevOpsEnvironmentKey,
-#pragma warning restore CS0618
             RepositoryHostConnectionKey = entity.RepositoryHostConnectionKey,
             RemoteIdentity = entity.RemoteIdentity,
             RuntimeEnvironmentKey = entity.RuntimeEnvironmentKey,

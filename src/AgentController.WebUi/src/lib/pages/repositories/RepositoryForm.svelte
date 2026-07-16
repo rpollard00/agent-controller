@@ -4,7 +4,6 @@
     RepositoryHostConnectionProfile,
     RepositoryProfile,
     RuntimeEnvironmentProfile,
-    WorkSourceEnvironmentProfile,
   } from '../../api/types';
   import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
@@ -19,7 +18,6 @@
   let {
     mode,
     profile,
-    workSourceEnvironments,
     repositoryHostConnections,
     runtimeEnvironments,
     submitting = false,
@@ -29,7 +27,6 @@
   }: {
     mode: 'create' | 'edit';
     profile?: RepositoryProfile;
-    workSourceEnvironments: WorkSourceEnvironmentProfile[];
     repositoryHostConnections: RepositoryHostConnectionProfile[];
     runtimeEnvironments: RuntimeEnvironmentProfile[];
     submitting?: boolean;
@@ -72,10 +69,6 @@
 
   function environmentLabel(profile: { key: string; displayName: string; enabled: boolean }): string {
     return `${profile.displayName} — ${profile.key}${profile.enabled ? '' : ' (disabled)'}`;
-  }
-
-  function hasWorkSourceEnvironment(key: string): boolean {
-    return workSourceEnvironments.some((environment) => environment.key === key);
   }
 
   function hasRuntimeEnvironment(key: string): boolean {
@@ -223,33 +216,6 @@
     </p>
 
     <div class="grid gap-6 lg:grid-cols-2">
-      <Field
-        id="repository-azureDevOpsEnvironmentKey"
-        label="Work source environment"
-        hint="Choose the work source this repository pulls from."
-        error={fieldError('azureDevOpsEnvironmentKey')}
-      >
-        <select
-          id="repository-azureDevOpsEnvironmentKey"
-          name="azureDevOpsEnvironmentKey"
-          class={inputClasses}
-          bind:value={values.azureDevOpsEnvironmentKey}
-          disabled={submitting}
-          aria-invalid={fieldError('azureDevOpsEnvironmentKey') ? 'true' : undefined}
-          aria-describedby={describedBy('azureDevOpsEnvironmentKey', true)}
-        >
-          <option value="">No managed work source environment</option>
-          {#if values.azureDevOpsEnvironmentKey && !hasWorkSourceEnvironment(values.azureDevOpsEnvironmentKey)}
-            <option value={values.azureDevOpsEnvironmentKey}>
-              {values.azureDevOpsEnvironmentKey} (unavailable)
-            </option>
-          {/if}
-          {#each workSourceEnvironments as environment (environment.key)}
-            <option value={environment.key}>{environmentLabel(environment)}</option>
-          {/each}
-        </select>
-      </Field>
-
       <Field
         id="repository-repositoryHostConnectionKey"
         label="Repository host connection"

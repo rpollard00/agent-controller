@@ -9,52 +9,48 @@ namespace AgentController.Application;
 /// Provider-keyed resolver that maps a <see cref="RepositoryHostConnectionProfile.Provider"/>
 /// string to the registered <see cref="IRepositoryHostConnection"/> for that provider.
 /// Returns a non-success result with a clear error for unsupported providers.
+///
+/// Uses the generic <see cref="ProviderKeyedResolver{TService,TResult}"/> to avoid
+/// duplicating the scoped resolution pattern.
 /// </summary>
 internal sealed class RepositoryHostResolver(
     IServiceScopeFactory scopeFactory,
     IReadOnlyDictionary<string, Type> hostTypes
 ) : IRepositoryHostResolver
 {
-    /// <inheritdoc />
-    public async Task<RepositoryHostConnectivityResult> VerifyConnectivityAsync(
+    private readonly ProviderKeyedResolver<IRepositoryHostConnection, RepositoryHostConnectivityResult>
+        _connectivityResolver = new(scopeFactory, hostTypes);
+
+    private readonly ProviderKeyedResolver<IRepositoryHostConnection, IReadOnlyList<HostRepository>>
+        _listResolver = new(scopeFactory, hostTypes);
+
+    public Task<RepositoryHostConnectivityResult> VerifyConnectivityAsync(
         RepositoryHostConnectionProfile profile,
         CancellationToken cancellationToken
     )
     {
-        if (!hostTypes.TryGetValue(profile.Provider, out var hostType))
-        {
-            return RepositoryHostConnectivityResult.FailureResult(
+        return _connectivityResolver.ResolveAndExecuteAsync(
+            profile.Provider,
+            RepositoryHostConnectivityResult.FailureResult(
                 [
                     $"Repository host operations are not supported for provider '{profile.Provider}'."
                 ]
-            );
-        }
-
-        await using var scope = scopeFactory.CreateAsyncScope();
-        var host = (IRepositoryHostConnection)scope.ServiceProvider
-            .GetRequiredService(hostType);
-
-        return await host.VerifyConnectivityAsync(profile, cancellationToken);
+            ),
+            (host, ct) => host.VerifyConnectivityAsync(profile, ct),
+            cancellationToken
+        );
     }
 
-    /// <inheritdoc />
-    public async Task<IReadOnlyList<HostRepository>> ListRepositoriesAsync(
+    public Task<IReadOnlyList<HostRepository>> ListRepositoriesAsync(
         RepositoryHostConnectionProfile profile,
         CancellationToken cancellationToken
     )
     {
-        if (!hostTypes.TryGetValue(profile.Provider, out var hostType))
-        {
-            // Return empty list for unsupported providers rather than throwing.
-            // The caller can distinguish this from a genuine empty result by checking
-            // whether the provider is known via the resolver's VerifyConnectivityAsync.
-            return Array.Empty<HostRepository>();
-        }
-
-        await using var scope = scopeFactory.CreateAsyncScope();
-        var host = (IRepositoryHostConnection)scope.ServiceProvider
-            .GetRequiredService(hostType);
-
-        return await host.ListRepositoriesAsync(profile, cancellationToken);
+        return _listResolver.ResolveAndExecuteAsync(
+            profile.Provider,
+            Array.Empty<HostRepository>(),
+            (host, ct) => host.ListRepositoriesAsync(profile, ct),
+            cancellationToken
+        );
     }
 }

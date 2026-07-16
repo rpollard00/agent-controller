@@ -4,15 +4,13 @@ using AgentController.Application.Results;
 namespace AgentController.Application.Commands;
 
 /// <summary>
-/// Validates and deletes an unreferenced managed work source environment profile.
+/// Validates and deletes a managed work source environment profile.
 /// </summary>
 public sealed class DeleteWorkSourceEnvironmentCommandHandler(
-    IWorkSourceEnvironmentStore environmentStore,
-    IRepositoryStore repositoryStore
+    IWorkSourceEnvironmentStore environmentStore
 ) : ICommandHandler<DeleteWorkSourceEnvironmentCommand, WorkSourceEnvironmentOperationResult>
 {
     private readonly IWorkSourceEnvironmentStore _environmentStore = environmentStore;
-    private readonly IRepositoryStore _repositoryStore = repositoryStore;
 
     public async Task<WorkSourceEnvironmentOperationResult> HandleAsync(
         DeleteWorkSourceEnvironmentCommand command,
@@ -30,27 +28,6 @@ public sealed class DeleteWorkSourceEnvironmentCommandHandler(
         {
             return WorkSourceEnvironmentOperationResult.NotFound(
                 $"Work source environment '{key.Key}' was not found."
-            );
-        }
-
-        var repositories = await _repositoryStore.ListAsync(cancellationToken);
-        var referencingRepository = repositories
-            .Where(repository =>
-#pragma warning disable CS0618 // Type or member is obsolete
-                string.Equals(
-                    repository.AzureDevOpsEnvironmentKey?.Trim(),
-                    key.Key,
-                    StringComparison.OrdinalIgnoreCase
-                )
-#pragma warning restore CS0618
-            )
-            .OrderBy(repository => repository.Key, StringComparer.Ordinal)
-            .FirstOrDefault();
-
-        if (referencingRepository is not null)
-        {
-            return WorkSourceEnvironmentOperationResult.Conflict(
-                $"Work source environment '{key.Key}' is referenced by repository '{referencingRepository.Key}'."
             );
         }
 

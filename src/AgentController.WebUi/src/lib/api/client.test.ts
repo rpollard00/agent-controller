@@ -9,7 +9,8 @@ const repository: RepositoryProfile = {
   transport: 'httpsPat',
   environmentProfile: '',
   runtimeProfile: '',
-  azureDevOpsEnvironmentKey: null,
+  repositoryHostConnectionKey: null,
+  remoteIdentity: null,
   runtimeEnvironmentKey: null,
   allowedPaths: ['src'],
 };

@@ -1,6 +1,5 @@
 using AgentController.Application;
 using AgentController.Domain;
-using AgentController.Infrastructure.Options;
 using Microsoft.Extensions.Logging;
 
 namespace AgentController.Infrastructure;
@@ -8,12 +7,12 @@ namespace AgentController.Infrastructure;
 /// <summary>
 /// Creates short-lived Azure DevOps clients from enabled effective profiles.
 /// Resolves the PAT through <see cref="ISecretStore"/> using the shared
-/// <see cref="AzureDevOpsPatResolver"/> so both work-source (Boards) and
-/// repo-host (Repos) ADO paths share the same resolution helper.
+/// <see cref="AzureDevOpsPatResolver"/>, then delegates client construction
+/// to the shared <see cref="AzureDevOpsClientFactory"/>.
 /// </summary>
 internal sealed class AzureDevOpsBoardsClientFactory(
-    ILoggerFactory loggerFactory,
-    AzureDevOpsPatResolver patResolver
+    AzureDevOpsPatResolver patResolver,
+    AzureDevOpsClientFactory clientFactory
 ) : IAzureDevOpsBoardsClientFactory
 {
     /// <summary>
@@ -31,13 +30,9 @@ internal sealed class AzureDevOpsBoardsClientFactory(
         }
 
         // Resolve PAT through the shared resolver.
-        // The profile's PatEnvironmentVariable is an environment variable name
-        // (without "ENV:" prefix), so we use ResolveFromEnvironmentVariableAsync.
         string? resolvedPat = null;
         if (!string.IsNullOrWhiteSpace(profile.PatEnvironmentVariable))
         {
-            // Synchronous resolution for the factory interface.
-            // The resolver dispatches through ISecretStore which handles EnvVar kind.
             resolvedPat = patResolver
                 .ResolveFromEnvironmentVariableAsync(
                     profile.PatEnvironmentVariable,
@@ -47,18 +42,18 @@ internal sealed class AzureDevOpsBoardsClientFactory(
                 .GetResult();
         }
 
-        var options = new AzureDevOpsBoardsOptions
+        if (string.IsNullOrWhiteSpace(resolvedPat))
         {
-            BaseUrl = profile.OrganizationUrl,
-            Project = profile.Project,
-            PersonalAccessToken = string.Empty,
-        };
+            throw new InvalidOperationException(
+                $"PAT could not be resolved for Azure DevOps environment '{profile.Key}'."
+            );
+        }
 
-        return new AzureDevOpsBoardsClient(
-            new HttpClient(),
-            options,
-            loggerFactory.CreateLogger<AzureDevOpsBoardsClient>(),
-            personalAccessToken: resolvedPat
+        // Delegate to the shared client factory.
+        return clientFactory.Create(
+            profile.OrganizationUrl,
+            profile.Project,
+            resolvedPat
         );
     }
 }

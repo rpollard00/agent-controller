@@ -190,7 +190,14 @@ public static class AgentControllerServiceCollectionExtensions
 
         // Ensure secret stores are registered for AzureDevOpsPatResolver dependency.
         AddAgentControllerSecretStores(services);
+
+        // Shared ADO client factory — used by both work-source (Boards) and repo-host (Repos) paths.
+        services.AddSingleton<AzureDevOpsClientFactory>();
+
+        // Shared PAT resolver used by both work-source (Boards) and repo-host (Repos) ADO paths.
         services.AddSingleton<AzureDevOpsPatResolver>();
+
+        // Boards client factory delegates to the shared AzureDevOpsClientFactory.
         services.TryAddSingleton<IAzureDevOpsBoardsClientFactory, AzureDevOpsBoardsClientFactory>();
 
         return services;
@@ -466,12 +473,15 @@ public static class AgentControllerServiceCollectionExtensions
         // Register secret stores so ISecretStore is available for PAT resolution.
         AddAgentControllerSecretStores(services);
 
+        // Shared ADO client factory — used by both work-source (Boards) and repo-host (Repos) paths.
+        services.TryAddSingleton<AzureDevOpsClientFactory>();
+
         // Register the shared PAT resolver used by both work-source (Boards)
         // and repo-host (Repos) ADO paths. Routes resolution through ISecretStore
         // with backward compatibility for legacy "ENV:NAME" and direct PAT forms.
-        services.AddSingleton<AzureDevOpsPatResolver>();
+        services.TryAddSingleton<AzureDevOpsPatResolver>();
 
-        // Register the Azure DevOps Boards client factory with ISecretStore-backed PAT resolution.
+        // Boards client factory delegates to the shared AzureDevOpsClientFactory.
         services.TryAddSingleton<IAzureDevOpsBoardsClientFactory, AzureDevOpsBoardsClientFactory>();
 
         // Register the Azure DevOps connectivity verifier with the provider-keyed resolver.
@@ -484,7 +494,8 @@ public static class AgentControllerServiceCollectionExtensions
         // Register the Azure DevOps Repos repository host for the provider-keyed resolver.
         // Uses ISecretStore for PAT resolution (not Environment.GetEnvironmentVariable).
         // Reuses AzureDevOpsBoardsClient for HTTP operations.
-        services.AddSingleton<IAzureDevOpsReposClientFactory, AzureDevOpsReposClientFactory>();
+        // Repos client factory delegates to the shared AzureDevOpsClientFactory.
+        services.TryAddSingleton<IAzureDevOpsReposClientFactory, AzureDevOpsReposClientFactory>();
         services.AddRepositoryHost<AzureDevOpsReposRepositoryHost>("AzureDevOpsRepos");
 
         return services;

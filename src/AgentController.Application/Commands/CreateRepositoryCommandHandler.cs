@@ -6,14 +6,11 @@ namespace AgentController.Application.Commands;
 /// <summary>Validates, normalizes, and creates a managed repository profile.</summary>
 public sealed class CreateRepositoryCommandHandler(
     IRepositoryStore repositoryStore,
-    IWorkSourceEnvironmentStore workSourceEnvironmentStore,
     IRuntimeEnvironmentStore runtimeEnvironmentStore,
     IRepositoryHostConnectionStore? repositoryHostConnectionStore
 ) : ICommandHandler<CreateRepositoryCommand, RepositoryOperationResult>
 {
     private readonly IRepositoryStore _repositoryStore = repositoryStore;
-    private readonly IWorkSourceEnvironmentStore _workSourceEnvironmentStore =
-        workSourceEnvironmentStore;
     private readonly IRuntimeEnvironmentStore _runtimeEnvironmentStore = runtimeEnvironmentStore;
     private readonly IRepositoryHostConnectionStore? _repositoryHostConnectionStore =
         repositoryHostConnectionStore;
@@ -35,7 +32,6 @@ public sealed class CreateRepositoryCommandHandler(
 
         var validation = await RepositoryProfileValidation.ValidateAndNormalizeAsync(
             command.Profile,
-            _workSourceEnvironmentStore,
             _runtimeEnvironmentStore,
             _repositoryHostConnectionStore,
             cancellationToken

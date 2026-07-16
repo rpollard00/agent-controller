@@ -60,12 +60,10 @@ public sealed class RepositoryOnboardingHandlerTests
     public async Task Create_NormalizesProfileAndReferencedKeysBeforePersisting()
     {
         var repositories = new FakeRepositoryStore();
-        var azureDevOpsEnvironments = new FakeWorkSourceEnvironmentStore("ado-primary");
         var runtimeEnvironments = new FakeRuntimeEnvironmentStore("runtime-local");
-        var hostConnections = new FakeRepositoryHostConnectionStore();
+        var hostConnections = new FakeRepositoryHostConnectionStore("host-primary");
         var handler = new CreateRepositoryCommandHandler(
             repositories,
-            azureDevOpsEnvironments,
             runtimeEnvironments,
             hostConnections
         );
@@ -77,9 +75,7 @@ public sealed class RepositoryOnboardingHandlerTests
             Transport = CloneTransport.HttpsPat,
             EnvironmentProfile = " legacy-environment ",
             RuntimeProfile = " legacy-runtime ",
-#pragma warning disable CS0618 // Type or member is obsolete
-            AzureDevOpsEnvironmentKey = " ADO-PRIMARY ",
-#pragma warning restore CS0618
+            RepositoryHostConnectionKey = " HOST-PRIMARY ",
             RuntimeEnvironmentKey = " RUNTIME-LOCAL ",
             AllowedPaths = [" ./src//Features/ ", "src\\Features", " tests/ "],
         };
@@ -97,9 +93,7 @@ public sealed class RepositoryOnboardingHandlerTests
         Assert.Equal("feature/onboarding", persisted.DefaultBranch);
         Assert.Equal("legacy-environment", persisted.EnvironmentProfile);
         Assert.Equal("legacy-runtime", persisted.RuntimeProfile);
-#pragma warning disable CS0618 // Type or member is obsolete
-        Assert.Equal("ado-primary", persisted.AzureDevOpsEnvironmentKey);
-#pragma warning restore CS0618
+        Assert.Equal("host-primary", persisted.RepositoryHostConnectionKey);
         Assert.Equal("runtime-local", persisted.RuntimeEnvironmentKey);
         Assert.Equal(["src/Features", "tests"], persisted.AllowedPaths);
     }
@@ -110,7 +104,6 @@ public sealed class RepositoryOnboardingHandlerTests
         var repositories = new FakeRepositoryStore();
         var handler = new CreateRepositoryCommandHandler(
             repositories,
-            new FakeWorkSourceEnvironmentStore(),
             new FakeRuntimeEnvironmentStore(),
             new FakeRepositoryHostConnectionStore()
         );
@@ -141,15 +134,12 @@ public sealed class RepositoryOnboardingHandlerTests
         var repositories = new FakeRepositoryStore();
         var handler = new CreateRepositoryCommandHandler(
             repositories,
-            new FakeWorkSourceEnvironmentStore(),
             new FakeRuntimeEnvironmentStore(),
             new FakeRepositoryHostConnectionStore()
         );
         var profile = CreateProfile("referencing") with
         {
-#pragma warning disable CS0618 // Type or member is obsolete
-            AzureDevOpsEnvironmentKey = "missing-ado",
-#pragma warning restore CS0618
+            RepositoryHostConnectionKey = "missing-host",
             RuntimeEnvironmentKey = "missing-runtime",
         };
 
@@ -159,7 +149,7 @@ public sealed class RepositoryOnboardingHandlerTests
         );
 
         Assert.Equal(RepositoryOperationStatus.ValidationFailed, result.Status);
-        Assert.Contains("azureDevOpsEnvironmentKey", result.ValidationErrors.Keys);
+        Assert.Contains("repositoryHostConnectionKey", result.ValidationErrors.Keys);
         Assert.Contains("runtimeEnvironmentKey", result.ValidationErrors.Keys);
         Assert.Null(repositories.LastCreated);
     }
@@ -170,7 +160,6 @@ public sealed class RepositoryOnboardingHandlerTests
         var repositories = new FakeRepositoryStore(CreateProfile("shared"));
         var handler = new CreateRepositoryCommandHandler(
             repositories,
-            new FakeWorkSourceEnvironmentStore(),
             new FakeRuntimeEnvironmentStore(),
             new FakeRepositoryHostConnectionStore()
         );
@@ -191,7 +180,6 @@ public sealed class RepositoryOnboardingHandlerTests
         var repositories = new FakeRepositoryStore(CreateProfile("service"));
         var handler = new UpdateRepositoryCommandHandler(
             repositories,
-            new FakeWorkSourceEnvironmentStore(),
             new FakeRuntimeEnvironmentStore(),
             new FakeRepositoryHostConnectionStore()
         );
@@ -219,7 +207,6 @@ public sealed class RepositoryOnboardingHandlerTests
         var repositories = new FakeRepositoryStore(CreateProfile("original"));
         var handler = new UpdateRepositoryCommandHandler(
             repositories,
-            new FakeWorkSourceEnvironmentStore(),
             new FakeRuntimeEnvironmentStore(),
             new FakeRepositoryHostConnectionStore()
         );
@@ -244,7 +231,6 @@ public sealed class RepositoryOnboardingHandlerTests
         var repositories = new FakeRepositoryStore();
         var handler = new UpdateRepositoryCommandHandler(
             repositories,
-            new FakeWorkSourceEnvironmentStore(),
             new FakeRuntimeEnvironmentStore(),
             new FakeRepositoryHostConnectionStore()
         );
@@ -467,8 +453,11 @@ public sealed class RepositoryOnboardingHandlerTests
             throw new NotSupportedException();
     }
 
-    private sealed class FakeRepositoryHostConnectionStore : IRepositoryHostConnectionStore
+    private sealed class FakeRepositoryHostConnectionStore(params string[] keys)
+        : IRepositoryHostConnectionStore
     {
+        private readonly HashSet<string> _keys = new(keys, StringComparer.OrdinalIgnoreCase);
+
         public Task<IReadOnlyList<RepositoryHostConnectionProfile>> ListAsync(
             CancellationToken cancellationToken
         ) => throw new NotSupportedException();
@@ -476,7 +465,13 @@ public sealed class RepositoryOnboardingHandlerTests
         public Task<RepositoryHostConnectionProfile?> GetByKeyAsync(
             string key,
             CancellationToken cancellationToken
-        ) => Task.FromResult<RepositoryHostConnectionProfile?>(null);
+        )
+        {
+            RepositoryHostConnectionProfile? profile = _keys.Contains(key)
+                ? new RepositoryHostConnectionProfile { Key = key }
+                : null;
+            return Task.FromResult(profile);
+        }
 
         public Task<bool> CreateAsync(
             RepositoryHostConnectionProfile profile,

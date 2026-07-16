@@ -68,9 +68,10 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
         }
 
         var resolvedWorkSource = await ResolveWorkSourceEnvironmentAsync(
-#pragma warning disable CS0618 // Type or member is obsolete
-            repository.AzureDevOpsEnvironmentKey,
-#pragma warning restore CS0618
+            // Work source environment is resolved independently from the repository host connection.
+            // The legacy AzureDevOpsEnvironmentKey field has been removed; repositories now
+            // reference a work source via the managed profile resolver's fallback logic.
+            null,
             cancellationToken
         );
         var resolvedHostConnection = await ResolveRepositoryHostConnectionAsync(

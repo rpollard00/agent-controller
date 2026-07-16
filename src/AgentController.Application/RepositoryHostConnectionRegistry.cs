@@ -3,24 +3,17 @@ using AgentController.Application.Abstractions;
 namespace AgentController.Application;
 
 /// <summary>
-/// Static registry that accumulates provider-keyed host type mappings during
-/// service registration, before the DI container is built.
+/// Provider-keyed registry for repository host connections.
+/// Delegates to the generic <see cref="ProviderKeyedRegistry{TService}"/> to avoid
+/// duplicating the registry pattern.
 /// </summary>
 internal static class RepositoryHostConnectionRegistry
 {
-    private static readonly Dictionary<string, Type> _mappings =
-        new(StringComparer.Ordinal);
-
     /// <summary>Register a host type for one or more provider keys.</summary>
-    internal static void Register(Type hostType, params string[] providerKeys)
-    {
-        foreach (var key in providerKeys)
-        {
-            _mappings[key] = hostType;
-        }
-    }
+    internal static void Register(Type hostType, params string[] providerKeys) =>
+        ProviderKeyedRegistry<IRepositoryHostConnection>.Register(hostType, providerKeys);
 
     /// <summary>Resolve the accumulated mappings (called once at container build time).</summary>
     internal static IReadOnlyDictionary<string, Type> Build() =>
-        new Dictionary<string, Type>(_mappings, StringComparer.Ordinal);
+        ProviderKeyedRegistry<IRepositoryHostConnection>.Build();
 }

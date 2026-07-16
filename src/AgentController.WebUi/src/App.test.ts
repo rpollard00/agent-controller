@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import App from './App.svelte';
 import { ApiError, type ResourceClient, type WebUiApiClient } from './lib/api/client';
 import type {
+  RepositoryHostConnectionProfile,
   RepositoryProfile,
   RuntimeEnvironmentProfile,
   WorkSourceEnvironmentProfile,
@@ -35,6 +36,16 @@ function createClient(
         authMechanism: 'PersonalAccessToken',
         errors: [],
       }),
+    },
+    repositoryHostConnections: {
+      ...resourceClient<RepositoryHostConnectionProfile>(async () => []),
+      verifyConnection: async () => ({
+        success: true,
+        authMechanism: 'PersonalAccessToken',
+        errors: [],
+      }),
+      listRepositories: async () => [],
+      onboardRepository: async () => ({} as RepositoryProfile),
     },
     runtimeEnvironments: resourceClient<RuntimeEnvironmentProfile>(async () => []),
   };

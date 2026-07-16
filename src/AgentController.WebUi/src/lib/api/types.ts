@@ -7,7 +7,6 @@ export interface RepositoryProfile {
   transport: CloneTransport;
   environmentProfile: string;
   runtimeProfile: string;
-  azureDevOpsEnvironmentKey: string | null;
   repositoryHostConnectionKey: string | null;
   remoteIdentity: string | null;
   runtimeEnvironmentKey: string | null;

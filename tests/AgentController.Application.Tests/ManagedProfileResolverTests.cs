@@ -12,7 +12,7 @@ public sealed class ManagedProfileResolverTests
         var managedRepository = Repository(
             "orders",
             "https://managed.example/orders.git",
-            azureDevOpsKey: "managed-ado",
+            hostConnectionKey: "managed-ado",
             runtimeKey: "managed-runtime"
         );
         var managedRuntime = Runtime("managed-runtime", enabled: true, "/managed/workspaces");
@@ -52,7 +52,7 @@ public sealed class ManagedProfileResolverTests
         var repository = Repository(
             "orders",
             "https://managed.example/orders.git",
-            azureDevOpsKey: "managed-ado",
+            hostConnectionKey: "managed-ado",
             runtimeKey: "managed-runtime"
         );
         var configuredRuntime = Runtime("legacy-runtime", enabled: true, "/legacy/workspaces");
@@ -174,7 +174,7 @@ public sealed class ManagedProfileResolverTests
     private static RepositoryProfile Repository(
         string key,
         string cloneUrl,
-        string? azureDevOpsKey = null,
+        string? hostConnectionKey = null,
         string? runtimeKey = null
     )
     {
@@ -183,9 +183,7 @@ public sealed class ManagedProfileResolverTests
             Key = key,
             CloneUrl = cloneUrl,
             DefaultBranch = "main",
-#pragma warning disable CS0618 // Type or member is obsolete
-            AzureDevOpsEnvironmentKey = azureDevOpsKey,
-#pragma warning restore CS0618
+            RepositoryHostConnectionKey = hostConnectionKey,
             RuntimeEnvironmentKey = runtimeKey,
         };
     }

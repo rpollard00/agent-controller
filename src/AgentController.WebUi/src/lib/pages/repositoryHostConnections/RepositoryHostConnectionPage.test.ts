@@ -66,7 +66,6 @@ function createApi(
       transport: 'httpsPat',
       environmentProfile: '',
       runtimeProfile: '',
-      azureDevOpsEnvironmentKey: null,
       repositoryHostConnectionKey: 'ado-repos-main',
       remoteIdentity: 'repo-guid',
       runtimeEnvironmentKey: null,

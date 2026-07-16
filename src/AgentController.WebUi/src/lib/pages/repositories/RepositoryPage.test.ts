@@ -16,11 +16,22 @@ const repository: RepositoryProfile = {
   transport: 'httpsPat',
   environmentProfile: 'legacy-environment',
   runtimeProfile: 'legacy-runtime',
-  azureDevOpsEnvironmentKey: 'ado-main',
   repositoryHostConnectionKey: null,
   remoteIdentity: null,
   runtimeEnvironmentKey: 'runtime-main',
   allowedPaths: ['src'],
+};
+
+const repositoryHostConnection: RepositoryHostConnectionProfile = {
+  key: 'ado-main',
+  displayName: 'Primary repos',
+  enabled: true,
+  provider: 'AzureDevOpsRepos',
+  organizationUrl: 'https://dev.azure.com/example',
+  project: 'Agent Controller',
+  personalAccessTokenReference: { kind: 'EnvVar', id: 'ADO_PAT' },
+  createdAt: '2026-07-13T00:00:00Z',
+  updatedAt: '2026-07-13T00:00:00Z',
 };
 
 const workSourceEnvironment: WorkSourceEnvironmentProfile = {
@@ -101,7 +112,7 @@ function createApi(initialRepositories: RepositoryProfile[] = [repository]): Moc
         }),
       },
       repositoryHostConnections: {
-        ...staticResource<RepositoryHostConnectionProfile>([]),
+        ...staticResource<RepositoryHostConnectionProfile>([repositoryHostConnection]),
         verifyConnection: async () => ({
           success: true,
           authMechanism: 'PersonalAccessToken',
@@ -153,7 +164,7 @@ describe('repository onboarding screens', () => {
     await fireEvent.input(screen.getByLabelText(/Allowed paths/), {
       target: { value: 'src\ntests/integration' },
     });
-    await fireEvent.change(screen.getByLabelText('Work source environment'), {
+    await fireEvent.change(screen.getByLabelText('Repository host connection'), {
       target: { value: 'ado-main' },
     });
     await fireEvent.change(screen.getByLabelText('Runtime environment'), {
@@ -169,7 +180,7 @@ describe('repository onboarding screens', () => {
         defaultBranch: 'main',
         transport: 'ssh',
         allowedPaths: ['src', 'tests/integration'],
-        azureDevOpsEnvironmentKey: 'ado-main',
+        repositoryHostConnectionKey: 'ado-main',
         runtimeEnvironmentKey: 'runtime-main',
       }),
       expect.any(AbortSignal),

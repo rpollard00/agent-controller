@@ -6,14 +6,11 @@ namespace AgentController.Application.Commands;
 /// <summary>Validates and updates mutable repository profile fields.</summary>
 public sealed class UpdateRepositoryCommandHandler(
     IRepositoryStore repositoryStore,
-    IWorkSourceEnvironmentStore workSourceEnvironmentStore,
     IRuntimeEnvironmentStore runtimeEnvironmentStore,
     IRepositoryHostConnectionStore? repositoryHostConnectionStore
 ) : ICommandHandler<UpdateRepositoryCommand, RepositoryOperationResult>
 {
     private readonly IRepositoryStore _repositoryStore = repositoryStore;
-    private readonly IWorkSourceEnvironmentStore _workSourceEnvironmentStore =
-        workSourceEnvironmentStore;
     private readonly IRuntimeEnvironmentStore _runtimeEnvironmentStore = runtimeEnvironmentStore;
     private readonly IRepositoryHostConnectionStore? _repositoryHostConnectionStore =
         repositoryHostConnectionStore;
@@ -41,7 +38,6 @@ public sealed class UpdateRepositoryCommandHandler(
 
         var validation = await RepositoryProfileValidation.ValidateAndNormalizeAsync(
             command.Profile,
-            _workSourceEnvironmentStore,
             _runtimeEnvironmentStore,
             _repositoryHostConnectionStore,
             cancellationToken

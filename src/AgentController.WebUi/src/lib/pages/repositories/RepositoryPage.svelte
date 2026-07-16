@@ -5,7 +5,6 @@
     RepositoryHostConnectionProfile,
     RepositoryProfile,
     RuntimeEnvironmentProfile,
-    WorkSourceEnvironmentProfile,
   } from '../../api/types';
   import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
@@ -33,7 +32,6 @@
   let status = $state<'loading' | 'empty' | 'ready' | 'error'>('loading');
   let repositories = $state<RepositoryProfile[]>([]);
   let repository = $state<RepositoryProfile>();
-  let workSourceEnvironments = $state<WorkSourceEnvironmentProfile[]>([]);
   let repositoryHostConnections = $state<RepositoryHostConnectionProfile[]>([]);
   let runtimeEnvironments = $state<RuntimeEnvironmentProfile[]>([]);
   let requestError = $state<unknown>();
@@ -89,8 +87,7 @@
       }
 
       if (currentRoute.view === 'create') {
-        [workSourceEnvironments, repositoryHostConnections, runtimeEnvironments] = await Promise.all([
-          client.workSourceEnvironments.list(signal),
+        [repositoryHostConnections, runtimeEnvironments] = await Promise.all([
           client.repositoryHostConnections.list(signal),
           client.runtimeEnvironments.list(signal),
         ]);
@@ -100,9 +97,8 @@
 
       const profileRequest = client.repositories.get(currentRoute.key, signal);
       if (currentRoute.view === 'edit') {
-        [repository, workSourceEnvironments, repositoryHostConnections, runtimeEnvironments] = await Promise.all([
+        [repository, repositoryHostConnections, runtimeEnvironments] = await Promise.all([
           profileRequest,
-          client.workSourceEnvironments.list(signal),
           client.repositoryHostConnections.list(signal),
           client.runtimeEnvironments.list(signal),
         ]);
@@ -321,7 +317,6 @@
       {/if}
       <RepositoryForm
         mode="create"
-        {workSourceEnvironments}
         {repositoryHostConnections}
         {runtimeEnvironments}
         {submitting}
@@ -349,7 +344,6 @@
         <RepositoryForm
           mode="edit"
           profile={repository}
-          {workSourceEnvironments}
           {repositoryHostConnections}
           {runtimeEnvironments}
           {submitting}

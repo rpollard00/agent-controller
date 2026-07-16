@@ -9,31 +9,32 @@ namespace AgentController.Application;
 /// Provider-keyed resolver that maps a <see cref="WorkSourceEnvironmentProfile.Provider"/>
 /// string to the registered <see cref="IWorkSourceConnectivityVerifier"/> for that provider.
 /// Returns a non-success result with a clear error for unsupported providers.
+///
+/// Uses the generic <see cref="ProviderKeyedResolver{TService,TResult}"/> to avoid
+/// duplicating the scoped resolution pattern.
 /// </summary>
 internal sealed class WorkSourceConnectivityVerifierResolver(
     IServiceScopeFactory scopeFactory,
     IReadOnlyDictionary<string, Type> verifierTypes
 ) : IWorkSourceConnectivityVerifierResolver
 {
-    /// <inheritdoc />
-    public async Task<WorkSourceConnectivityResult> VerifyAsync(
+    private readonly ProviderKeyedResolver<IWorkSourceConnectivityVerifier, WorkSourceConnectivityResult>
+        _resolver = new(scopeFactory, verifierTypes);
+
+    public Task<WorkSourceConnectivityResult> VerifyAsync(
         WorkSourceEnvironmentProfile profile,
         CancellationToken cancellationToken
     )
     {
-        if (!verifierTypes.TryGetValue(profile.Provider, out var verifierType))
-        {
-            return WorkSourceConnectivityResult.FailureResult(
+        return _resolver.ResolveAndExecuteAsync(
+            profile.Provider,
+            WorkSourceConnectivityResult.FailureResult(
                 [
                     $"Connectivity verification is not supported for provider '{profile.Provider}'."
                 ]
-            );
-        }
-
-        await using var scope = scopeFactory.CreateAsyncScope();
-        var verifier = (IWorkSourceConnectivityVerifier)scope.ServiceProvider
-            .GetRequiredService(verifierType);
-
-        return await verifier.VerifyAsync(profile, cancellationToken);
+            ),
+            (verifier, ct) => verifier.VerifyAsync(profile, ct),
+            cancellationToken
+        );
     }
 }
