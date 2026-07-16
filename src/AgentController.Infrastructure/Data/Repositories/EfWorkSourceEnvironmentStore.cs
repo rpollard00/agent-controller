@@ -90,6 +90,8 @@ internal sealed class EfWorkSourceEnvironmentStore : IWorkSourceEnvironmentStore
         entity.ActiveState = profile.ActiveState;
         entity.CompletedState = profile.CompletedState;
         entity.PatEnvironmentVariable = profile.PatEnvironmentVariable;
+        entity.PersonalAccessTokenSecretName = profile.PersonalAccessTokenReference.Name;
+        entity.PersonalAccessTokenSecretVersion = profile.PersonalAccessTokenReference.Version;
         entity.UpdatedAt = profile.UpdatedAt;
 
         await _db.SaveChangesAsync(cancellationToken);
@@ -129,6 +131,8 @@ internal sealed class EfWorkSourceEnvironmentStore : IWorkSourceEnvironmentStore
             ActiveState = profile.ActiveState,
             CompletedState = profile.CompletedState,
             PatEnvironmentVariable = profile.PatEnvironmentVariable,
+            PersonalAccessTokenSecretName = profile.PersonalAccessTokenReference.Name,
+            PersonalAccessTokenSecretVersion = profile.PersonalAccessTokenReference.Version,
             CreatedAt = profile.CreatedAt,
             UpdatedAt = profile.UpdatedAt,
         };
@@ -149,6 +153,13 @@ internal sealed class EfWorkSourceEnvironmentStore : IWorkSourceEnvironmentStore
             ActiveState = entity.ActiveState,
             CompletedState = entity.CompletedState,
             PatEnvironmentVariable = entity.PatEnvironmentVariable,
+            PersonalAccessTokenReference = string.IsNullOrWhiteSpace(entity.PersonalAccessTokenSecretName)
+                ? AgentController.Domain.Secrets.SecretReference.Empty
+                : new AgentController.Domain.Secrets.SecretReference
+                {
+                    Name = entity.PersonalAccessTokenSecretName,
+                    Version = entity.PersonalAccessTokenSecretVersion,
+                },
             CreatedAt = entity.CreatedAt,
             UpdatedAt = entity.UpdatedAt,
         };

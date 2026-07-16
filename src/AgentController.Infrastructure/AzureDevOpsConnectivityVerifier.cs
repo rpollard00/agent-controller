@@ -38,21 +38,41 @@ internal sealed class AzureDevOpsConnectivityVerifier(
             errors.Add("Azure DevOps project is not configured.");
         }
 
-        // Resolve PAT through IManagedSecretStore via the shared resolver.
+        // Resolve PAT: prefer SecretReference (ISecretStore) over legacy env variable.
         string? resolvedPat;
         try
         {
-            resolvedPat = await patResolver.ResolveFromEnvironmentVariableAsync(
-                profile.PatEnvironmentVariable,
-                cancellationToken
-            );
+            if (profile.PersonalAccessTokenReference.IsSpecified)
+            {
+                resolvedPat = await patResolver.ResolveFromSecretReferenceAsync(
+                    profile.PersonalAccessTokenReference,
+                    cancellationToken
+                );
+            }
+            else
+            {
+                resolvedPat = await patResolver.ResolveFromEnvironmentVariableAsync(
+                    profile.PatEnvironmentVariable,
+                    cancellationToken
+                );
+            }
+
             if (string.IsNullOrWhiteSpace(resolvedPat))
             {
-                errors.Add(
-                    string.IsNullOrWhiteSpace(profile.PatEnvironmentVariable)
-                        ? "The managed profile has no PAT environment-variable reference."
-                        : $"PAT environment variable '{profile.PatEnvironmentVariable}' is missing or empty."
-                );
+                if (profile.PersonalAccessTokenReference.IsSpecified)
+                {
+                    errors.Add(
+                        $"Secret '{profile.PersonalAccessTokenReference.Name}' could not be resolved."
+                    );
+                }
+                else
+                {
+                    errors.Add(
+                        string.IsNullOrWhiteSpace(profile.PatEnvironmentVariable)
+                            ? "The managed profile has no PAT reference configured."
+                            : $"PAT environment variable '{profile.PatEnvironmentVariable}' is missing or empty."
+                    );
+                }
             }
         }
         catch (Exception ex)

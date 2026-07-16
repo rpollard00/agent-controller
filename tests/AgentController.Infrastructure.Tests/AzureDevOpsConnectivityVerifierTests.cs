@@ -390,12 +390,14 @@ public sealed class AzureDevOpsConnectivityVerifierTests
 
     private static AzureDevOpsConnectivityVerifier CreateVerifier(
         IAzureDevOpsBoardsClient mockClient,
-        IManagedSecretStore? secretStore = null
+        IManagedSecretStore? managedSecretStore = null,
+        Domain.Secrets.ISecretStore? namedSecretStore = null
     )
     {
         var factory = new MockAzureDevOpsBoardsClientFactory(mockClient);
         var patResolver = new AzureDevOpsPatResolver(
-            secretStore ?? (IManagedSecretStore)new EnvVarBackedFakeSecretStore()
+            managedSecretStore ?? (IManagedSecretStore)new EnvVarBackedFakeSecretStore(),
+            namedSecretStore ?? new Domain.Secrets.InMemorySecretStore()
         );
         return new AzureDevOpsConnectivityVerifier(factory, patResolver);
     }

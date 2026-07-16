@@ -29,9 +29,19 @@ internal sealed class AzureDevOpsBoardsClientFactory(
             );
         }
 
-        // Resolve PAT through the shared resolver.
+        // Resolve PAT: prefer SecretReference (ISecretStore) over legacy env variable.
         string? resolvedPat = null;
-        if (!string.IsNullOrWhiteSpace(profile.PatEnvironmentVariable))
+        if (profile.PersonalAccessTokenReference.IsSpecified)
+        {
+            resolvedPat = patResolver
+                .ResolveFromSecretReferenceAsync(
+                    profile.PersonalAccessTokenReference,
+                    CancellationToken.None
+                )
+                .GetAwaiter()
+                .GetResult();
+        }
+        else if (!string.IsNullOrWhiteSpace(profile.PatEnvironmentVariable))
         {
             resolvedPat = patResolver
                 .ResolveFromEnvironmentVariableAsync(

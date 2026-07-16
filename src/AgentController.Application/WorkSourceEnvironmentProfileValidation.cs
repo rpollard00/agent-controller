@@ -11,6 +11,7 @@ internal static class WorkSourceEnvironmentProfileValidation
     private const int MaximumProjectLength = 256;
     private const int MaximumBoardValueLength = 256;
     private const int MaximumEnvironmentVariableLength = 256;
+    private const int MaximumSecretNameLength = 256;
 
     public static WorkSourceEnvironmentProfileValidationResult ValidateAndNormalize(
         WorkSourceEnvironmentProfile profile
@@ -69,7 +70,23 @@ internal static class WorkSourceEnvironmentProfileValidation
         var tagPrefix = NormalizeTagPrefix(profile.TagPrefix, errors);
 
         var patEnvironmentVariable = NormalizeText(profile.PatEnvironmentVariable);
-        ValidateEnvironmentVariableName(patEnvironmentVariable, errors);
+        var secretRef = NormalizeSecretReference(
+            profile.PersonalAccessTokenReference,
+            errors);
+
+        // Validate that at least one credential reference mechanism is specified.
+        if (!secretRef.IsSpecified && patEnvironmentVariable.Length == 0)
+        {
+            errors.Add(
+                "personalAccessTokenReference",
+                "A secret reference or environment variable name for the PAT is required."
+            );
+        }
+        else if (!secretRef.IsSpecified)
+        {
+            // SecretReference not specified — validate legacy env var name.
+            ValidateEnvironmentVariableName(patEnvironmentVariable, errors);
+        }
 
         var normalized = profile with
         {
@@ -82,6 +99,7 @@ internal static class WorkSourceEnvironmentProfileValidation
             CompletedState = completedState,
             TagPrefix = tagPrefix,
             PatEnvironmentVariable = patEnvironmentVariable,
+            PersonalAccessTokenReference = secretRef,
         };
 
         return new WorkSourceEnvironmentProfileValidationResult(normalized, errors.ToDictionary());
@@ -291,6 +309,47 @@ internal static class WorkSourceEnvironmentProfileValidation
 
     private static bool IsEnvironmentVariableCharacter(char character) =>
         IsEnvironmentVariableStartCharacter(character) || character is >= '0' and <= '9';
+
+    private static Domain.Secrets.SecretReference NormalizeSecretReference(
+        Domain.Secrets.SecretReference reference,
+        ValidationErrors errors)
+    {
+        var name = (reference.Name ?? string.Empty).Trim();
+
+        if (name.Length == 0)
+        {
+            // Empty reference — not an error by itself (PatEnvironmentVariable is fallback).
+            return Domain.Secrets.SecretReference.Empty;
+        }
+
+        if (name.Length > MaximumSecretNameLength)
+        {
+            errors.Add(
+                "personalAccessTokenReference",
+                $"The secret name must be {MaximumSecretNameLength} characters or fewer."
+            );
+        }
+
+        if (name.Any(char.IsControl))
+        {
+            errors.Add(
+                "personalAccessTokenReference",
+                "The secret name cannot contain control characters."
+            );
+        }
+
+        var version = reference.Version;
+        if (version.HasValue && version.Value < 1)
+        {
+            errors.Add(
+                "personalAccessTokenReference",
+                "The secret version must be 1 or greater."
+            );
+            version = null;
+        }
+
+        return new Domain.Secrets.SecretReference { Name = name, Version = version };
+    }
 
     private sealed class ValidationErrors
     {

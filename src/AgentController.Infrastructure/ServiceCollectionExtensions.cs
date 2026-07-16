@@ -733,6 +733,16 @@ public static class AgentControllerServiceCollectionExtensions
         // (e.g., DbSecretStore which depends on scoped DbContext).
         services.AddSingleton<IManagedSecretStore, SecretStoreResolver>();
 
+        // Register a fallback in-memory ISecretStore for the named/versioned secret path.
+        // This is overridden by AddAgentControllerNamedSecrets when the DB provider is configured.
+        // The fallback ensures AzureDevOpsPatResolver can always resolve ISecretStore
+        // even when only legacy secret stores are registered (e.g. in tests).
+        services.TryAddSingleton<ISecretStore>(new InMemorySecretStore());
+        services.TryAddSingleton<ISecretManager>(sp =>
+            sp.GetRequiredService<ISecretStore>() as ISecretManager
+            ?? throw new InvalidOperationException(
+                "ISecretManager is not registered. Call AddAgentControllerNamedSecrets."));
+
         return services;
     }
 

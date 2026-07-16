@@ -980,7 +980,7 @@ public class OptionsSmokeTests
         {
             Environment.SetEnvironmentVariable(envName, "resolved-token");
 
-            var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore());
+            var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore(), new AgentController.Domain.Secrets.InMemorySecretStore());
             var result = await resolver.ResolveFromEnvironmentVariableAsync(
                 envName,
                 CancellationToken.None
@@ -997,7 +997,7 @@ public class OptionsSmokeTests
     [Fact]
     public async Task AzureDevOpsPatResolver_ResolveFromEnvVar_ReturnsNullForMissingEnvVar()
     {
-        var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore());
+        var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore(), new AgentController.Domain.Secrets.InMemorySecretStore());
         var result = await resolver.ResolveFromEnvironmentVariableAsync(
             "NONEXISTENT_ENV_VAR_XYZ",
             CancellationToken.None
@@ -1009,7 +1009,7 @@ public class OptionsSmokeTests
     [Fact]
     public async Task AzureDevOpsPatResolver_ResolveFromEnvVar_ReturnsNullForEmptyName()
     {
-        var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore());
+        var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore(), new AgentController.Domain.Secrets.InMemorySecretStore());
         var result = await resolver.ResolveFromEnvironmentVariableAsync(
             "",
             CancellationToken.None
@@ -1021,7 +1021,7 @@ public class OptionsSmokeTests
     [Fact]
     public async Task AzureDevOpsPatResolver_ResolveFromLegacyValue_ReturnsDirectPat()
     {
-        var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore());
+        var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore(), new AgentController.Domain.Secrets.InMemorySecretStore());
         var result = await resolver.ResolveFromLegacyValueAsync(
             "my-direct-pat-token",
             CancellationToken.None
@@ -1038,7 +1038,7 @@ public class OptionsSmokeTests
         {
             Environment.SetEnvironmentVariable(envName, "env-expanded-token");
 
-            var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore());
+            var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore(), new AgentController.Domain.Secrets.InMemorySecretStore());
             var result = await resolver.ResolveFromLegacyValueAsync(
                 $"ENV:{envName}",
                 CancellationToken.None
@@ -1055,7 +1055,7 @@ public class OptionsSmokeTests
     [Fact]
     public async Task AzureDevOpsPatResolver_ResolveFromLegacyValue_ReturnsNullForEmptyValue()
     {
-        var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore());
+        var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore(), new AgentController.Domain.Secrets.InMemorySecretStore());
         var result = await resolver.ResolveFromLegacyValueAsync(
             "",
             CancellationToken.None
@@ -1067,7 +1067,7 @@ public class OptionsSmokeTests
     [Fact]
     public async Task AzureDevOpsPatResolver_ResolveFromLegacyValue_ReturnsNullForEnvVarMissing()
     {
-        var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore());
+        var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore(), new AgentController.Domain.Secrets.InMemorySecretStore());
         var result = await resolver.ResolveFromLegacyValueAsync(
             "ENV:NONEXISTENT_VAR_XYZ",
             CancellationToken.None
@@ -1171,7 +1171,7 @@ public class OptionsSmokeTests
         {
             ["EnvVar:DB_PAT_VAR"] = "db-stored-pat-token",
         };
-        var resolver = new AzureDevOpsPatResolver(new InMemoryFakeSecretStore(secrets));
+        var resolver = new AzureDevOpsPatResolver(new InMemoryFakeSecretStore(secrets), new AgentController.Domain.Secrets.InMemorySecretStore());
         var result = await resolver.ResolveFromEnvironmentVariableAsync(
             "DB_PAT_VAR",
             CancellationToken.None

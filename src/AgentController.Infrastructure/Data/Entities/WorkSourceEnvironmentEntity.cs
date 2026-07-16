@@ -17,4 +17,12 @@ internal sealed class WorkSourceEnvironmentEntity : BaseConnectionEntity
     public string? CompletedState { get; set; }
 
     public string PatEnvironmentVariable { get; set; } = string.Empty;
+
+    // --- SecretReference fields (replaces PatEnvironmentVariable) ---
+
+    /// <summary>Secret name for PAT resolution via ISecretStore.</summary>
+    public string PersonalAccessTokenSecretName { get; set; } = string.Empty;
+
+    /// <summary>Optional version pin for the PAT secret.</summary>
+    public int? PersonalAccessTokenSecretVersion { get; set; }
 }
