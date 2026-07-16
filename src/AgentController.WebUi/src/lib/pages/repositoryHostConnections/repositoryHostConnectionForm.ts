@@ -1,4 +1,4 @@
-import type { RepositoryHostConnectionProfile, SecretReference } from '../../api/types';
+import type { PersonalAccessTokenSecretReference, RepositoryHostConnectionProfile } from '../../api/types';
 
 export interface RepositoryHostConnectionFormValues {
   key: string;
@@ -7,8 +7,8 @@ export interface RepositoryHostConnectionFormValues {
   provider: string;
   organizationUrl: string;
   project: string;
-  secretKind: string;
-  secretId: string;
+  secretName: string;
+  secretVersion: number | null;
 }
 
 export type RepositoryHostConnectionFormErrors = Record<string, string[]>;
@@ -16,7 +16,7 @@ export type RepositoryHostConnectionFormErrors = Record<string, string[]>;
 export function createRepositoryHostConnectionFormValues(
   profile?: RepositoryHostConnectionProfile,
 ): RepositoryHostConnectionFormValues {
-  const ref = profile?.personalAccessTokenReference ?? { kind: 'EnvVar', id: '' };
+  const ref = profile?.personalAccessTokenReference ?? { name: '', version: null };
   return {
     key: profile?.key ?? '',
     displayName: profile?.displayName ?? '',
@@ -24,8 +24,8 @@ export function createRepositoryHostConnectionFormValues(
     provider: profile?.provider ?? 'AzureDevOpsRepos',
     organizationUrl: profile?.organizationUrl ?? '',
     project: profile?.project ?? '',
-    secretKind: ref.kind ?? 'EnvVar',
-    secretId: ref.id ?? '',
+    secretName: ref.name ?? '',
+    secretVersion: ref.version ?? null,
   };
 }
 
@@ -47,10 +47,20 @@ export function validateRepositoryHostConnectionForm(
     addRequiredError(errors, 'project', values.project, 'An Azure DevOps project is required.');
     addRequiredError(
       errors,
-      'secretId',
-      values.secretId,
-      'A secret reference identifier is required.',
+      'secretName',
+      values.secretName,
+      'A secret reference for the PAT is required.',
     );
+
+    if (
+      values.secretVersion !== null &&
+      values.secretVersion !== undefined &&
+      values.secretVersion < 1
+    ) {
+      errors.secretVersion = [
+        'The secret version must be 1 or greater.',
+      ];
+    }
 
     if (values.organizationUrl.trim() && !isValidOrganizationUrl(values.organizationUrl)) {
       errors.organizationUrl = [
@@ -75,18 +85,11 @@ export function toRepositoryHostConnectionProfile(
     organizationUrl: values.organizationUrl.trim().replace(/\/+$/, ''),
     project: values.project.trim(),
     personalAccessTokenReference: {
-      kind: values.secretKind.trim() || 'EnvVar',
-      id: values.secretId.trim(),
-    } as SecretReference,
+      name: values.secretName.trim(),
+      version: values.secretVersion ?? null,
+    } as PersonalAccessTokenSecretReference,
     createdAt: original?.createdAt ?? now,
     updatedAt: original?.updatedAt ?? now,
-  };
-}
-
-function toSecretReference(values: RepositoryHostConnectionFormValues): SecretReference {
-  return {
-    kind: values.secretKind.trim() || 'EnvVar',
-    id: values.secretId.trim(),
   };
 }
 
