@@ -202,10 +202,12 @@ public static class AgentControllerServiceCollectionExtensions
         services.AddSingleton<AzureDevOpsClientFactory>();
 
         // Shared PAT resolver used by both work-source (Boards) and repo-host (Repos) ADO paths.
-        services.AddSingleton<AzureDevOpsPatResolver>();
+        // Scoped because it depends on ISecretStore which is scoped (DbNamedSecretProvider).
+        services.AddScoped<AzureDevOpsPatResolver>();
 
         // Boards client factory delegates to the shared AzureDevOpsClientFactory.
-        services.TryAddSingleton<IAzureDevOpsBoardsClientFactory, AzureDevOpsBoardsClientFactory>();
+        // Scoped because it depends on AzureDevOpsPatResolver which is scoped.
+        services.TryAddScoped<IAzureDevOpsBoardsClientFactory, AzureDevOpsBoardsClientFactory>();
 
         return services;
     }
@@ -486,10 +488,12 @@ public static class AgentControllerServiceCollectionExtensions
         // Register the shared PAT resolver used by both work-source (Boards)
         // and repo-host (Repos) ADO paths. Routes resolution through IManagedSecretStore
         // with backward compatibility for legacy "ENV:NAME" and direct PAT forms.
-        services.TryAddSingleton<AzureDevOpsPatResolver>();
+        // Scoped because it depends on ISecretStore which is scoped (DbNamedSecretProvider).
+        services.TryAddScoped<AzureDevOpsPatResolver>();
 
         // Boards client factory delegates to the shared AzureDevOpsClientFactory.
-        services.TryAddSingleton<IAzureDevOpsBoardsClientFactory, AzureDevOpsBoardsClientFactory>();
+        // Scoped because it depends on AzureDevOpsPatResolver which is scoped.
+        services.TryAddScoped<IAzureDevOpsBoardsClientFactory, AzureDevOpsBoardsClientFactory>();
 
         // Register the Azure DevOps connectivity verifier with the provider-keyed resolver.
         // Keyed by "AzureDevOpsBoards" and "AzureDevOpsRepos" provider strings.
@@ -733,15 +737,12 @@ public static class AgentControllerServiceCollectionExtensions
         // (e.g., DbSecretStore which depends on scoped DbContext).
         services.AddSingleton<IManagedSecretStore, SecretStoreResolver>();
 
-        // Register a fallback in-memory ISecretStore for the named/versioned secret path.
-        // This is overridden by AddAgentControllerNamedSecrets when the DB provider is configured.
-        // The fallback ensures AzureDevOpsPatResolver can always resolve ISecretStore
-        // even when only legacy secret stores are registered (e.g. in tests).
-        services.TryAddSingleton<ISecretStore>(new InMemorySecretStore());
-        services.TryAddSingleton<ISecretManager>(sp =>
-            sp.GetRequiredService<ISecretStore>() as ISecretManager
-            ?? throw new InvalidOperationException(
-                "ISecretManager is not registered. Call AddAgentControllerNamedSecrets."));
+        // ISecretStore / ISecretManager are registered by AddAgentControllerNamedSecrets
+        // which selects the provider (default: "Db"). That method fails fast if the
+        // configured provider's prerequisites are not met (e.g. missing KEK for Db).
+        // Do NOT register a fallback here — a silent in-memory fallback would mask
+        // missing KEK configuration and cause writes to appear to succeed while
+        // never persisting to the database.
 
         return services;
     }

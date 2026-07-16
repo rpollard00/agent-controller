@@ -26,6 +26,12 @@ builder.Services.AddAgentControllerOptions(builder.Configuration);
 // console app; this registration never calls Migrate or EnsureCreated.
 builder.Services.AddAgentControllerDbContext(builder.Configuration);
 
+// Register the named-secret provider (ISecretStore / ISecretManager) backed
+// by the selected provider (default: "Db" with envelope encryption).
+// This fails fast at startup if the configured provider requires a KEK
+// (e.g. provider=Db) and no KEK source is resolvable.
+builder.Services.AddAgentControllerNamedSecrets(builder.Configuration);
+
 // Register EF Core-backed repository implementations for all application-layer
 // persistence contracts. Requires AddAgentControllerDbContext to be called first.
 builder.Services.AddAgentControllerRepositories();
