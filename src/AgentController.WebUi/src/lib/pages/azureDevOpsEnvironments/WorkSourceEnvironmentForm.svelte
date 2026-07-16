@@ -223,11 +223,6 @@
           />
         </div>
 
-        <Alert
-          variant="info"
-          title="Secrets are stored encrypted"
-          message="The PAT is stored as a named, versioned secret encrypted at rest. Select the secret holding the token value; the value itself is never shown in this form."
-        />
       </fieldset>
     {:else}
       <Alert
