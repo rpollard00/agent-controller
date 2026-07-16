@@ -116,6 +116,7 @@ app.MapWorkItemEndpoints();
 app.MapRunEndpoints();
 app.MapRuntimeEventEndpoints();
 app.MapWorkSourceConnectivityEndpoints();
+app.MapRepositoryHostConnectivityEndpoints();
 app.MapWebUiControllers();
 app.MapWebUiHosting();
 

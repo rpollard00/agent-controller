@@ -74,6 +74,27 @@ public static class ServiceCollectionExtensions
             ICommandHandler<DeleteRuntimeEnvironmentCommand, RuntimeEnvironmentOperationResult>,
             DeleteRuntimeEnvironmentCommandHandler
         >();
+        services.AddScoped<
+            ICommandHandler<
+                CreateRepositoryHostConnectionCommand,
+                RepositoryHostConnectionOperationResult
+            >,
+            CreateRepositoryHostConnectionCommandHandler
+        >();
+        services.AddScoped<
+            ICommandHandler<
+                UpdateRepositoryHostConnectionCommand,
+                RepositoryHostConnectionOperationResult
+            >,
+            UpdateRepositoryHostConnectionCommandHandler
+        >();
+        services.AddScoped<
+            ICommandHandler<
+                DeleteRepositoryHostConnectionCommand,
+                RepositoryHostConnectionOperationResult
+            >,
+            DeleteRepositoryHostConnectionCommandHandler
+        >();
 
         // Query handlers
         services.AddScoped<
@@ -122,6 +143,27 @@ public static class ServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<GetRuntimeEnvironmentByKeyQuery, RuntimeEnvironmentOperationResult>,
             GetRuntimeEnvironmentByKeyQueryHandler
+        >();
+        services.AddScoped<
+            IQueryHandler<
+                ListRepositoryHostConnectionsQuery,
+                IReadOnlyList<RepositoryHostConnectionProfile>
+            >,
+            ListRepositoryHostConnectionsQueryHandler
+        >();
+        services.AddScoped<
+            IQueryHandler<
+                GetRepositoryHostConnectionByKeyQuery,
+                RepositoryHostConnectionOperationResult
+            >,
+            GetRepositoryHostConnectionByKeyQueryHandler
+        >();
+        services.AddScoped<
+            IQueryHandler<
+                VerifyRepositoryHostConnectivityQuery,
+                RepositoryHostConnectivityResult
+            >,
+            VerifyRepositoryHostConnectivityQueryHandler
         >();
         // Work-source connectivity verifier resolver
         services.AddWorkSourceConnectivityVerifierResolver();

@@ -15,12 +15,14 @@ public static class WebUiControllers
     private const string RepositoriesPath = "/api/webui/repositories";
     private const string WorkSourceEnvironmentsPath = "/api/webui/work-source-environments";
     private const string RuntimeEnvironmentsPath = "/api/webui/runtime-environments";
+    private const string RepositoryHostConnectionsPath = "/api/webui/repository-host-connections";
 
     public static IEndpointRouteBuilder MapWebUiControllers(this IEndpointRouteBuilder app)
     {
         MapRepositoryControllers(app.MapGroup(RepositoriesPath));
         MapWorkSourceEnvironmentControllers(app.MapGroup(WorkSourceEnvironmentsPath));
         MapRuntimeEnvironmentControllers(app.MapGroup(RuntimeEnvironmentsPath));
+        MapRepositoryHostConnectionControllers(app.MapGroup(RepositoryHostConnectionsPath));
         return app;
     }
 
@@ -319,6 +321,110 @@ public static class WebUiControllers
         );
     }
 
+    private static void MapRepositoryHostConnectionControllers(RouteGroupBuilder group)
+    {
+        group.MapPost(
+            "",
+            async (
+                RepositoryHostConnectionProfile profile,
+                ICommandHandler<
+                    CreateRepositoryHostConnectionCommand,
+                    RepositoryHostConnectionOperationResult
+                > handler,
+                CancellationToken cancellationToken
+            ) =>
+            {
+                var result = await handler.HandleAsync(
+                    new CreateRepositoryHostConnectionCommand(profile),
+                    cancellationToken
+                );
+                return MapResult(
+                    result,
+                    connection =>
+                        Results.Created(
+                            $"{RepositoryHostConnectionsPath}/{Uri.EscapeDataString(connection!.Key)}",
+                            connection
+                        )
+                );
+            }
+        );
+
+        group.MapGet(
+            "",
+            async (
+                IQueryHandler<
+                    ListRepositoryHostConnectionsQuery,
+                    IReadOnlyList<RepositoryHostConnectionProfile>
+                > handler,
+                CancellationToken cancellationToken
+            ) =>
+                Results.Ok(
+                    await handler.ExecuteAsync(
+                        new ListRepositoryHostConnectionsQuery(),
+                        cancellationToken
+                    )
+                )
+        );
+
+        group.MapGet(
+            "/{key}",
+            async (
+                string key,
+                IQueryHandler<
+                    GetRepositoryHostConnectionByKeyQuery,
+                    RepositoryHostConnectionOperationResult
+                > handler,
+                CancellationToken cancellationToken
+            ) =>
+            {
+                var result = await handler.ExecuteAsync(
+                    new GetRepositoryHostConnectionByKeyQuery(key),
+                    cancellationToken
+                );
+                return MapResult(result, Results.Ok);
+            }
+        );
+
+        group.MapPut(
+            "/{key}",
+            async (
+                string key,
+                RepositoryHostConnectionProfile profile,
+                ICommandHandler<
+                    UpdateRepositoryHostConnectionCommand,
+                    RepositoryHostConnectionOperationResult
+                > handler,
+                CancellationToken cancellationToken
+            ) =>
+            {
+                var result = await handler.HandleAsync(
+                    new UpdateRepositoryHostConnectionCommand(key, profile),
+                    cancellationToken
+                );
+                return MapResult(result, Results.Ok);
+            }
+        );
+
+        group.MapDelete(
+            "/{key}",
+            async (
+                string key,
+                ICommandHandler<
+                    DeleteRepositoryHostConnectionCommand,
+                    RepositoryHostConnectionOperationResult
+                > handler,
+                CancellationToken cancellationToken
+            ) =>
+            {
+                var result = await handler.HandleAsync(
+                    new DeleteRepositoryHostConnectionCommand(key),
+                    cancellationToken
+                );
+                return MapResult(result, _ => Results.NoContent());
+            }
+        );
+    }
+
     private static IResult MapResult(
         RepositoryOperationResult result,
         Func<RepositoryProfile?, IResult> onSuccess
@@ -367,6 +473,23 @@ public static class WebUiControllers
             RuntimeEnvironmentOperationStatus.Conflict => ConflictProblem(result.Detail),
             _ => throw new InvalidOperationException(
                 $"Unsupported runtime environment operation status '{result.Status}'."
+            ),
+        };
+
+    private static IResult MapResult(
+        RepositoryHostConnectionOperationResult result,
+        Func<RepositoryHostConnectionProfile?, IResult> onSuccess
+    ) =>
+        result.Status switch
+        {
+            RepositoryHostConnectionOperationStatus.Succeeded => onSuccess(result.Connection),
+            RepositoryHostConnectionOperationStatus.ValidationFailed => ValidationProblem(
+                result.ValidationErrors
+            ),
+            RepositoryHostConnectionOperationStatus.NotFound => NotFoundProblem(result.Detail),
+            RepositoryHostConnectionOperationStatus.Conflict => ConflictProblem(result.Detail),
+            _ => throw new InvalidOperationException(
+                $"Unsupported repository host connection operation status '{result.Status}'."
             ),
         };
 
