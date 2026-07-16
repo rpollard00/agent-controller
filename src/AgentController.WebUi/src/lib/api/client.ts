@@ -1,5 +1,8 @@
 import type {
+  HostRepository,
   ProblemDetails,
+  RepositoryHostConnectionProfile,
+  RepositoryHostConnectivityResult,
   RepositoryProfile,
   RuntimeEnvironmentProfile,
   WorkSourceConnectivityResult,
@@ -21,9 +24,22 @@ export interface WorkSourceEnvironmentResourceClient
   verifyConnection(key: string, signal?: AbortSignal): Promise<WorkSourceConnectivityResult>;
 }
 
+export interface RepositoryHostConnectionResourceClient
+  extends ResourceClient<RepositoryHostConnectionProfile> {
+  verifyConnection(key: string, signal?: AbortSignal): Promise<RepositoryHostConnectivityResult>;
+  listRepositories(key: string, signal?: AbortSignal): Promise<HostRepository[]>;
+  onboardRepository(
+    key: string,
+    repositoryId: string,
+    repositoryKey?: string,
+    signal?: AbortSignal,
+  ): Promise<RepositoryProfile>;
+}
+
 export interface WebUiApiClient {
   repositories: ResourceClient<RepositoryProfile>;
   workSourceEnvironments: WorkSourceEnvironmentResourceClient;
+  repositoryHostConnections: RepositoryHostConnectionResourceClient;
   runtimeEnvironments: ResourceClient<RuntimeEnvironmentProfile>;
 }
 
@@ -130,6 +146,32 @@ export function createWebUiApiClient(options: ApiClientOptions = {}): WebUiApiCl
         request<WorkSourceConnectivityResult>(
           `/work-source-environments/${encodeURIComponent(key)}:verify`,
           { method: 'POST', signal },
+        ),
+    },
+    repositoryHostConnections: {
+      ...resource<RepositoryHostConnectionProfile>('/repository-host-connections'),
+      verifyConnection: (key, signal) =>
+        request<RepositoryHostConnectivityResult>(
+          `/repository-host-connections/${encodeURIComponent(key)}:verify`,
+          { method: 'POST', signal },
+        ),
+      listRepositories: (key, signal) =>
+        request<HostRepository[]>(
+          `/repository-host-connections/${encodeURIComponent(key)}/repositories`,
+          { signal },
+        ),
+      onboardRepository: (key, repositoryId, repositoryKey, signal) =>
+        request<RepositoryProfile>(
+          `/repository-host-connections/${encodeURIComponent(key)}/repositories/onboard`,
+          {
+            method: 'POST',
+            signal,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              repositoryId,
+              repositoryKey: repositoryKey ?? undefined,
+            }),
+          },
         ),
     },
     runtimeEnvironments: resource<RuntimeEnvironmentProfile>('/runtime-environments'),

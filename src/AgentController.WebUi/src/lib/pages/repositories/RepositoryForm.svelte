@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import type {
+    RepositoryHostConnectionProfile,
     RepositoryProfile,
     RuntimeEnvironmentProfile,
     WorkSourceEnvironmentProfile,
@@ -19,6 +20,7 @@
     mode,
     profile,
     workSourceEnvironments,
+    repositoryHostConnections,
     runtimeEnvironments,
     submitting = false,
     serverErrors = {},
@@ -28,6 +30,7 @@
     mode: 'create' | 'edit';
     profile?: RepositoryProfile;
     workSourceEnvironments: WorkSourceEnvironmentProfile[];
+    repositoryHostConnections: RepositoryHostConnectionProfile[];
     runtimeEnvironments: RuntimeEnvironmentProfile[];
     submitting?: boolean;
     serverErrors?: Readonly<Record<string, string[]>>;
@@ -77,6 +80,14 @@
 
   function hasRuntimeEnvironment(key: string): boolean {
     return runtimeEnvironments.some((environment) => environment.key === key);
+  }
+
+  function hasRepositoryHostConnection(key: string): boolean {
+    return repositoryHostConnections.some((connection) => connection.key === key);
+  }
+
+  function connectionLabel(profile: { key: string; displayName: string; enabled: boolean }): string {
+    return `${profile.displayName} — ${profile.key}${profile.enabled ? '' : ' (disabled)'}`;
   }
 </script>
 
@@ -207,7 +218,7 @@
   <fieldset class="space-y-5 rounded-xl border border-slate-800 p-4 sm:p-5">
     <legend class="px-2 text-sm font-semibold text-white">Managed environment associations</legend>
     <p class="text-sm leading-6 text-slate-400">
-      Associations are optional. They determine which board configuration and runtime are used for
+      Associations are optional. They determine which board configuration, repository host, and runtime are used for
       this repository.
     </p>
 
@@ -240,31 +251,58 @@
       </Field>
 
       <Field
-        id="repository-runtimeEnvironmentKey"
-        label="Runtime environment"
-        error={fieldError('runtimeEnvironmentKey')}
+        id="repository-repositoryHostConnectionKey"
+        label="Repository host connection"
+        hint="Choose the repository host this repository is sourced from. Decoupled from work source."
+        error={fieldError('repositoryHostConnectionKey')}
       >
         <select
-          id="repository-runtimeEnvironmentKey"
-          name="runtimeEnvironmentKey"
+          id="repository-repositoryHostConnectionKey"
+          name="repositoryHostConnectionKey"
           class={inputClasses}
-          bind:value={values.runtimeEnvironmentKey}
+          bind:value={values.repositoryHostConnectionKey}
           disabled={submitting}
-          aria-invalid={fieldError('runtimeEnvironmentKey') ? 'true' : undefined}
-          aria-describedby={describedBy('runtimeEnvironmentKey')}
+          aria-invalid={fieldError('repositoryHostConnectionKey') ? 'true' : undefined}
+          aria-describedby={describedBy('repositoryHostConnectionKey', true)}
         >
-          <option value="">No managed runtime environment</option>
-          {#if values.runtimeEnvironmentKey && !hasRuntimeEnvironment(values.runtimeEnvironmentKey)}
-            <option value={values.runtimeEnvironmentKey}>
-              {values.runtimeEnvironmentKey} (unavailable)
+          <option value="">No managed repository host connection</option>
+          {#if values.repositoryHostConnectionKey && !hasRepositoryHostConnection(values.repositoryHostConnectionKey)}
+            <option value={values.repositoryHostConnectionKey}>
+              {values.repositoryHostConnectionKey} (unavailable)
             </option>
           {/if}
-          {#each runtimeEnvironments as environment (environment.key)}
-            <option value={environment.key}>{environmentLabel(environment)}</option>
+          {#each repositoryHostConnections as conn (conn.key)}
+            <option value={conn.key}>{connectionLabel(conn)}</option>
           {/each}
         </select>
       </Field>
     </div>
+
+    <Field
+      id="repository-runtimeEnvironmentKey"
+      label="Runtime environment"
+      error={fieldError('runtimeEnvironmentKey')}
+    >
+      <select
+        id="repository-runtimeEnvironmentKey"
+        name="runtimeEnvironmentKey"
+        class={inputClasses}
+        bind:value={values.runtimeEnvironmentKey}
+        disabled={submitting}
+        aria-invalid={fieldError('runtimeEnvironmentKey') ? 'true' : undefined}
+        aria-describedby={describedBy('runtimeEnvironmentKey')}
+      >
+        <option value="">No managed runtime environment</option>
+        {#if values.runtimeEnvironmentKey && !hasRuntimeEnvironment(values.runtimeEnvironmentKey)}
+          <option value={values.runtimeEnvironmentKey}>
+            {values.runtimeEnvironmentKey} (unavailable)
+          </option>
+        {/if}
+        {#each runtimeEnvironments as environment (environment.key)}
+          <option value={environment.key}>{environmentLabel(environment)}</option>
+        {/each}
+      </select>
+    </Field>
   </fieldset>
 
   <div class="flex flex-col-reverse gap-3 border-t border-slate-800 pt-6 sm:flex-row sm:justify-end">

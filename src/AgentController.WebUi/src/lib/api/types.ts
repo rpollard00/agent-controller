@@ -8,6 +8,8 @@ export interface RepositoryProfile {
   environmentProfile: string;
   runtimeProfile: string;
   azureDevOpsEnvironmentKey: string | null;
+  repositoryHostConnectionKey: string | null;
+  remoteIdentity: string | null;
   runtimeEnvironmentKey: string | null;
   allowedPaths: string[];
 }
@@ -59,6 +61,46 @@ export interface WorkSourceConnectivityResult {
   httpStatus?: number;
   errors: string[];
   payload?: Record<string, unknown>;
+}
+
+/** Opaque reference to a secret value stored outside the profile. */
+export interface SecretReference {
+  kind: string;
+  id: string;
+}
+
+/** Managed configuration for a repository host connection. */
+export interface RepositoryHostConnectionProfile {
+  key: string;
+  displayName: string;
+  enabled: boolean;
+  provider: string;
+  organizationUrl: string;
+  project: string;
+  personalAccessTokenReference: SecretReference;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Provider-neutral connectivity verification result for a repository host. */
+export interface RepositoryHostConnectivityResult {
+  success: boolean;
+  authMechanism: string;
+  httpStatus?: number;
+  errors: string[];
+  payload?: Record<string, unknown>;
+}
+
+/** Clone transport hint from a repository host. */
+export type CloneTransportHint = 'unspecified' | 'ssh' | 'httpsPat';
+
+/** Provider-neutral description of a remote repository. */
+export interface HostRepository {
+  id: string;
+  name: string;
+  defaultBranch: string;
+  remoteUrl: string;
+  cloneTransportHint: CloneTransportHint;
 }
 
 /** RFC 9457 problem details, including ASP.NET validation extensions. */

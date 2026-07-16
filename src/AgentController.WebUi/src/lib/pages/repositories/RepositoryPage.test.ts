@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../../../App.svelte';
 import { ApiError, type ResourceClient, type WebUiApiClient } from '../../api/client';
 import type {
+  RepositoryHostConnectionProfile,
   RepositoryProfile,
   RuntimeEnvironmentProfile,
   WorkSourceEnvironmentProfile,
@@ -16,6 +17,8 @@ const repository: RepositoryProfile = {
   environmentProfile: 'legacy-environment',
   runtimeProfile: 'legacy-runtime',
   azureDevOpsEnvironmentKey: 'ado-main',
+  repositoryHostConnectionKey: null,
+  remoteIdentity: null,
   runtimeEnvironmentKey: 'runtime-main',
   allowedPaths: ['src'],
 };
@@ -96,6 +99,16 @@ function createApi(initialRepositories: RepositoryProfile[] = [repository]): Moc
           authMechanism: 'PersonalAccessToken',
           errors: [],
         }),
+      },
+      repositoryHostConnections: {
+        ...staticResource<RepositoryHostConnectionProfile>([]),
+        verifyConnection: async () => ({
+          success: true,
+          authMechanism: 'PersonalAccessToken',
+          errors: [],
+        }),
+        listRepositories: async () => [],
+        onboardRepository: async () => repository,
       },
       runtimeEnvironments: staticResource([runtimeEnvironment]),
     },

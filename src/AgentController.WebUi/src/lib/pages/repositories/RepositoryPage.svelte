@@ -2,6 +2,7 @@
   import { onDestroy } from 'svelte';
   import { getErrorMessage, getFieldErrors, type WebUiApiClient } from '../../api/client';
   import type {
+    RepositoryHostConnectionProfile,
     RepositoryProfile,
     RuntimeEnvironmentProfile,
     WorkSourceEnvironmentProfile,
@@ -33,6 +34,7 @@
   let repositories = $state<RepositoryProfile[]>([]);
   let repository = $state<RepositoryProfile>();
   let workSourceEnvironments = $state<WorkSourceEnvironmentProfile[]>([]);
+  let repositoryHostConnections = $state<RepositoryHostConnectionProfile[]>([]);
   let runtimeEnvironments = $state<RuntimeEnvironmentProfile[]>([]);
   let requestError = $state<unknown>();
   let mutationError = $state<unknown>();
@@ -87,8 +89,9 @@
       }
 
       if (currentRoute.view === 'create') {
-        [workSourceEnvironments, runtimeEnvironments] = await Promise.all([
+        [workSourceEnvironments, repositoryHostConnections, runtimeEnvironments] = await Promise.all([
           client.workSourceEnvironments.list(signal),
+          client.repositoryHostConnections.list(signal),
           client.runtimeEnvironments.list(signal),
         ]);
         status = 'ready';
@@ -97,9 +100,10 @@
 
       const profileRequest = client.repositories.get(currentRoute.key, signal);
       if (currentRoute.view === 'edit') {
-        [repository, workSourceEnvironments, runtimeEnvironments] = await Promise.all([
+        [repository, workSourceEnvironments, repositoryHostConnections, runtimeEnvironments] = await Promise.all([
           profileRequest,
           client.workSourceEnvironments.list(signal),
+          client.repositoryHostConnections.list(signal),
           client.runtimeEnvironments.list(signal),
         ]);
       } else {
@@ -318,6 +322,7 @@
       <RepositoryForm
         mode="create"
         {workSourceEnvironments}
+        {repositoryHostConnections}
         {runtimeEnvironments}
         {submitting}
         serverErrors={getFieldErrors(mutationError)}
@@ -345,6 +350,7 @@
           mode="edit"
           profile={repository}
           {workSourceEnvironments}
+          {repositoryHostConnections}
           {runtimeEnvironments}
           {submitting}
           serverErrors={getFieldErrors(mutationError)}

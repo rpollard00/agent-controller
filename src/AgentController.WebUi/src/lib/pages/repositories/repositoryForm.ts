@@ -7,6 +7,7 @@ export interface RepositoryFormValues {
   defaultBranch: string;
   allowedPaths: string;
   azureDevOpsEnvironmentKey: string;
+  repositoryHostConnectionKey: string;
   runtimeEnvironmentKey: string;
 }
 
@@ -20,6 +21,7 @@ export function createRepositoryFormValues(profile?: RepositoryProfile): Reposit
     defaultBranch: profile?.defaultBranch ?? 'main',
     allowedPaths: profile?.allowedPaths.join('\n') ?? '',
     azureDevOpsEnvironmentKey: profile?.azureDevOpsEnvironmentKey ?? '',
+    repositoryHostConnectionKey: profile?.repositoryHostConnectionKey ?? '',
     runtimeEnvironmentKey: profile?.runtimeEnvironmentKey ?? '',
   };
 }
@@ -48,6 +50,8 @@ export function toRepositoryProfile(
       .map((path) => path.trim())
       .filter((path) => path.length > 0),
     azureDevOpsEnvironmentKey: nullableKey(values.azureDevOpsEnvironmentKey),
+    repositoryHostConnectionKey: nullableKey(values.repositoryHostConnectionKey),
+    remoteIdentity: original?.remoteIdentity ?? null,
     runtimeEnvironmentKey: nullableKey(values.runtimeEnvironmentKey),
     environmentProfile: original?.environmentProfile ?? '',
     runtimeProfile: original?.runtimeProfile ?? '',
