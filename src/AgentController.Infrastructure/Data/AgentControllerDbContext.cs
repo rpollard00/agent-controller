@@ -34,6 +34,8 @@ internal sealed class AgentControllerDbContext : DbContext
     public DbSet<ReworkCycleEntity> ReworkCycles => Set<ReworkCycleEntity>();
     public DbSet<ReworkFeedbackEntity> ReworkFeedback => Set<ReworkFeedbackEntity>();
     public DbSet<SecretEntity> Secrets => Set<SecretEntity>();
+    public DbSet<NamedSecretEntity> NamedSecrets => Set<NamedSecretEntity>();
+    public DbSet<SecretVersionEntity> SecretVersions => Set<SecretVersionEntity>();
     public DbSet<RepositoryHostConnectionEntity> RepositoryHostConnections =>
         Set<RepositoryHostConnectionEntity>();
 
@@ -49,6 +51,8 @@ internal sealed class AgentControllerDbContext : DbContext
         modelBuilder.ApplyConfiguration(new ReworkCycleEntityConfiguration());
         modelBuilder.ApplyConfiguration(new ReworkFeedbackEntityConfiguration());
         modelBuilder.ApplyConfiguration(new SecretEntityConfiguration());
+        modelBuilder.ApplyConfiguration(new NamedSecretEntityConfiguration());
+        modelBuilder.ApplyConfiguration(new SecretVersionEntityConfiguration());
         modelBuilder.ApplyConfiguration(new RepositoryHostConnectionEntityConfiguration());
     }
 }
