@@ -11,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace AgentController.Migrations.Migrations
 {
     [DbContext(typeof(AgentControllerDbContext))]
-    partial class AgentControllerDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260716000000_AddSecretsTable")]
+    partial class AddSecretsTable
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.9");

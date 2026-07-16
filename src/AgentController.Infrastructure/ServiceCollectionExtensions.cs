@@ -5,6 +5,7 @@ using AgentController.Infrastructure;
 using AgentController.Infrastructure.Data;
 using AgentController.Infrastructure.Data.Repositories;
 using AgentController.Infrastructure.Options;
+using AgentController.Infrastructure.Secrets;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -633,5 +634,47 @@ public static class AgentControllerServiceCollectionExtensions
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Registers <see cref="ISecretStore"/> implementations backed by environment variables
+    /// and the database (EF Core <see cref="Data.Entities.SecretEntity"/> table).
+    ///
+    /// A <see cref="Secrets.SecretStoreResolver"/> dispatches to the correct store
+    /// based on <see cref="Domain.SecretReference.Kind"/>:
+    /// <list type="bullet">
+    ///   <item><description><c>"EnvVar"</c> → <see cref="Secrets.EnvVarSecretStore"/> (read-only, reads environment variables)</description></item>
+    ///   <item><description><c>"Db"</c> → <see cref="Secrets.DbSecretStore"/> (read/write, persisted in Secrets table)</description></item>
+    /// </list>
+    ///
+    /// Optionally accepts an <see cref="Secrets.ISecretProtector"/> for encrypted-at-rest
+    /// storage of database-backed secrets. If no protector is registered, values are
+    /// stored as plaintext (with a TODO for key rotation).
+    ///
+    /// Requires <see cref="AddAgentControllerDbContext"/> to be called first (for DbSecretStore).
+    /// </summary>
+    public static IServiceCollection AddAgentControllerSecretStores(
+        this IServiceCollection services
+    )
+    {
+        // Register the EnvVar-backed store (read-only, reads Environment.GetEnvironmentVariable).
+        services.AddSingleton<EnvVarSecretStore>();
+
+        // Register the Db-backed store (read/write, persisted via EF Core).
+        // Optionally uses ISecretProtector for encrypted-at-rest storage.
+        services.AddScoped<DbSecretStore>();
+
+        // Register the resolver that dispatches by SecretReference.Kind.
+        services.AddSingleton<ISecretStore, SecretStoreResolver>(sp =>
+        {
+            var stores = new Dictionary<string, ISecretStore>
+            {
+                ["EnvVar"] = sp.GetRequiredService<EnvVarSecretStore>(),
+                ["Db"] = sp.GetRequiredService<DbSecretStore>(),
+            };
+            return new SecretStoreResolver(stores);
+        });
+
+        return services;
     }
 }

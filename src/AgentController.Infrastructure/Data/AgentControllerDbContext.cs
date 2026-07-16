@@ -33,6 +33,7 @@ internal sealed class AgentControllerDbContext : DbContext
     public DbSet<RuntimeEnvironmentEntity> RuntimeEnvironments => Set<RuntimeEnvironmentEntity>();
     public DbSet<ReworkCycleEntity> ReworkCycles => Set<ReworkCycleEntity>();
     public DbSet<ReworkFeedbackEntity> ReworkFeedback => Set<ReworkFeedbackEntity>();
+    public DbSet<SecretEntity> Secrets => Set<SecretEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -45,5 +46,6 @@ internal sealed class AgentControllerDbContext : DbContext
         modelBuilder.ApplyConfiguration(new RuntimeEnvironmentEntityConfiguration());
         modelBuilder.ApplyConfiguration(new ReworkCycleEntityConfiguration());
         modelBuilder.ApplyConfiguration(new ReworkFeedbackEntityConfiguration());
+        modelBuilder.ApplyConfiguration(new SecretEntityConfiguration());
     }
 }
