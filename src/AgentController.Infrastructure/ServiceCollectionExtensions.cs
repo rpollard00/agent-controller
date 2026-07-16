@@ -283,6 +283,32 @@ public static class AgentControllerServiceCollectionExtensions
     }
 
     /// <summary>
+    /// Registers the <see cref="LocalGitRepositoryMaterializer"/> as a singleton
+    /// <see cref="IRepositoryMaterializer"/> that clones repositories into the local
+    /// filesystem using <c>git clone</c> with transport-appropriate credential injection:
+    /// <list type="bullet">
+    ///   <item><b>HTTPS+PAT</b>: injects credentials via <c>git http.extraHeader</c></item>
+    ///   <item><b>SSH</b>: uses the configured SSH key with <c>GIT_SSH_COMMAND</c></item>
+    ///   <item><b>Local</b>: native git clone for local paths</item>
+    /// </list>
+    ///
+    /// Requires <see cref="AddAgentControllerSecretStores"/> to be called first
+    /// (for <see cref="ISecretStore"/> dependency).
+    ///
+    /// Callers should register this <em>after</em>
+    /// <see cref="AddAgentControllerNoOpProviders"/> so the last-registered
+    /// <see cref="IRepositoryMaterializer"/> wins.
+    /// </summary>
+    public static IServiceCollection AddAgentControllerLocalGitRepositoryMaterializer(
+        this IServiceCollection services
+    )
+    {
+        services.AddSingleton<IRepositoryMaterializer, LocalGitRepositoryMaterializer>();
+
+        return services;
+    }
+
+    /// <summary>
     /// Registers the <see cref="LocalWorkspaceEnvironmentProvider"/> as a singleton
     /// <see cref="IEnvironmentProvider"/> that creates per-run local workspace
     /// directories under <c>{runRoot}/{runId}/</c>.
