@@ -113,6 +113,36 @@ public static class AgentControllerServiceCollectionExtensions
             .AddOptions<SecretProviderOptions>()
             .Bind(configuration.GetSection(SecretProviderOptions.SectionName))
             .ValidateDataAnnotations()
+            .Validate(options =>
+            {
+                // Defense in depth: reject provider=Db without a KEK at options-bind time.
+                // This surfaces the error earlier than the Build()-time throw and includes
+                // the options path in the message.
+                if (options.Provider != "Db")
+                {
+                    return true;
+                }
+
+                var kekFilePath = configuration["secrets:keyEncryptionKey:file:filePath"]
+                    ?? Environment.GetEnvironmentVariable("AGENT_CONTROLLER_SECRET_KEK_FILE_PATH");
+
+                if (string.IsNullOrWhiteSpace(kekFilePath))
+                {
+                    throw new OptionsValidationException(
+                        SecretProviderOptions.SectionName,
+                        typeof(SecretProviderOptions),
+                        new[]
+                        {
+                            "Secret provider 'Db' requires a Key Encryption Key (KEK). " +
+                            "Configure 'secrets:keyEncryptionKey:file:filePath' in appsettings " +
+                            "or set the AGENT_CONTROLLER_SECRET_KEK_FILE_PATH environment variable. " +
+                            "The KEK file must contain exactly 32 bytes of binary data (e.g., from openssl rand 32)."
+                        }
+                    );
+                }
+
+                return true;
+            })
             .ValidateOnStart();
 
         services.AddSingleton<IConfiguredProfileSource, ConfiguredProfileSource>();

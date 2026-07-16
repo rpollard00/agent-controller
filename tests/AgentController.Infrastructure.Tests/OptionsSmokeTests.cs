@@ -1002,6 +1002,111 @@ public class OptionsSmokeTests
     }
 
     // ──────────────────────────────────────────────
+    // SecretProviderOptions bind-time validation (provider=Db without KEK)
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public void SecretProviderOptions_DbWithoutKek_ThrowsOptionsValidationException()
+    {
+        // Arrange: provider=Db (default) with no KEK configured
+        var config = BuildConfiguration();
+
+        var services = new ServiceCollection();
+        services
+            .AddOptions<SecretProviderOptions>()
+            .Bind(config.GetSection(SecretProviderOptions.SectionName))
+            .ValidateDataAnnotations()
+            .Validate(options =>
+            {
+                if (options.Provider != "Db") return true;
+                var kekFilePath = config["secrets:keyEncryptionKey:file:filePath"]
+                    ?? Environment.GetEnvironmentVariable("AGENT_CONTROLLER_SECRET_KEK_FILE_PATH");
+                if (string.IsNullOrWhiteSpace(kekFilePath))
+                {
+                    throw new OptionsValidationException(
+                        SecretProviderOptions.SectionName,
+                        typeof(SecretProviderOptions),
+                        new[]
+                        {
+                            "Secret provider 'Db' requires a Key Encryption Key (KEK). " +
+                            "Configure 'secrets:keyEncryptionKey:file:filePath' in appsettings " +
+                            "or set the AGENT_CONTROLLER_SECRET_KEK_FILE_PATH environment variable. " +
+                            "The KEK file must contain exactly 32 bytes of binary data (e.g., from openssl rand 32)."
+                        }
+                    );
+                }
+                return true;
+            })
+            .ValidateOnStart();
+
+        var provider = services.BuildServiceProvider();
+        var ex = Assert.Throws<OptionsValidationException>(() =>
+            provider.GetRequiredService<IOptions<SecretProviderOptions>>().Value
+        );
+
+        // Assert: exception names both the provider setting and the KEK setting
+        Assert.Contains("Db", ex.Message);
+        Assert.Contains("secrets:keyEncryptionKey:file:filePath", ex.Message);
+        Assert.Contains("AGENT_CONTROLLER_SECRET_KEK_FILE_PATH", ex.Message);
+        Assert.Contains("KEK", ex.Message);
+    }
+
+    [Fact]
+    public void SecretProviderOptions_DbWithKek_BindsWithoutError()
+    {
+        // Arrange: provider=Db (default) with a KEK file path configured
+        var kekPath = Path.Combine(Path.GetTempPath(), "test-kek.key");
+        File.WriteAllBytes(kekPath, new byte[32]);
+
+        try
+        {
+            var config = BuildConfiguration(
+                new Dictionary<string, string?>
+                {
+                    ["secrets:keyEncryptionKey:file:filePath"] = kekPath,
+                }
+            );
+
+            var services = new ServiceCollection();
+            services
+                .AddOptions<SecretProviderOptions>()
+                .Bind(config.GetSection(SecretProviderOptions.SectionName))
+                .ValidateDataAnnotations()
+                .Validate(options =>
+                {
+                    if (options.Provider != "Db") return true;
+                    var kekFilePath = config["secrets:keyEncryptionKey:file:filePath"]
+                        ?? Environment.GetEnvironmentVariable("AGENT_CONTROLLER_SECRET_KEK_FILE_PATH");
+                    if (string.IsNullOrWhiteSpace(kekFilePath))
+                    {
+                        throw new OptionsValidationException(
+                            SecretProviderOptions.SectionName,
+                            typeof(SecretProviderOptions),
+                            new[]
+                            {
+                                "Secret provider 'Db' requires a Key Encryption Key (KEK). " +
+                                "Configure 'secrets:keyEncryptionKey:file:filePath' in appsettings " +
+                                "or set the AGENT_CONTROLLER_SECRET_KEK_FILE_PATH environment variable. " +
+                                "The KEK file must contain exactly 32 bytes of binary data (e.g., from openssl rand 32)."
+                            }
+                        );
+                    }
+                    return true;
+                })
+                .ValidateOnStart();
+
+            var serviceProvider = services.BuildServiceProvider();
+            // Should not throw — valid KEK path allows binding
+            var options = serviceProvider.GetRequiredService<IOptions<SecretProviderOptions>>().Value;
+            Assert.Equal("Db", options.Provider);
+        }
+        finally
+        {
+            File.Delete(kekPath);
+        }
+    }
+
+    // ──────────────────────────────────────────────
     // Fake secret store implementations for tests
     // ──────────────────────────────────────────────
 
