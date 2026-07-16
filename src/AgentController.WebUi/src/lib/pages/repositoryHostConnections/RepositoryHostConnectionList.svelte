@@ -91,9 +91,6 @@
     return undefined;
   }
 
-  function getSecretLabel(ref: { kind: string; id: string }): string {
-    return ref.kind === 'EnvVar' ? ref.id : `${ref.kind}:${ref.id}`;
-  }
 
   onDestroy(() => {
     for (const controller of verifyControllers.values()) {
