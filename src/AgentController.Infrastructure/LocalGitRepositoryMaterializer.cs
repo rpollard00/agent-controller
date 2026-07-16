@@ -28,7 +28,7 @@ namespace AgentController.Infrastructure;
 /// </summary>
 public sealed partial class LocalGitRepositoryMaterializer : IRepositoryMaterializer
 {
-    private readonly ISecretStore _secretStore;
+    private readonly IManagedSecretStore _secretStore;
     private readonly ILogger<LocalGitRepositoryMaterializer> _logger;
 
     /// <summary>
@@ -37,7 +37,7 @@ public sealed partial class LocalGitRepositoryMaterializer : IRepositoryMaterial
     private static readonly TimeSpan CloneTimeout = TimeSpan.FromMinutes(10);
 
     public LocalGitRepositoryMaterializer(
-        ISecretStore secretStore,
+        IManagedSecretStore secretStore,
         ILogger<LocalGitRepositoryMaterializer> logger)
     {
         _secretStore = secretStore;

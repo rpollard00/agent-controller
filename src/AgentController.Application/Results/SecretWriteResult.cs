@@ -1,7 +1,7 @@
 namespace AgentController.Application.Results;
 
 /// <summary>
-/// Result of a secret write operation from <see cref="ISecretStore.WriteAsync"/>.
+/// Result of a secret write operation from <see cref="IManagedSecretStore.WriteAsync"/>.
 /// </summary>
 public sealed record SecretWriteResult
 {

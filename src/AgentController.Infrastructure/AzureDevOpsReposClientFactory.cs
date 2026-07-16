@@ -14,7 +14,7 @@ internal sealed class AzureDevOpsReposClientFactory(
 {
     /// <summary>
     /// Create an authenticated ADO client for the given repository host connection profile.
-    /// The PAT is resolved via <see cref="ISecretStore"/> by the caller and passed in.
+    /// The PAT is resolved via <see cref="IManagedSecretStore"/> by the caller and passed in.
     /// </summary>
     public IAzureDevOpsBoardsClient Create(
         RepositoryHostConnectionProfile profile,

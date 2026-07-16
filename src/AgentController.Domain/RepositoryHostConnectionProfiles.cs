@@ -2,7 +2,7 @@ namespace AgentController.Domain;
 
 /// <summary>
 /// Opaque reference to a secret value stored outside the profile itself.
-/// Resolved at runtime by an <c>ISecretStore</c> implementation.
+/// Resolved at runtime by an <c>IManagedSecretStore</c> implementation.
 /// </summary>
 public sealed record SecretReference
 {

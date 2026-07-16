@@ -58,7 +58,7 @@ public sealed class AzureDevOpsReposRepositoryHostTests
         Assert.Equal("refs/heads/main", repositories[0]["defaultBranch"]);
         Assert.Equal("repo-2", repositories[1]["id"]);
 
-        // Assert: PAT was resolved through ISecretStore
+        // Assert: PAT was resolved through IManagedSecretStore
         Assert.True(fakeClient.WasCreated);
         Assert.Equal("test-token", fakeClient.ResolvedPat);
     }
@@ -203,7 +203,7 @@ public sealed class AzureDevOpsReposRepositoryHostTests
         Assert.Equal("repo-2", result[1].Id);
         Assert.Equal("develop", result[1].DefaultBranch); // refs/heads/ stripped
 
-        // Assert: PAT was resolved through ISecretStore
+        // Assert: PAT was resolved through IManagedSecretStore
         Assert.True(fakeClient.WasCreated);
         Assert.Equal("test-token", fakeClient.ResolvedPat);
     }
@@ -349,7 +349,7 @@ public sealed class AzureDevOpsReposRepositoryHostTests
     }
 
     private static AzureDevOpsReposRepositoryHost CreateHost(
-        ISecretStore secretStore,
+        IManagedSecretStore secretStore,
         FakeAdoClientForReposHost fakeClient
     )
     {
@@ -360,9 +360,9 @@ public sealed class AzureDevOpsReposRepositoryHostTests
     // ─── Test doubles ───
 
     /// <summary>
-    /// In-memory ISecretStore for tests.
+    /// In-memory IManagedSecretStore for tests.
     /// </summary>
-    private sealed class InMemorySecretStore : ISecretStore
+    private sealed class InMemorySecretStore : IManagedSecretStore
     {
         private readonly Dictionary<string, string> _store = new();
 

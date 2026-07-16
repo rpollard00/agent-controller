@@ -14,7 +14,7 @@ namespace AgentController.Infrastructure;
 /// <see cref="WorkSourceConnectivityResult"/>.
 ///
 /// PAT resolution is routed through <see cref="AzureDevOpsPatResolver"/> which
-/// dispatches via <see cref="ISecretStore"/>, replacing the previous direct
+/// dispatches via <see cref="IManagedSecretStore"/>, replacing the previous direct
 /// <c>Environment.GetEnvironmentVariable</c> call.
 /// </summary>
 internal sealed class AzureDevOpsConnectivityVerifier(
@@ -38,7 +38,7 @@ internal sealed class AzureDevOpsConnectivityVerifier(
             errors.Add("Azure DevOps project is not configured.");
         }
 
-        // Resolve PAT through ISecretStore via the shared resolver.
+        // Resolve PAT through IManagedSecretStore via the shared resolver.
         string? resolvedPat;
         try
         {

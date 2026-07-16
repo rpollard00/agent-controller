@@ -14,7 +14,7 @@ internal interface IAzureDevOpsReposClientFactory
     /// </summary>
     /// <param name="profile">The repository host connection profile.</param>
     /// <param name="personalAccessToken">
-    /// The resolved PAT value (already resolved through ISecretStore by the caller).
+    /// The resolved PAT value (already resolved through IManagedSecretStore by the caller).
     /// </param>
     IAzureDevOpsBoardsClient Create(
         RepositoryHostConnectionProfile profile,

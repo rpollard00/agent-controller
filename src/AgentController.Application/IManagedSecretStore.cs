@@ -4,11 +4,15 @@ using AgentController.Domain;
 namespace AgentController.Application;
 
 /// <summary>
-/// Application port for resolving and persisting secret values.
+/// Application port for resolving and persisting secret values via <see cref="SecretReference"/>.
 /// Implementations back the secret onto different storage mechanisms
 /// (environment variables, databases, key vaults, etc.).
+/// 
+/// This is the legacy combined read+write interface keyed by SecretReference (Kind + Id).
+/// For new code, prefer the provider-neutral <see cref="Domain.Secrets.ISecretStore"/> (read)
+/// and <see cref="Domain.Secrets.ISecretManager"/> (admin) ports.
 /// </summary>
-public interface ISecretStore
+public interface IManagedSecretStore
 {
     /// <summary>
     /// Resolve a secret reference to its raw string value.

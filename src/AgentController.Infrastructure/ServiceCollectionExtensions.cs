@@ -304,7 +304,7 @@ public static class AgentControllerServiceCollectionExtensions
     /// </list>
     ///
     /// Requires <see cref="AddAgentControllerSecretStores"/> to be called first
-    /// (for <see cref="ISecretStore"/> dependency).
+    /// (for <see cref="IManagedSecretStore"/> dependency).
     ///
     /// Callers should register this <em>after</em>
     /// <see cref="AddAgentControllerNoOpProviders"/> so the last-registered
@@ -470,14 +470,14 @@ public static class AgentControllerServiceCollectionExtensions
         // Throws during startup if any configured state is invalid.
         services.AddHostedService<AzureDevOpsBoardStateStartupValidator>();
 
-        // Register secret stores so ISecretStore is available for PAT resolution.
+        // Register secret stores so IManagedSecretStore is available for PAT resolution.
         AddAgentControllerSecretStores(services);
 
         // Shared ADO client factory — used by both work-source (Boards) and repo-host (Repos) paths.
         services.TryAddSingleton<AzureDevOpsClientFactory>();
 
         // Register the shared PAT resolver used by both work-source (Boards)
-        // and repo-host (Repos) ADO paths. Routes resolution through ISecretStore
+        // and repo-host (Repos) ADO paths. Routes resolution through IManagedSecretStore
         // with backward compatibility for legacy "ENV:NAME" and direct PAT forms.
         services.TryAddSingleton<AzureDevOpsPatResolver>();
 
@@ -492,7 +492,7 @@ public static class AgentControllerServiceCollectionExtensions
         );
 
         // Register the Azure DevOps Repos repository host for the provider-keyed resolver.
-        // Uses ISecretStore for PAT resolution (not Environment.GetEnvironmentVariable).
+        // Uses IManagedSecretStore for PAT resolution (not Environment.GetEnvironmentVariable).
         // Reuses AzureDevOpsBoardsClient for HTTP operations.
         // Repos client factory delegates to the shared AzureDevOpsClientFactory.
         services.TryAddSingleton<IAzureDevOpsReposClientFactory, AzureDevOpsReposClientFactory>();
@@ -694,7 +694,7 @@ public static class AgentControllerServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers <see cref="ISecretStore"/> implementations backed by environment variables
+    /// Registers <see cref="IManagedSecretStore"/> implementations backed by environment variables
     /// and the database (EF Core <see cref="Data.Entities.SecretEntity"/> table).
     ///
     /// A <see cref="Secrets.SecretStoreResolver"/> dispatches to the correct store
@@ -724,7 +724,7 @@ public static class AgentControllerServiceCollectionExtensions
         // Register the resolver that dispatches by SecretReference.Kind.
         // Uses lazy resolution from IServiceProvider to support scoped stores
         // (e.g., DbSecretStore which depends on scoped DbContext).
-        services.AddSingleton<ISecretStore, SecretStoreResolver>();
+        services.AddSingleton<IManagedSecretStore, SecretStoreResolver>();
 
         return services;
     }

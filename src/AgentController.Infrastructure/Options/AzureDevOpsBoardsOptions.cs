@@ -54,7 +54,7 @@ public sealed class AzureDevOpsBoardsOptions : IAzureDevOpsBoardsOptions
     /// This synchronous method uses <c>Environment.GetEnvironmentVariable</c> directly
     /// for backward compatibility. For new managed profiles, prefer
     /// <see cref="ResolvePersonalAccessTokenAsync"/> which routes through
-    /// <see cref="ISecretStore"/>.
+    /// <see cref="IManagedSecretStore"/>.
     /// </summary>
     public string? ResolvePersonalAccessToken()
     {
@@ -84,7 +84,7 @@ public sealed class AzureDevOpsBoardsOptions : IAzureDevOpsBoardsOptions
 
     /// <summary>
     /// Resolves the effective PAT value asynchronously, routing through
-    /// <see cref="ISecretStore"/> for "ENV:VARIABLE_NAME" references.
+    /// <see cref="IManagedSecretStore"/> for "ENV:VARIABLE_NAME" references.
     ///
     /// For legacy "ENV:NAME" values, converts to a <see cref="SecretReference"/>
     /// of kind "EnvVar" and resolves through the secret store. For direct PAT
@@ -99,7 +99,7 @@ public sealed class AzureDevOpsBoardsOptions : IAzureDevOpsBoardsOptions
     /// Cancellation token.
     /// </param>
     public async Task<string?> ResolvePersonalAccessTokenAsync(
-        ISecretStore secretStore,
+        IManagedSecretStore secretStore,
         CancellationToken cancellationToken
     )
     {
@@ -115,7 +115,7 @@ public sealed class AzureDevOpsBoardsOptions : IAzureDevOpsBoardsOptions
                 throw new InvalidOperationException(
                     $"Azure DevOps PAT is configured as 'ENV:' but no environment variable name was provided.");
 
-            // Route through ISecretStore for backward-compatible EnvVar resolution.
+            // Route through IManagedSecretStore for backward-compatible EnvVar resolution.
             var reference = SecretReference.EnvironmentVariable(envName.Trim());
             var resolved = await secretStore.ResolveAsync(reference, cancellationToken);
             if (string.IsNullOrWhiteSpace(resolved))

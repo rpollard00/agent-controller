@@ -6,7 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace AgentController.Infrastructure.Secrets;
 
 /// <summary>
-/// Resolves <see cref="ISecretStore"/> calls to the correct underlying store
+/// Resolves <see cref="IManagedSecretStore"/> calls to the correct underlying store
 /// based on <see cref="SecretReference.Kind"/>.
 ///
 /// Dispatches to registered store implementations:
@@ -22,7 +22,7 @@ namespace AgentController.Infrastructure.Secrets;
 ///
 /// Unknown kinds return <c>null</c> for resolve and failure for write.
 /// </summary>
-internal sealed class SecretStoreResolver : ISecretStore
+internal sealed class SecretStoreResolver : IManagedSecretStore
 {
     private readonly IServiceProvider _serviceProvider;
 

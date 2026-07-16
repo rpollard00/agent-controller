@@ -136,9 +136,9 @@ public sealed class SecretStoreTests
             Environment.SetEnvironmentVariable(envName, expected);
             var services = new ServiceCollection();
             services.AddSingleton<EnvVarSecretStore>();
-            services.AddSingleton<ISecretStore, SecretStoreResolver>();
+            services.AddSingleton<IManagedSecretStore, SecretStoreResolver>();
             var provider = services.BuildServiceProvider();
-            var resolver = provider.GetRequiredService<ISecretStore>();
+            var resolver = provider.GetRequiredService<IManagedSecretStore>();
             var reference = SecretReference.EnvironmentVariable(envName);
 
             // Act
@@ -161,9 +161,9 @@ public sealed class SecretStoreTests
         // Arrange
         var services = new ServiceCollection();
         services.AddSingleton<EnvVarSecretStore>();
-        services.AddSingleton<ISecretStore, SecretStoreResolver>();
+        services.AddSingleton<IManagedSecretStore, SecretStoreResolver>();
         var provider = services.BuildServiceProvider();
-        var resolver = provider.GetRequiredService<ISecretStore>();
+        var resolver = provider.GetRequiredService<IManagedSecretStore>();
         var reference = new SecretReference { Kind = "Unknown", Id = "x" };
 
         // Act
@@ -181,9 +181,9 @@ public sealed class SecretStoreTests
         // Arrange
         var services = new ServiceCollection();
         services.AddSingleton<EnvVarSecretStore>();
-        services.AddSingleton<ISecretStore, SecretStoreResolver>();
+        services.AddSingleton<IManagedSecretStore, SecretStoreResolver>();
         var provider = services.BuildServiceProvider();
-        var resolver = provider.GetRequiredService<ISecretStore>();
+        var resolver = provider.GetRequiredService<IManagedSecretStore>();
         var reference = new SecretReference { Kind = "Unknown", Id = "x" };
 
         // Act
@@ -203,9 +203,9 @@ public sealed class SecretStoreTests
         // Arrange
         var services = new ServiceCollection();
         services.AddSingleton<EnvVarSecretStore>();
-        services.AddSingleton<ISecretStore, SecretStoreResolver>();
+        services.AddSingleton<IManagedSecretStore, SecretStoreResolver>();
         var provider = services.BuildServiceProvider();
-        var resolver = provider.GetRequiredService<ISecretStore>();
+        var resolver = provider.GetRequiredService<IManagedSecretStore>();
         var reference = SecretReference.EnvironmentVariable("TEST_VAR");
 
         // Act
@@ -242,14 +242,14 @@ public sealed class SecretStoreTests
         // but we verify the Kind check logic by confirming the interface
         // is correctly implemented.
         var type = typeof(DbSecretStore);
-        Assert.True(typeof(ISecretStore).IsAssignableFrom(type));
+        Assert.True(typeof(IManagedSecretStore).IsAssignableFrom(type));
     }
 }
 
 /// <summary>
 /// Simple in-memory fake for testing SecretStoreResolver dispatch.
 /// </summary>
-internal sealed class InMemoryFakeSecretStore : ISecretStore
+internal sealed class InMemoryFakeSecretStore : IManagedSecretStore
 {
     private readonly Dictionary<string, string> _store = new();
 

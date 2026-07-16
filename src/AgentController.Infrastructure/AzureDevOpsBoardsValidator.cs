@@ -73,14 +73,14 @@ internal static class AzureDevOpsBoardsValidator
 
     /// <summary>
     /// Validates Azure DevOps Boards configuration asynchronously, routing PAT
-    /// resolution through <see cref="ISecretStore"/> for "ENV:" references.
+    /// resolution through <see cref="IManagedSecretStore"/> for "ENV:" references.
     /// Throws <see cref="InvalidOperationException"/> with a clear message on
     /// the first validation failure.
     /// </summary>
     public static async Task ValidateAsync(
         WorkSourceOptions workSource,
         AzureDevOpsBoardsOptions boards,
-        ISecretStore secretStore,
+        IManagedSecretStore secretStore,
         CancellationToken cancellationToken
     )
     {
@@ -109,7 +109,7 @@ internal static class AzureDevOpsBoardsValidator
                 "Configure 'workSource:project'.");
         }
 
-        // Personal Access Token — resolved through ISecretStore.
+        // Personal Access Token — resolved through IManagedSecretStore.
         string? resolvedPat = null;
         try
         {

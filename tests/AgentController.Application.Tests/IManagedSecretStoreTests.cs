@@ -5,14 +5,14 @@ using AgentController.Domain;
 namespace AgentController.Application.Tests;
 
 /// <summary>
-/// Contract-level tests for the <see cref="ISecretStore"/> port,
+/// Contract-level tests for the <see cref="IManagedSecretStore"/> port,
 /// <see cref="SecretWriteResult"/>, <see cref="ResolvedSecret"/>,
 /// and <see cref="ResolvedSecretsManifest"/> types.
 /// Uses a fake in-memory secret store — no real implementations exercised.
 /// </summary>
-public sealed class ISecretStoreTests
+public sealed class IManagedSecretStoreTests
 {
-    // ─── ISecretStore: resolve existing secret ───
+    // ─── IManagedSecretStore: resolve existing secret ───
 
     [Fact]
     public async Task ResolveAsync_ExistingEnvVarSecret_ReturnsValue()
@@ -33,7 +33,7 @@ public sealed class ISecretStoreTests
         Assert.Equal("fake-token-123", value);
     }
 
-    // ─── ISecretStore: resolve missing secret returns null ───
+    // ─── IManagedSecretStore: resolve missing secret returns null ───
 
     [Fact]
     public async Task ResolveAsync_MissingSecret_ReturnsNull()
@@ -51,7 +51,7 @@ public sealed class ISecretStoreTests
         Assert.Null(value);
     }
 
-    // ─── ISecretStore: resolve database-backed secret ───
+    // ─── IManagedSecretStore: resolve database-backed secret ───
 
     [Fact]
     public async Task ResolveAsync_DatabaseSecret_ReturnsValue()
@@ -72,7 +72,7 @@ public sealed class ISecretStoreTests
         Assert.Equal("db-stored-token", value);
     }
 
-    // ─── ISecretStore: passes cancellation token ───
+    // ─── IManagedSecretStore: passes cancellation token ───
 
     [Fact]
     public async Task ResolveAsync_PassesCancellationToken()
@@ -92,7 +92,7 @@ public sealed class ISecretStoreTests
         Assert.True(store.ReceivedCancellation);
     }
 
-    // ─── ISecretStore: write secret succeeds ───
+    // ─── IManagedSecretStore: write secret succeeds ───
 
     [Fact]
     public async Task WriteAsync_NewSecret_ReturnsSuccess()
@@ -119,7 +119,7 @@ public sealed class ISecretStoreTests
         Assert.Equal("new-secret-value", resolved);
     }
 
-    // ─── ISecretStore: write secret updates existing value ───
+    // ─── IManagedSecretStore: write secret updates existing value ───
 
     [Fact]
     public async Task WriteAsync_ExistingSecret_UpdatesValue()
@@ -147,7 +147,7 @@ public sealed class ISecretStoreTests
         Assert.Equal("new-value", resolved);
     }
 
-    // ─── ISecretStore: write passes cancellation token ───
+    // ─── IManagedSecretStore: write passes cancellation token ───
 
     [Fact]
     public async Task WriteAsync_PassesCancellationToken()
@@ -327,9 +327,9 @@ public sealed class ISecretStoreTests
 // ─── Fakes ───
 
 /// <summary>
-/// In-memory fake implementation of <see cref="ISecretStore"/> for contract tests.
+/// In-memory fake implementation of <see cref="IManagedSecretStore"/> for contract tests.
 /// </summary>
-internal sealed class FakeSecretStore(Dictionary<SecretReference, string> initialData) : ISecretStore
+internal sealed class FakeSecretStore(Dictionary<SecretReference, string> initialData) : IManagedSecretStore
 {
     private readonly Dictionary<SecretReference, string> _store = initialData;
     public bool ReceivedCancellation { get; private set; }
@@ -351,7 +351,7 @@ internal sealed class FakeSecretStore(Dictionary<SecretReference, string> initia
 /// <summary>
 /// Read-only fake that always fails writes — tests failure path of <see cref="SecretWriteResult"/>.
 /// </summary>
-internal sealed class ReadOnlyFakeSecretStore : ISecretStore
+internal sealed class ReadOnlyFakeSecretStore : IManagedSecretStore
 {
     public Task<string?> ResolveAsync(SecretReference reference, CancellationToken cancellationToken)
     {

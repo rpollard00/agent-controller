@@ -11,7 +11,7 @@ namespace AgentController.Infrastructure.Tests;
 /// - Success path (connectivity ok + repo list mapped into payload, AuthMechanism == "PersonalAccessToken")
 /// - Failure path (VerifyConnectivityAsync reports failure → non-success with errors/httpStatus)
 /// - Config-error path (missing org/project or unresolved ENV: PAT → non-success with descriptive errors, no throw)
-/// - PAT resolution through ISecretStore (EnvVar-backed and Db-backed secrets)
+/// - PAT resolution through IManagedSecretStore (EnvVar-backed and Db-backed secrets)
 /// </summary>
 public sealed class AzureDevOpsConnectivityVerifierTests
 {
@@ -303,7 +303,7 @@ public sealed class AzureDevOpsConnectivityVerifierTests
         );
     }
 
-    // ─── PAT resolution through ISecretStore: EnvVar-backed ───
+    // ─── PAT resolution through IManagedSecretStore: EnvVar-backed ───
 
     [Fact]
     public async Task VerifyAsync_EnvVarBackedSecret_ResolvesPatThroughSecretStore()
@@ -325,14 +325,14 @@ public sealed class AzureDevOpsConnectivityVerifierTests
         // Act
         var result = await verifier.VerifyAsync(profile, CancellationToken.None);
 
-        // Assert: success — PAT was resolved through ISecretStore (EnvVar kind)
+        // Assert: success — PAT was resolved through IManagedSecretStore (EnvVar kind)
         Assert.True(result.Success);
         Assert.Equal("PersonalAccessToken", result.AuthMechanism);
 
         ClearPatEnvironmentVariable();
     }
 
-    // ─── PAT resolution through ISecretStore: Db-backed (in-memory) ───
+    // ─── PAT resolution through IManagedSecretStore: Db-backed (in-memory) ───
 
     [Fact]
     public async Task VerifyAsync_DbBackedSecret_ResolvesPatThroughSecretStore()
@@ -358,7 +358,7 @@ public sealed class AzureDevOpsConnectivityVerifierTests
         // Act
         var result = await verifier.VerifyAsync(profile, CancellationToken.None);
 
-        // Assert: success — PAT was resolved through ISecretStore (Db kind)
+        // Assert: success — PAT was resolved through IManagedSecretStore (Db kind)
         Assert.True(result.Success);
         Assert.Equal("PersonalAccessToken", result.AuthMechanism);
     }
@@ -390,12 +390,12 @@ public sealed class AzureDevOpsConnectivityVerifierTests
 
     private static AzureDevOpsConnectivityVerifier CreateVerifier(
         IAzureDevOpsBoardsClient mockClient,
-        ISecretStore? secretStore = null
+        IManagedSecretStore? secretStore = null
     )
     {
         var factory = new MockAzureDevOpsBoardsClientFactory(mockClient);
         var patResolver = new AzureDevOpsPatResolver(
-            secretStore ?? (ISecretStore)new EnvVarBackedFakeSecretStore()
+            secretStore ?? (IManagedSecretStore)new EnvVarBackedFakeSecretStore()
         );
         return new AzureDevOpsConnectivityVerifier(factory, patResolver);
     }
@@ -459,10 +459,10 @@ public sealed class AzureDevOpsConnectivityVerifierTests
     }
 
     /// <summary>
-    /// Fake ISecretStore that resolves "EnvVar" kind references by reading
+    /// Fake IManagedSecretStore that resolves "EnvVar" kind references by reading
     /// the actual environment variable (mimicking EnvVarSecretStore).
     /// </summary>
-    private sealed class EnvVarBackedFakeSecretStore : ISecretStore
+    private sealed class EnvVarBackedFakeSecretStore : IManagedSecretStore
     {
         public Task<string?> ResolveAsync(SecretReference reference, CancellationToken ct)
         {
@@ -486,11 +486,11 @@ public sealed class AzureDevOpsConnectivityVerifierTests
     }
 
     /// <summary>
-    /// Fake ISecretStore with pre-configured in-memory secret values.
+    /// Fake IManagedSecretStore with pre-configured in-memory secret values.
     /// Simulates a Db-backed secret store.
     /// </summary>
     private sealed class InMemoryFakeSecretStore(Dictionary<string, string> secrets)
-        : ISecretStore
+        : IManagedSecretStore
     {
         public Task<string?> ResolveAsync(SecretReference reference, CancellationToken ct)
         {

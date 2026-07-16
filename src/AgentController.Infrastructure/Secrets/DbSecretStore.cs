@@ -23,10 +23,10 @@ internal interface ISecretProtector
 }
 
 /// <summary>
-/// <see cref="ISecretStore"/> implementation backed by the EF Core <see cref="SecretEntity"/> table.
+/// <see cref="IManagedSecretStore"/> implementation backed by the EF Core <see cref="SecretEntity"/> table.
 /// Supports encrypted-at-rest storage when an <see cref="ISecretProtector"/> is configured.
 /// </summary>
-internal sealed class DbSecretStore : ISecretStore
+internal sealed class DbSecretStore : IManagedSecretStore
 {
     private const string DbKind = "Db";
     private readonly AgentControllerDbContext _context;
@@ -56,7 +56,7 @@ internal sealed class DbSecretStore : ISecretStore
         }
 
         var entity = await _context.Secrets
-            .FirstOrDefaultAsync(x => x.Id == reference.Id, cancellationToken);
+            .FirstOrDefaultAsync(s => s.Id == reference.Id, cancellationToken);
 
         if (entity == null)
         {
@@ -91,7 +91,7 @@ internal sealed class DbSecretStore : ISecretStore
             : value;
 
         var existing = await _context.Secrets
-            .FirstOrDefaultAsync(x => x.Id == reference.Id, cancellationToken);
+            .FirstOrDefaultAsync(s => s.Id == reference.Id, cancellationToken);
 
         if (existing != null)
         {

@@ -54,7 +54,7 @@ public class LocalGitRepositoryMaterializerTests : IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    private static LocalGitRepositoryMaterializer CreateMaterializer(ISecretStore? secretStore = null)
+    private static LocalGitRepositoryMaterializer CreateMaterializer(IManagedSecretStore? secretStore = null)
     {
         return new LocalGitRepositoryMaterializer(
             secretStore ?? new FakeSecretStore(),
@@ -402,7 +402,7 @@ public class LocalGitRepositoryMaterializerTests : IAsyncLifetime
     {
         var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
         services.AddLogging();
-        services.AddSingleton<ISecretStore, FakeSecretStore>();
+        services.AddSingleton<IManagedSecretStore, FakeSecretStore>();
         services.AddAgentControllerLocalGitRepositoryMaterializer();
 
         var provider = services.BuildServiceProvider();
@@ -447,9 +447,9 @@ public class LocalGitRepositoryMaterializerTests : IAsyncLifetime
 // ─── Fakes ───
 
 /// <summary>
-/// Simple in-memory fake for <see cref="ISecretStore"/>.
+/// Simple in-memory fake for <see cref="IManagedSecretStore"/>.
 /// </summary>
-internal sealed class FakeSecretStore : ISecretStore
+internal sealed class FakeSecretStore : IManagedSecretStore
 {
     public Task<string?> ResolveAsync(SecretReference reference, CancellationToken cancellationToken)
     {
@@ -466,7 +466,7 @@ internal sealed class FakeSecretStore : ISecretStore
 /// <summary>
 /// Fake that tracks cancellation token receipt.
 /// </summary>
-internal sealed class CancellationTrackingSecretStore : ISecretStore
+internal sealed class CancellationTrackingSecretStore : IManagedSecretStore
 {
     public Task<string?> ResolveAsync(SecretReference reference, CancellationToken cancellationToken)
     {

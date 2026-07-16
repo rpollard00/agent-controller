@@ -1204,7 +1204,7 @@ public class OptionsSmokeTests
     // Fake secret store implementations for tests
     // ──────────────────────────────────────────────
 
-    private sealed class EnvVarFakeSecretStore : ISecretStore
+    private sealed class EnvVarFakeSecretStore : IManagedSecretStore
     {
         public Task<string?> ResolveAsync(SecretReference reference, CancellationToken ct)
         {
@@ -1228,7 +1228,7 @@ public class OptionsSmokeTests
     }
 
     private sealed class InMemoryFakeSecretStore(Dictionary<string, string> secrets)
-        : ISecretStore
+        : IManagedSecretStore
     {
         public Task<string?> ResolveAsync(SecretReference reference, CancellationToken ct)
         {

@@ -5,7 +5,7 @@ namespace AgentController.Application;
 /// <summary>
 /// Persistence contract for managed repository host connection profiles.
 /// Implementations store secret references only; callers must resolve the
-/// referenced secret through <see cref="ISecretStore"/> outside the persistence layer.
+/// referenced secret through <see cref="IManagedSecretStore"/> outside the persistence layer.
 /// </summary>
 public interface IRepositoryHostConnectionStore
 {

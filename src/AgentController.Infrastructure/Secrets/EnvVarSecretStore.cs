@@ -5,14 +5,14 @@ using AgentController.Domain;
 namespace AgentController.Infrastructure.Secrets;
 
 /// <summary>
-/// <see cref="ISecretStore"/> implementation backed by environment variables.
+/// <see cref="IManagedSecretStore"/> implementation backed by environment variables.
 /// Preserves the existing "ENV:NAME" convention: resolving a SecretReference
 /// with Kind "EnvVar" reads <c>Environment.GetEnvironmentVariable(reference.Id)</c>.
 ///
 /// Write operations always fail because environment variables are not
 /// writable at runtime through this abstraction.
 /// </summary>
-internal sealed class EnvVarSecretStore : ISecretStore
+internal sealed class EnvVarSecretStore : IManagedSecretStore
 {
     private const string EnvVarKind = "EnvVar";
 

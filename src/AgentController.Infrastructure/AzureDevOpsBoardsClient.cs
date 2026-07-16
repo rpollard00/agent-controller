@@ -56,7 +56,7 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
     /// <param name="personalAccessToken">
     /// Optional pre-resolved PAT. When provided, this value is used directly
     /// instead of calling <c>options.ResolvePersonalAccessToken()</c>.
-    /// This allows the caller to resolve the secret through <c>ISecretStore</c>
+    /// This allows the caller to resolve the secret through <c>IManagedSecretStore</c>
     /// before constructing the client.
     /// </param>
     public AzureDevOpsBoardsClient(

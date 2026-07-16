@@ -9,11 +9,11 @@ namespace AgentController.Infrastructure;
 /// Azure DevOps Repos implementation of <see cref="IRepositoryHostConnection"/>.
 /// Reuses the existing <see cref="AzureDevOpsBoardsClient"/> for HTTP operations
 /// without reimplementing any HTTP machinery. PAT is resolved through
-/// <see cref="ISecretStore"/> from the profile's <c>PersonalAccessTokenReference</c>.
+/// <see cref="IManagedSecretStore"/> from the profile's <c>PersonalAccessTokenReference</c>.
 /// </summary>
 internal sealed class AzureDevOpsReposRepositoryHost(
     IAzureDevOpsReposClientFactory clientFactory,
-    ISecretStore secretStore
+    IManagedSecretStore secretStore
 ) : IRepositoryHostConnection
 {
     /// <inheritdoc />
@@ -33,7 +33,7 @@ internal sealed class AzureDevOpsReposRepositoryHost(
             errors.Add("Azure DevOps project is not configured.");
         }
 
-        // Resolve PAT through ISecretStore.
+        // Resolve PAT through IManagedSecretStore.
         string? resolvedPat;
         try
         {
@@ -127,7 +127,7 @@ internal sealed class AzureDevOpsReposRepositoryHost(
             return Array.Empty<HostRepository>();
         }
 
-        // Resolve PAT through ISecretStore.
+        // Resolve PAT through IManagedSecretStore.
         string? resolvedPat;
         try
         {
