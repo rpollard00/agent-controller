@@ -165,6 +165,14 @@ public static class ServiceCollectionExtensions
             >,
             VerifyRepositoryHostConnectivityQueryHandler
         >();
+        services.AddScoped<
+            IQueryHandler<ListHostRepositoriesQuery, IReadOnlyList<HostRepository>>,
+            ListHostRepositoriesQueryHandler
+        >();
+        services.AddScoped<
+            ICommandHandler<OnboardRepositoryFromHostCommand, RepositoryOperationResult>,
+            OnboardRepositoryFromHostCommandHandler
+        >();
         // Work-source connectivity verifier resolver
         services.AddWorkSourceConnectivityVerifierResolver();
 
