@@ -441,6 +441,14 @@ public static class AgentControllerServiceCollectionExtensions
             "AzureDevOpsRepos"
         );
 
+        // Register the Azure DevOps Repos repository host for the provider-keyed resolver.
+        // Uses ISecretStore for PAT resolution (not Environment.GetEnvironmentVariable).
+        // Reuses AzureDevOpsBoardsClient for HTTP operations.
+        // Register secret stores so ISecretStore is available for PAT resolution.
+        AddAgentControllerSecretStores(services);
+        services.AddSingleton<IAzureDevOpsReposClientFactory, AzureDevOpsReposClientFactory>();
+        services.AddRepositoryHost<AzureDevOpsReposRepositoryHost>("AzureDevOpsRepos");
+
         return services;
     }
 
