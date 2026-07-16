@@ -10,14 +10,14 @@ namespace AgentController.Infrastructure.Tests;
 /// Tests for <see cref="AzureDevOpsConnectivityVerifier"/> covering:
 /// - Success path (connectivity ok + repo list mapped into payload, AuthMechanism == "PersonalAccessToken")
 /// - Failure path (VerifyConnectivityAsync reports failure → non-success with errors/httpStatus)
-/// - Config-error path (missing org/project or unresolved ENV: PAT → non-success with descriptive errors, no throw)
-/// - PAT resolution through IManagedSecretStore (EnvVar-backed and Db-backed secrets)
+/// - Config-error path (missing org/project or unresolved secret → non-success with descriptive errors, no throw)
+/// - PAT resolution through ISecretStore (named + versioned secrets)
 /// </summary>
 public sealed class AzureDevOpsConnectivityVerifierTests
 {
     private const string OrgUrl = "https://dev.azure.com/testorg";
     private const string Project = "TestProject";
-    private const string PatEnvVar = "TEST_ADO_PAT_VAR";
+    private const string SecretName = "test-ado-pat";
 
     // ─── Success path ───
 
@@ -25,7 +25,10 @@ public sealed class AzureDevOpsConnectivityVerifierTests
     public async Task VerifyAsync_ConnectivitySucceeds_ReturnsSuccessWithReposInPayload()
     {
         // Arrange
-        SetPatEnvironmentVariable();
+        var secretStore = await CreateNamedSecretStoreAsync(new Dictionary<string, string>
+        {
+            [SecretName] = "test-personal-access-token",
+        });
         var mockClient = new MockAzureDevOpsBoardsClientForVerifier
         {
             ConnectivityResult = new AzureDevOpsConnectivityResult
@@ -51,7 +54,7 @@ public sealed class AzureDevOpsConnectivityVerifierTests
                 },
             },
         };
-        var verifier = CreateVerifier(mockClient);
+        var verifier = CreateVerifier(mockClient, namedSecretStore: secretStore);
 
         var profile = CreateProfile();
 
@@ -74,8 +77,6 @@ public sealed class AzureDevOpsConnectivityVerifierTests
         Assert.Equal("https://dev.azure.com/testorg/TestProject/_git/main-repo", repositories[0]["remoteUrl"]);
         Assert.Equal("repo-2", repositories[1]["id"]);
         Assert.Equal("infra-repo", repositories[1]["name"]);
-
-        ClearPatEnvironmentVariable();
     }
 
     // ─── Failure path (connectivity check fails) ───
@@ -84,7 +85,10 @@ public sealed class AzureDevOpsConnectivityVerifierTests
     public async Task VerifyAsync_ConnectivityFails_ReturnsFailureWithErrorsAndHttpStatus()
     {
         // Arrange
-        SetPatEnvironmentVariable();
+        var secretStore = await CreateNamedSecretStoreAsync(new Dictionary<string, string>
+        {
+            [SecretName] = "test-personal-access-token",
+        });
         var mockClient = new MockAzureDevOpsBoardsClientForVerifier
         {
             ConnectivityResult = new AzureDevOpsConnectivityResult
@@ -95,7 +99,7 @@ public sealed class AzureDevOpsConnectivityVerifierTests
                 Repositories = Array.Empty<RepositoryInfo>(),
             },
         };
-        var verifier = CreateVerifier(mockClient);
+        var verifier = CreateVerifier(mockClient, namedSecretStore: secretStore);
 
         var profile = CreateProfile();
 
@@ -108,15 +112,16 @@ public sealed class AzureDevOpsConnectivityVerifierTests
         Assert.Equal(401, result.HttpStatus);
         Assert.Single(result.Errors);
         Assert.Equal("The provided credentials are invalid.", result.Errors[0]);
-
-        ClearPatEnvironmentVariable();
     }
 
     [Fact]
     public async Task VerifyAsync_ConnectivityFailsWithNullStatus_ReturnsFailureWithNullHttpStatus()
     {
         // Arrange
-        SetPatEnvironmentVariable();
+        var secretStore = await CreateNamedSecretStoreAsync(new Dictionary<string, string>
+        {
+            [SecretName] = "test-personal-access-token",
+        });
         var mockClient = new MockAzureDevOpsBoardsClientForVerifier
         {
             ConnectivityResult = new AzureDevOpsConnectivityResult
@@ -127,7 +132,7 @@ public sealed class AzureDevOpsConnectivityVerifierTests
                 Repositories = Array.Empty<RepositoryInfo>(),
             },
         };
-        var verifier = CreateVerifier(mockClient);
+        var verifier = CreateVerifier(mockClient, namedSecretStore: secretStore);
 
         var profile = CreateProfile();
 
@@ -139,8 +144,6 @@ public sealed class AzureDevOpsConnectivityVerifierTests
         Assert.Null(result.HttpStatus);
         Assert.Single(result.Errors);
         Assert.Equal("Connection timed out.", result.Errors[0]);
-
-        ClearPatEnvironmentVariable();
     }
 
     // ─── Config-error: missing organization URL ───
@@ -148,9 +151,10 @@ public sealed class AzureDevOpsConnectivityVerifierTests
     [Fact]
     public async Task VerifyAsync_MissingOrganizationUrl_ReturnsFailureWithConfigError()
     {
-        // Arrange — no PAT env var needed; config validation fails first
+        // Arrange — no PAT secret needed; config validation fails first
+        var secretStore = await CreateNamedSecretStoreAsync(new Dictionary<string, string>());
         var mockClient = new MockAzureDevOpsBoardsClientForVerifier();
-        var verifier = CreateVerifier(mockClient);
+        var verifier = CreateVerifier(mockClient, namedSecretStore: secretStore);
 
         var profile = new WorkSourceEnvironmentProfile
         {
@@ -159,7 +163,7 @@ public sealed class AzureDevOpsConnectivityVerifierTests
             Provider = "AzureDevOpsBoards",
             OrganizationUrl = "", // Missing
             Project = Project,
-            PatEnvironmentVariable = PatEnvVar,
+            PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByName(SecretName),
         };
 
         // Act — must not throw
@@ -180,8 +184,9 @@ public sealed class AzureDevOpsConnectivityVerifierTests
     public async Task VerifyAsync_MissingProject_ReturnsFailureWithConfigError()
     {
         // Arrange
+        var secretStore = await CreateNamedSecretStoreAsync(new Dictionary<string, string>());
         var mockClient = new MockAzureDevOpsBoardsClientForVerifier();
-        var verifier = CreateVerifier(mockClient);
+        var verifier = CreateVerifier(mockClient, namedSecretStore: secretStore);
 
         var profile = new WorkSourceEnvironmentProfile
         {
@@ -190,7 +195,7 @@ public sealed class AzureDevOpsConnectivityVerifierTests
             Provider = "AzureDevOpsBoards",
             OrganizationUrl = OrgUrl,
             Project = "", // Missing
-            PatEnvironmentVariable = PatEnvVar,
+            PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByName(SecretName),
         };
 
         // Act — must not throw
@@ -205,14 +210,15 @@ public sealed class AzureDevOpsConnectivityVerifierTests
         );
     }
 
-    // ─── Config-error: missing PAT environment variable reference ───
+    // ─── Config-error: missing PAT secret reference ───
 
     [Fact]
-    public async Task VerifyAsync_MissingPatEnvironmentVariable_ReturnsFailureWithConfigError()
+    public async Task VerifyAsync_MissingSecretReference_ReturnsFailureWithConfigError()
     {
         // Arrange
+        var secretStore = await CreateNamedSecretStoreAsync(new Dictionary<string, string>());
         var mockClient = new MockAzureDevOpsBoardsClientForVerifier();
-        var verifier = CreateVerifier(mockClient);
+        var verifier = CreateVerifier(mockClient, namedSecretStore: secretStore);
 
         var profile = new WorkSourceEnvironmentProfile
         {
@@ -221,7 +227,7 @@ public sealed class AzureDevOpsConnectivityVerifierTests
             Provider = "AzureDevOpsBoards",
             OrganizationUrl = OrgUrl,
             Project = Project,
-            PatEnvironmentVariable = "", // Missing
+            PersonalAccessTokenReference = Domain.Secrets.SecretReference.Empty, // Missing
         };
 
         // Act — must not throw
@@ -236,16 +242,15 @@ public sealed class AzureDevOpsConnectivityVerifierTests
         );
     }
 
-    // ─── Config-error: PAT env var exists but value is not set ───
+    // ─── Config-error: secret not found in store ───
 
     [Fact]
-    public async Task VerifyAsync_PatEnvVarNotSet_ReturnsFailureWithDescriptiveError()
+    public async Task VerifyAsync_SecretNotFoundInStore_ReturnsFailureWithDescriptiveError()
     {
-        // Arrange: ensure the env var is NOT set
-        Environment.SetEnvironmentVariable(PatEnvVar, null);
-
+        // Arrange: empty secret store — PAT cannot be resolved
+        var secretStore = await CreateNamedSecretStoreAsync(new Dictionary<string, string>());
         var mockClient = new MockAzureDevOpsBoardsClientForVerifier();
-        var verifier = CreateVerifier(mockClient);
+        var verifier = CreateVerifier(mockClient, namedSecretStore: secretStore);
 
         var profile = CreateProfile();
 
@@ -257,7 +262,7 @@ public sealed class AzureDevOpsConnectivityVerifierTests
         Assert.Equal("PersonalAccessToken", result.AuthMechanism);
         Assert.Contains(
             result.Errors,
-            e => e.Contains(PatEnvVar, StringComparison.Ordinal)
+            e => e.Contains(SecretName, StringComparison.Ordinal)
         );
     }
 
@@ -266,11 +271,10 @@ public sealed class AzureDevOpsConnectivityVerifierTests
     [Fact]
     public async Task VerifyAsync_MultipleConfigErrors_AggregatesAllErrors()
     {
-        // Arrange: missing org URL, missing project, and missing PAT env var
-        Environment.SetEnvironmentVariable(PatEnvVar, null);
-
+        // Arrange: missing org URL, missing project, and missing PAT secret
+        var secretStore = await CreateNamedSecretStoreAsync(new Dictionary<string, string>());
         var mockClient = new MockAzureDevOpsBoardsClientForVerifier();
-        var verifier = CreateVerifier(mockClient);
+        var verifier = CreateVerifier(mockClient, namedSecretStore: secretStore);
 
         var profile = new WorkSourceEnvironmentProfile
         {
@@ -279,7 +283,7 @@ public sealed class AzureDevOpsConnectivityVerifierTests
             Provider = "AzureDevOpsBoards",
             OrganizationUrl = "", // Missing
             Project = "", // Missing
-            PatEnvironmentVariable = PatEnvVar,
+            PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByName("nonexistent-secret"),
         };
 
         // Act — must not throw
@@ -299,17 +303,21 @@ public sealed class AzureDevOpsConnectivityVerifierTests
         );
         Assert.Contains(
             result.Errors,
-            e => e.Contains("PAT", StringComparison.OrdinalIgnoreCase)
+            e => e.Contains("could not be resolved", StringComparison.OrdinalIgnoreCase)
+                || e.Contains("PAT", StringComparison.OrdinalIgnoreCase)
         );
     }
 
-    // ─── PAT resolution through IManagedSecretStore: EnvVar-backed ───
+    // ─── PAT resolution through ISecretStore: named secret ───
 
     [Fact]
-    public async Task VerifyAsync_EnvVarBackedSecret_ResolvesPatThroughSecretStore()
+    public async Task VerifyAsync_NamedSecret_ResolvesPatThroughSecretStore()
     {
-        // Arrange: set env var so the EnvVar-backed fake secret store can resolve it
-        SetPatEnvironmentVariable();
+        // Arrange: use an in-memory named secret store
+        var secretStore = await CreateNamedSecretStoreAsync(new Dictionary<string, string>
+        {
+            [SecretName] = "named-secret-pat-token",
+        });
         var mockClient = new MockAzureDevOpsBoardsClientForVerifier
         {
             ConnectivityResult = new AzureDevOpsConnectivityResult
@@ -319,30 +327,28 @@ public sealed class AzureDevOpsConnectivityVerifierTests
                 Repositories = Array.Empty<RepositoryInfo>(),
             },
         };
-        var verifier = CreateVerifier(mockClient);
+        var verifier = CreateVerifier(mockClient, namedSecretStore: secretStore);
         var profile = CreateProfile();
 
         // Act
         var result = await verifier.VerifyAsync(profile, CancellationToken.None);
 
-        // Assert: success — PAT was resolved through IManagedSecretStore (EnvVar kind)
+        // Assert: success — PAT was resolved through ISecretStore
         Assert.True(result.Success);
         Assert.Equal("PersonalAccessToken", result.AuthMechanism);
-
-        ClearPatEnvironmentVariable();
     }
 
-    // ─── PAT resolution through IManagedSecretStore: Db-backed (in-memory) ───
+    // ─── PAT resolution through ISecretStore: versioned secret ───
 
     [Fact]
-    public async Task VerifyAsync_DbBackedSecret_ResolvesPatThroughSecretStore()
+    public async Task VerifyAsync_VersionedSecret_ResolvesCorrectVersion()
     {
-        // Arrange: use an in-memory secret store simulating Db-backed secrets
-        var secrets = new Dictionary<string, string>
-        {
-            ["EnvVar:" + PatEnvVar] = "db-stored-pat-token",
-        };
-        var secretStore = CreateInMemorySecretStore(secrets);
+        // Arrange: use an in-memory named secret store with versioned secrets
+        var secretStore = new Domain.Secrets.InMemorySecretStore();
+        // Create v1 and v2 of the same secret
+        await secretStore.CreateAsync(SecretName, "v1-token", CancellationToken.None);
+        await secretStore.CreateVersionAsync(SecretName, "v2-token", CancellationToken.None);
+
         var mockClient = new MockAzureDevOpsBoardsClientForVerifier
         {
             ConnectivityResult = new AzureDevOpsConnectivityResult
@@ -352,38 +358,23 @@ public sealed class AzureDevOpsConnectivityVerifierTests
                 Repositories = Array.Empty<RepositoryInfo>(),
             },
         };
-        var verifier = CreateVerifier(mockClient, secretStore);
-        var profile = CreateProfile();
+        var verifier = CreateVerifier(mockClient, namedSecretStore: secretStore);
+        var profile = new WorkSourceEnvironmentProfile
+        {
+            Key = "test-env",
+            DisplayName = "Test Environment",
+            Provider = "AzureDevOpsBoards",
+            OrganizationUrl = OrgUrl,
+            Project = Project,
+            PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByNameAndVersion(SecretName, 1),
+        };
 
         // Act
         var result = await verifier.VerifyAsync(profile, CancellationToken.None);
 
-        // Assert: success — PAT was resolved through IManagedSecretStore (Db kind)
+        // Assert: success — v1 was resolved
         Assert.True(result.Success);
         Assert.Equal("PersonalAccessToken", result.AuthMechanism);
-    }
-
-    // ─── PAT resolution failure: secret not found in store ───
-
-    [Fact]
-    public async Task VerifyAsync_SecretNotFoundInStore_ReturnsFailureWithPatError()
-    {
-        // Arrange: empty secret store — PAT cannot be resolved
-        var secretStore = CreateInMemorySecretStore(new Dictionary<string, string>());
-        var mockClient = new MockAzureDevOpsBoardsClientForVerifier();
-        var verifier = CreateVerifier(mockClient, secretStore);
-        var profile = CreateProfile();
-
-        // Act — must not throw
-        var result = await verifier.VerifyAsync(profile, CancellationToken.None);
-
-        // Assert: non-success with PAT error
-        Assert.False(result.Success);
-        Assert.Equal("PersonalAccessToken", result.AuthMechanism);
-        Assert.Contains(
-            result.Errors,
-            e => e.Contains(PatEnvVar, StringComparison.Ordinal)
-        );
     }
 
     // ─── Helpers ───
@@ -411,35 +402,21 @@ public sealed class AzureDevOpsConnectivityVerifierTests
             Provider = "AzureDevOpsBoards",
             OrganizationUrl = OrgUrl,
             Project = Project,
-            PatEnvironmentVariable = PatEnvVar,
+            PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByName(SecretName),
         };
     }
 
-    private static void SetPatEnvironmentVariable()
-    {
-        Environment.SetEnvironmentVariable(PatEnvVar, "test-personal-access-token");
-    }
-
-    private static void ClearPatEnvironmentVariable()
-    {
-        Environment.SetEnvironmentVariable(PatEnvVar, null);
-    }
-
     /// <summary>
-    /// Creates an in-memory fake secret store that resolves "EnvVar" kind references
-    /// by reading the actual environment variable (mimicking EnvVarSecretStore behavior).
+    /// Creates an in-memory named secret store with pre-configured secret values.
     /// </summary>
-    private static EnvVarBackedFakeSecretStore CreateEnvVarBackedSecretStore()
+    private static async Task<Domain.Secrets.InMemorySecretStore> CreateNamedSecretStoreAsync(Dictionary<string, string> secrets)
     {
-        return new EnvVarBackedFakeSecretStore();
-    }
-
-    /// <summary>
-    /// Creates an in-memory fake secret store with pre-configured secret values.
-    /// </summary>
-    private static InMemoryFakeSecretStore CreateInMemorySecretStore(Dictionary<string, string> secrets)
-    {
-        return new InMemoryFakeSecretStore(secrets);
+        var store = new Domain.Secrets.InMemorySecretStore();
+        foreach (var (name, value) in secrets)
+        {
+            await store.CreateAsync(name, value, CancellationToken.None);
+        }
+        return store;
     }
 
     // ─── Mock implementations ───
@@ -463,6 +440,7 @@ public sealed class AzureDevOpsConnectivityVerifierTests
     /// <summary>
     /// Fake IManagedSecretStore that resolves "EnvVar" kind references by reading
     /// the actual environment variable (mimicking EnvVarSecretStore).
+    /// Kept for backward compatibility with other consumers of IManagedSecretStore.
     /// </summary>
     private sealed class EnvVarBackedFakeSecretStore : IManagedSecretStore
     {
@@ -484,32 +462,6 @@ public sealed class AzureDevOpsConnectivityVerifierTests
             return Task.FromResult(
                 SecretWriteResult.FailureResult("Fake store is read-only.")
             );
-        }
-    }
-
-    /// <summary>
-    /// Fake IManagedSecretStore with pre-configured in-memory secret values.
-    /// Simulates a Db-backed secret store.
-    /// </summary>
-    private sealed class InMemoryFakeSecretStore(Dictionary<string, string> secrets)
-        : IManagedSecretStore
-    {
-        public Task<string?> ResolveAsync(SecretReference reference, CancellationToken ct)
-        {
-            ct.ThrowIfCancellationRequested();
-            secrets.TryGetValue($"{reference.Kind}:{reference.Id}", out var value);
-            return Task.FromResult(value);
-        }
-
-        public Task<SecretWriteResult> WriteAsync(
-            SecretReference reference,
-            string value,
-            CancellationToken ct
-        )
-        {
-            ct.ThrowIfCancellationRequested();
-            secrets[$"{reference.Kind}:{reference.Id}"] = value;
-            return Task.FromResult(SecretWriteResult.SuccessResult());
         }
     }
 

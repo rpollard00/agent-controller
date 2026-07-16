@@ -10,7 +10,6 @@ internal static class WorkSourceEnvironmentProfileValidation
     private const int MaximumOrganizationUrlLength = 2048;
     private const int MaximumProjectLength = 256;
     private const int MaximumBoardValueLength = 256;
-    private const int MaximumEnvironmentVariableLength = 256;
     private const int MaximumSecretNameLength = 256;
 
     public static WorkSourceEnvironmentProfileValidationResult ValidateAndNormalize(
@@ -69,23 +68,17 @@ internal static class WorkSourceEnvironmentProfileValidation
 
         var tagPrefix = NormalizeTagPrefix(profile.TagPrefix, errors);
 
-        var patEnvironmentVariable = NormalizeText(profile.PatEnvironmentVariable);
         var secretRef = NormalizeSecretReference(
             profile.PersonalAccessTokenReference,
             errors);
 
-        // Validate that at least one credential reference mechanism is specified.
-        if (!secretRef.IsSpecified && patEnvironmentVariable.Length == 0)
+        // Validate that a secret reference is specified.
+        if (!secretRef.IsSpecified)
         {
             errors.Add(
                 "personalAccessTokenReference",
-                "A secret reference or environment variable name for the PAT is required."
+                "A secret reference for the PAT is required."
             );
-        }
-        else if (!secretRef.IsSpecified)
-        {
-            // SecretReference not specified — validate legacy env var name.
-            ValidateEnvironmentVariableName(patEnvironmentVariable, errors);
         }
 
         var normalized = profile with
@@ -98,7 +91,6 @@ internal static class WorkSourceEnvironmentProfileValidation
             ActiveState = activeState,
             CompletedState = completedState,
             TagPrefix = tagPrefix,
-            PatEnvironmentVariable = patEnvironmentVariable,
             PersonalAccessTokenReference = secretRef,
         };
 
@@ -270,46 +262,6 @@ internal static class WorkSourceEnvironmentProfileValidation
         return value;
     }
 
-    private static void ValidateEnvironmentVariableName(
-        string environmentVariable,
-        ValidationErrors errors
-    )
-    {
-        if (environmentVariable.Length == 0)
-        {
-            errors.Add(
-                "patEnvironmentVariable",
-                "The name of an environment variable containing the PAT is required."
-            );
-            return;
-        }
-
-        if (environmentVariable.Length > MaximumEnvironmentVariableLength)
-        {
-            errors.Add(
-                "patEnvironmentVariable",
-                $"The environment-variable name must be {MaximumEnvironmentVariableLength} characters or fewer."
-            );
-        }
-
-        if (
-            !IsEnvironmentVariableStartCharacter(environmentVariable[0])
-            || environmentVariable.Any(character => !IsEnvironmentVariableCharacter(character))
-        )
-        {
-            errors.Add(
-                "patEnvironmentVariable",
-                "The PAT reference must be an environment-variable name containing only letters, numbers, and underscores, and it cannot start with a number."
-            );
-        }
-    }
-
-    private static bool IsEnvironmentVariableStartCharacter(char character) =>
-        character is '_' or >= 'A' and <= 'Z' or >= 'a' and <= 'z';
-
-    private static bool IsEnvironmentVariableCharacter(char character) =>
-        IsEnvironmentVariableStartCharacter(character) || character is >= '0' and <= '9';
-
     private static Domain.Secrets.SecretReference NormalizeSecretReference(
         Domain.Secrets.SecretReference reference,
         ValidationErrors errors)
@@ -318,7 +270,6 @@ internal static class WorkSourceEnvironmentProfileValidation
 
         if (name.Length == 0)
         {
-            // Empty reference — not an error by itself (PatEnvironmentVariable is fallback).
             return Domain.Secrets.SecretReference.Empty;
         }
 

@@ -26,7 +26,7 @@ namespace AgentController.Api.Tests;
 )]
 public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
 {
-    private const string TestPatEnvVar = "TEST_VERIFY_ADO_PAT";
+    private const string TestSecretName = "test-verify-ado-pat";
     private const string TestPatValue = "test-personal-access-token-verify";
 
     private string _databasePath = null!;
@@ -40,10 +40,7 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
             $"agent-controller-verify-{Guid.NewGuid():N}.db"
         );
 
-        // Set the PAT env var for success/config-error tests that need it.
-        Environment.SetEnvironmentVariable(TestPatEnvVar, TestPatValue);
-
-        _factory = new VerifyConnectivityApiFactory(_databasePath);
+        _factory = new VerifyConnectivityApiFactory(_databasePath, TestSecretName, TestPatValue);
 
         using var scope = _factory.Services.CreateScope();
         var database = scope.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
@@ -57,8 +54,6 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
         _client.Dispose();
         _factory.Dispose();
 
-        Environment.SetEnvironmentVariable(TestPatEnvVar, null);
-
         DeleteDatabaseFile(_databasePath);
         DeleteDatabaseFile($"{_databasePath}-shm");
         DeleteDatabaseFile($"{_databasePath}-wal");
@@ -71,7 +66,7 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
     public async Task VerifyEndpoint_Success_Returns200WithResultShapeAndNoPat()
     {
         // Arrange: create a work source environment that the mock factory will serve.
-        var profile = CreateValidProfile("Verify.Success", "Success Environment", TestPatEnvVar);
+        var profile = CreateValidProfile("Verify.Success", "Success Environment", TestSecretName);
 
         using var createResponse = await _client.PostAsJsonAsync(
             "/api/webui/work-source-environments",
@@ -104,16 +99,16 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
         Assert.DoesNotContain(TestPatValue, responseBody, StringComparison.Ordinal);
     }
 
-    // ─── Config-error case: missing PAT env var → non-success, still 200 ───
+    // ─── Config-error case: secret not in store → non-success, still 200 ───
 
     [Fact]
-    public async Task VerifyEndpoint_ConfigError_MissingPat_Returns200WithFailure()
+    public async Task VerifyEndpoint_ConfigError_SecretNotFound_Returns200WithFailure()
     {
-        // Arrange: create an environment whose PAT env var is NOT set.
+        // Arrange: create an environment whose PAT secret is NOT in the store.
         var profile = CreateValidProfile(
             "Verify.ConfigError",
             "Config Error Environment",
-            "NONEXISTENT_ADO_PAT_VAR_FOR_TEST"
+            "NONEXISTENT_SECRET_FOR_TEST"
         );
 
         using var createResponse = await _client.PostAsJsonAsync(
@@ -140,7 +135,7 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
         Assert.NotEmpty(errors);
         Assert.Contains(
             errors,
-            e => e.Contains("NONEXISTENT_ADO_PAT_VAR_FOR_TEST", StringComparison.Ordinal)
+            e => e.Contains("NONEXISTENT_SECRET_FOR_TEST", StringComparison.Ordinal)
         );
     }
 
@@ -175,7 +170,7 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
     public async Task VerifyEndpoint_UnsupportedProvider_Returns200WithFailure()
     {
         // Arrange: create an environment with an unsupported provider.
-        // Note: patEnvironmentVariable is still required by validation regardless of provider.
+        // Note: personalAccessTokenReference is required by validation regardless of provider.
         var profile = new
         {
             key = "Verify.Unsupported",
@@ -188,7 +183,7 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
             tagPrefix = "agent",
             activeState = (string?)null,
             completedState = (string?)null,
-            patEnvironmentVariable = TestPatEnvVar, // Required by validation
+            personalAccessTokenReference = new { name = TestSecretName },
         };
 
         using var createResponse = await _client.PostAsJsonAsync(
@@ -236,7 +231,7 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
 
     // ─── Helpers ───
 
-    private static object CreateValidProfile(string key, string displayName, string patEnvVar) =>
+    private static object CreateValidProfile(string key, string displayName, string secretName) =>
         new
         {
             key,
@@ -249,7 +244,7 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
             tagPrefix = "agent",
             activeState = "Active",
             completedState = "Resolved",
-            patEnvironmentVariable = patEnvVar,
+            personalAccessTokenReference = new { name = secretName },
         };
 
     private static async Task<JsonElement> ReadJsonAsync(HttpResponseMessage response) =>
@@ -269,7 +264,10 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
     /// WebApplicationFactory that replaces IAzureDevOpsBoardsClientFactory
     /// with a mock that returns a successful connectivity result with repos.
     /// </summary>
-    private sealed class VerifyConnectivityApiFactory(string databasePath) : SilentWebApplicationFactory
+    private sealed class VerifyConnectivityApiFactory(
+        string databasePath,
+        string testSecretName,
+        string testSecretValue) : SilentWebApplicationFactory
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -310,9 +308,14 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
                     new MockAzureDevOpsBoardsClientFactory()
                 );
 
-                // Ensure secret stores and PAT resolver are registered.
-                // These are needed by AzureDevOpsConnectivityVerifier.
-                services.AddAgentControllerSecretStores();
+                // Register in-memory named secret store with test secret.
+                var secretStore = new AgentController.Domain.Secrets.InMemorySecretStore();
+                secretStore.CreateAsync(testSecretName, testSecretValue, CancellationToken.None)
+                    .GetAwaiter().GetResult();
+                services.RemoveAll<Domain.Secrets.ISecretStore>();
+                services.RemoveAll<Domain.Secrets.ISecretManager>();
+                services.AddSingleton<Domain.Secrets.ISecretStore>(secretStore);
+                services.AddSingleton<Domain.Secrets.ISecretManager>(secretStore);
                 services.TryAddSingleton<AgentController.Infrastructure.AzureDevOpsPatResolver>();
             });
         }

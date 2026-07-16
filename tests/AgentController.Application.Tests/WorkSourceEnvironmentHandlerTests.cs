@@ -16,46 +16,31 @@ public sealed class WorkSourceEnvironmentHandlerTests
     [Fact]
     public async Task ListAndGet_ReturnStoredProfilesAndNormalizeLookupKeyWithoutResolvingPat()
     {
-        const string environmentVariable = "ADO_HANDLER_TEST_PAT";
-        const string rawPat = "raw-pat-that-must-not-be-returned";
+        const string secretName = "ado-primary-pat";
         var environments = new FakeWorkSourceEnvironmentStore(
             CreateProfile("zulu"),
             CreateProfile("ado-primary") with
             {
-                PatEnvironmentVariable = environmentVariable,
+                PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByName(secretName),
             }
         );
         var listHandler = new ListWorkSourceEnvironmentsQueryHandler(environments);
         var getHandler = new GetWorkSourceEnvironmentByKeyQueryHandler(environments);
-        Environment.SetEnvironmentVariable(environmentVariable, rawPat);
 
-        try
-        {
-            var listed = await listHandler.ExecuteAsync(
-                new ListWorkSourceEnvironmentsQuery(),
-                CancellationToken.None
-            );
-            var read = await getHandler.ExecuteAsync(
-                new GetWorkSourceEnvironmentByKeyQuery("  ADO-PRIMARY  "),
-                CancellationToken.None
-            );
+        var listed = await listHandler.ExecuteAsync(
+            new ListWorkSourceEnvironmentsQuery(),
+            CancellationToken.None
+        );
+        var read = await getHandler.ExecuteAsync(
+            new GetWorkSourceEnvironmentByKeyQuery("  ADO-PRIMARY  "),
+            CancellationToken.None
+        );
 
-            Assert.Equal(["ado-primary", "zulu"], listed.Select(profile => profile.Key));
-            Assert.Equal(WorkSourceEnvironmentOperationStatus.Succeeded, read.Status);
-            var profile = Assert.IsType<WorkSourceEnvironmentProfile>(read.Environment);
-            Assert.Equal(environmentVariable, profile.PatEnvironmentVariable);
-            Assert.Equal("ado-primary", environments.LastReadKey);
-            Assert.DoesNotContain(
-                rawPat,
-                JsonSerializer.Serialize(listed),
-                StringComparison.Ordinal
-            );
-            Assert.DoesNotContain(rawPat, JsonSerializer.Serialize(read), StringComparison.Ordinal);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(environmentVariable, null);
-        }
+        Assert.Equal(["ado-primary", "zulu"], listed.Select(profile => profile.Key));
+        Assert.Equal(WorkSourceEnvironmentOperationStatus.Succeeded, read.Status);
+        var profile = Assert.IsType<WorkSourceEnvironmentProfile>(read.Environment);
+        Assert.Equal(secretName, profile.PersonalAccessTokenReference.Name);
+        Assert.Equal("ado-primary", environments.LastReadKey);
     }
 
     [Fact]
@@ -95,7 +80,7 @@ public sealed class WorkSourceEnvironmentHandlerTests
             TagPrefix = "  agent  ",
             ActiveState = " Active ",
             CompletedState = " Resolved ",
-            PatEnvironmentVariable = " ADO_PRIMARY_PAT ",
+            PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByName("  ADO_PRIMARY_PAT  "),
             CreatedAt = suppliedTimestamp,
             UpdatedAt = suppliedTimestamp,
         };
@@ -117,7 +102,7 @@ public sealed class WorkSourceEnvironmentHandlerTests
         Assert.Equal("agent", persisted.TagPrefix);
         Assert.Equal("Active", persisted.ActiveState);
         Assert.Equal("Resolved", persisted.CompletedState);
-        Assert.Equal("ADO_PRIMARY_PAT", persisted.PatEnvironmentVariable);
+        Assert.Equal("ADO_PRIMARY_PAT", persisted.PersonalAccessTokenReference.Name);
         Assert.Equal(persisted.CreatedAt, persisted.UpdatedAt);
         Assert.InRange(persisted.CreatedAt, before, after);
     }
@@ -127,15 +112,16 @@ public sealed class WorkSourceEnvironmentHandlerTests
     {
         var environments = new FakeWorkSourceEnvironmentStore();
         var handler = new CreateWorkSourceEnvironmentCommandHandler(environments);
-        var profile = CreateProfile("not valid") with
+        var profile = new WorkSourceEnvironmentProfile
         {
+            Key = "not valid",
             DisplayName = " ",
             OrganizationUrl = "ftp://user:secret@example.test/org?token=secret",
             Project = " ",
             TagPrefix = "  ",
             ActiveState = "Active",
             CompletedState = "active",
-            PatEnvironmentVariable = "ENV:raw-pat-value",
+            // No PersonalAccessTokenReference — should fail validation
         };
 
         var result = await handler.HandleAsync(
@@ -149,7 +135,7 @@ public sealed class WorkSourceEnvironmentHandlerTests
         Assert.Contains("organizationUrl", result.ValidationErrors.Keys);
         Assert.Contains("project", result.ValidationErrors.Keys);
         Assert.Contains("completedState", result.ValidationErrors.Keys);
-        Assert.Contains("patEnvironmentVariable", result.ValidationErrors.Keys);
+        Assert.Contains("personalAccessTokenReference", result.ValidationErrors.Keys);
         Assert.Null(environments.LastCreated);
     }
 
@@ -197,7 +183,7 @@ public sealed class WorkSourceEnvironmentHandlerTests
             Enabled = false,
             Project = " Updated Project ",
             TagPrefix = " custom ",
-            PatEnvironmentVariable = " ADO_UPDATED_PAT ",
+            PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByName(" ADO_UPDATED_PAT "),
             CreatedAt = suppliedTimestamp,
             UpdatedAt = suppliedTimestamp,
         };
@@ -216,7 +202,7 @@ public sealed class WorkSourceEnvironmentHandlerTests
         Assert.False(persisted.Enabled);
         Assert.Equal("Updated Project", persisted.Project);
         Assert.Equal("custom", persisted.TagPrefix);
-        Assert.Equal("ADO_UPDATED_PAT", persisted.PatEnvironmentVariable);
+        Assert.Equal("ADO_UPDATED_PAT", persisted.PersonalAccessTokenReference.Name);
         Assert.Equal(createdAt, persisted.CreatedAt);
         Assert.InRange(persisted.UpdatedAt, before, after);
         Assert.Same(persisted, result.Environment);
@@ -323,7 +309,7 @@ public sealed class WorkSourceEnvironmentHandlerTests
             Project = "Agent Controller",
             ActiveState = "Active",
             CompletedState = "Resolved",
-            PatEnvironmentVariable = "ADO_TEST_PAT",
+            PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByName("ADO_TEST_PAT"),
         };
 
     private static void AssertRegistration<TService, TImplementation>(IServiceCollection services)

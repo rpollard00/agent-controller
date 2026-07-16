@@ -89,7 +89,6 @@ internal sealed class EfWorkSourceEnvironmentStore : IWorkSourceEnvironmentStore
         entity.Project = profile.Project;
         entity.ActiveState = profile.ActiveState;
         entity.CompletedState = profile.CompletedState;
-        entity.PatEnvironmentVariable = profile.PatEnvironmentVariable;
         entity.PersonalAccessTokenSecretName = profile.PersonalAccessTokenReference.Name;
         entity.PersonalAccessTokenSecretVersion = profile.PersonalAccessTokenReference.Version;
         entity.UpdatedAt = profile.UpdatedAt;
@@ -130,7 +129,6 @@ internal sealed class EfWorkSourceEnvironmentStore : IWorkSourceEnvironmentStore
             Project = profile.Project,
             ActiveState = profile.ActiveState,
             CompletedState = profile.CompletedState,
-            PatEnvironmentVariable = profile.PatEnvironmentVariable,
             PersonalAccessTokenSecretName = profile.PersonalAccessTokenReference.Name,
             PersonalAccessTokenSecretVersion = profile.PersonalAccessTokenReference.Version,
             CreatedAt = profile.CreatedAt,
@@ -152,7 +150,6 @@ internal sealed class EfWorkSourceEnvironmentStore : IWorkSourceEnvironmentStore
             Project = entity.Project,
             ActiveState = entity.ActiveState,
             CompletedState = entity.CompletedState,
-            PatEnvironmentVariable = entity.PatEnvironmentVariable,
             PersonalAccessTokenReference = string.IsNullOrWhiteSpace(entity.PersonalAccessTokenSecretName)
                 ? AgentController.Domain.Secrets.SecretReference.Empty
                 : new AgentController.Domain.Secrets.SecretReference

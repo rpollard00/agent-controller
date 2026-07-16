@@ -38,57 +38,34 @@ internal sealed class AzureDevOpsConnectivityVerifier(
             errors.Add("Azure DevOps project is not configured.");
         }
 
-        // Resolve PAT: prefer SecretReference (ISecretStore) over legacy env variable.
+        // Validate that a secret reference is configured.
+        if (!profile.PersonalAccessTokenReference.IsSpecified)
+        {
+            errors.Add("The managed profile has no PAT secret reference configured.");
+        }
+
+        // Resolve PAT via ISecretStore.
         string? resolvedPat;
         try
         {
-            if (profile.PersonalAccessTokenReference.IsSpecified)
-            {
-                resolvedPat = await patResolver.ResolveFromSecretReferenceAsync(
-                    profile.PersonalAccessTokenReference,
-                    cancellationToken
-                );
-            }
-            else
-            {
-                resolvedPat = await patResolver.ResolveFromEnvironmentVariableAsync(
-                    profile.PatEnvironmentVariable,
-                    cancellationToken
-                );
-            }
+            resolvedPat = await patResolver.ResolveFromSecretReferenceAsync(
+                profile.PersonalAccessTokenReference,
+                cancellationToken
+            );
 
             if (string.IsNullOrWhiteSpace(resolvedPat))
             {
-                if (profile.PersonalAccessTokenReference.IsSpecified)
-                {
-                    errors.Add(
-                        $"Secret '{profile.PersonalAccessTokenReference.Name}' could not be resolved."
-                    );
-                }
-                else
-                {
-                    errors.Add(
-                        string.IsNullOrWhiteSpace(profile.PatEnvironmentVariable)
-                            ? "The managed profile has no PAT reference configured."
-                            : $"PAT environment variable '{profile.PatEnvironmentVariable}' is missing or empty."
-                    );
-                }
+                errors.Add(
+                    profile.PersonalAccessTokenReference.IsSpecified
+                        ? $"Secret '{profile.PersonalAccessTokenReference.Name}' could not be resolved."
+                        : "Azure DevOps PAT is not configured."
+                );
             }
         }
         catch (Exception ex)
         {
             errors.Add($"PAT resolution failed: {ex.Message}");
             resolvedPat = null;
-        }
-
-        if (
-            string.IsNullOrWhiteSpace(resolvedPat)
-            && errors.TrueForAll(error =>
-                !error.StartsWith("PAT resolution failed:", StringComparison.Ordinal)
-            )
-        )
-        {
-            errors.Add("Azure DevOps PAT is not configured.");
         }
 
         if (errors.Count > 0)

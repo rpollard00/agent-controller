@@ -220,7 +220,7 @@ public sealed class ManagedProfileResolverTests
             TagPrefix = "agent",
             OrganizationUrl = "https://dev.azure.com/example",
             Project = project,
-            PatEnvironmentVariable = "TEST_ADO_PAT",
+            PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByName("TEST_ADO_PAT"),
         };
     }
 

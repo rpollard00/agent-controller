@@ -63,7 +63,7 @@ public sealed class ManagedLifecycleProfileTests : IDisposable
                     Project = "Example",
                     ActiveState = "Managed Active",
                     CompletedState = "Managed Done",
-                    PatEnvironmentVariable = "MANAGED_LIFECYCLE_TEST_PAT",
+                    PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByName("MANAGED_LIFECYCLE_TEST_PAT"),
                 },
                 CancellationToken.None
             )

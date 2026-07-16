@@ -1,9 +1,9 @@
 namespace AgentController.Infrastructure.Data.Entities;
 
 /// <summary>
-/// Persisted managed work-source environment profile. Credential values are
-/// deliberately absent; only the name of the environment variable containing
-/// the PAT is stored.
+/// Persisted managed work-source environment profile.
+/// The PAT is referenced by a named, versioned secret resolved at runtime
+/// via <see cref="Domain.Secrets.ISecretStore"/>.
 /// </summary>
 internal sealed class WorkSourceEnvironmentEntity : BaseConnectionEntity
 {
@@ -15,10 +15,6 @@ internal sealed class WorkSourceEnvironmentEntity : BaseConnectionEntity
     public string? ActiveState { get; set; }
 
     public string? CompletedState { get; set; }
-
-    public string PatEnvironmentVariable { get; set; } = string.Empty;
-
-    // --- SecretReference fields (replaces PatEnvironmentVariable) ---
 
     /// <summary>Secret name for PAT resolution via ISecretStore.</summary>
     public string PersonalAccessTokenSecretName { get; set; } = string.Empty;

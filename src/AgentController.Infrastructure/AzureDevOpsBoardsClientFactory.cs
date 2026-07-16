@@ -18,7 +18,8 @@ internal sealed class AzureDevOpsBoardsClientFactory(
     /// <summary>
     /// Creates a client for the given profile. PAT resolution is synchronous
     /// because the factory interface is synchronous; the PAT is resolved from
-    /// the profile's <c>PatEnvironmentVariable</c> field via the shared resolver.
+    /// the profile's <see cref="WorkSourceEnvironmentProfile.PersonalAccessTokenReference"/>
+    /// via <see cref="Domain.Secrets.ISecretStore"/>.
     /// </summary>
     public IAzureDevOpsBoardsClient Create(WorkSourceEnvironmentProfile profile)
     {
@@ -29,28 +30,13 @@ internal sealed class AzureDevOpsBoardsClientFactory(
             );
         }
 
-        // Resolve PAT: prefer SecretReference (ISecretStore) over legacy env variable.
-        string? resolvedPat = null;
-        if (profile.PersonalAccessTokenReference.IsSpecified)
-        {
-            resolvedPat = patResolver
-                .ResolveFromSecretReferenceAsync(
-                    profile.PersonalAccessTokenReference,
-                    CancellationToken.None
-                )
-                .GetAwaiter()
-                .GetResult();
-        }
-        else if (!string.IsNullOrWhiteSpace(profile.PatEnvironmentVariable))
-        {
-            resolvedPat = patResolver
-                .ResolveFromEnvironmentVariableAsync(
-                    profile.PatEnvironmentVariable,
-                    CancellationToken.None
-                )
-                .GetAwaiter()
-                .GetResult();
-        }
+        string? resolvedPat = patResolver
+            .ResolveFromSecretReferenceAsync(
+                profile.PersonalAccessTokenReference,
+                CancellationToken.None
+            )
+            .GetAwaiter()
+            .GetResult();
 
         if (string.IsNullOrWhiteSpace(resolvedPat))
         {

@@ -13,32 +13,22 @@ namespace AgentController.Infrastructure.Tests;
 public sealed class WorkSourceEnvironmentStoreTests
 {
     [Fact]
-    public async Task CreateAndGet_RoundTripsProfileAndCredentialReference()
+    public async Task CreateAndGet_RoundTripsProfileAndSecretReference()
     {
         await using var fixture = await StoreFixture.CreateAsync();
         var profile = CreateProfile("production");
-        const string rawPat = "raw-pat-must-not-be-persisted";
-        Environment.SetEnvironmentVariable(profile.PatEnvironmentVariable, rawPat);
 
-        try
-        {
-            var created = await fixture.Store.CreateAsync(profile, CancellationToken.None);
-            var persisted = await fixture.Store.GetByKeyAsync(profile.Key, CancellationToken.None);
+        var created = await fixture.Store.CreateAsync(profile, CancellationToken.None);
+        var persisted = await fixture.Store.GetByKeyAsync(profile.Key, CancellationToken.None);
 
-            Assert.True(created);
-            AssertProfile(profile, Assert.IsType<WorkSourceEnvironmentProfile>(persisted));
+        Assert.True(created);
+        AssertProfile(profile, Assert.IsType<WorkSourceEnvironmentProfile>(persisted));
 
-            await using var command = fixture.Connection.CreateCommand();
-            command.CommandText = "SELECT PatEnvironmentVariable FROM WorkSourceEnvironments WHERE Key = $key";
-            command.Parameters.AddWithValue("$key", profile.Key);
-            var storedReference = Assert.IsType<string>(await command.ExecuteScalarAsync());
-            Assert.Equal("ADO_PRODUCTION_PAT", storedReference);
-            Assert.NotEqual(rawPat, storedReference);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(profile.PatEnvironmentVariable, null);
-        }
+        await using var command = fixture.Connection.CreateCommand();
+        command.CommandText = "SELECT PersonalAccessTokenSecretName FROM WorkSourceEnvironments WHERE Key = $key";
+        command.Parameters.AddWithValue("$key", profile.Key);
+        var storedReference = Assert.IsType<string>(await command.ExecuteScalarAsync());
+        Assert.Equal("ADO_PRODUCTION_PAT", storedReference);
     }
 
     [Fact]
@@ -85,7 +75,7 @@ public sealed class WorkSourceEnvironmentStoreTests
             Project = "Updated Project",
             ActiveState = "Doing",
             CompletedState = "Done",
-            PatEnvironmentVariable = "ADO_STAGING_PAT_V2",
+            PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByName("ADO_STAGING_PAT_V2"),
             UpdatedAt = new DateTimeOffset(2026, 7, 13, 18, 0, 0, TimeSpan.Zero),
         };
 
@@ -122,7 +112,7 @@ public sealed class WorkSourceEnvironmentStoreTests
     }
 
     [Fact]
-    public async Task Migration_CreatesProfileTableWithoutCredentialValueColumn()
+    public async Task Migration_CreatesProfileTableWithSecretReferenceColumns()
     {
         await using var fixture = await StoreFixture.CreateAsync(useMigrations: true);
 
@@ -130,7 +120,7 @@ public sealed class WorkSourceEnvironmentStoreTests
         Assert.Contains(
             appliedMigrations,
             migration => migration.EndsWith(
-                "_RenameToWorkSourceEnvironments",
+                "_MigratePatEnvironmentVariableToSecretReference",
                 StringComparison.Ordinal));
 
         await using var command = fixture.Connection.CreateCommand();
@@ -142,7 +132,9 @@ public sealed class WorkSourceEnvironmentStoreTests
             columns.Add(reader.GetString(1));
         }
 
-        Assert.Contains("PatEnvironmentVariable", columns);
+        Assert.Contains("PersonalAccessTokenSecretName", columns);
+        Assert.Contains("PersonalAccessTokenSecretVersion", columns);
+        Assert.DoesNotContain("PatEnvironmentVariable", columns);
         Assert.DoesNotContain("PersonalAccessToken", columns);
         Assert.DoesNotContain("Pat", columns);
         Assert.Contains("Provider", columns);
@@ -192,7 +184,7 @@ public sealed class WorkSourceEnvironmentStoreTests
             Project = "Agent Controller",
             ActiveState = "Active",
             CompletedState = "Resolved",
-            PatEnvironmentVariable = "ADO_PRODUCTION_PAT",
+            PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByName("ADO_PRODUCTION_PAT"),
             CreatedAt = new DateTimeOffset(2026, 7, 13, 17, 0, 0, TimeSpan.Zero),
             UpdatedAt = new DateTimeOffset(2026, 7, 13, 17, 30, 0, TimeSpan.Zero),
         };
@@ -211,7 +203,8 @@ public sealed class WorkSourceEnvironmentStoreTests
         Assert.Equal(expected.Project, actual.Project);
         Assert.Equal(expected.ActiveState, actual.ActiveState);
         Assert.Equal(expected.CompletedState, actual.CompletedState);
-        Assert.Equal(expected.PatEnvironmentVariable, actual.PatEnvironmentVariable);
+        Assert.Equal(expected.PersonalAccessTokenReference.Name, actual.PersonalAccessTokenReference.Name);
+        Assert.Equal(expected.PersonalAccessTokenReference.Version, actual.PersonalAccessTokenReference.Version);
         Assert.Equal(expected.CreatedAt, actual.CreatedAt);
         Assert.Equal(expected.UpdatedAt, actual.UpdatedAt);
     }

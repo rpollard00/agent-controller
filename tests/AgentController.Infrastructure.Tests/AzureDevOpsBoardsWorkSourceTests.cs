@@ -683,7 +683,7 @@ public class AzureDevOpsBoardsWorkSourceTests
             TagPrefix = "agent",
             OrganizationUrl = $"https://dev.azure.com/{key}",
             Project = project,
-            PatEnvironmentVariable = "TEST_ADO_PAT",
+            PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByName("TEST_ADO_PAT"),
         };
     }
 

@@ -32,12 +32,9 @@ internal sealed class WorkSourceEnvironmentEntityConfiguration
         builder.Property(x => x.CompletedState)
             .HasMaxLength(256);
 
-        builder.Property(x => x.PatEnvironmentVariable)
-            .IsRequired()
-            .HasMaxLength(256);
-
-        // SecretReference fields (replaces PatEnvironmentVariable).
+        // SecretReference fields.
         builder.Property(x => x.PersonalAccessTokenSecretName)
+            .IsRequired()
             .HasMaxLength(256);
 
         builder.Property(x => x.PersonalAccessTokenSecretVersion);

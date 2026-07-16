@@ -106,17 +106,30 @@ internal sealed class ConfiguredProfileSource : IConfiguredProfileSource
             Project = workSource.Project ?? string.Empty,
             ActiveState = workSource.ActiveState,
             CompletedState = workSource.CompletedState,
-            PatEnvironmentVariable = GetEnvironmentVariableReference(
+            PersonalAccessTokenReference = SecretReferenceFromAppSettings(
                 azureDevOps.PersonalAccessToken
             ),
         };
     }
 
-    private static string GetEnvironmentVariableReference(string configuredValue)
+    private static Domain.Secrets.SecretReference SecretReferenceFromAppSettings(
+        string? configuredValue)
     {
+        if (string.IsNullOrWhiteSpace(configuredValue))
+        {
+            return Domain.Secrets.SecretReference.Empty;
+        }
+
         const string prefix = "ENV:";
-        return configuredValue.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
-            ? configuredValue[prefix.Length..].Trim()
-            : string.Empty;
+        if (configuredValue.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var name = configuredValue[prefix.Length..].Trim();
+            return string.IsNullOrWhiteSpace(name)
+                ? Domain.Secrets.SecretReference.Empty
+                : Domain.Secrets.SecretReference.ByName(name);
+        }
+
+        // Direct value — not a reference.
+        return Domain.Secrets.SecretReference.Empty;
     }
 }

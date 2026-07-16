@@ -973,52 +973,6 @@ public class OptionsSmokeTests
     // ──────────────────────────────────────────────
 
     [Fact]
-    public async Task AzureDevOpsPatResolver_ResolveFromEnvVar_ResolvesExistingEnvVar()
-    {
-        var envName = "PAT_RESOLVER_TEST_ENV";
-        try
-        {
-            Environment.SetEnvironmentVariable(envName, "resolved-token");
-
-            var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore(), new AgentController.Domain.Secrets.InMemorySecretStore());
-            var result = await resolver.ResolveFromEnvironmentVariableAsync(
-                envName,
-                CancellationToken.None
-            );
-
-            Assert.Equal("resolved-token", result);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(envName, null);
-        }
-    }
-
-    [Fact]
-    public async Task AzureDevOpsPatResolver_ResolveFromEnvVar_ReturnsNullForMissingEnvVar()
-    {
-        var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore(), new AgentController.Domain.Secrets.InMemorySecretStore());
-        var result = await resolver.ResolveFromEnvironmentVariableAsync(
-            "NONEXISTENT_ENV_VAR_XYZ",
-            CancellationToken.None
-        );
-
-        Assert.Null(result);
-    }
-
-    [Fact]
-    public async Task AzureDevOpsPatResolver_ResolveFromEnvVar_ReturnsNullForEmptyName()
-    {
-        var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore(), new AgentController.Domain.Secrets.InMemorySecretStore());
-        var result = await resolver.ResolveFromEnvironmentVariableAsync(
-            "",
-            CancellationToken.None
-        );
-
-        Assert.Null(result);
-    }
-
-    [Fact]
     public async Task AzureDevOpsPatResolver_ResolveFromLegacyValue_ReturnsDirectPat()
     {
         var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore(), new AgentController.Domain.Secrets.InMemorySecretStore());
@@ -1163,22 +1117,6 @@ public class OptionsSmokeTests
     // ──────────────────────────────────────────────
     // Db-backed secret authentication tests
     // ──────────────────────────────────────────────
-
-    [Fact]
-    public async Task AzureDevOpsPatResolver_DbBackedSecret_ResolvesPat()
-    {
-        var secrets = new Dictionary<string, string>
-        {
-            ["EnvVar:DB_PAT_VAR"] = "db-stored-pat-token",
-        };
-        var resolver = new AzureDevOpsPatResolver(new InMemoryFakeSecretStore(secrets), new AgentController.Domain.Secrets.InMemorySecretStore());
-        var result = await resolver.ResolveFromEnvironmentVariableAsync(
-            "DB_PAT_VAR",
-            CancellationToken.None
-        );
-
-        Assert.Equal("db-stored-pat-token", result);
-    }
 
     [Fact]
     public async Task AzureDevOpsBoardsOptions_ResolvePatAsync_DbBackedSecret_ResolvesPat()

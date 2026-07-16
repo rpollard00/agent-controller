@@ -44,18 +44,8 @@ public sealed record WorkSourceEnvironmentProfile
     public string? CompletedState { get; init; }
 
     /// <summary>
-    /// Name of the environment variable containing the Azure DevOps PAT.
-    /// The credential value itself must never be stored on the profile.
-    /// 
-    /// [Legacy — replaced by PersonalAccessTokenReference. Kept for backward
-    /// compatibility during migration.]
-    /// </summary>
-    public string PatEnvironmentVariable { get; init; } = string.Empty;
-
-    /// <summary>
     /// Reference to a named, versioned secret holding the Azure DevOps PAT.
     /// Resolved at runtime via <see cref="Secrets.ISecretStore"/>.
-    /// When specified, this takes precedence over <see cref="PatEnvironmentVariable"/>.
     /// </summary>
     public Secrets.SecretReference PersonalAccessTokenReference { get; init; } =
         Secrets.SecretReference.Empty;

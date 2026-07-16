@@ -135,116 +135,101 @@ public sealed class WebUiControllerTests : IAsyncLifetime
     [Fact]
     public async Task WorkSourceEnvironmentEndpoints_SupportEveryVerbAndRedactCredentials()
     {
-        const string credentialValue = "ado-secret-that-must-never-be-returned";
-        const string credentialVariable = "WEBUI_TEST_ADO_PAT";
-        Environment.SetEnvironmentVariable(credentialVariable, credentialValue);
-        try
+        const string secretName = "webui-test-ado-pat";
+        var profile = new
         {
-            var profile = new
-            {
-                key = " ADO.Main ",
-                displayName = " Main Azure DevOps ",
-                enabled = true,
-                provider = "AzureDevOpsBoards",
-                organizationUrl = "https://dev.azure.com/example/",
-                project = "Agent Controller",
-                completedStates = new[] { "Resolved", "Removed" },
-                tagPrefix = "agent",
-                activeState = "Active",
-                completedState = "Resolved",
-                patEnvironmentVariable = credentialVariable,
-                personalAccessToken = credentialValue,
-            };
+            key = " ADO.Main ",
+            displayName = " Main Azure DevOps ",
+            enabled = true,
+            provider = "AzureDevOpsBoards",
+            organizationUrl = "https://dev.azure.com/example/",
+            project = "Agent Controller",
+            completedStates = new[] { "Resolved", "Removed" },
+            tagPrefix = "agent",
+            activeState = "Active",
+            completedState = "Resolved",
+            personalAccessTokenReference = new { name = secretName },
+        };
 
-            using var createResponse = await _client.PostAsJsonAsync(
-                "/api/webui/work-source-environments",
-                profile
-            );
-            Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
-            Assert.Equal(
-                "/api/webui/work-source-environments/ado.main",
-                createResponse.Headers.Location?.ToString()
-            );
-            await AssertCredentialRedactedAsync(createResponse, credentialValue);
+        using var createResponse = await _client.PostAsJsonAsync(
+            "/api/webui/work-source-environments",
+            profile
+        );
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+        Assert.Equal(
+            "/api/webui/work-source-environments/ado.main",
+            createResponse.Headers.Location?.ToString()
+        );
 
-            using var duplicateResponse = await _client.PostAsJsonAsync(
-                "/api/webui/work-source-environments",
-                profile
-            );
-            await AssertProblemAsync(
-                duplicateResponse,
-                HttpStatusCode.Conflict,
-                "Resource conflict."
-            );
-            await AssertCredentialRedactedAsync(duplicateResponse, credentialValue);
+        using var duplicateResponse = await _client.PostAsJsonAsync(
+            "/api/webui/work-source-environments",
+            profile
+        );
+        await AssertProblemAsync(
+            duplicateResponse,
+            HttpStatusCode.Conflict,
+            "Resource conflict."
+        );
 
-            using var listResponse = await _client.GetAsync("/api/webui/work-source-environments");
-            Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
-            var listBody = await AssertCredentialRedactedAsync(listResponse, credentialValue);
-            using var listJson = JsonDocument.Parse(listBody);
-            Assert.Contains(
-                listJson.RootElement.EnumerateArray(),
-                environment => environment.GetProperty("key").GetString() == "ado.main"
-            );
+        using var listResponse = await _client.GetAsync("/api/webui/work-source-environments");
+        Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
+        var listBody = await listResponse.Content.ReadAsStringAsync();
+        using var listJson = JsonDocument.Parse(listBody);
+        Assert.Contains(
+            listJson.RootElement.EnumerateArray(),
+            environment => environment.GetProperty("key").GetString() == "ado.main"
+        );
 
-            using var getResponse = await _client.GetAsync(
-                "/api/webui/work-source-environments/ADO.MAIN"
-            );
-            Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
-            var getBody = await AssertCredentialRedactedAsync(getResponse, credentialValue);
-            using var getJson = JsonDocument.Parse(getBody);
-            Assert.Equal(
-                credentialVariable,
-                getJson.RootElement.GetProperty("patEnvironmentVariable").GetString()
-            );
-            Assert.False(getJson.RootElement.TryGetProperty("personalAccessToken", out _));
+        using var getResponse = await _client.GetAsync(
+            "/api/webui/work-source-environments/ADO.MAIN"
+        );
+        Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
+        var getBody = await getResponse.Content.ReadAsStringAsync();
+        using var getJson = JsonDocument.Parse(getBody);
+        Assert.True(getJson.RootElement.TryGetProperty("personalAccessTokenReference", out var refProp));
+        Assert.Equal(secretName, refProp.GetProperty("name").GetString());
+        Assert.False(getJson.RootElement.TryGetProperty("personalAccessToken", out _));
 
-            var update = new
-            {
-                key = "ado.main",
-                displayName = "Updated Azure DevOps",
-                enabled = false,
-                provider = "AzureDevOpsBoards",
-                organizationUrl = "https://dev.azure.com/example",
-                project = "Agent Controller",
-                completedStates = new[] { "Resolved" },
-                tagPrefix = "agent",
-                activeState = "Active",
-                completedState = "Done",
-                patEnvironmentVariable = credentialVariable,
-                personalAccessToken = credentialValue,
-            };
-            using var updateResponse = await _client.PutAsJsonAsync(
-                "/api/webui/work-source-environments/ado.main",
-                update
-            );
-            Assert.Equal(HttpStatusCode.OK, updateResponse.StatusCode);
-            var updateBody = await AssertCredentialRedactedAsync(updateResponse, credentialValue);
-            using var updateJson = JsonDocument.Parse(updateBody);
-            Assert.Equal(
-                "Updated Azure DevOps",
-                updateJson.RootElement.GetProperty("displayName").GetString()
-            );
-            Assert.False(updateJson.RootElement.GetProperty("enabled").GetBoolean());
-
-            using var deleteResponse = await _client.DeleteAsync(
-                "/api/webui/work-source-environments/ado.main"
-            );
-            Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
-
-            using var missingResponse = await _client.GetAsync(
-                "/api/webui/work-source-environments/ado.main"
-            );
-            await AssertProblemAsync(
-                missingResponse,
-                HttpStatusCode.NotFound,
-                "Resource not found."
-            );
-        }
-        finally
+        var update = new
         {
-            Environment.SetEnvironmentVariable(credentialVariable, null);
-        }
+            key = "ado.main",
+            displayName = "Updated Azure DevOps",
+            enabled = false,
+            provider = "AzureDevOpsBoards",
+            organizationUrl = "https://dev.azure.com/example",
+            project = "Agent Controller",
+            completedStates = new[] { "Resolved" },
+            tagPrefix = "agent",
+            activeState = "Active",
+            completedState = "Done",
+            personalAccessTokenReference = new { name = secretName },
+        };
+        using var updateResponse = await _client.PutAsJsonAsync(
+            "/api/webui/work-source-environments/ado.main",
+            update
+        );
+        Assert.Equal(HttpStatusCode.OK, updateResponse.StatusCode);
+        var updateBody = await updateResponse.Content.ReadAsStringAsync();
+        using var updateJson = JsonDocument.Parse(updateBody);
+        Assert.Equal(
+            "Updated Azure DevOps",
+            updateJson.RootElement.GetProperty("displayName").GetString()
+        );
+        Assert.False(updateJson.RootElement.GetProperty("enabled").GetBoolean());
+
+        using var deleteResponse = await _client.DeleteAsync(
+            "/api/webui/work-source-environments/ado.main"
+        );
+        Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
+
+        using var missingResponse = await _client.GetAsync(
+            "/api/webui/work-source-environments/ado.main"
+        );
+        await AssertProblemAsync(
+            missingResponse,
+            HttpStatusCode.NotFound,
+            "Resource not found."
+        );
     }
 
     [Fact]
