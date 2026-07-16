@@ -1,3 +1,5 @@
+using AgentController.Application;
+using AgentController.Application.Results;
 using AgentController.Domain;
 using AgentController.Infrastructure;
 using AgentController.Infrastructure.Options;
@@ -963,6 +965,287 @@ public class OptionsSmokeTests
                 maxConcurrency > 0,
                 $"maxConcurrentRuns should be positive, got {maxConcurrency}"
             );
+        }
+    }
+
+    // ──────────────────────────────────────────────
+    // AzureDevOpsPatResolver tests
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task AzureDevOpsPatResolver_ResolveFromEnvVar_ResolvesExistingEnvVar()
+    {
+        var envName = "PAT_RESOLVER_TEST_ENV";
+        try
+        {
+            Environment.SetEnvironmentVariable(envName, "resolved-token");
+
+            var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore());
+            var result = await resolver.ResolveFromEnvironmentVariableAsync(
+                envName,
+                CancellationToken.None
+            );
+
+            Assert.Equal("resolved-token", result);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envName, null);
+        }
+    }
+
+    [Fact]
+    public async Task AzureDevOpsPatResolver_ResolveFromEnvVar_ReturnsNullForMissingEnvVar()
+    {
+        var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore());
+        var result = await resolver.ResolveFromEnvironmentVariableAsync(
+            "NONEXISTENT_ENV_VAR_XYZ",
+            CancellationToken.None
+        );
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task AzureDevOpsPatResolver_ResolveFromEnvVar_ReturnsNullForEmptyName()
+    {
+        var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore());
+        var result = await resolver.ResolveFromEnvironmentVariableAsync(
+            "",
+            CancellationToken.None
+        );
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task AzureDevOpsPatResolver_ResolveFromLegacyValue_ReturnsDirectPat()
+    {
+        var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore());
+        var result = await resolver.ResolveFromLegacyValueAsync(
+            "my-direct-pat-token",
+            CancellationToken.None
+        );
+
+        Assert.Equal("my-direct-pat-token", result);
+    }
+
+    [Fact]
+    public async Task AzureDevOpsPatResolver_ResolveFromLegacyValue_ExpandsEnvReference()
+    {
+        var envName = "PAT_RESOLVER_LEGACY_ENV";
+        try
+        {
+            Environment.SetEnvironmentVariable(envName, "env-expanded-token");
+
+            var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore());
+            var result = await resolver.ResolveFromLegacyValueAsync(
+                $"ENV:{envName}",
+                CancellationToken.None
+            );
+
+            Assert.Equal("env-expanded-token", result);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envName, null);
+        }
+    }
+
+    [Fact]
+    public async Task AzureDevOpsPatResolver_ResolveFromLegacyValue_ReturnsNullForEmptyValue()
+    {
+        var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore());
+        var result = await resolver.ResolveFromLegacyValueAsync(
+            "",
+            CancellationToken.None
+        );
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task AzureDevOpsPatResolver_ResolveFromLegacyValue_ReturnsNullForEnvVarMissing()
+    {
+        var resolver = new AzureDevOpsPatResolver(new EnvVarFakeSecretStore());
+        var result = await resolver.ResolveFromLegacyValueAsync(
+            "ENV:NONEXISTENT_VAR_XYZ",
+            CancellationToken.None
+        );
+
+        Assert.Null(result);
+    }
+
+    // ──────────────────────────────────────────────
+    // AzureDevOpsBoardsOptions async resolution tests
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task AzureDevOpsBoardsOptions_ResolvePatAsync_ReturnsDirectValue()
+    {
+        var options = new AzureDevOpsBoardsOptions
+        {
+            PersonalAccessToken = "my-direct-pat",
+        };
+
+        var resolved = await options.ResolvePersonalAccessTokenAsync(
+            new EnvVarFakeSecretStore(),
+            CancellationToken.None
+        );
+
+        Assert.Equal("my-direct-pat", resolved);
+    }
+
+    [Fact]
+    public async Task AzureDevOpsBoardsOptions_ResolvePatAsync_ExpandsEnvReference()
+    {
+        var envName = "TEST_AZURE_DEVOPS_PAT_ASYNC";
+        try
+        {
+            Environment.SetEnvironmentVariable(envName, "async-resolved-pat-value");
+
+            var options = new AzureDevOpsBoardsOptions
+            {
+                PersonalAccessToken = $"ENV:{envName}",
+            };
+
+            var resolved = await options.ResolvePersonalAccessTokenAsync(
+                new EnvVarFakeSecretStore(),
+                CancellationToken.None
+            );
+
+            Assert.Equal("async-resolved-pat-value", resolved);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envName, null);
+        }
+    }
+
+    [Fact]
+    public async Task AzureDevOpsBoardsOptions_ResolvePatAsync_ThrowsWhenEnvVarMissing()
+    {
+        var envName = "MISSING_ENV_VAR_FOR_AZDO_PAT_ASYNC";
+        Environment.SetEnvironmentVariable(envName, null);
+
+        var options = new AzureDevOpsBoardsOptions
+        {
+            PersonalAccessToken = $"ENV:{envName}",
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => options.ResolvePersonalAccessTokenAsync(
+                new EnvVarFakeSecretStore(),
+                CancellationToken.None
+            )
+        );
+
+        Assert.Contains(envName, ex.Message);
+        Assert.Contains("missing or empty", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task AzureDevOpsBoardsOptions_ResolvePatAsync_ReturnsNullForEmptyValue()
+    {
+        var options = new AzureDevOpsBoardsOptions
+        {
+            PersonalAccessToken = "",
+        };
+
+        var resolved = await options.ResolvePersonalAccessTokenAsync(
+            new EnvVarFakeSecretStore(),
+            CancellationToken.None
+        );
+
+        Assert.Null(resolved);
+    }
+
+    // ──────────────────────────────────────────────
+    // Db-backed secret authentication tests
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task AzureDevOpsPatResolver_DbBackedSecret_ResolvesPat()
+    {
+        var secrets = new Dictionary<string, string>
+        {
+            ["EnvVar:DB_PAT_VAR"] = "db-stored-pat-token",
+        };
+        var resolver = new AzureDevOpsPatResolver(new InMemoryFakeSecretStore(secrets));
+        var result = await resolver.ResolveFromEnvironmentVariableAsync(
+            "DB_PAT_VAR",
+            CancellationToken.None
+        );
+
+        Assert.Equal("db-stored-pat-token", result);
+    }
+
+    [Fact]
+    public async Task AzureDevOpsBoardsOptions_ResolvePatAsync_DbBackedSecret_ResolvesPat()
+    {
+        var secrets = new Dictionary<string, string>
+        {
+            ["EnvVar:DB_ADO_PAT"] = "db-ado-pat-token",
+        };
+        var options = new AzureDevOpsBoardsOptions
+        {
+            PersonalAccessToken = "ENV:DB_ADO_PAT",
+        };
+
+        var resolved = await options.ResolvePersonalAccessTokenAsync(
+            new InMemoryFakeSecretStore(secrets),
+            CancellationToken.None
+        );
+
+        Assert.Equal("db-ado-pat-token", resolved);
+    }
+
+    // ──────────────────────────────────────────────
+    // Fake secret store implementations for tests
+    // ──────────────────────────────────────────────
+
+    private sealed class EnvVarFakeSecretStore : ISecretStore
+    {
+        public Task<string?> ResolveAsync(SecretReference reference, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (reference.Kind != "EnvVar")
+                return Task.FromResult<string?>(null);
+            return Task.FromResult(Environment.GetEnvironmentVariable(reference.Id));
+        }
+
+        public Task<SecretWriteResult> WriteAsync(
+            SecretReference reference,
+            string value,
+            CancellationToken ct
+        )
+        {
+            ct.ThrowIfCancellationRequested();
+            return Task.FromResult(
+                SecretWriteResult.FailureResult("Fake store is read-only.")
+            );
+        }
+    }
+
+    private sealed class InMemoryFakeSecretStore(Dictionary<string, string> secrets)
+        : ISecretStore
+    {
+        public Task<string?> ResolveAsync(SecretReference reference, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            secrets.TryGetValue($"{reference.Kind}:{reference.Id}", out var value);
+            return Task.FromResult(value);
+        }
+
+        public Task<SecretWriteResult> WriteAsync(
+            SecretReference reference,
+            string value,
+            CancellationToken ct
+        )
+        {
+            ct.ThrowIfCancellationRequested();
+            secrets[$"{reference.Kind}:{reference.Id}"] = value;
+            return Task.FromResult(SecretWriteResult.SuccessResult());
         }
     }
 }

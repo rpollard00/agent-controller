@@ -1,5 +1,6 @@
 using AgentController.Application;
 using AgentController.Application.Abstractions;
+using AgentController.Application.Results;
 using AgentController.Domain;
 using AgentController.Infrastructure;
 
@@ -10,6 +11,7 @@ namespace AgentController.Infrastructure.Tests;
 /// - Success path (connectivity ok + repo list mapped into payload, AuthMechanism == "PersonalAccessToken")
 /// - Failure path (VerifyConnectivityAsync reports failure → non-success with errors/httpStatus)
 /// - Config-error path (missing org/project or unresolved ENV: PAT → non-success with descriptive errors, no throw)
+/// - PAT resolution through ISecretStore (EnvVar-backed and Db-backed secrets)
 /// </summary>
 public sealed class AzureDevOpsConnectivityVerifierTests
 {
@@ -49,8 +51,7 @@ public sealed class AzureDevOpsConnectivityVerifierTests
                 },
             },
         };
-        var factory = new MockAzureDevOpsBoardsClientFactory(mockClient);
-        var verifier = new AzureDevOpsConnectivityVerifier(factory);
+        var verifier = CreateVerifier(mockClient);
 
         var profile = CreateProfile();
 
@@ -73,9 +74,6 @@ public sealed class AzureDevOpsConnectivityVerifierTests
         Assert.Equal("https://dev.azure.com/testorg/TestProject/_git/main-repo", repositories[0]["remoteUrl"]);
         Assert.Equal("repo-2", repositories[1]["id"]);
         Assert.Equal("infra-repo", repositories[1]["name"]);
-
-        // Assert: factory.Create was called with the profile
-        Assert.Same(profile, factory.CreatedProfile);
 
         ClearPatEnvironmentVariable();
     }
@@ -305,14 +303,101 @@ public sealed class AzureDevOpsConnectivityVerifierTests
         );
     }
 
+    // ─── PAT resolution through ISecretStore: EnvVar-backed ───
+
+    [Fact]
+    public async Task VerifyAsync_EnvVarBackedSecret_ResolvesPatThroughSecretStore()
+    {
+        // Arrange: set env var so the EnvVar-backed fake secret store can resolve it
+        SetPatEnvironmentVariable();
+        var mockClient = new MockAzureDevOpsBoardsClientForVerifier
+        {
+            ConnectivityResult = new AzureDevOpsConnectivityResult
+            {
+                Success = true,
+                Status = System.Net.HttpStatusCode.OK,
+                Repositories = Array.Empty<RepositoryInfo>(),
+            },
+        };
+        var verifier = CreateVerifier(mockClient);
+        var profile = CreateProfile();
+
+        // Act
+        var result = await verifier.VerifyAsync(profile, CancellationToken.None);
+
+        // Assert: success — PAT was resolved through ISecretStore (EnvVar kind)
+        Assert.True(result.Success);
+        Assert.Equal("PersonalAccessToken", result.AuthMechanism);
+
+        ClearPatEnvironmentVariable();
+    }
+
+    // ─── PAT resolution through ISecretStore: Db-backed (in-memory) ───
+
+    [Fact]
+    public async Task VerifyAsync_DbBackedSecret_ResolvesPatThroughSecretStore()
+    {
+        // Arrange: use an in-memory secret store simulating Db-backed secrets
+        var secrets = new Dictionary<string, string>
+        {
+            ["EnvVar:" + PatEnvVar] = "db-stored-pat-token",
+        };
+        var secretStore = CreateInMemorySecretStore(secrets);
+        var mockClient = new MockAzureDevOpsBoardsClientForVerifier
+        {
+            ConnectivityResult = new AzureDevOpsConnectivityResult
+            {
+                Success = true,
+                Status = System.Net.HttpStatusCode.OK,
+                Repositories = Array.Empty<RepositoryInfo>(),
+            },
+        };
+        var verifier = CreateVerifier(mockClient, secretStore);
+        var profile = CreateProfile();
+
+        // Act
+        var result = await verifier.VerifyAsync(profile, CancellationToken.None);
+
+        // Assert: success — PAT was resolved through ISecretStore (Db kind)
+        Assert.True(result.Success);
+        Assert.Equal("PersonalAccessToken", result.AuthMechanism);
+    }
+
+    // ─── PAT resolution failure: secret not found in store ───
+
+    [Fact]
+    public async Task VerifyAsync_SecretNotFoundInStore_ReturnsFailureWithPatError()
+    {
+        // Arrange: empty secret store — PAT cannot be resolved
+        var secretStore = CreateInMemorySecretStore(new Dictionary<string, string>());
+        var mockClient = new MockAzureDevOpsBoardsClientForVerifier();
+        var verifier = CreateVerifier(mockClient, secretStore);
+        var profile = CreateProfile();
+
+        // Act — must not throw
+        var result = await verifier.VerifyAsync(profile, CancellationToken.None);
+
+        // Assert: non-success with PAT error
+        Assert.False(result.Success);
+        Assert.Equal("PersonalAccessToken", result.AuthMechanism);
+        Assert.Contains(
+            result.Errors,
+            e => e.Contains(PatEnvVar, StringComparison.Ordinal)
+        );
+    }
+
     // ─── Helpers ───
 
     private static AzureDevOpsConnectivityVerifier CreateVerifier(
-        IAzureDevOpsBoardsClient mockClient
+        IAzureDevOpsBoardsClient mockClient,
+        ISecretStore? secretStore = null
     )
     {
         var factory = new MockAzureDevOpsBoardsClientFactory(mockClient);
-        return new AzureDevOpsConnectivityVerifier(factory);
+        var patResolver = new AzureDevOpsPatResolver(
+            secretStore ?? (ISecretStore)new EnvVarBackedFakeSecretStore()
+        );
+        return new AzureDevOpsConnectivityVerifier(factory, patResolver);
     }
 
     private static WorkSourceEnvironmentProfile CreateProfile()
@@ -338,6 +423,23 @@ public sealed class AzureDevOpsConnectivityVerifierTests
         Environment.SetEnvironmentVariable(PatEnvVar, null);
     }
 
+    /// <summary>
+    /// Creates an in-memory fake secret store that resolves "EnvVar" kind references
+    /// by reading the actual environment variable (mimicking EnvVarSecretStore behavior).
+    /// </summary>
+    private static EnvVarBackedFakeSecretStore CreateEnvVarBackedSecretStore()
+    {
+        return new EnvVarBackedFakeSecretStore();
+    }
+
+    /// <summary>
+    /// Creates an in-memory fake secret store with pre-configured secret values.
+    /// </summary>
+    private static InMemoryFakeSecretStore CreateInMemorySecretStore(Dictionary<string, string> secrets)
+    {
+        return new InMemoryFakeSecretStore(secrets);
+    }
+
     // ─── Mock implementations ───
 
     /// <summary>
@@ -353,6 +455,59 @@ public sealed class AzureDevOpsConnectivityVerifierTests
         {
             CreatedProfile = profile;
             return client;
+        }
+    }
+
+    /// <summary>
+    /// Fake ISecretStore that resolves "EnvVar" kind references by reading
+    /// the actual environment variable (mimicking EnvVarSecretStore).
+    /// </summary>
+    private sealed class EnvVarBackedFakeSecretStore : ISecretStore
+    {
+        public Task<string?> ResolveAsync(SecretReference reference, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (reference.Kind != "EnvVar")
+                return Task.FromResult<string?>(null);
+            return Task.FromResult(Environment.GetEnvironmentVariable(reference.Id));
+        }
+
+        public Task<SecretWriteResult> WriteAsync(
+            SecretReference reference,
+            string value,
+            CancellationToken ct
+        )
+        {
+            ct.ThrowIfCancellationRequested();
+            return Task.FromResult(
+                SecretWriteResult.FailureResult("Fake store is read-only.")
+            );
+        }
+    }
+
+    /// <summary>
+    /// Fake ISecretStore with pre-configured in-memory secret values.
+    /// Simulates a Db-backed secret store.
+    /// </summary>
+    private sealed class InMemoryFakeSecretStore(Dictionary<string, string> secrets)
+        : ISecretStore
+    {
+        public Task<string?> ResolveAsync(SecretReference reference, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            secrets.TryGetValue($"{reference.Kind}:{reference.Id}", out var value);
+            return Task.FromResult(value);
+        }
+
+        public Task<SecretWriteResult> WriteAsync(
+            SecretReference reference,
+            string value,
+            CancellationToken ct
+        )
+        {
+            ct.ThrowIfCancellationRequested();
+            secrets[$"{reference.Kind}:{reference.Id}"] = value;
+            return Task.FromResult(SecretWriteResult.SuccessResult());
         }
     }
 

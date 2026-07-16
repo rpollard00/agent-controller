@@ -310,7 +310,10 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
                     new MockAzureDevOpsBoardsClientFactory()
                 );
 
-
+                // Ensure secret stores and PAT resolver are registered.
+                // These are needed by AzureDevOpsConnectivityVerifier.
+                services.AddAgentControllerSecretStores();
+                services.TryAddSingleton<AgentController.Infrastructure.AzureDevOpsPatResolver>();
             });
         }
     }

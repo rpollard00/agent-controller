@@ -187,6 +187,10 @@ public static class AgentControllerServiceCollectionExtensions
     )
     {
         services.AddScoped<IRunLifecycleService, RunLifecycleService>();
+
+        // Ensure secret stores are registered for AzureDevOpsPatResolver dependency.
+        AddAgentControllerSecretStores(services);
+        services.AddSingleton<AzureDevOpsPatResolver>();
         services.TryAddSingleton<IAzureDevOpsBoardsClientFactory, AzureDevOpsBoardsClientFactory>();
 
         return services;
@@ -448,8 +452,6 @@ public static class AgentControllerServiceCollectionExtensions
             return new AzureDevOpsBoardsClient(http, boardsOptions, logger);
         });
 
-        services.TryAddSingleton<IAzureDevOpsBoardsClientFactory, AzureDevOpsBoardsClientFactory>();
-
         // Register the work source implementation as singleton.
         // It uses IServiceScopeFactory to resolve scoped profile/client services
         // per operation.
@@ -461,6 +463,17 @@ public static class AgentControllerServiceCollectionExtensions
         // Throws during startup if any configured state is invalid.
         services.AddHostedService<AzureDevOpsBoardStateStartupValidator>();
 
+        // Register secret stores so ISecretStore is available for PAT resolution.
+        AddAgentControllerSecretStores(services);
+
+        // Register the shared PAT resolver used by both work-source (Boards)
+        // and repo-host (Repos) ADO paths. Routes resolution through ISecretStore
+        // with backward compatibility for legacy "ENV:NAME" and direct PAT forms.
+        services.AddSingleton<AzureDevOpsPatResolver>();
+
+        // Register the Azure DevOps Boards client factory with ISecretStore-backed PAT resolution.
+        services.TryAddSingleton<IAzureDevOpsBoardsClientFactory, AzureDevOpsBoardsClientFactory>();
+
         // Register the Azure DevOps connectivity verifier with the provider-keyed resolver.
         // Keyed by "AzureDevOpsBoards" and "AzureDevOpsRepos" provider strings.
         services.AddWorkSourceConnectivityVerifier<AzureDevOpsConnectivityVerifier>(
@@ -471,8 +484,6 @@ public static class AgentControllerServiceCollectionExtensions
         // Register the Azure DevOps Repos repository host for the provider-keyed resolver.
         // Uses ISecretStore for PAT resolution (not Environment.GetEnvironmentVariable).
         // Reuses AzureDevOpsBoardsClient for HTTP operations.
-        // Register secret stores so ISecretStore is available for PAT resolution.
-        AddAgentControllerSecretStores(services);
         services.AddSingleton<IAzureDevOpsReposClientFactory, AzureDevOpsReposClientFactory>();
         services.AddRepositoryHost<AzureDevOpsReposRepositoryHost>("AzureDevOpsRepos");
 
@@ -700,15 +711,9 @@ public static class AgentControllerServiceCollectionExtensions
         services.AddScoped<DbSecretStore>();
 
         // Register the resolver that dispatches by SecretReference.Kind.
-        services.AddSingleton<ISecretStore, SecretStoreResolver>(sp =>
-        {
-            var stores = new Dictionary<string, ISecretStore>
-            {
-                ["EnvVar"] = sp.GetRequiredService<EnvVarSecretStore>(),
-                ["Db"] = sp.GetRequiredService<DbSecretStore>(),
-            };
-            return new SecretStoreResolver(stores);
-        });
+        // Uses lazy resolution from IServiceProvider to support scoped stores
+        // (e.g., DbSecretStore which depends on scoped DbContext).
+        services.AddSingleton<ISecretStore, SecretStoreResolver>();
 
         return services;
     }

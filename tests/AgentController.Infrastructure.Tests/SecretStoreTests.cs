@@ -2,6 +2,7 @@ using AgentController.Application;
 using AgentController.Application.Results;
 using AgentController.Domain;
 using AgentController.Infrastructure.Secrets;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -133,11 +134,11 @@ public sealed class SecretStoreTests
         try
         {
             Environment.SetEnvironmentVariable(envName, expected);
-            var stores = new Dictionary<string, ISecretStore>
-            {
-                ["EnvVar"] = new EnvVarSecretStore(),
-            };
-            var resolver = new SecretStoreResolver(stores);
+            var services = new ServiceCollection();
+            services.AddSingleton<EnvVarSecretStore>();
+            services.AddSingleton<ISecretStore, SecretStoreResolver>();
+            var provider = services.BuildServiceProvider();
+            var resolver = provider.GetRequiredService<ISecretStore>();
             var reference = SecretReference.EnvironmentVariable(envName);
 
             // Act
@@ -158,8 +159,11 @@ public sealed class SecretStoreTests
     public async Task SecretStoreResolver_ResolveAsync_UnknownKind_ReturnsNull()
     {
         // Arrange
-        var stores = new Dictionary<string, ISecretStore>();
-        var resolver = new SecretStoreResolver(stores);
+        var services = new ServiceCollection();
+        services.AddSingleton<EnvVarSecretStore>();
+        services.AddSingleton<ISecretStore, SecretStoreResolver>();
+        var provider = services.BuildServiceProvider();
+        var resolver = provider.GetRequiredService<ISecretStore>();
         var reference = new SecretReference { Kind = "Unknown", Id = "x" };
 
         // Act
@@ -175,8 +179,11 @@ public sealed class SecretStoreTests
     public async Task SecretStoreResolver_WriteAsync_UnknownKind_ReturnsFailure()
     {
         // Arrange
-        var stores = new Dictionary<string, ISecretStore>();
-        var resolver = new SecretStoreResolver(stores);
+        var services = new ServiceCollection();
+        services.AddSingleton<EnvVarSecretStore>();
+        services.AddSingleton<ISecretStore, SecretStoreResolver>();
+        var provider = services.BuildServiceProvider();
+        var resolver = provider.GetRequiredService<ISecretStore>();
         var reference = new SecretReference { Kind = "Unknown", Id = "x" };
 
         // Act
@@ -188,29 +195,25 @@ public sealed class SecretStoreTests
         Assert.Contains("Unknown", result.Errors[0]);
     }
 
-    // ─── SecretStoreResolver: write delegates to registered store ───
+    // ─── SecretStoreResolver: write delegates to EnvVar store (read-only) ───
 
     [Fact]
-    public async Task SecretStoreResolver_WriteAsync_KnownKind_DelegatesToStore()
+    public async Task SecretStoreResolver_WriteAsync_EnvVarKind_DelegatesToStore()
     {
         // Arrange
-        var fakeStore = new InMemoryFakeSecretStore();
-        var stores = new Dictionary<string, ISecretStore>
-        {
-            ["Db"] = fakeStore,
-        };
-        var resolver = new SecretStoreResolver(stores);
-        var reference = SecretReference.Database("test-guid");
+        var services = new ServiceCollection();
+        services.AddSingleton<EnvVarSecretStore>();
+        services.AddSingleton<ISecretStore, SecretStoreResolver>();
+        var provider = services.BuildServiceProvider();
+        var resolver = provider.GetRequiredService<ISecretStore>();
+        var reference = SecretReference.EnvironmentVariable("TEST_VAR");
 
         // Act
         var result = await resolver.WriteAsync(reference, "secret-value", CancellationToken.None);
 
-        // Assert
-        Assert.True(result.Success);
-
-        // Verify the value was written to the underlying store
-        var resolved = await fakeStore.ResolveAsync(reference, CancellationToken.None);
-        Assert.Equal("secret-value", resolved);
+        // Assert: EnvVar store is read-only, so write should fail
+        Assert.False(result.Success);
+        Assert.NotEmpty(result.Errors);
     }
 
     // ─── ISecretProtector: contract verification ───

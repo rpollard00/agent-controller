@@ -1,6 +1,7 @@
 using AgentController.Application;
 using AgentController.Application.Results;
 using AgentController.Domain;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace AgentController.Infrastructure.Secrets;
 
@@ -14,15 +15,20 @@ namespace AgentController.Infrastructure.Secrets;
 ///   <item><description><c>"Db"</c> → <see cref="DbSecretStore"/></description></item>
 /// </list>
 ///
+/// Stores are resolved lazily from the service provider to support scoped services
+/// (e.g., <see cref="DbSecretStore"/> which depends on EF Core DbContext).
+/// For scoped stores, a new scope is created per operation to ensure the DbContext
+/// is available.
+///
 /// Unknown kinds return <c>null</c> for resolve and failure for write.
 /// </summary>
 internal sealed class SecretStoreResolver : ISecretStore
 {
-    private readonly IDictionary<string, ISecretStore> _stores;
+    private readonly IServiceProvider _serviceProvider;
 
-    public SecretStoreResolver(IDictionary<string, ISecretStore> stores)
+    public SecretStoreResolver(IServiceProvider serviceProvider)
     {
-        _stores = stores;
+        _serviceProvider = serviceProvider;
     }
 
     /// <inheritdoc />
@@ -31,13 +37,15 @@ internal sealed class SecretStoreResolver : ISecretStore
         CancellationToken cancellationToken
     )
     {
-        if (_stores.TryGetValue(reference.Kind, out var store))
+        return reference.Kind switch
         {
-            return store.ResolveAsync(reference, cancellationToken);
-        }
-
-        // Unknown kind — cannot resolve.
-        return Task.FromResult<string?>(null);
+            "EnvVar" => _serviceProvider
+                .GetRequiredService<EnvVarSecretStore>()
+                .ResolveAsync(reference, cancellationToken),
+            "Db" => ResolveScopedAsync(store =>
+                store.ResolveAsync(reference, cancellationToken)),
+            _ => Task.FromResult<string?>(null),
+        };
     }
 
     /// <inheritdoc />
@@ -47,16 +55,31 @@ internal sealed class SecretStoreResolver : ISecretStore
         CancellationToken cancellationToken
     )
     {
-        if (_stores.TryGetValue(reference.Kind, out var store))
+        return reference.Kind switch
         {
-            return store.WriteAsync(reference, value, cancellationToken);
-        }
+            "EnvVar" => _serviceProvider
+                .GetRequiredService<EnvVarSecretStore>()
+                .WriteAsync(reference, value, cancellationToken),
+            "Db" => ResolveScopedAsync(store =>
+                store.WriteAsync(reference, value, cancellationToken)),
+            _ => Task.FromResult(
+                SecretWriteResult.FailureResult(
+                    $"No secret store registered for Kind '{reference.Kind}'."
+                )),
+        };
+    }
 
-        // Unknown kind — cannot write.
-        return Task.FromResult(
-            SecretWriteResult.FailureResult(
-                $"No secret store registered for Kind '{reference.Kind}'."
-            )
-        );
+    /// <summary>
+    /// Executes an operation within a scoped service context.
+    /// Creates a scope, resolves the scoped service, executes the operation,
+    /// and disposes the scope.
+    /// </summary>
+    private Task<T> ResolveScopedAsync<T>(
+        Func<DbSecretStore, Task<T>> operation
+    )
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<DbSecretStore>();
+        return operation(store);
     }
 }

@@ -12,9 +12,14 @@ namespace AgentController.Infrastructure;
 /// <see cref="IAzureDevOpsBoardsClient.VerifyConnectivityAsync"/> and maps the
 /// result (including enumerated repositories) into the provider-neutral
 /// <see cref="WorkSourceConnectivityResult"/>.
+///
+/// PAT resolution is routed through <see cref="AzureDevOpsPatResolver"/> which
+/// dispatches via <see cref="ISecretStore"/>, replacing the previous direct
+/// <c>Environment.GetEnvironmentVariable</c> call.
 /// </summary>
 internal sealed class AzureDevOpsConnectivityVerifier(
-    IAzureDevOpsBoardsClientFactory boardsClientFactory
+    IAzureDevOpsBoardsClientFactory boardsClientFactory,
+    AzureDevOpsPatResolver patResolver
 ) : IWorkSourceConnectivityVerifier
 {
     public async Task<WorkSourceConnectivityResult> VerifyAsync(
@@ -33,13 +38,24 @@ internal sealed class AzureDevOpsConnectivityVerifier(
             errors.Add("Azure DevOps project is not configured.");
         }
 
-        // Resolve PAT from the environment variable reference.
+        // Resolve PAT through ISecretStore via the shared resolver.
         string? resolvedPat;
         try
         {
-            resolvedPat = ResolveManagedPat(profile.PatEnvironmentVariable);
+            resolvedPat = await patResolver.ResolveFromEnvironmentVariableAsync(
+                profile.PatEnvironmentVariable,
+                cancellationToken
+            );
+            if (string.IsNullOrWhiteSpace(resolvedPat))
+            {
+                errors.Add(
+                    string.IsNullOrWhiteSpace(profile.PatEnvironmentVariable)
+                        ? "The managed profile has no PAT environment-variable reference."
+                        : $"PAT environment variable '{profile.PatEnvironmentVariable}' is missing or empty."
+                );
+            }
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex)
         {
             errors.Add($"PAT resolution failed: {ex.Message}");
             resolvedPat = null;
@@ -114,25 +130,5 @@ internal sealed class AzureDevOpsConnectivityVerifier(
                 : null,
             payload: new Dictionary<string, object> { ["repositories"] = repositories }
         );
-    }
-
-    private static string ResolveManagedPat(string environmentVariable)
-    {
-        if (string.IsNullOrWhiteSpace(environmentVariable))
-        {
-            throw new InvalidOperationException(
-                "The managed profile has no PAT environment-variable reference."
-            );
-        }
-
-        var value = Environment.GetEnvironmentVariable(environmentVariable);
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            throw new InvalidOperationException(
-                $"PAT environment variable '{environmentVariable}' is missing or empty."
-            );
-        }
-
-        return value;
     }
 }

@@ -47,10 +47,23 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         "System.WorkItemType",
     ];
 
+    /// <summary>
+    /// Creates a new Azure DevOps Boards client.
+    /// </summary>
+    /// <param name="http">The HTTP client to use for requests.</param>
+    /// <param name="options">The Azure DevOps Boards options.</param>
+    /// <param name="logger">The logger instance.</param>
+    /// <param name="personalAccessToken">
+    /// Optional pre-resolved PAT. When provided, this value is used directly
+    /// instead of calling <c>options.ResolvePersonalAccessToken()</c>.
+    /// This allows the caller to resolve the secret through <c>ISecretStore</c>
+    /// before constructing the client.
+    /// </param>
     public AzureDevOpsBoardsClient(
         HttpClient http,
         AzureDevOpsBoardsOptions options,
-        ILogger<AzureDevOpsBoardsClient> logger
+        ILogger<AzureDevOpsBoardsClient> logger,
+        string? personalAccessToken = null
     )
     {
         _http = http;
@@ -63,11 +76,15 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             _http.BaseAddress = new Uri(options.BaseUrl.TrimEnd('/') + "/");
         }
 
-        // Set Basic auth header with PAT
-        var pat = options.ResolvePersonalAccessToken();
-        if (!string.IsNullOrWhiteSpace(pat))
+        // Set Basic auth header with PAT.
+        // Prefer the explicitly-supplied PAT; fall back to resolving from options
+        // for backward compatibility with legacy appsettings-based configuration.
+        var effectivePat = !string.IsNullOrWhiteSpace(personalAccessToken)
+            ? personalAccessToken
+            : options.ResolvePersonalAccessToken();
+        if (!string.IsNullOrWhiteSpace(effectivePat))
         {
-            var authBytes = Encoding.ASCII.GetBytes($":{pat}");
+            var authBytes = Encoding.ASCII.GetBytes($":{effectivePat}");
             _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
                 "Basic",
                 Convert.ToBase64String(authBytes)
