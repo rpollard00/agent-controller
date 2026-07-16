@@ -1,6 +1,7 @@
 using AgentController.Infrastructure;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace AgentController.Infrastructure.Tests;
@@ -112,6 +113,46 @@ public sealed class MissingKekStartupTests
 
         var message = criticalLogs[0].Message;
         Assert.Contains("KEK", message);
+    }
+
+    /// <summary>
+    /// Guard the loud-failure behavior end-to-end: building the full host
+    /// with secrets:provider=Db and no KEK throws InvalidOperationException
+    /// naming the KEK configuration key.
+    /// This is the acceptance test for the startup-failure requirement.
+    /// </summary>
+    [Fact]
+    public void HostBuild_NoKekWithDbProvider_ThrowsWithKekConfigKey()
+    {
+        // Arrange — configure secrets:provider=Db with NO KEK configured.
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["secrets:provider"] = "Db",
+                // Deliberately omit: secrets:keyEncryptionKey:file:filePath
+                // Deliberately omit: AGENT_CONTROLLER_SECRET_KEK_FILE_PATH
+            })
+            .Build();
+
+        // Act & Assert — building the host must throw with KEK config key in message.
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+        {
+            using var host = Host.CreateDefaultBuilder()
+                .ConfigureAppConfiguration(builder =>
+                {
+                    builder.Sources.Clear();
+                    builder.AddConfiguration(config);
+                })
+                .ConfigureServices((context, services) =>
+                {
+                    services.AddAgentControllerNamedSecrets(context.Configuration);
+                })
+                .Build();
+        });
+
+        // Assert the exception message references the KEK configuration key.
+        Assert.Contains("secrets:keyEncryptionKey:file:filePath", exception.Message);
+        Assert.Contains("AGENT_CONTROLLER_SECRET_KEK_FILE_PATH", exception.Message);
     }
 
     // ─── Test helpers ──────────────────────────────────────────
