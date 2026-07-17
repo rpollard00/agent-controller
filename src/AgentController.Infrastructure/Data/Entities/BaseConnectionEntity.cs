@@ -18,9 +18,7 @@ internal abstract class BaseConnectionEntity
 
     public string Provider { get; set; } = string.Empty;
 
-    public string OrganizationUrl { get; set; } = string.Empty;
-
-    public string Project { get; set; } = string.Empty;
+    public virtual string OrganizationUrl { get; set; } = string.Empty;
 
     public DateTimeOffset CreatedAt { get; set; }
 
@@ -56,10 +54,6 @@ internal static class ConnectionEntityConfigurationHelper
         builder.Property(x => x.OrganizationUrl)
             .IsRequired()
             .HasMaxLength(2048);
-
-        builder.Property(x => x.Project)
-            .IsRequired()
-            .HasMaxLength(256);
 
         builder.Property(x => x.CreatedAt).IsRequired();
 

@@ -29,12 +29,13 @@ public sealed record WorkSourceEnvironmentProfile
     /// </summary>
     public string TagPrefix { get; init; } = "agent";
 
-    // --- Azure DevOps Boards connection fields ---
+    /// <summary>
+    /// Key of the unified <see cref="ConnectionProfile"/> this work source uses for
+    /// organization-level connectivity (org URL, PAT, etc.).
+    /// </summary>
+    public string ConnectionKey { get; init; } = string.Empty;
 
-    /// <summary>Azure DevOps organization URL (provider: AzureDevOpsBoards).</summary>
-    public string OrganizationUrl { get; init; } = string.Empty;
-
-    /// <summary>Azure DevOps project name (provider: AzureDevOpsBoards).</summary>
+    /// <summary>Consumer-level project name (e.g. Azure DevOps project).</summary>
     public string Project { get; init; } = string.Empty;
 
     /// <summary>State applied when work begins, if configured.</summary>
@@ -42,13 +43,6 @@ public sealed record WorkSourceEnvironmentProfile
 
     /// <summary>State applied when work completes, if configured.</summary>
     public string? CompletedState { get; init; }
-
-    /// <summary>
-    /// Reference to a named, versioned secret holding the Azure DevOps PAT.
-    /// Resolved at runtime via <see cref="Secrets.ISecretStore"/>.
-    /// </summary>
-    public Secrets.SecretReference PersonalAccessTokenReference { get; init; } =
-        Secrets.SecretReference.Empty;
 
     /// <summary>When the managed profile was created.</summary>
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;

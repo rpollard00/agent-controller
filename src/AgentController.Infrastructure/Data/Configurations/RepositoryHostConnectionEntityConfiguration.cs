@@ -18,10 +18,14 @@ internal sealed class RepositoryHostConnectionEntityConfiguration
         builder.HasKey(x => x.Key);
 
         // Apply common connection entity configurations (Key, DisplayName, Enabled,
-        // Provider, OrganizationUrl, Project, CreatedAt, UpdatedAt).
+        // Provider, OrganizationUrl, CreatedAt, UpdatedAt).
         ConnectionEntityConfigurationHelper.ApplyCommonConfigurations(builder);
 
         // Repository-host-specific fields.
+        builder.Property(x => x.Project)
+            .IsRequired()
+            .HasMaxLength(256);
+
         builder.Property(x => x.PersonalAccessTokenSecretName)
             .IsRequired()
             .HasMaxLength(256);

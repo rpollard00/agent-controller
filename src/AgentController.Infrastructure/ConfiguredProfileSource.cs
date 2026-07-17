@@ -12,21 +12,18 @@ internal sealed class ConfiguredProfileSource : IConfiguredProfileSource
     private readonly IOptionsMonitor<EnvironmentProviderOptions> _environment;
     private readonly IOptionsMonitor<RuntimeOptions> _runtime;
     private readonly IOptionsMonitor<WorkSourceOptions> _workSource;
-    private readonly IOptionsMonitor<AzureDevOpsBoardsOptions> _azureDevOps;
 
     public ConfiguredProfileSource(
         IOptionsMonitor<Dictionary<string, RepositoryProfileOptions>> repositories,
         IOptionsMonitor<EnvironmentProviderOptions> environment,
         IOptionsMonitor<RuntimeOptions> runtime,
-        IOptionsMonitor<WorkSourceOptions> workSource,
-        IOptionsMonitor<AzureDevOpsBoardsOptions> azureDevOps
+        IOptionsMonitor<WorkSourceOptions> workSource
     )
     {
         _repositories = repositories;
         _environment = environment;
         _runtime = runtime;
         _workSource = workSource;
-        _azureDevOps = azureDevOps;
     }
 
     public RepositoryProfile? GetRepository(string key)
@@ -85,12 +82,8 @@ internal sealed class ConfiguredProfileSource : IConfiguredProfileSource
     public WorkSourceEnvironmentProfile? GetWorkSourceEnvironment()
     {
         var workSource = _workSource.CurrentValue;
-        var azureDevOps = _azureDevOps.CurrentValue;
 
-        if (
-            string.IsNullOrWhiteSpace(workSource.OrganizationUrl)
-            && string.IsNullOrWhiteSpace(workSource.Project)
-        )
+        if (string.IsNullOrWhiteSpace(workSource.Project))
         {
             return null;
         }
@@ -102,25 +95,10 @@ internal sealed class ConfiguredProfileSource : IConfiguredProfileSource
             Enabled = true,
             Provider = "AzureDevOpsBoards",
             TagPrefix = workSource.TagPrefix,
-            OrganizationUrl = workSource.OrganizationUrl ?? string.Empty,
+            ConnectionKey = string.Empty,
             Project = workSource.Project ?? string.Empty,
             ActiveState = workSource.ActiveState,
             CompletedState = workSource.CompletedState,
-            PersonalAccessTokenReference = SecretReferenceFromAppSettings(
-                azureDevOps.PersonalAccessToken
-            ),
         };
-    }
-
-    private static Domain.Secrets.SecretReference SecretReferenceFromAppSettings(
-        string? configuredValue)
-    {
-        if (string.IsNullOrWhiteSpace(configuredValue))
-        {
-            return Domain.Secrets.SecretReference.Empty;
-        }
-
-        // Treat the configured value as a named secret reference.
-        return Domain.Secrets.SecretReference.ByName(configuredValue.Trim());
     }
 }

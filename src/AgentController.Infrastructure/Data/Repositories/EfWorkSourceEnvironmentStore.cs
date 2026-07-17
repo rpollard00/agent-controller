@@ -85,12 +85,10 @@ internal sealed class EfWorkSourceEnvironmentStore : IWorkSourceEnvironmentStore
         entity.Enabled = profile.Enabled;
         entity.Provider = profile.Provider;
         entity.TagPrefix = profile.TagPrefix;
-        entity.OrganizationUrl = profile.OrganizationUrl;
+        entity.ConnectionKey = profile.ConnectionKey;
         entity.Project = profile.Project;
         entity.ActiveState = profile.ActiveState;
         entity.CompletedState = profile.CompletedState;
-        entity.PersonalAccessTokenSecretName = profile.PersonalAccessTokenReference.Name;
-        entity.PersonalAccessTokenSecretVersion = profile.PersonalAccessTokenReference.Version;
         entity.UpdatedAt = profile.UpdatedAt;
 
         await _db.SaveChangesAsync(cancellationToken);
@@ -125,12 +123,10 @@ internal sealed class EfWorkSourceEnvironmentStore : IWorkSourceEnvironmentStore
             Enabled = profile.Enabled,
             Provider = profile.Provider,
             TagPrefix = profile.TagPrefix,
-            OrganizationUrl = profile.OrganizationUrl,
+            ConnectionKey = profile.ConnectionKey,
             Project = profile.Project,
             ActiveState = profile.ActiveState,
             CompletedState = profile.CompletedState,
-            PersonalAccessTokenSecretName = profile.PersonalAccessTokenReference.Name,
-            PersonalAccessTokenSecretVersion = profile.PersonalAccessTokenReference.Version,
             CreatedAt = profile.CreatedAt,
             UpdatedAt = profile.UpdatedAt,
         };
@@ -146,17 +142,10 @@ internal sealed class EfWorkSourceEnvironmentStore : IWorkSourceEnvironmentStore
             Enabled = entity.Enabled,
             Provider = entity.Provider,
             TagPrefix = entity.TagPrefix,
-            OrganizationUrl = entity.OrganizationUrl,
+            ConnectionKey = entity.ConnectionKey,
             Project = entity.Project,
             ActiveState = entity.ActiveState,
             CompletedState = entity.CompletedState,
-            PersonalAccessTokenReference = string.IsNullOrWhiteSpace(entity.PersonalAccessTokenSecretName)
-                ? AgentController.Domain.Secrets.SecretReference.Empty
-                : new AgentController.Domain.Secrets.SecretReference
-                {
-                    Name = entity.PersonalAccessTokenSecretName,
-                    Version = entity.PersonalAccessTokenSecretVersion,
-                },
             CreatedAt = entity.CreatedAt,
             UpdatedAt = entity.UpdatedAt,
         };

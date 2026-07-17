@@ -7,10 +7,8 @@ internal static class WorkSourceEnvironmentProfileValidation
 {
     private const int MaximumKeyLength = 128;
     private const int MaximumDisplayNameLength = 256;
-    private const int MaximumOrganizationUrlLength = 2048;
     private const int MaximumProjectLength = 256;
     private const int MaximumBoardValueLength = 256;
-    private const int MaximumSecretNameLength = 256;
 
     public static WorkSourceEnvironmentProfileValidationResult ValidateAndNormalize(
         WorkSourceEnvironmentProfile profile
@@ -29,14 +27,20 @@ internal static class WorkSourceEnvironmentProfileValidation
             errors
         );
 
-        var organizationUrl = NormalizeOrganizationUrl(profile.OrganizationUrl);
-        ValidateOrganizationUrl(organizationUrl, errors);
+        var connectionKey = NormalizeKey(profile.ConnectionKey);
+        ValidateRequiredText(
+            connectionKey,
+            "connectionKey",
+            "A connection key is required.",
+            MaximumKeyLength,
+            errors
+        );
 
         var project = NormalizeText(profile.Project);
         ValidateRequiredText(
             project,
             "project",
-            "An Azure DevOps project is required.",
+            "A project name is required.",
             MaximumProjectLength,
             errors
         );
@@ -68,30 +72,16 @@ internal static class WorkSourceEnvironmentProfileValidation
 
         var tagPrefix = NormalizeTagPrefix(profile.TagPrefix, errors);
 
-        var secretRef = NormalizeSecretReference(
-            profile.PersonalAccessTokenReference,
-            errors);
-
-        // Validate that a secret reference is specified.
-        if (!secretRef.IsSpecified)
-        {
-            errors.Add(
-                "personalAccessTokenReference",
-                "A secret reference for the PAT is required."
-            );
-        }
-
         var normalized = profile with
         {
             Key = key,
             DisplayName = displayName,
             Provider = provider,
-            OrganizationUrl = organizationUrl,
+            ConnectionKey = connectionKey,
             Project = project,
             ActiveState = activeState,
             CompletedState = completedState,
             TagPrefix = tagPrefix,
-            PersonalAccessTokenReference = secretRef,
         };
 
         return new WorkSourceEnvironmentProfileValidationResult(normalized, errors.ToDictionary());
@@ -139,9 +129,6 @@ internal static class WorkSourceEnvironmentProfileValidation
         (value ?? string.Empty).Trim().ToLowerInvariant();
 
     private static string NormalizeText(string? value) => (value ?? string.Empty).Trim();
-
-    private static string NormalizeOrganizationUrl(string? value) =>
-        NormalizeText(value).TrimEnd('/');
 
     private static void ValidateKey(string key, ValidationErrors errors)
     {
@@ -211,41 +198,6 @@ internal static class WorkSourceEnvironmentProfileValidation
         }
     }
 
-    private static void ValidateOrganizationUrl(string organizationUrl, ValidationErrors errors)
-    {
-        if (organizationUrl.Length == 0)
-        {
-            errors.Add("organizationUrl", "An Azure DevOps organization URL is required.");
-            return;
-        }
-
-        if (organizationUrl.Length > MaximumOrganizationUrlLength)
-        {
-            errors.Add(
-                "organizationUrl",
-                $"The organization URL must be {MaximumOrganizationUrlLength} characters or fewer."
-            );
-        }
-
-        if (
-            organizationUrl.Any(character =>
-                char.IsControl(character) || char.IsWhiteSpace(character)
-            )
-            || !Uri.TryCreate(organizationUrl, UriKind.Absolute, out var uri)
-            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
-            || string.IsNullOrWhiteSpace(uri.Host)
-            || uri.UserInfo.Length > 0
-            || uri.Query.Length > 0
-            || uri.Fragment.Length > 0
-        )
-        {
-            errors.Add(
-                "organizationUrl",
-                "The organization URL must be an absolute HTTP or HTTPS URL without credentials, a query, or a fragment."
-            );
-        }
-    }
-
     private static string? NormalizeOptionalBoardValue(
         string? originalValue,
         string field,
@@ -260,46 +212,6 @@ internal static class WorkSourceEnvironmentProfileValidation
 
         ValidateText(value, field, MaximumBoardValueLength, errors);
         return value;
-    }
-
-    private static Domain.Secrets.SecretReference NormalizeSecretReference(
-        Domain.Secrets.SecretReference reference,
-        ValidationErrors errors)
-    {
-        var name = (reference.Name ?? string.Empty).Trim();
-
-        if (name.Length == 0)
-        {
-            return Domain.Secrets.SecretReference.Empty;
-        }
-
-        if (name.Length > MaximumSecretNameLength)
-        {
-            errors.Add(
-                "personalAccessTokenReference",
-                $"The secret name must be {MaximumSecretNameLength} characters or fewer."
-            );
-        }
-
-        if (name.Any(char.IsControl))
-        {
-            errors.Add(
-                "personalAccessTokenReference",
-                "The secret name cannot contain control characters."
-            );
-        }
-
-        var version = reference.Version;
-        if (version.HasValue && version.Value < 1)
-        {
-            errors.Add(
-                "personalAccessTokenReference",
-                "The secret version must be 1 or greater."
-            );
-            version = null;
-        }
-
-        return new Domain.Secrets.SecretReference { Name = name, Version = version };
     }
 
     private sealed class ValidationErrors

@@ -6,7 +6,8 @@ namespace AgentController.Infrastructure.Data.Configurations;
 
 /// <summary>
 /// EF Core configuration for managed work-source environment profiles.
-/// Uses <see cref="ConnectionEntityConfigurationHelper"/> for shared connection fields.
+/// Organization URL and PAT live on the referenced connection; this entity
+/// carries only ConnectionKey, consumer-level Project, and board-usage settings.
 /// </summary>
 internal sealed class WorkSourceEnvironmentEntityConfiguration
     : IEntityTypeConfiguration<WorkSourceEnvironmentEntity>
@@ -17,9 +18,33 @@ internal sealed class WorkSourceEnvironmentEntityConfiguration
 
         builder.HasKey(x => x.Key);
 
-        // Apply common connection entity configurations (Key, DisplayName, Enabled,
-        // Provider, OrganizationUrl, Project, CreatedAt, UpdatedAt).
-        ConnectionEntityConfigurationHelper.ApplyCommonConfigurations(builder);
+        // Common fields from BaseConnectionEntity (Key, DisplayName, Enabled, Provider,
+        // CreatedAt, UpdatedAt). OrganizationUrl is excluded — it lives on the connection.
+        builder.Property(x => x.Key).HasMaxLength(128);
+
+        builder.Property(x => x.DisplayName)
+            .IsRequired()
+            .HasMaxLength(256);
+
+        builder.Property(x => x.Enabled).IsRequired();
+
+        builder.Property(x => x.Provider)
+            .IsRequired()
+            .HasMaxLength(128);
+
+        builder.Property(x => x.CreatedAt).IsRequired();
+
+        builder.Property(x => x.UpdatedAt).IsRequired();
+
+        // Connection reference.
+        builder.Property(x => x.ConnectionKey)
+            .IsRequired()
+            .HasMaxLength(128);
+
+        // Consumer-level project (not the base OrganizationUrl/Project).
+        builder.Property(x => x.Project)
+            .IsRequired()
+            .HasMaxLength(256);
 
         // Work-source-specific fields.
         builder.Property(x => x.TagPrefix)
@@ -31,12 +56,5 @@ internal sealed class WorkSourceEnvironmentEntityConfiguration
 
         builder.Property(x => x.CompletedState)
             .HasMaxLength(256);
-
-        // SecretReference fields.
-        builder.Property(x => x.PersonalAccessTokenSecretName)
-            .IsRequired()
-            .HasMaxLength(256);
-
-        builder.Property(x => x.PersonalAccessTokenSecretVersion);
     }
 }

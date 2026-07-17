@@ -12,6 +12,7 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
     private readonly IWorkSourceEnvironmentStore _workSourceEnvironmentStore;
     private readonly IRuntimeEnvironmentStore _runtimeEnvironmentStore;
     private readonly IRepositoryHostConnectionStore _repositoryHostConnectionStore;
+    private readonly IConnectionStore _connectionStore;
     private readonly IConfiguredProfileSource _configuredProfiles;
 
     public ManagedProfileResolver(
@@ -19,6 +20,7 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
         IWorkSourceEnvironmentStore workSourceEnvironmentStore,
         IRuntimeEnvironmentStore runtimeEnvironmentStore,
         IRepositoryHostConnectionStore repositoryHostConnectionStore,
+        IConnectionStore connectionStore,
         IConfiguredProfileSource configuredProfiles
     )
     {
@@ -26,6 +28,7 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
         _workSourceEnvironmentStore = workSourceEnvironmentStore;
         _runtimeEnvironmentStore = runtimeEnvironmentStore;
         _repositoryHostConnectionStore = repositoryHostConnectionStore;
+        _connectionStore = connectionStore;
         _configuredProfiles = configuredProfiles;
     }
 
@@ -84,6 +87,7 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
             Repository = repository,
             RuntimeEnvironment = runtime,
             WorkSourceEnvironment = resolvedWorkSource?.Profile,
+            WorkSourceConnection = resolvedWorkSource?.Connection,
             RepositoryHostConnection = resolvedHostConnection,
             RepositoryIsManaged = repositoryIsManaged,
             RuntimeEnvironmentIsManaged = runtimeIsManaged,
@@ -96,6 +100,10 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
         CancellationToken cancellationToken
     )
     {
+        WorkSourceEnvironmentProfile? profile = null;
+        ConnectionProfile? connection = null;
+        bool isManaged = false;
+
         if (!string.IsNullOrWhiteSpace(key))
         {
             var managed = await _workSourceEnvironmentStore.GetByKeyAsync(
@@ -105,7 +113,9 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
 
             if (managed?.Enabled == true)
             {
-                return new ResolvedWorkSourceEnvironment(managed, IsManaged: true);
+                profile = managed;
+                isManaged = true;
+                connection = await ResolveWorkSourceConnectionAsync(profile, cancellationToken);
             }
         }
         else
@@ -116,14 +126,36 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
 
             if (managed is not null)
             {
-                return new ResolvedWorkSourceEnvironment(managed, IsManaged: true);
+                profile = managed;
+                isManaged = true;
+                connection = await ResolveWorkSourceConnectionAsync(profile, cancellationToken);
             }
         }
 
-        var configured = _configuredProfiles.GetWorkSourceEnvironment();
-        return configured is null
-            ? null
-            : new ResolvedWorkSourceEnvironment(configured, IsManaged: false);
+        if (profile is null)
+        {
+            var configured = _configuredProfiles.GetWorkSourceEnvironment();
+            return configured is null
+                ? null
+                : new ResolvedWorkSourceEnvironment(configured, null, IsManaged: false);
+        }
+
+        return new ResolvedWorkSourceEnvironment(profile, connection, isManaged);
+    }
+
+    private async Task<ConnectionProfile?> ResolveWorkSourceConnectionAsync(
+        WorkSourceEnvironmentProfile profile,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(profile.ConnectionKey))
+        {
+            return null;
+        }
+
+        return await _connectionStore.GetByKeyAsync(
+            NormalizeKey(profile.ConnectionKey),
+            cancellationToken
+        );
     }
 
     private async Task<ResolvedRepositoryHostConnection?> ResolveRepositoryHostConnectionAsync(
@@ -151,20 +183,25 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
         IReadOnlyList<ResolvedWorkSourceEnvironment>
     > ListWorkSourceEnvironmentsAsync(CancellationToken cancellationToken)
     {
-        var managed = (await _workSourceEnvironmentStore.ListAsync(cancellationToken))
+        var managedList = await _workSourceEnvironmentStore.ListAsync(cancellationToken);
+        var managed = managedList
             .Where(profile => profile.Enabled)
-            .Select(profile => new ResolvedWorkSourceEnvironment(profile, IsManaged: true))
+            .Select(async profile => new ResolvedWorkSourceEnvironment(
+                profile,
+                await ResolveWorkSourceConnectionAsync(profile, cancellationToken),
+                IsManaged: true
+            ))
             .ToList();
 
         if (managed.Count > 0)
         {
-            return managed;
+            return await Task.WhenAll(managed);
         }
 
         var configured = _configuredProfiles.GetWorkSourceEnvironment();
         return configured is null
             ? []
-            : [new ResolvedWorkSourceEnvironment(configured, IsManaged: false)];
+            : [new ResolvedWorkSourceEnvironment(configured, null, IsManaged: false)];
     }
 
     private static string NormalizeKey(string? key) =>
