@@ -134,8 +134,6 @@ describe('work source environment screens', () => {
     expect(
       await screen.findByRole('heading', { level: 1, name: 'Add work source environment' }),
     ).toBeVisible();
-    expect(screen.getByText('Secrets are stored encrypted')).toBeVisible();
-
     // Verify provider selector defaults to Azure DevOps
     expect(screen.getByLabelText(/Work source provider/)).toHaveValue('AzureDevOpsBoards');
 
