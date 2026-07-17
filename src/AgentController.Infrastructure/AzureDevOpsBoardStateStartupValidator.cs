@@ -1,5 +1,6 @@
 using System.Linq;
 using AgentController.Application;
+using AgentController.Domain;
 using AgentController.Infrastructure.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -11,6 +12,12 @@ namespace AgentController.Infrastructure;
 /// <summary>
 /// Validates configured work source board states against the actual valid states
 /// for the configured project at host startup.
+///
+/// For managed profiles: derives OrganizationUrl from the resolved
+/// <see cref="ConnectionProfile"/> and Project from the consumer
+/// <see cref="WorkSourceEnvironmentProfile"/>.
+/// For configured fallback: reads OrganizationUrl and Project from
+/// <see cref="WorkSourceOptions"/> (appsettings).
 ///
 /// Uses <see cref="IAzureDevOpsBoardsClient.GetValidStatesAsync"/> to enumerate
 /// the valid System.State values, then throws during startup if ActiveState
@@ -43,7 +50,6 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         var workSource = _workSourceOptions.Value;
-        var boards = _boardsOptions.Value;
 
         // Only validate when using AzureDevOpsBoards work source.
         if (!workSource.Provider.Equals("AzureDevOpsBoards", StringComparison.OrdinalIgnoreCase))
@@ -59,6 +65,99 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
             SkipValidationEnvVar(_logger);
             return;
         }
+
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var services = scope.ServiceProvider;
+
+        // Try managed profiles first.
+        var resolver = services.GetService<IManagedProfileResolver>();
+        if (resolver is not null)
+        {
+            var environments = await resolver.ListWorkSourceEnvironmentsAsync(cancellationToken);
+            var managedEnvironments = environments
+                .Where(env => env.IsManaged && env.Connection is not null)
+                .ToList();
+
+            if (managedEnvironments.Count > 0)
+            {
+                var allFailures = new List<string>();
+
+                foreach (var env in managedEnvironments)
+                {
+                    var profile = env.Profile;
+                    var connection = env.Connection!;
+                    var envProject = profile.Project;
+
+                    var settings = connection.ProviderSettings as AzureDevOpsConnectionSettings;
+                    if (settings is null || string.IsNullOrWhiteSpace(settings.OrganizationUrl))
+                    {
+                        WarnMissingConnectionConfig(_logger, connection.Key);
+                        continue;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(envProject))
+                    {
+                        WarnMissingProject(_logger, profile.Key);
+                        continue;
+                    }
+
+                    // Create a client for this connection + project and fetch valid states.
+                    IReadOnlyDictionary<string, IReadOnlyList<string>> envGroupedStates;
+                    try
+                    {
+                        envGroupedStates = await FetchValidStatesForEnvironmentAsync(
+                            services,
+                            env,
+                            envProject,
+                            cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        WarnStateQueryFailed(_logger, envProject, ex.Message);
+                        continue;
+                    }
+
+                    var envValidStates = envGroupedStates
+                        .SelectMany(kvp => kvp.Value)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .OrderBy(s => s, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+
+                    if (envValidStates.Count == 0)
+                    {
+                        WarnNoValidStates(_logger, envProject);
+                        continue;
+                    }
+
+#pragma warning disable CA1873
+                    ValidStatesEnumerated(_logger, envProject, string.Join(", ", envValidStates));
+#pragma warning restore CA1873
+
+                    // Validate this profile's states.
+                    var envFailures = ValidateStates(
+                        profile.Key,
+                        envProject,
+                        profile.ActiveState,
+                        profile.CompletedState,
+                        envValidStates);
+
+                    allFailures.AddRange(envFailures);
+                }
+
+                if (allFailures.Count > 0)
+                {
+                    throw new InvalidOperationException(
+                        "Azure DevOps board state configuration is invalid:\n" +
+                        string.Join("\n", allFailures.Select((f, i) => $"  {i + 1}. {f}")));
+                }
+
+                ValidationPassedManaged(_logger, managedEnvironments.Count);
+                return;
+            }
+        }
+
+        // Fall back to configured (appsettings) path.
+        var boards = _boardsOptions.Value;
 
         // Resolve PAT — skip if not available (PAT validation is handled elsewhere).
         string? pat;
@@ -88,9 +187,6 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
 
         // Query ADO for valid states via the scoped IAzureDevOpsBoardsClient.
         // The client is registered with the correct base URL and PAT from options.
-        // GetValidStatesAsync returns states grouped by work item type;
-        // flatten to a union of all bare state names for validation.
-        // On connectivity failure the client throws — skip validation with a warning.
         IReadOnlyDictionary<string, IReadOnlyList<string>> groupedStates;
         try
         {
@@ -98,12 +194,10 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
         }
         catch (Exception ex)
         {
-            // Any failure (HTTP error, JSON parse, network, cancellation) skips validation.
             WarnStateQueryFailed(_logger, project!, ex.Message);
             return;
         }
 
-        // Flatten grouped map: union all state-name lists across types.
         var validStates = groupedStates
             .SelectMany(kvp => kvp.Value)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -116,38 +210,16 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
             return;
         }
 
-#pragma warning disable CA1873 // LoggerMessage source-gen has its own IsEnabled guard
+#pragma warning disable CA1873
         ValidStatesEnumerated(_logger, project!, string.Join(", ", validStates));
 #pragma warning restore CA1873
 
-        // Validate configured states
-        var failures = new List<string>();
-        var validStatesSet = new HashSet<string>(validStates, StringComparer.OrdinalIgnoreCase);
-
-        if (!string.IsNullOrWhiteSpace(workSource.ActiveState) &&
-            !validStatesSet.Contains(workSource.ActiveState))
-        {
-            failures.Add(
-                $"ActiveState '{workSource.ActiveState}' is not a valid System.State value. " +
-                $"Valid states: [{string.Join(", ", validStates)}].");
-        }
-
-        if (!string.IsNullOrWhiteSpace(workSource.CompletedState) &&
-            !validStatesSet.Contains(workSource.CompletedState))
-        {
-            failures.Add(
-                $"CompletedState '{workSource.CompletedState}' is not a valid System.State value. " +
-                $"Valid states: [{string.Join(", ", validStates)}].");
-        }
-
-        // ActiveState and CompletedState must be distinct when both are configured.
-        if (!string.IsNullOrWhiteSpace(workSource.ActiveState)
-            && !string.IsNullOrWhiteSpace(workSource.CompletedState)
-            && workSource.ActiveState.Equals(workSource.CompletedState, StringComparison.OrdinalIgnoreCase))
-        {
-            failures.Add(
-                $"ActiveState and CompletedState must be distinct, but both are set to '{workSource.ActiveState}'.");
-        }
+        var failures = ValidateStates(
+            "(configured)",
+            project,
+            workSource.ActiveState,
+            workSource.CompletedState,
+            validStates);
 
         if (failures.Count > 0)
         {
@@ -156,11 +228,72 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
                 string.Join("\n", failures.Select((f, i) => $"  {i + 1}. {f}")));
         }
 
-#pragma warning disable CA1873 // LoggerMessage source-gen has its own IsEnabled guard
+#pragma warning disable CA1873
         ValidationPassed(_logger,
             workSource.ActiveState ?? "(not set)",
             workSource.CompletedState ?? "(not set)");
 #pragma warning restore CA1873
+    }
+
+    /// <summary>
+    /// Validates ActiveState and CompletedState against the set of valid states.
+    /// Returns a list of failure messages (empty if all checks pass).
+    /// </summary>
+    private static List<string> ValidateStates(
+        string profileLabel,
+        string project,
+        string? activeState,
+        string? completedState,
+        IReadOnlyList<string> validStates)
+    {
+        var failures = new List<string>();
+        var validStatesSet = new HashSet<string>(validStates, StringComparer.OrdinalIgnoreCase);
+        var prefix = !profileLabel.Equals("(configured)", StringComparison.Ordinal)
+            ? $"[profile '{profileLabel}', project '{project}'] "
+            : $"[project '{project}'] ";
+
+        if (!string.IsNullOrWhiteSpace(activeState) &&
+            !validStatesSet.Contains(activeState))
+        {
+            failures.Add(
+                $"{prefix}ActiveState '{activeState}' is not a valid System.State value. " +
+                $"Valid states: [{string.Join(", ", validStates)}].");
+        }
+
+        if (!string.IsNullOrWhiteSpace(completedState) &&
+            !validStatesSet.Contains(completedState))
+        {
+            failures.Add(
+                $"{prefix}CompletedState '{completedState}' is not a valid System.State value. " +
+                $"Valid states: [{string.Join(", ", validStates)}].");
+        }
+
+        if (!string.IsNullOrWhiteSpace(activeState)
+            && !string.IsNullOrWhiteSpace(completedState)
+            && activeState.Equals(completedState, StringComparison.OrdinalIgnoreCase))
+        {
+            failures.Add(
+                $"{prefix}ActiveState and CompletedState must be distinct, " +
+                $"but both are set to '{activeState}'.");
+        }
+
+        return failures;
+    }
+
+    /// <summary>
+    /// Fetches valid states for a managed work-source environment by creating
+    /// a client from the resolved connection and consumer project.
+    /// </summary>
+    private static async Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> FetchValidStatesForEnvironmentAsync(
+        IServiceProvider services,
+        ResolvedWorkSourceEnvironment environment,
+        string project,
+        CancellationToken cancellationToken)
+    {
+        var factory = services.GetRequiredService<IAzureDevOpsBoardsClientFactory>();
+        var client = await factory.CreateAsync(environment, cancellationToken);
+        using var disposable = client as IDisposable;
+        return await client.GetValidStatesAsync(project, cancellationToken);
     }
 
     /// <summary>
@@ -228,4 +361,21 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
                   "CompletedState='{CompletedState}'.")]
     private static partial void ValidationPassed(
         ILogger logger, string activeState, string completedState);
+
+    [LoggerMessage(Level = LogLevel.Information,
+        Message = "ADO board state validation passed for {EnvironmentCount} managed environment(s).")]
+    private static partial void ValidationPassedManaged(
+        ILogger logger, int environmentCount);
+
+    [LoggerMessage(Level = LogLevel.Warning,
+        Message = "Skipping ADO state validation for connection '{ConnectionKey}': " +
+                  "missing OrganizationUrl or AzureDevOps settings.")]
+    private static partial void WarnMissingConnectionConfig(
+        ILogger logger, string connectionKey);
+
+    [LoggerMessage(Level = LogLevel.Warning,
+        Message = "Skipping ADO state validation for profile '{ProfileKey}': " +
+                  "project is not configured.")]
+    private static partial void WarnMissingProject(
+        ILogger logger, string profileKey);
 }

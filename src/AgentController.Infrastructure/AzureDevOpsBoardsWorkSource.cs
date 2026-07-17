@@ -59,7 +59,7 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
         {
             cancellationToken.ThrowIfCancellationRequested();
             var profile = environment.Profile;
-            var boardsClient = factory.Create(profile);
+            var boardsClient = await factory.CreateAsync(environment, cancellationToken);
             using var disposableClient = boardsClient as IDisposable;
             var parameters = BuildQueryParameters(query, profile);
             var remaining = Math.Max(0, query.MaxResults - candidates.Count);
@@ -361,7 +361,7 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
             {
                 var factory = services.GetRequiredService<IAzureDevOpsBoardsClientFactory>();
                 return new ClientSelection(
-                    factory.Create(environment.Profile),
+                    await factory.CreateAsync(environment, cancellationToken),
                     environment,
                     OwnsClient: true
                 );
