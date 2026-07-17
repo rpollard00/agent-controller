@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import type { WebUiApiClient } from '../../api/client';
-  import type { WorkSourceConnectivityResult, WorkSourceEnvironmentProfile } from '../../api/types';
+  import type { ConnectionConnectivityResult, WorkSourceEnvironmentProfile } from '../../api/types';
   import Button from '../../components/ui/Button.svelte';
   import Card from '../../components/ui/Card.svelte';
   import DataTable from '../../components/ui/DataTable.svelte';
@@ -12,7 +12,7 @@
 
   interface VerifyState {
     loading: boolean;
-    result: WorkSourceConnectivityResult | null;
+    result: ConnectionConnectivityResult | null;
     controller: AbortController | null;
   }
 
@@ -37,7 +37,7 @@
   // Flat reactive state — each key maps to a reactive sub-object.
   // We replace the entire sub-object on mutation so $state detects the change.
   let verifyLoading = $state<Record<string, boolean>>({});
-  let verifyResults = $state<Record<string, WorkSourceConnectivityResult | null>>({});
+  let verifyResults = $state<Record<string, ConnectionConnectivityResult | null>>({});
   let verifyControllers = new Map<string, AbortController>();
 
   function getVerifyState(key: string): VerifyState {
@@ -52,7 +52,7 @@
     verifyLoading[key] = loading;
   }
 
-  function setVerifyResult(key: string, result: WorkSourceConnectivityResult | null): void {
+  function setVerifyResult(key: string, result: ConnectionConnectivityResult | null): void {
     verifyResults[key] = result;
   }
 
@@ -75,8 +75,8 @@
     setVerifyResult(key, null);
 
     try {
-      const result = await client.workSourceEnvironments.verifyConnection(
-        key,
+      const result = await client.connections.verifyConnection(
+        profile.connectionKey,
         controller.signal,
       );
       if (!controller.signal.aborted) {
@@ -98,7 +98,7 @@
     }
   }
 
-  function getRepoCount(result: WorkSourceConnectivityResult | null): number | undefined {
+  function getRepoCount(result: ConnectionConnectivityResult | null): number | undefined {
     if (!result?.payload) return undefined;
     const repos = result.payload.repositories;
     if (Array.isArray(repos)) return repos.length;
@@ -161,7 +161,7 @@
             <td class="px-4 py-4 text-slate-300">
               <span class="block">{profile.project}</span>
               <span class="mt-1 block max-w-xs break-all text-xs text-slate-500">
-                {profile.organizationUrl}
+                {profile.connectionKey}
               </span>
             </td>
             <td class="px-4 py-4 text-slate-300">{profile.provider}</td>

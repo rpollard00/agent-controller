@@ -2,9 +2,11 @@
   import { untrack } from 'svelte';
   import type {
     ConnectionProfile,
+    ConnectionProject,
     RepositoryProfile,
     RuntimeEnvironmentProfile,
   } from '../../api/types';
+  import { type WebUiApiClient } from '../../api/client';
   import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
   import Field from '../../components/ui/Field.svelte';
@@ -23,6 +25,7 @@
     submitting = false,
     serverErrors = {},
     onsave,
+    client,
     oncancel,
   }: {
     mode: 'create' | 'edit';
@@ -32,11 +35,14 @@
     submitting?: boolean;
     serverErrors?: Readonly<Record<string, string[]>>;
     onsave: (profile: RepositoryProfile) => void;
+    client: WebUiApiClient;
     oncancel: () => void;
   } = $props();
 
   let values = $state(untrack(() => createRepositoryFormValues(profile)));
   let clientErrors = $state<RepositoryFormErrors>({});
+  let projects = $state<ConnectionProject[]>([]);
+  let projectsLoading = $state(false);
 
   const inputClasses =
     'min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 placeholder:text-slate-600 disabled:cursor-not-allowed disabled:bg-slate-900 disabled:text-slate-400';
@@ -67,6 +73,23 @@
     clientErrors = nextErrors;
   }
 
+  async function loadProjects(connectionKey: string): Promise<void> {
+    if (!connectionKey) {
+      projects = [];
+      values.project = '';
+      projectsLoading = false;
+      return;
+    }
+    projectsLoading = true;
+    try {
+      projects = await client.connections.listProjects(connectionKey);
+    } catch {
+      projects = [];
+    } finally {
+      projectsLoading = false;
+    }
+  }
+
   function environmentLabel(profile: { key: string; displayName: string; enabled: boolean }): string {
     return `${profile.displayName} — ${profile.key}${profile.enabled ? '' : ' (disabled)'}`;
   }
@@ -82,6 +105,10 @@
   function connectionLabel(profile: { key: string; displayName: string; enabled: boolean }): string {
     return `${profile.displayName} — ${profile.key}${profile.enabled ? '' : ' (disabled)'}`;
   }
+
+  $effect(() => {
+    void loadProjects(values.repositoryHostConnectionKey);
+  });
 </script>
 
 <form class="space-y-7" novalidate onsubmit={handleSubmit}>
@@ -239,6 +266,33 @@
           {/if}
           {#each connections as conn (conn.key)}
             <option value={conn.key}>{connectionLabel(conn)}</option>
+          {/each}
+        </select>
+      </Field>
+
+      <Field
+        id="repository-project"
+        label="Project"
+        hint="The project within the selected connection that contains this repository."
+        error={fieldError('project')}
+      >
+        <select
+          id="repository-project"
+          name="project"
+          class={inputClasses}
+          bind:value={values.project}
+          disabled={submitting || projectsLoading}
+          aria-invalid={fieldError('project') ? 'true' : undefined}
+          aria-describedby={describedBy('project', true)}
+        >
+          <option value="">
+            {projectsLoading ? 'Loading projects…' : 'Select a project…'}
+          </option>
+          {#if values.project && !projects.some((p) => p.name === values.project)}
+            <option value={values.project}>{values.project} (unavailable)</option>
+          {/if}
+          {#each projects as project (project.id)}
+            <option value={project.name}>{project.name}</option>
           {/each}
         </select>
       </Field>

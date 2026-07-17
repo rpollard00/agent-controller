@@ -3,39 +3,57 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../../../App.svelte';
 import { ApiError, type ResourceClient, type WebUiApiClient } from '../../api/client';
 import type {
+  ConnectionConnectivityResult,
   ConnectionProfile,
+  ConnectionProject,
   RepositoryProfile,
   RuntimeEnvironmentProfile,
-  SecretInfo,
-  SecretsResourceClient,
-  WorkSourceConnectivityResult,
   WorkSourceEnvironmentProfile,
 } from '../../api/types';
+
+const connection: ConnectionProfile = {
+  key: 'azuredevops-example',
+  displayName: 'Example ADO',
+  enabled: true,
+  provider: 'AzureDevOps',
+  capabilities: ['Repositories', 'WorkTracking'],
+  providerSettings: {
+    organizationUrl: 'https://dev.azure.com/example',
+    personalAccessTokenReference: { name: 'ADO_PAT', version: null },
+  },
+  createdAt: '2026-07-13T00:00:00Z',
+  updatedAt: '2026-07-13T00:00:00Z',
+};
+
+const projects: ConnectionProject[] = [
+  { id: 'proj-1', name: 'Agent Controller' },
+  { id: 'proj-2', name: 'Secondary Project' },
+];
 
 const environment: WorkSourceEnvironmentProfile = {
   key: 'ado-main',
   displayName: 'Primary boards',
   enabled: true,
   provider: 'AzureDevOpsBoards',
-  organizationUrl: 'https://dev.azure.com/example',
+  connectionKey: 'azuredevops-example',
   project: 'Agent Controller',
   tagPrefix: 'agent',
   activeState: 'Active',
   completedState: 'Resolved',
-  personalAccessTokenReference: { name: 'ADO_PAT', version: null },
   createdAt: '2026-07-13T00:00:00Z',
   updatedAt: '2026-07-13T00:00:00Z',
 };
 
 function createApi(
   initialEnvironments: WorkSourceEnvironmentProfile[] = [environment],
-  verifyResult?: WorkSourceConnectivityResult,
-  initialSecrets: SecretInfo[] = [{ name: 'ADO_PAT', latestVersion: 1, createdAt: '2026-07-13T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z' }],
+  verifyResult?: ConnectionConnectivityResult,
+  initialConnections: ConnectionProfile[] = [connection],
+  initialProjects: ConnectionProject[] = projects,
 ) {
   let profiles = [...initialEnvironments];
-  let secrets = [...initialSecrets];
+  let connections = [...initialConnections];
 
-  const defaultVerifyResult: WorkSourceConnectivityResult = {
+  const defaultVerifyResult: ConnectionConnectivityResult = {
     success: true,
     authMechanism: 'PersonalAccessToken',
     errors: [],
@@ -61,36 +79,50 @@ function createApi(
       profiles = profiles.filter((candidate) => candidate.key !== key);
     }),
     verifyConnection: vi.fn(
-      async (): Promise<WorkSourceConnectivityResult> => verifyResult ?? defaultVerifyResult,
+      async (): Promise<ConnectionConnectivityResult> => verifyResult ?? defaultVerifyResult,
     ),
   };
 
-  const secretsClient: SecretsResourceClient = {
-    list: vi.fn(async () => [...secrets]),
-    listVersions: vi.fn(async () => []),
-    create: vi.fn(async (req) => { secrets.push({ name: req.name, latestVersion: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }); return { name: req.name }; }),
-    createVersion: vi.fn(async (name) => ({ name, version: 2 })),
+  const connectionsClient = {
+    list: vi.fn(async () => [...connections]),
+    get: vi.fn(async (key: string) => {
+      const conn = connections.find((c) => c.key === key);
+      if (!conn) throw new Error(`Missing connection ${key}.`);
+      return conn;
+    }),
+    create: vi.fn(async (profile: ConnectionProfile) => {
+      connections.push(profile);
+      return profile;
+    }),
+    update: vi.fn(async (_key: string, profile: ConnectionProfile) => {
+      connections = connections.map((c) => (c.key === profile.key ? profile : c));
+      return profile;
+    }),
+    delete: vi.fn(async (key: string) => {
+      connections = connections.filter((c) => c.key !== key);
+    }),
+    verifyConnection: vi.fn(
+      async (): Promise<ConnectionConnectivityResult> => verifyResult ?? defaultVerifyResult,
+    ),
+    listProjects: vi.fn(async () => [...initialProjects]),
+    listRepositories: vi.fn(async () => []),
+    onboardRepository: vi.fn(async () => ({} as RepositoryProfile)),
   };
 
   const client: WebUiApiClient = {
     repositories: staticResource<RepositoryProfile>([]),
     workSourceEnvironments,
-    connections: {
-      ...staticResource<ConnectionProfile>([]),
-      verifyConnection: async () => ({
-        success: true,
-        authMechanism: 'PersonalAccessToken',
-        errors: [],
-      }),
-      listProjects: async () => [],
-      listRepositories: async () => [],
-      onboardRepository: async () => ({} as RepositoryProfile),
-    },
+    connections: connectionsClient,
     runtimeEnvironments: staticResource<RuntimeEnvironmentProfile>([]),
-    secrets: secretsClient,
+    secrets: {
+      list: vi.fn(async () => []),
+      listVersions: vi.fn(async () => []),
+      create: vi.fn(async () => ({ name: 'test' })),
+      createVersion: vi.fn(async () => ({ name: 'test', version: 1 })),
+    },
   };
 
-  return { client, environments: workSourceEnvironments, secrets: secretsClient };
+  return { client, environments: workSourceEnvironments, connections: connectionsClient };
 }
 
 function staticResource<T>(profiles: T[]): ResourceClient<T> {
@@ -110,16 +142,15 @@ async function completeRequiredCreateFields(): Promise<void> {
   await fireEvent.input(screen.getByLabelText(/Display name/), {
     target: { value: 'Secondary boards' },
   });
-  await fireEvent.input(screen.getByLabelText(/Organization URL/), {
-    target: { value: 'https://dev.azure.com/example/' },
+  // Select a connection from the dropdown
+  await fireEvent.change(screen.getByLabelText(/Connection/), {
+    target: { value: 'azuredevops-example' },
   });
-  await fireEvent.input(screen.getByLabelText(/^Project/), {
+  // Wait for projects to load, then select one
+  await waitFor(() => expect(screen.getByLabelText(/^Project/)).not.toBeDisabled());
+  await fireEvent.change(screen.getByLabelText(/^Project/), {
     target: { value: 'Secondary Project' },
   });
-  // Select a secret from the combobox picker
-  await fireEvent.click(screen.getByRole('button', { name: 'PAT secret (required)' }));
-  await waitFor(() => expect(screen.getByText('ADO_PAT')).toBeVisible());
-  fireEvent.click(screen.getByRole('option', { name: /ADO_PAT/ }));
 }
 
 describe('work source environment screens', () => {
@@ -135,8 +166,9 @@ describe('work source environment screens', () => {
     expect(
       await screen.findByRole('heading', { level: 1, name: 'Add work source environment' }),
     ).toBeVisible();
-    // Verify provider selector defaults to Azure DevOps
-    expect(screen.getByLabelText(/Work source provider/)).toHaveValue('AzureDevOpsBoards');
+
+    // Connection selector is present
+    await screen.findByLabelText(/Connection/);
 
     // Board policy section is hidden on create — only connection fields are present
     expect(screen.queryByLabelText(/Active state/)).not.toBeInTheDocument();
@@ -153,10 +185,9 @@ describe('work source environment screens', () => {
         displayName: 'Secondary boards',
         enabled: true,
         provider: 'AzureDevOpsBoards',
-        organizationUrl: 'https://dev.azure.com/example',
+        connectionKey: 'azuredevops-example',
         project: 'Secondary Project',
         tagPrefix: 'agent',
-        personalAccessTokenReference: { name: 'ADO_PAT', version: null },
         activeState: null,
         completedState: null,
       }),
@@ -173,12 +204,12 @@ describe('work source environment screens', () => {
     const api = createApi([]);
     render(App, { client: api.client });
 
+    await screen.findByRole('heading', { level: 1, name: 'Add work source environment' });
     await fireEvent.click(await screen.findByRole('button', { name: 'Create environment' }));
 
     expect(await screen.findByText('Correct the highlighted fields')).toBeVisible();
     expect(screen.getByText('A key is required.')).toBeVisible();
-    expect(screen.getByText('An Azure DevOps organization URL is required.')).toBeVisible();
-    expect(screen.getByText('A secret reference for the PAT is required.')).toBeVisible();
+    expect(screen.getByText('A connection is required.')).toBeVisible();
     expect(api.environments.create).not.toHaveBeenCalled();
   });
 
@@ -221,7 +252,7 @@ describe('work source environment screens', () => {
         status: 400,
         detail: 'Correct the highlighted work source fields.',
         errors: {
-          organizationUrl: ['The organization URL must not include a collection path.'],
+          connectionKey: ['The connection does not exist.'],
         },
       }),
     );
@@ -234,23 +265,9 @@ describe('work source environment screens', () => {
     expect(alert).toHaveTextContent('Could not create environment');
     expect(alert).toHaveTextContent('Correct the highlighted work source fields.');
     expect(
-      screen.getByText('The organization URL must not include a collection path.'),
+      screen.getByText('The connection does not exist.'),
     ).toBeVisible();
-    expect(screen.getByLabelText(/Organization URL/)).toHaveAttribute('aria-invalid', 'true');
-  });
-
-  it('renders only the secret name reference, never a returned secret value', async () => {
-    window.history.replaceState({}, '', '/work-source-environments/ado-main');
-    const responseWithUnexpectedSecret = {
-      ...environment,
-      personalAccessToken: 'super-secret-value',
-    } as unknown as WorkSourceEnvironmentProfile;
-    const api = createApi([responseWithUnexpectedSecret]);
-    render(App, { client: api.client });
-
-    expect(await screen.findByText('ADO_PAT')).toBeVisible();
-    expect(screen.getByText('Secret value redacted')).toBeVisible();
-    expect(screen.queryByText('super-secret-value')).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/Connection/)).toHaveAttribute('aria-invalid', 'true');
   });
 
   it('enables and disables an environment from the list', async () => {
@@ -323,8 +340,11 @@ describe('work source environment screens', () => {
     const api = createApi([]);
     render(App, { client: api.client });
 
+    // Wait for the form to render
+    await screen.findByRole('heading', { level: 1, name: 'Add work source environment' });
+
     // Provider select is present and defaults to Azure DevOps
-    const providerSelect = screen.getByLabelText(/Work source provider/);
+    const providerSelect = await screen.findByLabelText(/Work source provider/);
     expect(providerSelect).toHaveValue('AzureDevOpsBoards');
 
     // Board policy fields (tagPrefix, activeState, completedState) are hidden on create
@@ -395,10 +415,10 @@ describe('work source environment screens', () => {
     });
     fireEvent.click(testButton);
 
-    // verifyConnection should have been called with the environment key
+    // verifyConnection should have been called with the connection key
     await waitFor(() =>
-      expect(api.environments.verifyConnection).toHaveBeenCalledWith(
-        'ado-main',
+      expect(api.connections.verifyConnection).toHaveBeenCalledWith(
+        'azuredevops-example',
         expect.anything(),
       ),
     );
@@ -424,8 +444,8 @@ describe('work source environment screens', () => {
     fireEvent.click(testButton);
 
     await waitFor(() =>
-      expect(api.environments.verifyConnection).toHaveBeenCalledWith(
-        'ado-main',
+      expect(api.connections.verifyConnection).toHaveBeenCalledWith(
+        'azuredevops-example',
         expect.anything(),
       ),
     );
@@ -451,8 +471,8 @@ describe('work source environment screens', () => {
     fireEvent.click(testButton);
 
     await waitFor(() =>
-      expect(api.environments.verifyConnection).toHaveBeenCalledWith(
-        'ado-main',
+      expect(api.connections.verifyConnection).toHaveBeenCalledWith(
+        'azuredevops-example',
         expect.anything(),
       ),
     );
@@ -467,7 +487,7 @@ describe('work source environment screens', () => {
   it('list view: Test connection button shows loading state then success', async () => {
     // Use a macrotask delay so there's a window to observe the loading state
     const api = createApi([environment]);
-    api.environments.verifyConnection.mockImplementationOnce(
+    api.connections.verifyConnection.mockImplementationOnce(
       async () =>
         new Promise((resolve) =>
           setTimeout(
@@ -492,8 +512,8 @@ describe('work source environment screens', () => {
 
     // verifyConnection should have been called
     await waitFor(() =>
-      expect(api.environments.verifyConnection).toHaveBeenCalledWith(
-        'ado-main',
+      expect(api.connections.verifyConnection).toHaveBeenCalledWith(
+        'azuredevops-example',
         expect.anything(),
       ),
     );
@@ -532,10 +552,10 @@ describe('work source environment screens', () => {
     const testButton = screen.getByRole('button', { name: 'Test connection' });
     fireEvent.click(testButton);
 
-    // verifyConnection called with the correct key
+    // verifyConnection called with the connection key
     await waitFor(() =>
-      expect(api.environments.verifyConnection).toHaveBeenCalledWith(
-        'ado-main',
+      expect(api.connections.verifyConnection).toHaveBeenCalledWith(
+        'azuredevops-example',
         expect.anything(),
       ),
     );
@@ -560,8 +580,8 @@ describe('work source environment screens', () => {
     fireEvent.click(testButton);
 
     await waitFor(() =>
-      expect(api.environments.verifyConnection).toHaveBeenCalledWith(
-        'ado-main',
+      expect(api.connections.verifyConnection).toHaveBeenCalledWith(
+        'azuredevops-example',
         expect.anything(),
       ),
     );
@@ -575,7 +595,7 @@ describe('work source environment screens', () => {
     window.history.replaceState({}, '', '/work-source-environments/ado-main');
     // Use a macrotask delay so there's a window to observe the loading state
     const api = createApi([environment]);
-    api.environments.verifyConnection.mockImplementationOnce(
+    api.connections.verifyConnection.mockImplementationOnce(
       async () =>
         new Promise((resolve) =>
           setTimeout(
@@ -598,8 +618,8 @@ describe('work source environment screens', () => {
 
     // verifyConnection called
     await waitFor(() =>
-      expect(api.environments.verifyConnection).toHaveBeenCalledWith(
-        'ado-main',
+      expect(api.connections.verifyConnection).toHaveBeenCalledWith(
+        'azuredevops-example',
         expect.anything(),
       ),
     );

@@ -1,11 +1,10 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import type { WorkSourceEnvironmentProfile } from '../../api/types';
+  import type { ConnectionProfile, ConnectionProject, WorkSourceEnvironmentProfile } from '../../api/types';
   import { type WebUiApiClient } from '../../api/client';
   import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
   import Field from '../../components/ui/Field.svelte';
-  import SecretPicker from '../../components/ui/SecretPicker.svelte';
   import {
     createWorkSourceEnvironmentFormValues,
     toWorkSourceEnvironmentProfile,
@@ -16,6 +15,7 @@
   let {
     mode,
     profile,
+    connections,
     submitting = false,
     serverErrors = {},
     onsave,
@@ -24,6 +24,7 @@
   }: {
     mode: 'create' | 'edit';
     profile?: WorkSourceEnvironmentProfile;
+    connections: ConnectionProfile[];
     submitting?: boolean;
     serverErrors?: Readonly<Record<string, string[]>>;
     onsave: (profile: WorkSourceEnvironmentProfile) => void;
@@ -33,7 +34,8 @@
 
   let values = $state(untrack(() => createWorkSourceEnvironmentFormValues(profile)));
   let clientErrors = $state<WorkSourceEnvironmentFormErrors>({});
-  const secretsClient = client.secrets;
+  let projects = $state<ConnectionProject[]>([]);
+  let projectsLoading = $state(false);
 
   const tagPrefixHint =
     'Namespace for controller-owned tags like prefix-ready, prefix-active, prefix-failed, prefix-needs-human. Defaults to \'agent\' when blank.';
@@ -67,11 +69,33 @@
     clientErrors = nextErrors;
   }
 
+  async function loadProjects(connectionKey: string): Promise<void> {
+    if (!connectionKey) {
+      projects = [];
+      values.project = '';
+      projectsLoading = false;
+      return;
+    }
+    projectsLoading = true;
+    try {
+      projects = await client.connections.listProjects(connectionKey);
+    } catch {
+      projects = [];
+    } finally {
+      projectsLoading = false;
+    }
+  }
+
+  function hasConnection(key: string): boolean {
+    return connections.some((conn) => conn.key === key);
+  }
+
+  function connectionLabel(conn: { key: string; displayName: string; enabled: boolean }): string {
+    return `${conn.displayName} — ${conn.key}${conn.enabled ? '' : ' (disabled)'}`;
+  }
+
   $effect(() => {
-    // Clear client-side errors when secret name/version changes via the picker
-    void values.secretName;
-    if (values.secretName && clientErrors.secretName) clearClientError('secretName');
-    if (values.secretVersion !== null && clientErrors.secretVersion) clearClientError('secretVersion');
+    void loadProjects(values.connectionKey);
   });
 </script>
 
@@ -164,26 +188,33 @@
 
         <div class="grid gap-6 lg:grid-cols-2">
           <Field
-            id="wse-organizationUrl"
-            label="Organization URL"
-            error={fieldError('organizationUrl')}
+            id="wse-connectionKey"
+            label="Connection"
+            hint="Select the Azure DevOps connection to use. PAT credentials are managed on the connection."
+            error={fieldError('connectionKey')}
             required
           >
-            <input
-              id="wse-organizationUrl"
-              name="organizationUrl"
-              type="url"
+            <select
+              id="wse-connectionKey"
+              name="connectionKey"
               class={inputClasses}
-              bind:value={values.organizationUrl}
+              bind:value={values.connectionKey}
               disabled={submitting}
               required
-              spellcheck="false"
-              autocomplete="url"
-              placeholder="https://dev.azure.com/example"
-              aria-invalid={fieldError('organizationUrl') ? 'true' : undefined}
-              aria-describedby={describedBy('wse-organizationUrl', 'organizationUrl')}
-              oninput={() => clearClientError('organizationUrl')}
-            />
+              aria-invalid={fieldError('connectionKey') ? 'true' : undefined}
+              aria-describedby={describedBy('wse-connectionKey', 'connectionKey', true)}
+              onchange={() => clearClientError('connectionKey')}
+            >
+              <option value="">Select a connection…</option>
+              {#if values.connectionKey && !hasConnection(values.connectionKey)}
+                <option value={values.connectionKey}>
+                  {values.connectionKey} (unavailable)
+                </option>
+              {/if}
+              {#each connections as conn (conn.key)}
+                <option value={conn.key}>{connectionLabel(conn)}</option>
+              {/each}
+            </select>
           </Field>
 
           <Field
@@ -192,35 +223,28 @@
             error={fieldError('project')}
             required
           >
-            <input
+            <select
               id="wse-project"
               name="project"
               class={inputClasses}
               bind:value={values.project}
-              disabled={submitting}
+              disabled={submitting || projectsLoading}
               required
-              autocomplete="off"
               aria-invalid={fieldError('project') ? 'true' : undefined}
               aria-describedby={describedBy('wse-project', 'project')}
-              oninput={() => clearClientError('project')}
-            />
+              onchange={() => clearClientError('project')}
+            >
+              <option value="">
+                {projectsLoading ? 'Loading projects…' : 'Select a project…'}
+              </option>
+              {#if values.project && !projects.some((p) => p.name === values.project)}
+                <option value={values.project}>{values.project} (unavailable)</option>
+              {/if}
+              {#each projects as project (project.id)}
+                <option value={project.name}>{project.name}</option>
+              {/each}
+            </select>
           </Field>
-        </div>
-
-        <div class="space-y-2">
-          <label class="block text-sm font-medium text-slate-200" for="wse-secretName-input">
-            PAT secret
-            <span class="text-rose-300" aria-hidden="true"> *</span>
-            <span class="sr-only"> (required)</span>
-          </label>
-          <SecretPicker
-            id="wse-secretName"
-            client={secretsClient}
-            bind:secretName={values.secretName}
-            bind:secretVersion={values.secretVersion}
-            disabled={submitting}
-            error={fieldError('secretName')}
-          />
         </div>
 
       </fieldset>

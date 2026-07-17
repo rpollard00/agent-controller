@@ -320,6 +320,7 @@
         {connections}
         {runtimeEnvironments}
         {submitting}
+        {client}
         serverErrors={getFieldErrors(mutationError)}
         onsave={(profile) => void saveRepository(profile)}
         oncancel={cancelForm}
@@ -347,6 +348,7 @@
           {connections}
           {runtimeEnvironments}
           {submitting}
+          {client}
           serverErrors={getFieldErrors(mutationError)}
           onsave={(profile) => void saveRepository(profile)}
           oncancel={cancelForm}

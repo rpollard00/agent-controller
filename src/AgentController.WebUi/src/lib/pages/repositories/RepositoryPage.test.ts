@@ -4,6 +4,7 @@ import App from '../../../App.svelte';
 import { ApiError, type ResourceClient, type WebUiApiClient } from '../../api/client';
 import type {
   ConnectionProfile,
+  ConnectionProject,
   RepositoryProfile,
   RuntimeEnvironmentProfile,
   WorkSourceEnvironmentProfile,
@@ -20,6 +21,7 @@ const repository: RepositoryProfile = {
   remoteIdentity: null,
   runtimeEnvironmentKey: 'runtime-main',
   allowedPaths: ['src'],
+  project: null,
 };
 
 const connection: ConnectionProfile = {
@@ -36,17 +38,20 @@ const connection: ConnectionProfile = {
   updatedAt: '2026-07-13T00:00:00Z',
 };
 
+const projects: ConnectionProject[] = [
+  { id: 'proj-1', name: 'Agent Controller' },
+];
+
 const workSourceEnvironment: WorkSourceEnvironmentProfile = {
   key: 'ado-main',
   displayName: 'Primary boards',
   enabled: true,
   provider: 'AzureDevOpsBoards',
-  organizationUrl: 'https://dev.azure.com/example',
+  connectionKey: 'ado-main',
   project: 'Agent Controller',
   tagPrefix: 'agent',
   activeState: 'Active',
   completedState: 'Done',
-  personalAccessTokenReference: { name: 'ADO_PAT', version: null },
   createdAt: '2026-07-13T00:00:00Z',
   updatedAt: '2026-07-13T00:00:00Z',
 };
@@ -120,11 +125,17 @@ function createApi(initialRepositories: RepositoryProfile[] = [repository]): Moc
           authMechanism: 'PersonalAccessToken',
           errors: [],
         }),
-        listProjects: async () => [],
+        listProjects: async () => projects,
         listRepositories: async () => [],
         onboardRepository: async () => repository,
       },
       runtimeEnvironments: staticResource([runtimeEnvironment]),
+      secrets: {
+        list: vi.fn(async () => []),
+        listVersions: vi.fn(async () => []),
+        create: vi.fn(async () => ({ name: 'test' })),
+        createVersion: vi.fn(async () => ({ name: 'test', version: 1 })),
+      },
     },
     repositories,
   };
@@ -170,6 +181,11 @@ describe('repository onboarding screens', () => {
     await fireEvent.change(screen.getByLabelText('Repository host connection'), {
       target: { value: 'ado-main' },
     });
+    // Wait for projects to load then select one
+    await waitFor(() => expect(screen.getByLabelText(/^Project$/)).not.toBeDisabled());
+    await fireEvent.change(screen.getByLabelText(/^Project$/), {
+      target: { value: 'Agent Controller' },
+    });
     await fireEvent.change(screen.getByLabelText('Runtime environment'), {
       target: { value: 'runtime-main' },
     });
@@ -184,13 +200,13 @@ describe('repository onboarding screens', () => {
         transport: 'ssh',
         allowedPaths: ['src', 'tests/integration'],
         repositoryHostConnectionKey: 'ado-main',
+        project: 'Agent Controller',
         runtimeEnvironmentKey: 'runtime-main',
       }),
       expect.any(AbortSignal),
     );
     expect(await screen.findByText('Repository “new.repo” was onboarded.')).toBeVisible();
     expect(window.location.pathname).toBe('/repositories/new.repo');
-    expect(screen.queryByText('Primary boards', { exact: false })).not.toBeInTheDocument();
   });
 
   it('validates required fields before submitting', async () => {

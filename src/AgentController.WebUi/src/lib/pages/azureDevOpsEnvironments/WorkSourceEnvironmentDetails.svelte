@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import type { WebUiApiClient } from '../../api/client';
-  import type { WorkSourceConnectivityResult, WorkSourceEnvironmentProfile } from '../../api/types';
+  import type { ConnectionConnectivityResult, WorkSourceEnvironmentProfile } from '../../api/types';
   import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
   import Card from '../../components/ui/Card.svelte';
@@ -28,7 +28,7 @@
 
   // Ephemeral verify-connection state (in-session, not persisted)
   let verifyLoading = $state(false);
-  let verifyResult = $state<WorkSourceConnectivityResult | null>(null);
+  let verifyResult = $state<ConnectionConnectivityResult | null>(null);
   let verifyController: AbortController | undefined;
 
   async function testConnection(): Promise<void> {
@@ -39,8 +39,8 @@
     verifyResult = null;
 
     try {
-      const result = await client.workSourceEnvironments.verifyConnection(
-        environment.key,
+      const result = await client.connections.verifyConnection(
+        environment.connectionKey,
         controller.signal,
       );
       if (!controller.signal.aborted) {
@@ -62,7 +62,7 @@
     }
   }
 
-  function getRepoCount(result: WorkSourceConnectivityResult | null): number | undefined {
+  function getRepoCount(result: ConnectionConnectivityResult | null): number | undefined {
     if (!result?.payload) return undefined;
     const repos = result.payload.repositories;
     if (Array.isArray(repos)) return repos.length;
@@ -122,9 +122,9 @@
         <dt class="text-sm font-medium text-slate-400">Project</dt>
         <dd class="mt-1 text-slate-100">{environment.project}</dd>
       </div>
-      <div class="sm:col-span-2">
-        <dt class="text-sm font-medium text-slate-400">Organization URL</dt>
-        <dd class="mt-1 break-all text-slate-100">{environment.organizationUrl}</dd>
+      <div>
+        <dt class="text-sm font-medium text-slate-400">Connection</dt>
+        <dd class="mt-1 break-all text-slate-100">{environment.connectionKey}</dd>
       </div>
       <div>
         <dt class="text-sm font-medium text-slate-400">Provider</dt>
@@ -151,32 +151,6 @@
         <dd class="mt-1 text-slate-100">{formatTimestamp(environment.updatedAt)}</dd>
       </div>
     </dl>
-  </Card>
-
-  <Card title="Credential reference" description="The PAT is stored as a named, versioned secret encrypted at rest.">
-    <dl class="grid gap-x-8 gap-y-6 sm:grid-cols-2">
-      <div>
-        <dt class="text-sm font-medium text-slate-400">Secret name</dt>
-        <dd class="mt-1 break-all font-mono text-sm text-cyan-200">
-          {environment.personalAccessTokenReference.name || 'Not configured'}
-        </dd>
-      </div>
-      <div>
-        <dt class="text-sm font-medium text-slate-400">Pinned version</dt>
-        <dd class="mt-1 text-slate-100">
-          {environment.personalAccessTokenReference.version
-            ? `v${environment.personalAccessTokenReference.version}`
-            : 'Latest'}
-        </dd>
-      </div>
-    </dl>
-    <div class="mt-5">
-      <Alert
-        variant="info"
-        title="Secret value redacted"
-        message="The PAT is stored as a named, versioned secret encrypted at rest. The value is never shown in this profile."
-      />
-    </div>
   </Card>
 
   {#if verifyLoading}

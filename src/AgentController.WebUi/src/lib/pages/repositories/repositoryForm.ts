@@ -7,6 +7,7 @@ export interface RepositoryFormValues {
   defaultBranch: string;
   allowedPaths: string;
   repositoryHostConnectionKey: string;
+  project: string;
   runtimeEnvironmentKey: string;
 }
 
@@ -20,6 +21,7 @@ export function createRepositoryFormValues(profile?: RepositoryProfile): Reposit
     defaultBranch: profile?.defaultBranch ?? 'main',
     allowedPaths: profile?.allowedPaths.join('\n') ?? '',
     repositoryHostConnectionKey: profile?.repositoryHostConnectionKey ?? '',
+    project: profile?.project ?? '',
     runtimeEnvironmentKey: profile?.runtimeEnvironmentKey ?? '',
   };
 }
@@ -48,6 +50,7 @@ export function toRepositoryProfile(
       .map((path) => path.trim())
       .filter((path) => path.length > 0),
     repositoryHostConnectionKey: nullableKey(values.repositoryHostConnectionKey),
+    project: nullableKey(values.project),
     remoteIdentity: original?.remoteIdentity ?? null,
     runtimeEnvironmentKey: nullableKey(values.runtimeEnvironmentKey),
     environmentProfile: original?.environmentProfile ?? '',

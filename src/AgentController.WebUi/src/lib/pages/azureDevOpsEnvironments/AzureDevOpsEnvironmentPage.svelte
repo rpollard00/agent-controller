@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { getErrorMessage, getFieldErrors, type WebUiApiClient } from '../../api/client';
-  import type { WorkSourceEnvironmentProfile } from '../../api/types';
+  import type { ConnectionProfile, WorkSourceEnvironmentProfile } from '../../api/types';
   import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
   import Card from '../../components/ui/Card.svelte';
@@ -28,6 +28,7 @@
   let status = $state<'loading' | 'empty' | 'ready' | 'error'>('loading');
   let environments = $state<WorkSourceEnvironmentProfile[]>([]);
   let environment = $state<WorkSourceEnvironmentProfile>();
+  let connections = $state<ConnectionProfile[]>([]);
   let requestError = $state<unknown>();
   let mutationError = $state<unknown>();
   let submitting = $state(false);
@@ -87,6 +88,16 @@
       }
 
       if (currentRoute.view === 'create') {
+        connections = await client.connections.list(signal);
+        status = 'ready';
+        return;
+      }
+
+      if (currentRoute.view === 'edit') {
+        [environment, connections] = await Promise.all([
+          client.workSourceEnvironments.get(currentRoute.key, signal),
+          client.connections.list(signal),
+        ]);
         status = 'ready';
         return;
       }
@@ -350,6 +361,7 @@
       {/if}
       <WorkSourceEnvironmentForm
         mode="create"
+        {connections}
         {submitting}
         {client}
         serverErrors={getFieldErrors(mutationError)}
@@ -376,6 +388,7 @@
         <WorkSourceEnvironmentForm
           mode="edit"
           profile={environment}
+          {connections}
           {submitting}
           {client}
           serverErrors={getFieldErrors(mutationError)}

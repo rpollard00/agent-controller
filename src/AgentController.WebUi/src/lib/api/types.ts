@@ -11,6 +11,7 @@ export interface RepositoryProfile {
   remoteIdentity: string | null;
   runtimeEnvironmentKey: string | null;
   allowedPaths: string[];
+  project: string | null;
 }
 
 export interface WorkSourceEnvironmentProfile {
@@ -18,20 +19,13 @@ export interface WorkSourceEnvironmentProfile {
   displayName: string;
   enabled: boolean;
   provider: string;
-  organizationUrl: string;
+  connectionKey: string;
   project: string;
   tagPrefix: string;
   activeState: string | null;
   completedState: string | null;
-  personalAccessTokenReference: PersonalAccessTokenSecretReference;
   createdAt: string;
   updatedAt: string;
-}
-
-/** Reference to a named, versioned secret (used by work-source environments). */
-export interface PersonalAccessTokenSecretReference {
-  name: string;
-  version: number | null;
 }
 
 export interface EnvironmentProviderSettings {
