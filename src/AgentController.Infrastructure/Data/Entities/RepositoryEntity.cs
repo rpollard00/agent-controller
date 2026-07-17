@@ -30,6 +30,9 @@ internal sealed class RepositoryEntity
     /// <summary>Optional key of the managed repository host connection profile.</summary>
     public string? RepositoryHostConnectionKey { get; set; }
 
+    /// <summary>Provider-specific project name scoped to this repository.</summary>
+    public string? Project { get; set; }
+
     /// <summary>Optional provider-specific remote identity (e.g. ADO repo GUID).</summary>
     public string? RemoteIdentity { get; set; }
 

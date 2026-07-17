@@ -9,7 +9,7 @@ namespace AgentController.Api.Endpoints;
 
 /// <summary>
 /// Repository discovery and onboarding endpoint group:
-/// GET /repository-host-connections/{key}/repositories — list enumerable repos from a connected host.
+/// GET /repository-host-connections/{key}/repositories?project= — list enumerable repos from a connected host.
 /// POST /repository-host-connections/{key}/repositories/onboard — create a RepositoryProfile from a selected repo.
 /// </summary>
 public static class RepositoryHostDiscoveryEndpoints
@@ -20,17 +20,23 @@ public static class RepositoryHostDiscoveryEndpoints
     {
         var group = app.MapGroup("/api/webui/repository-host-connections/{connectionKey}");
 
-        // GET /api/webui/repository-host-connections/{connectionKey}/repositories
+        // GET /api/webui/repository-host-connections/{connectionKey}/repositories?project=
         group.MapGet(
             "/repositories",
             async (
                 string connectionKey,
+                string? project,
                 IQueryHandler<ListHostRepositoriesQuery, IReadOnlyList<HostRepository>> handler,
                 CancellationToken ct
             ) =>
             {
+                if (string.IsNullOrWhiteSpace(project))
+                {
+                    return Results.BadRequest("Project parameter is required.");
+                }
+
                 var repositories = await handler.ExecuteAsync(
-                    new ListHostRepositoriesQuery(connectionKey),
+                    new ListHostRepositoriesQuery(connectionKey, project!),
                     ct
                 );
                 return Results.Ok(repositories);
@@ -49,6 +55,7 @@ public static class RepositoryHostDiscoveryEndpoints
             {
                 var command = new OnboardRepositoryFromHostCommand(
                     connectionKey,
+                    request.Project,
                     request.RepositoryId,
                     request.RepositoryKey
                 );
@@ -95,6 +102,9 @@ public static class RepositoryHostDiscoveryEndpoints
     /// Request body for the onboard endpoint.
     /// </summary>
     public sealed record OnboardRepositoryRequest(
+        /// <summary>Provider-specific project name to scope the repository.</summary>
+        string Project,
+
         /// <summary>
         /// Provider-specific repository identifier (e.g. ADO repo GUID).
         /// </summary>

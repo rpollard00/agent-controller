@@ -6,8 +6,11 @@ namespace AgentController.Application.Commands;
 /// Request to onboard a repository by selecting it from a connected repository host.
 /// </summary>
 public sealed record OnboardRepositoryFromHostCommand(
-    /// <summary>Key of the repository host connection to use.</summary>
+    /// <summary>Key of the unified connection to use.</summary>
     string ConnectionKey,
+
+    /// <summary>Provider-specific project name to scope the repository enumeration.</summary>
+    string Project,
 
     /// <summary>
     /// Provider-specific repository identifier (e.g. ADO repo GUID) to select.

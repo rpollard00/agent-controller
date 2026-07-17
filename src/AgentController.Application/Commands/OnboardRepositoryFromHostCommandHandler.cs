@@ -7,16 +7,17 @@ namespace AgentController.Application.Commands;
 /// <summary>
 /// Looks up a repository from a connected host and produces a draft RepositoryProfile
 /// with CloneUrl, DefaultBranch, and Transport pre-filled from the host discovery data.
+/// Uses the unified IConnection port (IConnectionResolver) instead of IRepositoryHostConnection.
 /// </summary>
 public sealed class OnboardRepositoryFromHostCommandHandler(
-    IRepositoryHostConnectionStore connectionStore,
-    IRepositoryHostResolver hostResolver,
+    IConnectionStore connectionStore,
+    IConnectionResolver connectionResolver,
     IRepositoryStore repositoryStore,
     IRuntimeEnvironmentStore runtimeEnvironmentStore
 ) : ICommandHandler<OnboardRepositoryFromHostCommand, RepositoryOperationResult>
 {
-    private readonly IRepositoryHostConnectionStore _connectionStore = connectionStore;
-    private readonly IRepositoryHostResolver _hostResolver = hostResolver;
+    private readonly IConnectionStore _connectionStore = connectionStore;
+    private readonly IConnectionResolver _connectionResolver = connectionResolver;
     private readonly IRepositoryStore _repositoryStore = repositoryStore;
     private readonly IRuntimeEnvironmentStore _runtimeEnvironmentStore = runtimeEnvironmentStore;
 
@@ -26,7 +27,7 @@ public sealed class OnboardRepositoryFromHostCommandHandler(
     )
     {
         // 1. Validate and resolve the connection key.
-        var keyValidation = RepositoryHostConnectionProfileValidation.ValidateAndNormalizeKey(
+        var keyValidation = ConnectionProfileValidation.ValidateAndNormalizeKey(
             command.ConnectionKey
         );
         if (!keyValidation.IsValid)
@@ -38,12 +39,16 @@ public sealed class OnboardRepositoryFromHostCommandHandler(
         if (profile is null)
         {
             return RepositoryOperationResult.NotFound(
-                $"Repository host connection '{keyValidation.Key}' was not found."
+                $"Connection '{keyValidation.Key}' was not found."
             );
         }
 
-        // 2. Enumerate repositories from the host.
-        var repositories = await _hostResolver.ListRepositoriesAsync(profile, cancellationToken);
+        // 2. Enumerate repositories from the host via the unified IConnection port.
+        var repositories = await _connectionResolver.ListRepositoriesAsync(
+            profile,
+            command.Project,
+            cancellationToken
+        );
 
         // 3. Find the selected repository by its provider-specific id.
         var selected = repositories.FirstOrDefault(
@@ -67,6 +72,7 @@ public sealed class OnboardRepositoryFromHostCommandHandler(
             DefaultBranch = selected.DefaultBranch,
             Transport = transport,
             RepositoryHostConnectionKey = keyValidation.Key,
+            Project = command.Project,
             RemoteIdentity = selected.Id,
             AllowedPaths = [],
         };

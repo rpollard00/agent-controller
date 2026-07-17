@@ -29,6 +29,8 @@ internal sealed class RepositoryEntityConfiguration : IEntityTypeConfiguration<R
 
         builder.Property(x => x.RepositoryHostConnectionKey).HasMaxLength(128);
 
+        builder.Property(x => x.Project).HasMaxLength(256);
+
         builder.Property(x => x.RemoteIdentity).HasMaxLength(256);
 
         builder.Property(x => x.RuntimeEnvironmentKey).HasMaxLength(128);

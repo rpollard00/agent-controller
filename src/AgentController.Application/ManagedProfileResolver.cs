@@ -11,7 +11,6 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
     private readonly IRepositoryStore _repositoryStore;
     private readonly IWorkSourceEnvironmentStore _workSourceEnvironmentStore;
     private readonly IRuntimeEnvironmentStore _runtimeEnvironmentStore;
-    private readonly IRepositoryHostConnectionStore _repositoryHostConnectionStore;
     private readonly IConnectionStore _connectionStore;
     private readonly IConfiguredProfileSource _configuredProfiles;
 
@@ -19,7 +18,6 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
         IRepositoryStore repositoryStore,
         IWorkSourceEnvironmentStore workSourceEnvironmentStore,
         IRuntimeEnvironmentStore runtimeEnvironmentStore,
-        IRepositoryHostConnectionStore repositoryHostConnectionStore,
         IConnectionStore connectionStore,
         IConfiguredProfileSource configuredProfiles
     )
@@ -27,7 +25,6 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
         _repositoryStore = repositoryStore;
         _workSourceEnvironmentStore = workSourceEnvironmentStore;
         _runtimeEnvironmentStore = runtimeEnvironmentStore;
-        _repositoryHostConnectionStore = repositoryHostConnectionStore;
         _connectionStore = connectionStore;
         _configuredProfiles = configuredProfiles;
     }
@@ -77,7 +74,7 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
             null,
             cancellationToken
         );
-        var resolvedHostConnection = await ResolveRepositoryHostConnectionAsync(
+        var resolvedRepoConnection = await ResolveRepositoryConnectionAsync(
             repository.RepositoryHostConnectionKey,
             cancellationToken
         );
@@ -88,7 +85,7 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
             RuntimeEnvironment = runtime,
             WorkSourceEnvironment = resolvedWorkSource?.Profile,
             WorkSourceConnection = resolvedWorkSource?.Connection,
-            RepositoryHostConnection = resolvedHostConnection,
+            RepositoryConnection = resolvedRepoConnection,
             RepositoryIsManaged = repositoryIsManaged,
             RuntimeEnvironmentIsManaged = runtimeIsManaged,
             WorkSourceEnvironmentIsManaged = resolvedWorkSource?.IsManaged == true,
@@ -158,25 +155,20 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
         );
     }
 
-    private async Task<ResolvedRepositoryHostConnection?> ResolveRepositoryHostConnectionAsync(
+    private async Task<ConnectionProfile?> ResolveRepositoryConnectionAsync(
         string? key,
         CancellationToken cancellationToken
     )
     {
-        if (!string.IsNullOrWhiteSpace(key))
+        if (string.IsNullOrWhiteSpace(key))
         {
-            var managed = await _repositoryHostConnectionStore.GetByKeyAsync(
-                NormalizeKey(key),
-                cancellationToken
-            );
-
-            if (managed?.Enabled == true)
-            {
-                return new ResolvedRepositoryHostConnection(managed, IsManaged: true);
-            }
+            return null;
         }
 
-        return null;
+        return await _connectionStore.GetByKeyAsync(
+            NormalizeKey(key),
+            cancellationToken
+        );
     }
 
     public async Task<

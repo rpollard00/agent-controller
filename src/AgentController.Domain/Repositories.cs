@@ -75,8 +75,18 @@ public sealed record RepositoryProfile
     /// </summary>
     public string RuntimeProfile { get; init; } = string.Empty;
 
-    /// <summary>Optional key of the managed repository host connection profile.</summary>
+    /// <summary>
+    /// Optional key of the managed repository host connection profile.
+    /// References a unified <see cref="ConnectionProfile"/> with the
+    /// <see cref="ConnectionCapability.Repositories"/> capability.
+    /// </summary>
     public string? RepositoryHostConnectionKey { get; init; }
+
+    /// <summary>
+    /// Provider-specific project name scoped to this repository.
+    /// Persisted explicitly (not derived from <see cref="CloneUrl"/>).
+    /// </summary>
+    public string? Project { get; init; }
 
     /// <summary>
     /// Optional provider-specific remote identity for this repository

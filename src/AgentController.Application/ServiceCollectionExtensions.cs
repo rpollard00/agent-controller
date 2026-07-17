@@ -161,7 +161,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<
             IQueryHandler<
                 VerifyRepositoryHostConnectivityQuery,
-                RepositoryHostConnectivityResult
+                ConnectionConnectivityResult
             >,
             VerifyRepositoryHostConnectivityQueryHandler
         >();

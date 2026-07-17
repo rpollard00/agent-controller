@@ -15,8 +15,8 @@ namespace AgentController.Infrastructure;
 /// <see cref="ReviewThread"/> domain records.
 ///
 /// PAT resolution: for each PR, looks up the repository profile via
-/// <see cref="IRepositoryStore"/>, resolves the owning repo-host connection
-/// via <see cref="IRepositoryHostConnectionStore"/>, then obtains the PAT
+/// <see cref="IRepositoryStore"/>, resolves the owning unified connection
+/// via <see cref="IConnectionStore"/>, then obtains the PAT
 /// from the connection's named secret reference through <see cref="ISecretStore"/>.
 ///
 /// This source is a pure fetcher — it returns raw threads without any filtering.
@@ -26,7 +26,7 @@ namespace AgentController.Infrastructure;
 internal sealed class AzureDevOpsReposFeedbackSource : IFeedbackSource
 {
     private readonly IRepositoryStore _repositoryStore;
-    private readonly IRepositoryHostConnectionStore _connectionStore;
+    private readonly IConnectionStore _connectionStore;
     private readonly ISecretStore _secretStore;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -51,7 +51,7 @@ internal sealed class AzureDevOpsReposFeedbackSource : IFeedbackSource
 
     public AzureDevOpsReposFeedbackSource(
         IRepositoryStore repositoryStore,
-        IRepositoryHostConnectionStore connectionStore,
+        IConnectionStore connectionStore,
         ISecretStore secretStore)
     {
         _repositoryStore = repositoryStore;
@@ -126,7 +126,7 @@ internal sealed class AzureDevOpsReposFeedbackSource : IFeedbackSource
     }
 
     /// <summary>
-    /// Resolve the PAT for a repository by looking up its owning repo-host connection
+    /// Resolve the PAT for a repository by looking up its owning unified connection
     /// profile and resolving the connection's named secret reference through ISecretStore.
     /// </summary>
     private async Task<string?> ResolvePatForRepoAsync(
@@ -140,7 +140,7 @@ internal sealed class AzureDevOpsReposFeedbackSource : IFeedbackSource
             return null;
         }
 
-        // Step 2: Look up the repo-host connection profile.
+        // Step 2: Look up the unified connection profile.
         var connection = await _connectionStore.GetByKeyAsync(
             repository.RepositoryHostConnectionKey,
             cancellationToken);
@@ -150,8 +150,14 @@ internal sealed class AzureDevOpsReposFeedbackSource : IFeedbackSource
             return null;
         }
 
-        // Step 3: Resolve the PAT from the connection's named secret reference.
-        var secretName = connection.PersonalAccessTokenReference.Name;
+        // Step 3: Extract ADO settings and resolve the PAT from the connection's secret reference.
+        var settings = connection.ProviderSettings as AzureDevOpsConnectionSettings;
+        if (settings is null)
+        {
+            return null;
+        }
+
+        var secretName = settings.PersonalAccessTokenReference.Name;
         if (string.IsNullOrWhiteSpace(secretName))
         {
             return null;

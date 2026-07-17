@@ -7,13 +7,12 @@ namespace AgentController.Application.Commands;
 public sealed class UpdateRepositoryCommandHandler(
     IRepositoryStore repositoryStore,
     IRuntimeEnvironmentStore runtimeEnvironmentStore,
-    IRepositoryHostConnectionStore? repositoryHostConnectionStore
+    IConnectionStore? connectionStore
 ) : ICommandHandler<UpdateRepositoryCommand, RepositoryOperationResult>
 {
     private readonly IRepositoryStore _repositoryStore = repositoryStore;
     private readonly IRuntimeEnvironmentStore _runtimeEnvironmentStore = runtimeEnvironmentStore;
-    private readonly IRepositoryHostConnectionStore? _repositoryHostConnectionStore =
-        repositoryHostConnectionStore;
+    private readonly IConnectionStore? _connectionStore = connectionStore;
 
     public async Task<RepositoryOperationResult> HandleAsync(
         UpdateRepositoryCommand command,
@@ -39,7 +38,7 @@ public sealed class UpdateRepositoryCommandHandler(
         var validation = await RepositoryProfileValidation.ValidateAndNormalizeAsync(
             command.Profile,
             _runtimeEnvironmentStore,
-            _repositoryHostConnectionStore,
+            _connectionStore,
             cancellationToken
         );
 

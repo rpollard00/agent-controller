@@ -4,23 +4,23 @@ using AgentController.Domain;
 namespace AgentController.Application.Queries;
 
 /// <summary>
-/// Resolves a managed repository host connection by key and dispatches repository
-/// enumeration through the provider-keyed host resolver.
+/// Resolves a unified connection by key and dispatches repository
+/// enumeration through the provider-keyed connection resolver.
 /// </summary>
 public sealed class ListHostRepositoriesQueryHandler(
-    IRepositoryHostConnectionStore connectionStore,
-    IRepositoryHostResolver hostResolver
+    IConnectionStore connectionStore,
+    IConnectionResolver connectionResolver
 ) : IQueryHandler<ListHostRepositoriesQuery, IReadOnlyList<HostRepository>>
 {
-    private readonly IRepositoryHostConnectionStore _connectionStore = connectionStore;
-    private readonly IRepositoryHostResolver _hostResolver = hostResolver;
+    private readonly IConnectionStore _connectionStore = connectionStore;
+    private readonly IConnectionResolver _connectionResolver = connectionResolver;
 
     public async Task<IReadOnlyList<HostRepository>> ExecuteAsync(
         ListHostRepositoriesQuery query,
         CancellationToken cancellationToken
     )
     {
-        var key = RepositoryHostConnectionProfileValidation.ValidateAndNormalizeKey(query.ConnectionKey);
+        var key = ConnectionProfileValidation.ValidateAndNormalizeKey(query.ConnectionKey);
         if (!key.IsValid)
         {
             return [];
@@ -32,9 +32,13 @@ public sealed class ListHostRepositoriesQueryHandler(
             return [];
         }
 
-        // Dispatch through the provider-keyed resolver.
+        // Dispatch through the unified connection resolver.
         // The resolver handles unsupported-provider fallback (empty list, no throw).
-        // Individual hosts handle config/PAT errors (empty list, no throw).
-        return await _hostResolver.ListRepositoriesAsync(profile, cancellationToken);
+        // Individual connections handle config/PAT errors (empty list, no throw).
+        return await _connectionResolver.ListRepositoriesAsync(
+            profile,
+            query.Project,
+            cancellationToken
+        );
     }
 }

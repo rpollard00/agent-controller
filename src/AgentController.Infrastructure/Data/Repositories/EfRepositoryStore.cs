@@ -145,6 +145,7 @@ internal sealed class EfRepositoryStore : IRepositoryStore
         entity.EnvironmentProfile = profile.EnvironmentProfile;
         entity.RuntimeProfile = profile.RuntimeProfile;
         entity.RepositoryHostConnectionKey = profile.RepositoryHostConnectionKey;
+        entity.Project = profile.Project;
         entity.RemoteIdentity = profile.RemoteIdentity;
         entity.RuntimeEnvironmentKey = profile.RuntimeEnvironmentKey;
         entity.AllowedPathsJson = SerializeList(profile.AllowedPaths);
@@ -161,6 +162,7 @@ internal sealed class EfRepositoryStore : IRepositoryStore
             EnvironmentProfile = entity.EnvironmentProfile,
             RuntimeProfile = entity.RuntimeProfile,
             RepositoryHostConnectionKey = entity.RepositoryHostConnectionKey,
+            Project = entity.Project,
             RemoteIdentity = entity.RemoteIdentity,
             RuntimeEnvironmentKey = entity.RuntimeEnvironmentKey,
             AllowedPaths = DeserializeList(entity.AllowedPathsJson),

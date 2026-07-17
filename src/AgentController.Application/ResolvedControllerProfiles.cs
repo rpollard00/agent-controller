@@ -17,7 +17,11 @@ public sealed record ResolvedControllerProfiles
     /// </summary>
     public ConnectionProfile? WorkSourceConnection { get; init; }
 
-    public ResolvedRepositoryHostConnection? RepositoryHostConnection { get; init; }
+    /// <summary>
+    /// The resolved <see cref="ConnectionProfile"/> for the repository,
+    /// when the repository references a managed connection.
+    /// </summary>
+    public ConnectionProfile? RepositoryConnection { get; init; }
 
     public bool RepositoryIsManaged { get; init; }
 
@@ -33,8 +37,4 @@ public sealed record ResolvedWorkSourceEnvironment(
     bool IsManaged
 );
 
-/// <summary>A repository host connection profile together with its managed/configured origin.</summary>
-public sealed record ResolvedRepositoryHostConnection(
-    RepositoryHostConnectionProfile Profile,
-    bool IsManaged
-);
+

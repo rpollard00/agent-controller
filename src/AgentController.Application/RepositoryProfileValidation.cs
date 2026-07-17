@@ -10,11 +10,12 @@ internal static class RepositoryProfileValidation
     private const int MaximumCloneUrlLength = 2048;
     private const int MaximumBranchLength = 256;
     private const int MaximumAllowedPathLength = 2048;
+    private const int MaximumProjectLength = 256;
 
     public static async Task<RepositoryProfileValidationResult> ValidateAndNormalizeAsync(
         RepositoryProfile profile,
         IRuntimeEnvironmentStore runtimeEnvironmentStore,
-        IRepositoryHostConnectionStore? repositoryHostConnectionStore,
+        IConnectionStore? connectionStore,
         CancellationToken cancellationToken
     )
     {
@@ -35,6 +36,7 @@ internal static class RepositoryProfileValidation
 
         var allowedPaths = NormalizeAllowedPaths(profile.AllowedPaths, errors);
         var repositoryHostConnectionKey = NormalizeOptionalKey(profile.RepositoryHostConnectionKey);
+        var project = NormalizeProject(profile.Project);
         var remoteIdentity = NormalizeRemoteIdentity(profile.RemoteIdentity);
         var runtimeEnvironmentKey = NormalizeOptionalKey(profile.RuntimeEnvironmentKey);
 
@@ -42,15 +44,16 @@ internal static class RepositoryProfileValidation
         // ValidateOptionalKey(azureDevOpsEnvironmentKey, "azureDevOpsEnvironmentKey", errors);
 
         ValidateOptionalKey(repositoryHostConnectionKey, "repositoryHostConnectionKey", errors);
+        ValidateOptionalText(project, "project", MaximumProjectLength, errors);
         ValidateOptionalKey(remoteIdentity, "remoteIdentity", errors);
         ValidateOptionalKey(runtimeEnvironmentKey, "runtimeEnvironmentKey", errors);
 
-        // Validate that the repository host connection exists when specified.
+        // Validate that the unified connection exists when specified.
         if (
             repositoryHostConnectionKey is not null
             && !errors.Contains("repositoryHostConnectionKey")
-            && repositoryHostConnectionStore is not null
-            && await repositoryHostConnectionStore.GetByKeyAsync(
+            && connectionStore is not null
+            && await connectionStore.GetByKeyAsync(
                 repositoryHostConnectionKey,
                 cancellationToken
             )
@@ -59,7 +62,7 @@ internal static class RepositoryProfileValidation
         {
             errors.Add(
                 "repositoryHostConnectionKey",
-                $"Repository host connection '{repositoryHostConnectionKey}' does not exist."
+                $"Connection '{repositoryHostConnectionKey}' does not exist."
             );
         }
 
@@ -84,6 +87,7 @@ internal static class RepositoryProfileValidation
             EnvironmentProfile = profile.EnvironmentProfile?.Trim() ?? string.Empty,
             RuntimeProfile = profile.RuntimeProfile?.Trim() ?? string.Empty,
             RepositoryHostConnectionKey = repositoryHostConnectionKey,
+            Project = project,
             RemoteIdentity = remoteIdentity,
             RuntimeEnvironmentKey = runtimeEnvironmentKey,
             AllowedPaths = allowedPaths,
@@ -107,6 +111,34 @@ internal static class RepositoryProfileValidation
     {
         var normalized = NormalizeKey(value);
         return normalized.Length == 0 ? null : normalized;
+    }
+
+    private static string? NormalizeProject(string? value)
+    {
+        var normalized = (value ?? string.Empty).Trim();
+        return normalized.Length == 0 ? null : normalized;
+    }
+
+    private static void ValidateOptionalText(
+        string? value,
+        string field,
+        int maximumLength,
+        ValidationErrors errors)
+    {
+        if (value is null)
+        {
+            return;
+        }
+
+        if (value.Length > maximumLength)
+        {
+            errors.Add(field, $"The value must be {maximumLength} characters or fewer.");
+        }
+
+        if (value.Any(char.IsControl))
+        {
+            errors.Add(field, "The value cannot contain control characters.");
+        }
     }
 
     private static string? NormalizeRemoteIdentity(string? value)

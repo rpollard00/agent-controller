@@ -21,7 +21,7 @@ public static class RepositoryHostConnectivityEndpoints
             "/api/webui/repository-host-connections/{key}:verify",
             async (
                 string key,
-                IQueryHandler<VerifyRepositoryHostConnectivityQuery, RepositoryHostConnectivityResult> handler,
+                IQueryHandler<VerifyRepositoryHostConnectivityQuery, ConnectionConnectivityResult> handler,
                 CancellationToken ct
             ) =>
             {

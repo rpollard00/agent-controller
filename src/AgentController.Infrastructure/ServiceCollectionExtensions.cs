@@ -580,11 +580,11 @@ public static class AgentControllerServiceCollectionExtensions
     )
     {
         // Register the feedback source (thread fetcher) as scoped.
-        // PAT is resolved per-PR from the owning repo-host connection profile.
+        // PAT is resolved per-PR from the owning unified connection profile.
         services.AddScoped<IFeedbackSource>(sp =>
         {
             var repositoryStore = sp.GetRequiredService<IRepositoryStore>();
-            var connectionStore = sp.GetRequiredService<IRepositoryHostConnectionStore>();
+            var connectionStore = sp.GetRequiredService<IConnectionStore>();
             var secretStore = sp.GetRequiredService<ISecretStore>();
 
             return new AzureDevOpsReposFeedbackSource(repositoryStore, connectionStore, secretStore);
