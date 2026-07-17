@@ -527,19 +527,10 @@ public static class AgentControllerServiceCollectionExtensions
         // Scoped because it depends on AzureDevOpsPatResolver which is scoped.
         services.TryAddScoped<IAzureDevOpsBoardsClientFactory, AzureDevOpsBoardsClientFactory>();
 
-        // Register the Azure DevOps connectivity verifier with the provider-keyed resolver.
-        // Keyed by "AzureDevOpsBoards" and "AzureDevOpsRepos" provider strings.
-        services.AddWorkSourceConnectivityVerifier<AzureDevOpsConnectivityVerifier>(
-            "AzureDevOpsBoards",
-            "AzureDevOpsRepos"
-        );
-
-        // Register the Azure DevOps Repos repository host for the provider-keyed resolver.
-        // Uses AzureDevOpsPatResolver → ISecretStore for PAT resolution (named envelope-encrypted secrets).
-        // Reuses AzureDevOpsBoardsClient for HTTP operations.
-        // Repos client factory delegates to the shared AzureDevOpsClientFactory.
-        services.TryAddSingleton<IAzureDevOpsReposClientFactory, AzureDevOpsReposClientFactory>();
-        services.AddRepositoryHost<AzureDevOpsReposRepositoryHost>("AzureDevOpsRepos");
+        // Register the unified Azure DevOps connection provider.
+        // Covers both Repositories and WorkTracking capabilities via IConnection.
+        // Replaces the legacy AddWorkSourceConnectivityVerifier + AddRepositoryHost registrations.
+        services.AddConnection<AzureDevOpsConnection>("AzureDevOps");
 
         return services;
     }

@@ -17,104 +17,20 @@ internal sealed class AzureDevOpsReposRepositoryHost(
 ) : IRepositoryHostConnection
 {
     /// <inheritdoc />
-    public async Task<RepositoryHostConnectivityResult> VerifyConnectivityAsync(
+    /// <remarks>
+    /// This method is superseded by <see cref="AzureDevOpsConnection"/>.
+    /// The repo-host verify path has been removed and unified into
+    /// <see cref="IConnection"/>. Retained as a stub only to satisfy
+    /// <see cref="IRepositoryHostConnection"/> until legacy types are deleted.
+    /// </remarks>
+    public Task<RepositoryHostConnectivityResult> VerifyConnectivityAsync(
         RepositoryHostConnectionProfile profile,
         CancellationToken cancellationToken
     )
     {
-        // Validate required configuration fields.
-        var errors = new List<string>();
-        if (string.IsNullOrWhiteSpace(profile.OrganizationUrl))
-        {
-            errors.Add("Azure DevOps organization URL is not configured.");
-        }
-        if (string.IsNullOrWhiteSpace(profile.Project))
-        {
-            errors.Add("Azure DevOps project is not configured.");
-        }
-
-        // Resolve PAT through ISecretStore via the shared PAT resolver.
-        string? resolvedPat;
-        try
-        {
-            resolvedPat = await patResolver.ResolveFromSecretReferenceAsync(
-                profile.PersonalAccessTokenReference,
-                cancellationToken
-            );
-        }
-        catch (Exception ex)
-        {
-            errors.Add($"PAT resolution failed: {ex.Message}");
-            resolvedPat = null;
-        }
-
-        if (string.IsNullOrWhiteSpace(resolvedPat) && errors.Count == 0)
-        {
-            errors.Add(
-                profile.PersonalAccessTokenReference.IsSpecified
-                    ? $"Secret '{profile.PersonalAccessTokenReference.Name}' could not be resolved."
-                    : "Azure DevOps PAT is not configured."
-            );
-        }
-
-        if (errors.Count > 0)
-        {
-            return RepositoryHostConnectivityResult.FailureResult(
-                errors,
-                authMechanism: "PersonalAccessToken"
-            );
-        }
-
-        // Build client via factory and verify connectivity through the existing ADO client.
-        var adoClient = clientFactory.Create(profile, resolvedPat!);
-        using var disposableClient = adoClient as IDisposable;
-
-        var connectivityResult = await adoClient.VerifyConnectivityAsync(
-            profile.OrganizationUrl,
-            profile.Project,
-            resolvedPat!,
-            cancellationToken
-        );
-
-        // Map repositories into a serializable payload.
-        var repositories = connectivityResult.Repositories.Select(repo =>
-            new Dictionary<string, object?>
-            {
-                ["id"] = repo.Id,
-                ["name"] = repo.Name,
-                ["defaultBranch"] = repo.DefaultBranch,
-                ["remoteUrl"] = repo.RemoteUrl,
-            }
-        ).ToList();
-
-        if (connectivityResult.Success)
-        {
-            var payload = new Dictionary<string, object>
-            {
-                ["repositories"] = repositories,
-            };
-
-            return RepositoryHostConnectivityResult.SuccessResult(
-                "PersonalAccessToken",
-                connectivityResult.Status is { } statusCode ? (int)statusCode : null,
-                payload
-            );
-        }
-
-        // Connectivity failed — collect errors from the ADO result.
-        var connectErrors = new List<string>();
-        if (!string.IsNullOrEmpty(connectivityResult.Error))
-        {
-            connectErrors.Add(connectivityResult.Error);
-        }
-
-        return RepositoryHostConnectivityResult.FailureResult(
-            connectErrors,
-            authMechanism: "PersonalAccessToken",
-            httpStatus: connectivityResult.Status is { } failedStatusCode
-                ? (int)failedStatusCode
-                : null,
-            payload: new Dictionary<string, object> { ["repositories"] = repositories }
+        throw new NotSupportedException(
+            "VerifyConnectivityAsync on AzureDevOpsReposRepositoryHost is superseded. " +
+            "Use IConnection.VerifyConnectivityAsync via IConnectionResolver instead."
         );
     }
 
