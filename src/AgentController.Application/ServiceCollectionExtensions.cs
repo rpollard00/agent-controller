@@ -200,6 +200,9 @@ public static class ServiceCollectionExtensions
         // Repository host resolver
         services.AddRepositoryHostResolver();
 
+        // Unified connection resolver
+        services.AddConnectionResolver();
+
         return services;
     }
 
@@ -289,6 +292,53 @@ public static class ServiceCollectionExtensions
         // Accumulate the provider key → implementation type mapping in the static registry.
         // The registry is consumed once at container build time by the resolver registration.
         RepositoryHostConnectionRegistry.Register(typeof(THost), providerKeys);
+
+        return services;
+    }
+
+    // ─── Unified connection resolver ───
+
+    /// <summary>
+    /// Registers the unified connection resolver and its backing registry.
+    /// Individual providers register their connections via
+    /// <see cref="AddConnection{TConnection}(IServiceCollection, string[])"/>.
+    /// </summary>
+    public static IServiceCollection AddConnectionResolver(
+        this IServiceCollection services
+    )
+    {
+        // Build the type-keyed dictionary from the static registry at container build time.
+        // Provider-to-type mappings are accumulated via AddConnection<T>()
+        // calls before the container is built.
+        // We capture the dictionary inline to avoid conflicting with other resolvers
+        // that also register IReadOnlyDictionary<string, Type>.
+        var connectionTypes = ConnectionRegistry.Build();
+        services.AddSingleton<IConnectionResolver>(sp =>
+            new ConnectionResolver(sp.GetRequiredService<IServiceScopeFactory>(), connectionTypes));
+        return services;
+    }
+
+    /// <summary>
+    /// Registers a provider-specific unified connection for one or more provider strings.
+    /// The connection is registered as scoped and keyed into the resolver's type dictionary.
+    /// </summary>
+    /// <typeparam name="TConnection">The connection implementation type.</typeparam>
+    /// <param name="services">The service collection.</param>
+    /// <param name="providerKeys">
+    /// Provider discriminator strings (e.g. "AzureDevOps", "GitHub", "GitLab").
+    /// </param>
+    public static IServiceCollection AddConnection<TConnection>(
+        this IServiceCollection services,
+        params string[] providerKeys
+    ) where TConnection : class, IConnection
+    {
+        // Register the connection implementation as a scoped service so it can be resolved
+        // by the resolver at runtime through the scoped service provider.
+        services.AddScoped<TConnection>();
+
+        // Accumulate the provider key → implementation type mapping in the static registry.
+        // The registry is consumed once at container build time by the resolver registration.
+        ConnectionRegistry.Register(typeof(TConnection), providerKeys);
 
         return services;
     }
