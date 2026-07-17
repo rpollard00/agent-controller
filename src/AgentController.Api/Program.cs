@@ -121,7 +121,7 @@ app.MapHealthEndpoints();
 app.MapWorkItemEndpoints();
 app.MapRunEndpoints();
 app.MapRuntimeEventEndpoints();
-app.MapRepositoryHostDiscoveryEndpoints();
+app.MapConnectionEndpoints();
 app.MapWebUiControllers();
 app.MapWebUiHosting();
 

@@ -134,6 +134,38 @@ public static class ServiceCollectionExtensions
             OnboardRepositoryFromHostCommandHandler
         >();
 
+        // Connection management command handlers
+        services.AddScoped<
+            ICommandHandler<CreateConnectionCommand, ConnectionOperationResult>,
+            CreateConnectionCommandHandler
+        >();
+        services.AddScoped<
+            ICommandHandler<UpdateConnectionCommand, ConnectionOperationResult>,
+            UpdateConnectionCommandHandler
+        >();
+        services.AddScoped<
+            ICommandHandler<DeleteConnectionCommand, ConnectionOperationResult>,
+            DeleteConnectionCommandHandler
+        >();
+
+        // Connection management query handlers
+        services.AddScoped<
+            IQueryHandler<ListConnectionsQuery, IReadOnlyList<Domain.ConnectionProfile>>,
+            ListConnectionsQueryHandler
+        >();
+        services.AddScoped<
+            IQueryHandler<GetConnectionByKeyQuery, ConnectionOperationResult>,
+            GetConnectionByKeyQueryHandler
+        >();
+        services.AddScoped<
+            IQueryHandler<VerifyConnectionQuery, ConnectionConnectivityResult>,
+            VerifyConnectionQueryHandler
+        >();
+        services.AddScoped<
+            IQueryHandler<ListConnectionProjectsQuery, IReadOnlyList<Abstractions.ConnectionProject>>,
+            ListConnectionProjectsQueryHandler
+        >();
+
         // Secrets management command handlers
         services.AddScoped<
             ICommandHandler<CreateSecretCommand, CreateSecretResult>,
