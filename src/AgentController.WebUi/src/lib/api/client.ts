@@ -1,12 +1,13 @@
 import type {
+  ConnectionConnectivityResult,
+  ConnectionProfile,
+  ConnectionProject,
   CreatedSecretResponse,
   CreatedSecretVersionResponse,
   CreateSecretRequest,
   CreateSecretVersionRequest,
   HostRepository,
   ProblemDetails,
-  RepositoryHostConnectionProfile,
-  RepositoryHostConnectivityResult,
   RepositoryProfile,
   RuntimeEnvironmentProfile,
   SecretInfo,
@@ -30,12 +31,14 @@ export interface WorkSourceEnvironmentResourceClient
   verifyConnection(key: string, signal?: AbortSignal): Promise<WorkSourceConnectivityResult>;
 }
 
-export interface RepositoryHostConnectionResourceClient
-  extends ResourceClient<RepositoryHostConnectionProfile> {
-  verifyConnection(key: string, signal?: AbortSignal): Promise<RepositoryHostConnectivityResult>;
-  listRepositories(key: string, signal?: AbortSignal): Promise<HostRepository[]>;
+export interface ConnectionResourceClient
+  extends ResourceClient<ConnectionProfile> {
+  verifyConnection(key: string, signal?: AbortSignal): Promise<ConnectionConnectivityResult>;
+  listProjects(key: string, signal?: AbortSignal): Promise<ConnectionProject[]>;
+  listRepositories(key: string, project: string, signal?: AbortSignal): Promise<HostRepository[]>;
   onboardRepository(
     key: string,
+    project: string,
     repositoryId: string,
     repositoryKey?: string,
     signal?: AbortSignal,
@@ -52,7 +55,7 @@ export interface SecretsResourceClient {
 export interface WebUiApiClient {
   repositories: ResourceClient<RepositoryProfile>;
   workSourceEnvironments: WorkSourceEnvironmentResourceClient;
-  repositoryHostConnections: RepositoryHostConnectionResourceClient;
+  connections: ConnectionResourceClient;
   runtimeEnvironments: ResourceClient<RuntimeEnvironmentProfile>;
   secrets: SecretsResourceClient;
 }
@@ -162,26 +165,32 @@ export function createWebUiApiClient(options: ApiClientOptions = {}): WebUiApiCl
           { method: 'POST', signal },
         ),
     },
-    repositoryHostConnections: {
-      ...resource<RepositoryHostConnectionProfile>('/repository-host-connections'),
+    connections: {
+      ...resource<ConnectionProfile>('/connections'),
       verifyConnection: (key, signal) =>
-        request<RepositoryHostConnectivityResult>(
-          `/repository-host-connections/${encodeURIComponent(key)}:verify`,
+        request<ConnectionConnectivityResult>(
+          `/connections/${encodeURIComponent(key)}/verify`,
           { method: 'POST', signal },
         ),
-      listRepositories: (key, signal) =>
-        request<HostRepository[]>(
-          `/repository-host-connections/${encodeURIComponent(key)}/repositories`,
+      listProjects: (key, signal) =>
+        request<ConnectionProject[]>(
+          `/connections/${encodeURIComponent(key)}/projects`,
           { signal },
         ),
-      onboardRepository: (key, repositoryId, repositoryKey, signal) =>
+      listRepositories: (key, project, signal) =>
+        request<HostRepository[]>(
+          `/connections/${encodeURIComponent(key)}/repositories?project=${encodeURIComponent(project)}`,
+          { signal },
+        ),
+      onboardRepository: (key, project, repositoryId, repositoryKey, signal) =>
         request<RepositoryProfile>(
-          `/repository-host-connections/${encodeURIComponent(key)}/repositories/onboard`,
+          `/connections/${encodeURIComponent(key)}/repositories/onboard`,
           {
             method: 'POST',
             signal,
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+              project,
               repositoryId,
               repositoryKey: repositoryKey ?? undefined,
             }),

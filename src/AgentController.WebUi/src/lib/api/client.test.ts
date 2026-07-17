@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ApiError, createWebUiApiClient, getFieldErrors } from './client';
-import type { RepositoryProfile } from './types';
+import type { ConnectionProfile, ConnectionProject, RepositoryProfile } from './types';
 
 const repository: RepositoryProfile = {
   key: 'web.repo',
@@ -14,6 +14,22 @@ const repository: RepositoryProfile = {
   runtimeEnvironmentKey: null,
   allowedPaths: ['src'],
 };
+
+const connection: ConnectionProfile = {
+  key: 'ado-main',
+  displayName: 'Primary ADO',
+  enabled: true,
+  provider: 'AzureDevOps',
+  capabilities: ['Repositories', 'WorkTracking'],
+  providerSettings: {
+    organizationUrl: 'https://dev.azure.com/example',
+    personalAccessTokenReference: { name: 'ADO_PAT', version: null },
+  },
+  createdAt: '2026-07-16T00:00:00Z',
+  updatedAt: '2026-07-16T00:00:00Z',
+};
+
+const connectionProject: ConnectionProject = { id: 'proj-1', name: 'Agent Controller' };
 
 describe('Web UI API client', () => {
   it('uses same-origin API paths and sends typed JSON requests', async () => {
@@ -77,6 +93,69 @@ describe('Web UI API client', () => {
     await expect(client.runtimeEnvironments.list()).rejects.toMatchObject({
       status: 0,
       problem: { title: 'Unable to reach Agent Controller.' },
+    });
+  });
+
+  it('connections client: lists connections', async () => {
+    const fetchMock = vi.fn(async () => Response.json([connection]));
+    const client = createWebUiApiClient({ fetch: fetchMock });
+
+    const result = await client.connections.list();
+    expect(result).toEqual([connection]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/webui/connections',
+      expect.objectContaining({}),
+    );
+  });
+
+  it('connections client: verifies connectivity via POST /connections/{key}/verify', async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({ success: true, authMechanism: 'PersonalAccessToken', errors: [] }),
+    );
+    const client = createWebUiApiClient({ fetch: fetchMock });
+
+    await client.connections.verifyConnection('ado-main');
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/webui/connections/ado-main/verify',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('connections client: lists projects via GET /connections/{key}/projects', async () => {
+    const fetchMock = vi.fn(async () => Response.json([connectionProject]));
+    const client = createWebUiApiClient({ fetch: fetchMock });
+
+    const result = await client.connections.listProjects('ado-main');
+    expect(result).toEqual([connectionProject]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/webui/connections/ado-main/projects',
+      expect.objectContaining({}),
+    );
+  });
+
+  it('connections client: lists repositories with project parameter', async () => {
+    const fetchMock = vi.fn(async () => Response.json([]));
+    const client = createWebUiApiClient({ fetch: fetchMock });
+
+    await client.connections.listRepositories('ado-main', 'Agent Controller');
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/webui/connections/ado-main/repositories?project=Agent%20Controller',
+      expect.objectContaining({}),
+    );
+  });
+
+  it('connections client: onboards repository with project parameter', async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json(repository, { status: 201, headers: { Location: '/repositories/onboarded' } }),
+    );
+    const client = createWebUiApiClient({ fetch: fetchMock });
+
+    await client.connections.onboardRepository('ado-main', 'Agent Controller', 'repo-1');
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('/api/webui/connections/ado-main/repositories/onboard');
+    expect(JSON.parse(init?.body as string)).toEqual({
+      project: 'Agent Controller',
+      repositoryId: 'repo-1',
     });
   });
 });

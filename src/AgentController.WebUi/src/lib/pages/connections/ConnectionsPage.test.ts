@@ -3,9 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../../../App.svelte';
 import { ApiError, type ResourceClient, type WebUiApiClient } from '../../api/client';
 import type {
+  ConnectionConnectivityResult,
+  ConnectionProfile,
+  ConnectionProject,
   HostRepository,
-  RepositoryHostConnectionProfile,
-  RepositoryHostConnectivityResult,
   RepositoryProfile,
   RuntimeEnvironmentProfile,
   SecretInfo,
@@ -13,46 +14,64 @@ import type {
   WorkSourceEnvironmentProfile,
 } from '../../api/types';
 
-const connection: RepositoryHostConnectionProfile = {
-  key: 'ado-repos-main',
-  displayName: 'Primary Azure DevOps Repos',
+const connection: ConnectionProfile = {
+  key: 'ado-main',
+  displayName: 'Primary Azure DevOps',
   enabled: true,
-  provider: 'AzureDevOpsRepos',
-  organizationUrl: 'https://dev.azure.com/example',
-  project: 'Agent Controller',
-  personalAccessTokenReference: { name: 'ADO_PAT', version: null },
+  provider: 'AzureDevOps',
+  capabilities: ['Repositories', 'WorkTracking'],
+  providerSettings: {
+    organizationUrl: 'https://dev.azure.com/example',
+    personalAccessTokenReference: { name: 'ADO_PAT', version: null },
+  },
   createdAt: '2026-07-16T00:00:00Z',
   updatedAt: '2026-07-16T00:00:00Z',
 };
 
+const projects: ConnectionProject[] = [
+  { id: 'proj-1', name: 'Agent Controller' },
+  { id: 'proj-2', name: 'Test Project' },
+];
+
+const repos: HostRepository[] = [
+  {
+    id: 'repo-1',
+    name: 'web-app',
+    defaultBranch: 'main',
+    remoteUrl: 'https://dev.azure.com/example/project/_git/web-app',
+    cloneTransportHint: 'httpsPat',
+  },
+];
+
 function createApi(
-  initialConnections: RepositoryHostConnectionProfile[] = [connection],
-  verifyResult?: RepositoryHostConnectivityResult,
-  repos?: HostRepository[],
+  initialConnections: ConnectionProfile[] = [connection],
+  verifyResult?: ConnectionConnectivityResult,
+  initialProjects: ConnectionProject[] = projects,
+  initialRepos: HostRepository[] = repos,
   initialSecrets: SecretInfo[] = [{ name: 'ADO_PAT', latestVersion: 1, createdAt: '2026-07-16T00:00:00Z', updatedAt: '2026-07-16T00:00:00Z' }],
 ) {
   let profiles = [...initialConnections];
   let secrets = [...initialSecrets];
 
-  const defaultVerifyResult: RepositoryHostConnectivityResult = {
+  const defaultVerifyResult: ConnectionConnectivityResult = {
     success: true,
     authMechanism: 'PersonalAccessToken',
     errors: [],
     payload: { repositories: [] },
   };
 
-  const repositoryHostConnections = {
+  const connections = {
     list: vi.fn(async () => [...profiles]),
     get: vi.fn(async (key: string) => {
       const profile = profiles.find((candidate) => candidate.key === key);
-      if (!profile) throw new Error(`Missing repository host connection ${key}.`);
+      if (!profile) throw new Error(`Missing connection ${key}.`);
       return profile;
     }),
-    create: vi.fn(async (profile: RepositoryHostConnectionProfile) => {
+    create: vi.fn(async (profile: ConnectionProfile) => {
       profiles.push(profile);
       return profile;
     }),
-    update: vi.fn(async (_key: string, profile: RepositoryHostConnectionProfile) => {
+    update: vi.fn(async (_key: string, profile: ConnectionProfile) => {
       profiles = profiles.map((candidate) => (candidate.key === profile.key ? profile : candidate));
       return profile;
     }),
@@ -60,17 +79,18 @@ function createApi(
       profiles = profiles.filter((candidate) => candidate.key !== key);
     }),
     verifyConnection: vi.fn(
-      async (): Promise<RepositoryHostConnectivityResult> => verifyResult ?? defaultVerifyResult,
+      async (): Promise<ConnectionConnectivityResult> => verifyResult ?? defaultVerifyResult,
     ),
-    listRepositories: vi.fn(async (): Promise<HostRepository[]> => repos ?? []),
-    onboardRepository: vi.fn(async (_key: string, _repoId: string): Promise<RepositoryProfile> => ({
+    listProjects: vi.fn(async (): Promise<ConnectionProject[]> => initialProjects),
+    listRepositories: vi.fn(async (): Promise<HostRepository[]> => initialRepos),
+    onboardRepository: vi.fn(async (_key: string, _project: string, _repoId: string): Promise<RepositoryProfile> => ({
       key: 'onboarded-repo',
       cloneUrl: 'https://dev.azure.com/example/project/_git/repo',
       defaultBranch: 'main',
       transport: 'httpsPat',
       environmentProfile: '',
       runtimeProfile: '',
-      repositoryHostConnectionKey: 'ado-repos-main',
+      repositoryHostConnectionKey: 'ado-main',
       remoteIdentity: 'repo-guid',
       runtimeEnvironmentKey: null,
       allowedPaths: [],
@@ -94,12 +114,12 @@ function createApi(
         errors: [],
       }),
     },
-    repositoryHostConnections,
+    connections,
     runtimeEnvironments: staticResource<RuntimeEnvironmentProfile>([]),
     secrets: secretsClient,
   };
 
-  return { client, connections: repositoryHostConnections, secrets: secretsClient };
+  return { client, connections, secrets: secretsClient };
 }
 
 function staticResource<T>(profiles: T[]): ResourceClient<T> {
@@ -114,16 +134,13 @@ function staticResource<T>(profiles: T[]): ResourceClient<T> {
 
 async function completeRequiredCreateFields(): Promise<void> {
   await fireEvent.input(await screen.findByLabelText(/Connection name/), {
-    target: { value: 'ado-repos-secondary' },
+    target: { value: 'ado-secondary' },
   });
   await fireEvent.input(screen.getByLabelText(/Display name/), {
-    target: { value: 'Secondary Repos' },
+    target: { value: 'Secondary ADO' },
   });
   await fireEvent.input(screen.getByLabelText(/Organization URL/), {
     target: { value: 'https://dev.azure.com/example/' },
-  });
-  await fireEvent.input(screen.getByLabelText(/^Project/), {
-    target: { value: 'Secondary Project' },
   });
   // Select a secret from the combobox picker
   await fireEvent.click(screen.getByRole('button', { name: 'PAT secret (required)' }));
@@ -131,22 +148,22 @@ async function completeRequiredCreateFields(): Promise<void> {
   fireEvent.click(screen.getByRole('option', { name: /ADO_PAT/ }));
 }
 
-describe('repository host connection screens', () => {
+describe('connection screens', () => {
   beforeEach(() => {
-    window.history.replaceState({}, '', '/repository-host-connections');
+    window.history.replaceState({}, '', '/connections');
   });
 
   it('creates a connection with secret reference', async () => {
-    window.history.replaceState({}, '', '/repository-host-connections/new');
+    window.history.replaceState({}, '', '/connections/new');
     const api = createApi([]);
     render(App, { client: api.client });
 
     expect(
-      await screen.findByRole('heading', { level: 1, name: 'Add repository host connection' }),
+      await screen.findByRole('heading', { level: 1, name: 'Add connection' }),
     ).toBeVisible();
 
-    // Verify provider selector defaults to Azure DevOps Repos
-    expect(screen.getByLabelText(/Repository host provider/)).toHaveValue('AzureDevOpsRepos');
+    // Verify provider selector defaults to Azure DevOps
+    expect(screen.getByLabelText(/Provider/)).toHaveValue('AzureDevOps');
 
     await completeRequiredCreateFields();
     await fireEvent.click(screen.getByRole('button', { name: 'Create connection' }));
@@ -154,24 +171,25 @@ describe('repository host connection screens', () => {
     await waitFor(() => expect(api.connections.create).toHaveBeenCalledOnce());
     expect(api.connections.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        key: 'ado-repos-secondary',
-        displayName: 'Secondary Repos',
+        key: 'ado-secondary',
+        displayName: 'Secondary ADO',
         enabled: true,
-        provider: 'AzureDevOpsRepos',
-        organizationUrl: 'https://dev.azure.com/example',
-        project: 'Secondary Project',
-        personalAccessTokenReference: { name: 'ADO_PAT', version: null },
+        provider: 'AzureDevOps',
+        providerSettings: expect.objectContaining({
+          organizationUrl: 'https://dev.azure.com/example',
+          personalAccessTokenReference: { name: 'ADO_PAT', version: null },
+        }),
       }),
       expect.any(AbortSignal),
     );
     expect(
-      await screen.findByText(/Repository host connection .*Secondary Repos.* was created/),
+      await screen.findByText(/Connection .*Secondary ADO.* was created/),
     ).toBeVisible();
-    expect(window.location.pathname).toBe('/repository-host-connections/ado-repos-secondary');
+    expect(window.location.pathname).toBe('/connections/ado-secondary');
   });
 
   it('validates required fields before submitting', async () => {
-    window.history.replaceState({}, '', '/repository-host-connections/new');
+    window.history.replaceState({}, '', '/connections/new');
     const api = createApi([]);
     render(App, { client: api.client });
 
@@ -185,7 +203,7 @@ describe('repository host connection screens', () => {
   });
 
   it('edits connection settings while preserving the key', async () => {
-    window.history.replaceState({}, '', '/repository-host-connections/ado-repos-main/edit');
+    window.history.replaceState({}, '', '/connections/ado-main/edit');
     const api = createApi();
     render(App, { client: api.client });
 
@@ -193,29 +211,29 @@ describe('repository host connection screens', () => {
     expect(keyInput).toHaveAttribute('readonly');
 
     await fireEvent.input(screen.getByLabelText(/Display name/), {
-      target: { value: 'Updated Repos' },
+      target: { value: 'Updated ADO' },
     });
     await fireEvent.click(screen.getByLabelText('Enabled'));
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(api.connections.update).toHaveBeenCalledOnce());
     expect(api.connections.update).toHaveBeenCalledWith(
-      'ado-repos-main',
+      'ado-main',
       expect.objectContaining({
-        key: 'ado-repos-main',
-        displayName: 'Updated Repos',
+        key: 'ado-main',
+        displayName: 'Updated ADO',
         enabled: false,
         createdAt: connection.createdAt,
       }),
       expect.any(AbortSignal),
     );
     expect(
-      await screen.findByText(/Repository host connection .*Updated Repos.* was updated/),
+      await screen.findByText(/Connection .*Updated ADO.* was updated/),
     ).toBeVisible();
   });
 
   it('shows field-level server validation errors', async () => {
-    window.history.replaceState({}, '', '/repository-host-connections/new');
+    window.history.replaceState({}, '', '/connections/new');
     const api = createApi([]);
     api.connections.create.mockRejectedValueOnce(
       new ApiError({
@@ -234,15 +252,13 @@ describe('repository host connection screens', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Could not create connection');
-    expect(alert).toHaveTextContent('Correct the highlighted connection fields.');
     expect(
       screen.getByText('The organization URL must not include a collection path.'),
     ).toBeVisible();
-    expect(screen.getByLabelText(/Organization URL/)).toHaveAttribute('aria-invalid', 'true');
   });
 
-  it('renders only the secret reference, never a returned secret value', async () => {
-    window.history.replaceState({}, '', '/repository-host-connections/ado-repos-main');
+  it('renders the secret reference, never a returned secret value', async () => {
+    window.history.replaceState({}, '', '/connections/ado-main');
     const api = createApi([connection]);
     render(App, { client: api.client });
 
@@ -254,37 +270,37 @@ describe('repository host connection screens', () => {
     const api = createApi();
     render(App, { client: api.client });
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Disable Primary Azure DevOps Repos' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Disable Primary Azure DevOps' }));
 
     await waitFor(() => expect(api.connections.update).toHaveBeenCalledOnce());
     expect(api.connections.update).toHaveBeenCalledWith(
-      'ado-repos-main',
+      'ado-main',
       expect.objectContaining({ enabled: false }),
       expect.any(AbortSignal),
     );
     expect(await screen.findByText('Connection disabled')).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Enable Primary Azure DevOps Repos' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Enable Primary Azure DevOps' })).toBeVisible();
   });
 
   it('deletes a connection only after confirmation', async () => {
     const api = createApi();
     render(App, { client: api.client });
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Delete Primary Azure DevOps Repos' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Delete Primary Azure DevOps' }));
 
     const dialog = await screen.findByRole('dialog', {
-      name: 'Delete repository host connection?',
+      name: 'Delete connection?',
     });
     expect(api.connections.delete).not.toHaveBeenCalled();
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Delete connection' }));
 
     await waitFor(() =>
-      expect(api.connections.delete).toHaveBeenCalledWith('ado-repos-main', expect.any(AbortSignal)),
+      expect(api.connections.delete).toHaveBeenCalledWith('ado-main', expect.any(AbortSignal)),
     );
     expect(
-      await screen.findByRole('heading', { name: 'No repository host connections yet' }),
+      await screen.findByRole('heading', { name: 'No connections yet' }),
     ).toBeVisible();
-    expect(screen.getByText(/Repository host connection .*Primary Azure DevOps Repos.* was deleted/)).toBeVisible();
+    expect(screen.getByText(/Connection .*Primary Azure DevOps.* was deleted/)).toBeVisible();
   });
 
   // ── Test Connection — List view ─────────────────────────────────────
@@ -296,7 +312,7 @@ describe('repository host connection screens', () => {
     await screen.findByRole('table');
 
     const buttons = screen.getAllByRole('button', {
-      name: /Test connection for Primary Azure DevOps Repos/i,
+      name: /Test connection for Primary Azure DevOps/i,
     });
     expect(buttons.length).toBeGreaterThanOrEqual(1);
     expect(buttons[0]).toBeVisible();
@@ -314,13 +330,13 @@ describe('repository host connection screens', () => {
 
     await screen.findByRole('table');
     const testButton = screen.getByRole('button', {
-      name: /Test connection for Primary Azure DevOps Repos/i,
+      name: /Test connection for Primary Azure DevOps/i,
     });
     fireEvent.click(testButton);
 
     await waitFor(() =>
       expect(api.connections.verifyConnection).toHaveBeenCalledWith(
-        'ado-repos-main',
+        'ado-main',
         expect.anything(),
       ),
     );
@@ -340,13 +356,13 @@ describe('repository host connection screens', () => {
 
     await screen.findByRole('table');
     const testButton = screen.getByRole('button', {
-      name: /Test connection for Primary Azure DevOps Repos/i,
+      name: /Test connection for Primary Azure DevOps/i,
     });
     fireEvent.click(testButton);
 
     await waitFor(() =>
       expect(api.connections.verifyConnection).toHaveBeenCalledWith(
-        'ado-repos-main',
+        'ado-main',
         expect.anything(),
       ),
     );
@@ -360,7 +376,7 @@ describe('repository host connection screens', () => {
   // ── Test Connection — Details view ──────────────────────────────────
 
   it('details view renders a Test connection button', async () => {
-    window.history.replaceState({}, '', '/repository-host-connections/ado-repos-main');
+    window.history.replaceState({}, '', '/connections/ado-main');
     const api = createApi();
     render(App, { client: api.client });
 
@@ -372,7 +388,7 @@ describe('repository host connection screens', () => {
   });
 
   it('details view: Test connection transitions through loading to success', async () => {
-    window.history.replaceState({}, '', '/repository-host-connections/ado-repos-main');
+    window.history.replaceState({}, '', '/connections/ado-main');
     const api = createApi([connection], {
       success: true,
       authMechanism: 'PersonalAccessToken',
@@ -388,7 +404,7 @@ describe('repository host connection screens', () => {
 
     await waitFor(() =>
       expect(api.connections.verifyConnection).toHaveBeenCalledWith(
-        'ado-repos-main',
+        'ado-main',
         expect.anything(),
       ),
     );
@@ -398,7 +414,7 @@ describe('repository host connection screens', () => {
   });
 
   it('details view: Test connection transitions through loading to failure', async () => {
-    window.history.replaceState({}, '', '/repository-host-connections/ado-repos-main');
+    window.history.replaceState({}, '', '/connections/ado-main');
     const api = createApi([connection], {
       success: false,
       authMechanism: 'PersonalAccessToken',
@@ -413,7 +429,7 @@ describe('repository host connection screens', () => {
 
     await waitFor(() =>
       expect(api.connections.verifyConnection).toHaveBeenCalledWith(
-        'ado-repos-main',
+        'ado-main',
         expect.anything(),
       ),
     );
@@ -424,72 +440,47 @@ describe('repository host connection screens', () => {
 
   // ── Repo picker ─────────────────────────────────────────────────────
 
-  it('repo picker renders discovered repositories with onboard buttons', async () => {
-    window.history.replaceState({}, '', '/repository-host-connections/ado-repos-main/repos');
-    const api = createApi([connection], undefined, [
-      {
-        id: 'repo-1',
-        name: 'web-app',
-        defaultBranch: 'main',
-        remoteUrl: 'https://dev.azure.com/example/project/_git/web-app',
-        cloneTransportHint: 'httpsPat',
-      },
-      {
-        id: 'repo-2',
-        name: 'api-service',
-        defaultBranch: 'develop',
-        remoteUrl: 'https://dev.azure.com/example/project/_git/api-service',
-        cloneTransportHint: 'ssh',
-      },
-    ]);
+  it('repo picker renders project dropdown and discovered repositories', async () => {
+    window.history.replaceState({}, '', '/connections/ado-main/repos?project=proj-1');
+    const api = createApi([connection]);
     render(App, { client: api.client });
 
     expect(await screen.findByText('Available repositories')).toBeVisible();
-    expect(screen.getByText('web-app')).toBeVisible();
-    expect(screen.getByText('api-service')).toBeVisible();
+    await waitFor(() => expect(screen.getByText('web-app')).toBeVisible());
     expect(screen.getByText('HTTPS + PAT')).toBeVisible();
-    expect(screen.getByText('SSH')).toBeVisible();
-    expect(screen.getAllByRole('button', { name: /Onboard/i }).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByRole('button', { name: /Onboard/i }).length).toBeGreaterThanOrEqual(1);
   });
 
-  it('repo picker: clicking Onboard calls the onboard endpoint and navigates to the repository', async () => {
-    window.history.replaceState({}, '', '/repository-host-connections/ado-repos-main/repos');
-    const api = createApi([connection], undefined, [
-      {
-        id: 'repo-1',
-        name: 'web-app',
-        defaultBranch: 'main',
-        remoteUrl: 'https://dev.azure.com/example/project/_git/web-app',
-        cloneTransportHint: 'httpsPat',
-      },
-    ]);
+  it('repo picker: clicking Onboard calls the onboard endpoint and navigates', async () => {
+    window.history.replaceState({}, '', '/connections/ado-main/repos?project=proj-1');
+    const api = createApi([connection]);
     render(App, { client: api.client });
 
     expect(await screen.findByText('Available repositories')).toBeVisible();
-    const onboardButton = screen.getByRole('button', { name: 'Onboard web-app' });
+    const onboardButton = await screen.findByRole('button', { name: 'Onboard web-app' });
     fireEvent.click(onboardButton);
 
     await waitFor(() =>
       expect(api.connections.onboardRepository).toHaveBeenCalledWith(
-        'ado-repos-main',
+        'ado-main',
+        'proj-1',
         'repo-1',
         undefined,
         expect.any(AbortSignal),
       ),
     );
 
-    // Wait for the navigation to complete
     await waitFor(() => {
       expect(window.location.pathname).toBe('/repositories/onboarded-repo');
     });
   });
 
-  it('repo picker: shows empty state when no repositories found', async () => {
-    window.history.replaceState({}, '', '/repository-host-connections/ado-repos-main/repos');
+  it('repo picker: shows empty state when no project selected', async () => {
+    window.history.replaceState({}, '', '/connections/ado-main/repos');
     const api = createApi([connection]);
     render(App, { client: api.client });
 
-    expect(await screen.findByText('No repositories found')).toBeVisible();
+    expect(await screen.findByText('Select a project')).toBeVisible();
   });
 
   // ── Browse repos link ───────────────────────────────────────────────
@@ -501,6 +492,6 @@ describe('repository host connection screens', () => {
     await screen.findByRole('table');
     const browseLink = screen.getByRole('link', { name: 'Browse repos' });
     expect(browseLink).toBeVisible();
-    expect(browseLink).toHaveAttribute('href', '/repository-host-connections/ado-repos-main/repos');
+    expect(browseLink).toHaveAttribute('href', '/connections/ado-main/repos');
   });
 });

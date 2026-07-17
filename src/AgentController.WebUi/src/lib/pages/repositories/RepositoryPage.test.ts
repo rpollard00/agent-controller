@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../../../App.svelte';
 import { ApiError, type ResourceClient, type WebUiApiClient } from '../../api/client';
 import type {
-  RepositoryHostConnectionProfile,
+  ConnectionProfile,
   RepositoryProfile,
   RuntimeEnvironmentProfile,
   WorkSourceEnvironmentProfile,
@@ -22,14 +22,16 @@ const repository: RepositoryProfile = {
   allowedPaths: ['src'],
 };
 
-const repositoryHostConnection: RepositoryHostConnectionProfile = {
+const connection: ConnectionProfile = {
   key: 'ado-main',
-  displayName: 'Primary repos',
+  displayName: 'Primary ADO',
   enabled: true,
-  provider: 'AzureDevOpsRepos',
-  organizationUrl: 'https://dev.azure.com/example',
-  project: 'Agent Controller',
-  personalAccessTokenReference: { name: 'ADO_PAT', version: null },
+  provider: 'AzureDevOps',
+  capabilities: ['Repositories', 'WorkTracking'],
+  providerSettings: {
+    organizationUrl: 'https://dev.azure.com/example',
+    personalAccessTokenReference: { name: 'ADO_PAT', version: null },
+  },
   createdAt: '2026-07-13T00:00:00Z',
   updatedAt: '2026-07-13T00:00:00Z',
 };
@@ -111,13 +113,14 @@ function createApi(initialRepositories: RepositoryProfile[] = [repository]): Moc
           errors: [],
         }),
       },
-      repositoryHostConnections: {
-        ...staticResource<RepositoryHostConnectionProfile>([repositoryHostConnection]),
+      connections: {
+        ...staticResource<ConnectionProfile>([connection]),
         verifyConnection: async () => ({
           success: true,
           authMechanism: 'PersonalAccessToken',
           errors: [],
         }),
+        listProjects: async () => [],
         listRepositories: async () => [],
         onboardRepository: async () => repository,
       },

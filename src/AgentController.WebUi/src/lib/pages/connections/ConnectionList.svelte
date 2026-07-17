@@ -1,15 +1,15 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import type { WebUiApiClient } from '../../api/client';
-  import type { RepositoryHostConnectivityResult, RepositoryHostConnectionProfile } from '../../api/types';
+  import type { ConnectionConnectivityResult, ConnectionProfile } from '../../api/types';
   import Button from '../../components/ui/Button.svelte';
   import Card from '../../components/ui/Card.svelte';
   import DataTable from '../../components/ui/DataTable.svelte';
   import {
-    repositoryHostConnectionDetailPath,
-    repositoryHostConnectionEditPath,
-    repositoryHostConnectionRepoPickerPath,
-  } from './repositoryHostConnectionRoutes';
+    connectionDetailPath,
+    connectionEditPath,
+    connectionRepoPickerPath,
+  } from './connectionRoutes';
 
   let {
     connections,
@@ -20,22 +20,22 @@
     ontoggle,
     ondelete,
   }: {
-    connections: RepositoryHostConnectionProfile[];
+    connections: ConnectionProfile[];
     empty: boolean;
     client: WebUiApiClient;
     updatingKey?: string;
     onrefresh: () => void;
-    ontoggle: (profile: RepositoryHostConnectionProfile) => void;
-    ondelete: (profile: RepositoryHostConnectionProfile) => void;
+    ontoggle: (profile: ConnectionProfile) => void;
+    ondelete: (profile: ConnectionProfile) => void;
   } = $props();
 
   let verifyLoading = $state<Record<string, boolean>>({});
-  let verifyResults = $state<Record<string, RepositoryHostConnectivityResult | null>>({});
+  let verifyResults = $state<Record<string, ConnectionConnectivityResult | null>>({});
   let verifyControllers = new Map<string, AbortController>();
 
   function getVerifyState(key: string): {
     loading: boolean;
-    result: RepositoryHostConnectivityResult | null;
+    result: ConnectionConnectivityResult | null;
   } {
     return {
       loading: verifyLoading[key] ?? false,
@@ -47,11 +47,11 @@
     verifyLoading[key] = loading;
   }
 
-  function setVerifyResult(key: string, result: RepositoryHostConnectivityResult | null): void {
+  function setVerifyResult(key: string, result: ConnectionConnectivityResult | null): void {
     verifyResults[key] = result;
   }
 
-  async function testConnection(profile: RepositoryHostConnectionProfile): Promise<void> {
+  async function testConnection(profile: ConnectionProfile): Promise<void> {
     const key = profile.key;
 
     verifyControllers.get(key)?.abort();
@@ -61,7 +61,7 @@
     setVerifyResult(key, null);
 
     try {
-      const result = await client.repositoryHostConnections.verifyConnection(
+      const result = await client.connections.verifyConnection(
         key,
         controller.signal,
       );
@@ -84,13 +84,20 @@
     }
   }
 
-  function getRepoCount(result: RepositoryHostConnectivityResult | null): number | undefined {
+  function getRepoCount(result: ConnectionConnectivityResult | null): number | undefined {
     if (!result?.payload) return undefined;
     const repos = result.payload.repositories;
     if (Array.isArray(repos)) return repos.length;
     return undefined;
   }
 
+  function capabilityTags(capabilities: string[]): string {
+    return capabilities.join(', ');
+  }
+
+  function orgUrl(profile: ConnectionProfile): string {
+    return profile.providerSettings?.organizationUrl ?? '';
+  }
 
   onDestroy(() => {
     for (const controller of verifyControllers.values()) {
@@ -100,8 +107,8 @@
 </script>
 
 <Card
-  title="Repository host connections"
-  description="Connected APIs used as sources of repositories, decoupled from work sources."
+  title="Connections"
+  description="Unified provider connections for repositories, work tracking, and runtime environments."
 >
   {#snippet actions()}
     <Button variant="secondary" onclick={onrefresh}>Refresh</Button>
@@ -109,24 +116,24 @@
 
   {#if empty}
     <div class="rounded-xl border border-dashed border-slate-700 px-5 py-12 text-center">
-      <h2 class="font-semibold text-white">No repository host connections yet</h2>
+      <h2 class="font-semibold text-white">No connections yet</h2>
       <p class="mx-auto mt-2 max-w-lg text-sm leading-6 text-slate-400">
-        Add a connection to browse and onboard repositories from a remote host like Azure DevOps Repos.
+        Add a connection to a provider like Azure DevOps, then reference it from work sources, repositories, or runtime environments.
       </p>
       <a
-        href="/repository-host-connections/new"
+        href="/connections/new"
         class="mt-5 inline-flex min-h-11 items-center justify-center rounded-lg bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-300"
       >
         Add your first connection
       </a>
     </div>
   {:else}
-    <DataTable caption="Repository host connections">
+    <DataTable caption="Connections">
       <thead class="bg-slate-950/60 text-xs tracking-wide text-slate-400 uppercase">
         <tr>
           <th class="px-4 py-3 font-medium" scope="col">Connection</th>
-          <th class="px-4 py-3 font-medium" scope="col">Project</th>
           <th class="px-4 py-3 font-medium" scope="col">Provider</th>
+          <th class="px-4 py-3 font-medium" scope="col">Capabilities</th>
           <th class="px-4 py-3 font-medium" scope="col">Status</th>
           <th class="px-4 py-3 text-right font-medium" scope="col">Actions</th>
         </tr>
@@ -137,7 +144,7 @@
             <th class="px-4 py-4 font-medium" scope="row">
               <a
                 class="text-cyan-300 hover:text-cyan-200 hover:underline"
-                href={repositoryHostConnectionDetailPath(profile.key)}
+                href={connectionDetailPath(profile.key)}
               >
                 {profile.displayName}
               </a>
@@ -146,12 +153,16 @@
               </span>
             </th>
             <td class="px-4 py-4 text-slate-300">
-              <span class="block">{profile.project}</span>
-              <span class="mt-1 block max-w-xs break-all text-xs text-slate-500">
-                {profile.organizationUrl}
-              </span>
+              <span class="block">{profile.provider}</span>
+              {#if orgUrl(profile)}
+                <span class="mt-1 block max-w-xs break-all text-xs text-slate-500">
+                  {orgUrl(profile)}
+                </span>
+              {/if}
             </td>
-            <td class="px-4 py-4 text-slate-300">{profile.provider}</td>
+            <td class="px-4 py-4 text-slate-300">
+              {capabilityTags(profile.capabilities)}
+            </td>
             <td class="px-4 py-4">
               <span
                 class={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
@@ -187,14 +198,16 @@
                       ? 'Disable'
                       : 'Enable'}
                 </Button>
+                {#if profile.capabilities.includes('Repositories')}
+                  <a
+                    href={connectionRepoPickerPath(profile.key)}
+                    class="inline-flex min-h-10 items-center rounded-lg px-3 py-2 text-sm font-semibold text-slate-300 hover:bg-slate-800 hover:text-white"
+                  >
+                    Browse repos
+                  </a>
+                {/if}
                 <a
-                  href={repositoryHostConnectionRepoPickerPath(profile.key)}
-                  class="inline-flex min-h-10 items-center rounded-lg px-3 py-2 text-sm font-semibold text-slate-300 hover:bg-slate-800 hover:text-white"
-                >
-                  Browse repos
-                </a>
-                <a
-                  href={repositoryHostConnectionEditPath(profile.key)}
+                  href={connectionEditPath(profile.key)}
                   class="inline-flex min-h-10 items-center rounded-lg px-3 py-2 text-sm font-semibold text-slate-300 hover:bg-slate-800 hover:text-white"
                 >
                   Edit

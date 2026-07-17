@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import type {
-    RepositoryHostConnectionProfile,
+    ConnectionProfile,
     RepositoryProfile,
     RuntimeEnvironmentProfile,
   } from '../../api/types';
@@ -18,7 +18,7 @@
   let {
     mode,
     profile,
-    repositoryHostConnections,
+    connections,
     runtimeEnvironments,
     submitting = false,
     serverErrors = {},
@@ -27,7 +27,7 @@
   }: {
     mode: 'create' | 'edit';
     profile?: RepositoryProfile;
-    repositoryHostConnections: RepositoryHostConnectionProfile[];
+    connections: ConnectionProfile[];
     runtimeEnvironments: RuntimeEnvironmentProfile[];
     submitting?: boolean;
     serverErrors?: Readonly<Record<string, string[]>>;
@@ -75,8 +75,8 @@
     return runtimeEnvironments.some((environment) => environment.key === key);
   }
 
-  function hasRepositoryHostConnection(key: string): boolean {
-    return repositoryHostConnections.some((connection) => connection.key === key);
+  function hasConnection(key: string): boolean {
+    return connections.some((connection) => connection.key === key);
   }
 
   function connectionLabel(profile: { key: string; displayName: string; enabled: boolean }): string {
@@ -232,12 +232,12 @@
           aria-describedby={describedBy('repositoryHostConnectionKey', true)}
         >
           <option value="">No managed repository host connection</option>
-          {#if values.repositoryHostConnectionKey && !hasRepositoryHostConnection(values.repositoryHostConnectionKey)}
+          {#if values.repositoryHostConnectionKey && !hasConnection(values.repositoryHostConnectionKey)}
             <option value={values.repositoryHostConnectionKey}>
               {values.repositoryHostConnectionKey} (unavailable)
             </option>
           {/if}
-          {#each repositoryHostConnections as conn (conn.key)}
+          {#each connections as conn (conn.key)}
             <option value={conn.key}>{connectionLabel(conn)}</option>
           {/each}
         </select>

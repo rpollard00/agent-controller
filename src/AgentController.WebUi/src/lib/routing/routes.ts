@@ -1,4 +1,4 @@
-export type RouteId = 'overview' | 'repositories' | 'work-source-environments' | 'repository-host-connections' | 'runtime-environments' | 'secrets';
+export type RouteId = 'overview' | 'repositories' | 'work-source-environments' | 'connections' | 'runtime-environments' | 'secrets';
 
 export interface AppRoute {
   id: RouteId;
@@ -35,12 +35,12 @@ export const routes: readonly AppRoute[] = [
     description: 'Manage work source organizations, projects, and board policies.',
   },
   {
-    id: 'repository-host-connections',
-    path: '/repository-host-connections',
-    label: 'Repository hosts',
-    shortLabel: 'Repo hosts',
-    title: 'Repository host connections',
-    description: 'Manage connected repository hosts for discovering and onboarding repositories.',
+    id: 'connections',
+    path: '/connections',
+    label: 'Connections',
+    shortLabel: 'Connections',
+    title: 'Connections',
+    description: 'Manage unified provider connections for repositories, work tracking, and runtime environments.',
   },
   {
     id: 'runtime-environments',
@@ -73,8 +73,8 @@ export function matchRoute(pathname: string): AppRoute | undefined {
     return routes.find((route) => route.id === 'work-source-environments');
   }
 
-  if (/^\/repository-host-connections\/(?:new|[^/]+(?:\/edit|\/repos)?)$/.test(normalizedPath)) {
-    return routes.find((route) => route.id === 'repository-host-connections');
+  if (/^\/connections\/(?:new|[^/]+(?:\/edit|\/repos(?:\?.*)?)?)$/.test(normalizedPath)) {
+    return routes.find((route) => route.id === 'connections');
   }
 
   if (/^\/runtime-environments\/(?:new|[^/]+(?:\/edit)?)$/.test(normalizedPath)) {

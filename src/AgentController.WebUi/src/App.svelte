@@ -4,7 +4,7 @@
   import NotFoundPage from './lib/pages/NotFoundPage.svelte';
   import OverviewPage from './lib/pages/OverviewPage.svelte';
   import WorkSourceEnvironmentPage from './lib/pages/azureDevOpsEnvironments/AzureDevOpsEnvironmentPage.svelte';
-  import RepositoryHostConnectionPage from './lib/pages/repositoryHostConnections/RepositoryHostConnectionPage.svelte';
+  import ConnectionsPage from './lib/pages/connections/ConnectionsPage.svelte';
   import RepositoryPage from './lib/pages/repositories/RepositoryPage.svelte';
   import RuntimeEnvironmentPage from './lib/pages/runtimeEnvironments/RuntimeEnvironmentPage.svelte';
   import SecretsPage from './lib/pages/secrets/SecretsPage.svelte';
@@ -183,8 +183,8 @@
         {client}
         navigate={(path) => showPath(path, true)}
       />
-    {:else if currentRoute.id === 'repository-host-connections'}
-      <RepositoryHostConnectionPage
+    {:else if currentRoute.id === 'connections'}
+      <ConnectionsPage
         {pathname}
         {client}
         navigate={(path) => showPath(path, true)}

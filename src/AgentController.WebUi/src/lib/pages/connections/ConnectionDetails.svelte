@@ -1,11 +1,11 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import type { WebUiApiClient } from '../../api/client';
-  import type { RepositoryHostConnectivityResult, RepositoryHostConnectionProfile } from '../../api/types';
+  import type { ConnectionConnectivityResult, ConnectionProfile } from '../../api/types';
   import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
   import Card from '../../components/ui/Card.svelte';
-  import { repositoryHostConnectionEditPath, repositoryHostConnectionRepoPickerPath } from './repositoryHostConnectionRoutes';
+  import { connectionEditPath, connectionRepoPickerPath } from './connectionRoutes';
 
   let {
     connection,
@@ -14,11 +14,11 @@
     ontoggle,
     ondelete,
   }: {
-    connection: RepositoryHostConnectionProfile;
+    connection: ConnectionProfile;
     client: WebUiApiClient;
     updating?: boolean;
-    ontoggle: (profile: RepositoryHostConnectionProfile) => void;
-    ondelete: (profile: RepositoryHostConnectionProfile) => void;
+    ontoggle: (profile: ConnectionProfile) => void;
+    ondelete: (profile: ConnectionProfile) => void;
   } = $props();
 
   function formatTimestamp(value: string): string {
@@ -27,7 +27,7 @@
   }
 
   let verifyLoading = $state(false);
-  let verifyResult = $state<RepositoryHostConnectivityResult | null>(null);
+  let verifyResult = $state<ConnectionConnectivityResult | null>(null);
   let verifyController: AbortController | undefined;
 
   async function testConnection(): Promise<void> {
@@ -38,7 +38,7 @@
     verifyResult = null;
 
     try {
-      const result = await client.repositoryHostConnections.verifyConnection(
+      const result = await client.connections.verifyConnection(
         connection.key,
         controller.signal,
       );
@@ -61,11 +61,23 @@
     }
   }
 
-  function getRepoCount(result: RepositoryHostConnectivityResult | null): number | undefined {
+  function getRepoCount(result: ConnectionConnectivityResult | null): number | undefined {
     if (!result?.payload) return undefined;
     const repos = result.payload.repositories;
     if (Array.isArray(repos)) return repos.length;
     return undefined;
+  }
+
+  function orgUrl(): string {
+    return connection.providerSettings?.organizationUrl ?? '';
+  }
+
+  function patSecretName(): string {
+    return connection.providerSettings?.personalAccessTokenReference?.name ?? '';
+  }
+
+  function patSecretVersion(): number | null {
+    return connection.providerSettings?.personalAccessTokenReference?.version ?? null;
   }
 
   onDestroy(() => {
@@ -74,7 +86,7 @@
 </script>
 
 <div class="space-y-6">
-  <Card title="Connection details" description="Repository host connection and credential reference.">
+  <Card title="Connection details" description="Unified provider connection and credential reference.">
     {#snippet actions()}
       <div class="flex flex-wrap gap-2">
         <Button
@@ -92,14 +104,16 @@
         >
           {verifyLoading ? 'Testing…' : 'Test connection'}
         </Button>
+        {#if connection.capabilities.includes('Repositories')}
+          <a
+            href={connectionRepoPickerPath(connection.key)}
+            class="inline-flex min-h-10 items-center rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"
+          >
+            Browse repositories
+          </a>
+        {/if}
         <a
-          href={repositoryHostConnectionRepoPickerPath(connection.key)}
-          class="inline-flex min-h-10 items-center rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"
-        >
-          Browse repositories
-        </a>
-        <a
-          href={repositoryHostConnectionEditPath(connection.key)}
+          href={connectionEditPath(connection.key)}
           class="inline-flex min-h-10 items-center rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"
         >
           Edit
@@ -124,17 +138,25 @@
         <dd class="mt-1 text-slate-100">{connection.displayName}</dd>
       </div>
       <div>
-        <dt class="text-sm font-medium text-slate-400">Project</dt>
-        <dd class="mt-1 text-slate-100">{connection.project}</dd>
-      </div>
-      <div class="sm:col-span-2">
-        <dt class="text-sm font-medium text-slate-400">Organization URL</dt>
-        <dd class="mt-1 break-all text-slate-100">{connection.organizationUrl}</dd>
-      </div>
-      <div>
         <dt class="text-sm font-medium text-slate-400">Provider</dt>
         <dd class="mt-1 text-slate-100">{connection.provider}</dd>
       </div>
+      <div class="sm:col-span-2">
+        <dt class="text-sm font-medium text-slate-400">Capabilities</dt>
+        <dd class="mt-1 flex flex-wrap gap-2">
+          {#each connection.capabilities as cap}
+            <span class="inline-flex rounded-full bg-cyan-950 px-2.5 py-1 text-xs font-semibold text-cyan-300">
+              {cap}
+            </span>
+          {/each}
+        </dd>
+      </div>
+      {#if orgUrl()}
+        <div class="sm:col-span-2">
+          <dt class="text-sm font-medium text-slate-400">Organization URL</dt>
+          <dd class="mt-1 break-all text-slate-100">{orgUrl()}</dd>
+        </div>
+      {/if}
       <div>
         <dt class="text-sm font-medium text-slate-400">Created</dt>
         <dd class="mt-1 text-slate-100">{formatTimestamp(connection.createdAt)}</dd>
@@ -146,31 +168,33 @@
     </dl>
   </Card>
 
-  <Card title="Credential reference" description="The PAT is stored as a named, versioned secret encrypted at rest.">
-    <dl class="grid gap-x-8 gap-y-6 sm:grid-cols-2">
-      <div>
-        <dt class="text-sm font-medium text-slate-400">Secret name</dt>
-        <dd class="mt-1 break-all font-mono text-sm text-cyan-200">
-          {connection.personalAccessTokenReference.name || 'Not configured'}
-        </dd>
+  {#if connection.providerSettings}
+    <Card title="Credential reference" description="The PAT is stored as a named, versioned secret encrypted at rest.">
+      <dl class="grid gap-x-8 gap-y-6 sm:grid-cols-2">
+        <div>
+          <dt class="text-sm font-medium text-slate-400">Secret name</dt>
+          <dd class="mt-1 break-all font-mono text-sm text-cyan-200">
+            {patSecretName() || 'Not configured'}
+          </dd>
+        </div>
+        <div>
+          <dt class="text-sm font-medium text-slate-400">Pinned version</dt>
+          <dd class="mt-1 text-slate-100">
+            {patSecretVersion()
+              ? `v${patSecretVersion()}`
+              : 'Latest'}
+          </dd>
+        </div>
+      </dl>
+      <div class="mt-5">
+        <Alert
+          variant="info"
+          title="Secret value redacted"
+          message="Only the secret reference is shown. The raw credential is resolved at runtime and never displayed."
+        />
       </div>
-      <div>
-        <dt class="text-sm font-medium text-slate-400">Pinned version</dt>
-        <dd class="mt-1 text-slate-100">
-          {connection.personalAccessTokenReference.version
-            ? `v${connection.personalAccessTokenReference.version}`
-            : 'Latest'}
-        </dd>
-      </div>
-    </dl>
-    <div class="mt-5">
-      <Alert
-        variant="info"
-        title="Secret value redacted"
-        message="Only the secret reference is shown. The raw credential is resolved at runtime and never displayed."
-      />
-    </div>
-  </Card>
+    </Card>
+  {/if}
 
   {#if verifyLoading}
     <Card title="Testing connection">
@@ -207,9 +231,9 @@
   {/if}
 
   <a
-    href="/repository-host-connections"
+    href="/connections"
     class="inline-flex min-h-10 items-center rounded-lg px-3 py-2 text-sm font-semibold text-cyan-300 hover:bg-slate-800 hover:text-cyan-200"
   >
-    Back to Repository host connections
+    Back to Connections
   </a>
 </div>

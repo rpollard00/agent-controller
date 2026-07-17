@@ -68,28 +68,6 @@ export interface WorkSourceConnectivityResult {
   payload?: Record<string, unknown>;
 }
 
-/** Managed configuration for a repository host connection. */
-export interface RepositoryHostConnectionProfile {
-  key: string;
-  displayName: string;
-  enabled: boolean;
-  provider: string;
-  organizationUrl: string;
-  project: string;
-  personalAccessTokenReference: PersonalAccessTokenSecretReference;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** Provider-neutral connectivity verification result for a repository host. */
-export interface RepositoryHostConnectivityResult {
-  success: boolean;
-  authMechanism: string;
-  httpStatus?: number;
-  errors: string[];
-  payload?: Record<string, unknown>;
-}
-
 /** Clone transport hint from a repository host. */
 export type CloneTransportHint = 'unspecified' | 'ssh' | 'httpsPat';
 
@@ -136,6 +114,48 @@ export interface CreatedSecretResponse {
 export interface CreatedSecretVersionResponse {
   name: string;
   version: number;
+}
+
+/** Capability a unified connection can provide. */
+export type ConnectionCapability = 'Repositories' | 'WorkTracking' | 'ExecutionHost';
+
+/** Reference to a named, versioned secret for a connection PAT. */
+export interface ConnectionSecretReference {
+  name: string;
+  version: number | null;
+}
+
+/** Azure DevOps provider settings for a connection. */
+export interface AzureDevOpsConnectionSettings {
+  organizationUrl: string;
+  personalAccessTokenReference: ConnectionSecretReference;
+}
+
+/** Unified, provider-discriminated connection profile. */
+export interface ConnectionProfile {
+  key: string;
+  displayName: string;
+  enabled: boolean;
+  provider: string;
+  capabilities: ConnectionCapability[];
+  providerSettings: AzureDevOpsConnectionSettings | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Minimal project descriptor from a connection provider. */
+export interface ConnectionProject {
+  id: string;
+  name: string;
+}
+
+/** Provider-neutral connectivity verification result for a unified connection. */
+export interface ConnectionConnectivityResult {
+  success: boolean;
+  authMechanism: string;
+  httpStatus?: number;
+  errors: string[];
+  payload?: Record<string, unknown>;
 }
 
 /** RFC 9457 problem details, including ASP.NET validation extensions. */
