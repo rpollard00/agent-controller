@@ -29,7 +29,7 @@ const repositoryHostConnection: RepositoryHostConnectionProfile = {
   provider: 'AzureDevOpsRepos',
   organizationUrl: 'https://dev.azure.com/example',
   project: 'Agent Controller',
-  personalAccessTokenReference: { kind: 'EnvVar', id: 'ADO_PAT' },
+  personalAccessTokenReference: { name: 'ADO_PAT', version: null },
   createdAt: '2026-07-13T00:00:00Z',
   updatedAt: '2026-07-13T00:00:00Z',
 };
