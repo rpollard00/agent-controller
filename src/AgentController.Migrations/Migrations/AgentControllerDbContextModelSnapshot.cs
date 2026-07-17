@@ -330,6 +330,48 @@ namespace AgentController.Migrations.Migrations
                     b.ToTable("RepositoryHostConnections", (string)null);
                 });
 
+            modelBuilder.Entity("AgentController.Infrastructure.Data.Entities.ConnectionEntity", b =>
+                {
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Enabled")
+                        .IsRequired()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Capabilities")
+                        .IsRequired()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ProviderSettingsJson")
+                        .HasMaxLength(65536)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Key");
+
+                    b.ToTable("Connections", (string)null);
+                });
+
             modelBuilder.Entity("AgentController.Infrastructure.Data.Entities.ReworkCycleEntity", b =>
                 {
                     b.Property<string>("Id")

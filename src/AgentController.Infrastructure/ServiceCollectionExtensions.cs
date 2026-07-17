@@ -208,6 +208,7 @@ public static class AgentControllerServiceCollectionExtensions
         services.AddScoped<IReworkCycleStore, EfReworkCycleStore>();
         services.AddScoped<IReworkFeedbackStore, EfReworkFeedbackStore>();
         services.AddScoped<IRepositoryHostConnectionStore, EfRepositoryHostConnectionStore>();
+        services.AddScoped<IConnectionStore, EfConnectionStore>();
 
         return services;
     }
