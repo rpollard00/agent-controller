@@ -166,7 +166,7 @@ public sealed class ManagedProfileResolverTests
             new RepositoryStore(repositories),
             new WorkSourceStore(workSourceEnvironments),
             new RuntimeStore(runtimes),
-            new HostConnectionStore(),
+            new ConnectionStore(),
             configuredProfiles
         );
     }
@@ -323,24 +323,24 @@ public sealed class ManagedProfileResolverTests
             throw new NotSupportedException();
     }
 
-    private sealed class HostConnectionStore : IRepositoryHostConnectionStore
+    private sealed class ConnectionStore : IConnectionStore
     {
-        public Task<IReadOnlyList<RepositoryHostConnectionProfile>> ListAsync(
+        public Task<IReadOnlyList<ConnectionProfile>> ListAsync(
             CancellationToken cancellationToken
         ) => throw new NotSupportedException();
 
-        public Task<RepositoryHostConnectionProfile?> GetByKeyAsync(
+        public Task<ConnectionProfile?> GetByKeyAsync(
             string key,
             CancellationToken cancellationToken
-        ) => Task.FromResult<RepositoryHostConnectionProfile?>(null);
+        ) => Task.FromResult<ConnectionProfile?>(null);
 
         public Task<bool> CreateAsync(
-            RepositoryHostConnectionProfile profile,
+            ConnectionProfile profile,
             CancellationToken cancellationToken
         ) => throw new NotSupportedException();
 
         public Task<bool> UpdateAsync(
-            RepositoryHostConnectionProfile profile,
+            ConnectionProfile profile,
             CancellationToken cancellationToken
         ) => throw new NotSupportedException();
 

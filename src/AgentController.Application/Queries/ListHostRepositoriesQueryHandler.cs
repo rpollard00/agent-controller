@@ -1,4 +1,5 @@
 using AgentController.Application.Abstractions;
+using AgentController.Application.Results;
 using AgentController.Domain;
 
 namespace AgentController.Application.Queries;

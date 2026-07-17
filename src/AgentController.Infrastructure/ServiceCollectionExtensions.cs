@@ -207,7 +207,6 @@ public static class AgentControllerServiceCollectionExtensions
         services.AddScoped<IRuntimeEnvironmentStore, EfRuntimeEnvironmentStore>();
         services.AddScoped<IReworkCycleStore, EfReworkCycleStore>();
         services.AddScoped<IReworkFeedbackStore, EfReworkFeedbackStore>();
-        services.AddScoped<IRepositoryHostConnectionStore, EfRepositoryHostConnectionStore>();
         services.AddScoped<IConnectionStore, EfConnectionStore>();
 
         return services;
@@ -567,12 +566,12 @@ public static class AgentControllerServiceCollectionExtensions
     /// <see cref="AzureDevOpsReposFeedbackSource"/> as <see cref="IFeedbackSource"/>
     /// and <see cref="AzureDevOpsReposPrLabelSource"/> as <see cref="IPrLabelSource"/>.
     ///
-    /// The feedback source resolves its PAT per-PR from the repo-host connection
+    /// The feedback source resolves its PAT per-PR from the unified connection
     /// profile that owns the PR's repository (via IRepositoryStore →
-    /// IRepositoryHostConnectionStore → ISecretStore).
+    /// IConnectionStore → ISecretStore).
     ///
     /// Requires <see cref="AddAgentControllerRepositories"/> to be called first
-    /// (for <see cref="IRepositoryStore"/> and <see cref="IRepositoryHostConnectionStore"/>).
+    /// (for <see cref="IRepositoryStore"/> and <see cref="IConnectionStore"/>).
     /// Requires secrets infrastructure (for <see cref="ISecretStore"/>).
     /// </summary>
     public static IServiceCollection AddAgentControllerAzureDevOpsReposFeedbackSource(

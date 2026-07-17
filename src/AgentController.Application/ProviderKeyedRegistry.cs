@@ -4,12 +4,11 @@ namespace AgentController.Application;
 /// Generic static registry that accumulates provider-keyed type mappings during
 /// service registration, before the DI container is built.
 ///
-/// Used by both work-source connectivity verifiers and repository host connections
-/// to avoid duplicating the registry pattern.
+/// Used by the unified connection resolver to map provider discriminator strings
+/// to implementation types without duplicating the registry pattern.
 /// </summary>
 /// <typeparam name="TService">
-/// The service interface type being registered (e.g. <see cref="Abstractions.IWorkSourceConnectivityVerifier"/>
-/// or <see cref="Abstractions.IRepositoryHostConnection"/>).
+/// The service interface type being registered (e.g. <see cref="Abstractions.IConnection"/>).
 /// </typeparam>
 internal static class ProviderKeyedRegistry<TService>
 {

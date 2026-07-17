@@ -2,8 +2,6 @@ namespace AgentController.Application.Results;
 
 /// <summary>
 /// Provider-neutral result of a connectivity verification for a unified connection.
-/// Supersedes <see cref="RepositoryHostConnectivityResult"/> and
-/// <see cref="WorkSourceConnectivityResult"/> conceptually.
 /// </summary>
 public sealed record ConnectionConnectivityResult
 {

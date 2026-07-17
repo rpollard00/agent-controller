@@ -50,13 +50,13 @@ public sealed record AzureDevOpsConnectionSettings : ConnectionSettings
 
 /// <summary>
 /// Unified, provider-discriminated connection profile.
-/// 
-/// Replaces the connection-shaped halves of <see cref="RepositoryHostConnectionProfile"/>
-/// and <see cref="WorkSourceEnvironmentProfile"/>. A single org-level connection carries
-/// one or more <see cref="ConnectionCapability"/> values and provider-specific settings.
+///
+/// Replaces the connection-shaped halves of legacy repository-host and work-source profiles.
+/// A single org-level connection carries one or more <see cref="ConnectionCapability"/>
+/// values and provider-specific settings.
 /// Consumer profiles (work sources, repositories) reference this via <c>ConnectionKey</c>
 /// and add their own consumer-level fields (e.g. <c>Project</c>).
-/// 
+///
 /// Provider discriminator values:
 /// <list type="table">
 ///   <item><term>AzureDevOps</term><def>Azure DevOps (org-level, supports Repositories + WorkTracking).</def></item>

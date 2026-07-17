@@ -35,8 +35,6 @@ internal sealed class AgentControllerDbContext : DbContext
     public DbSet<ReworkFeedbackEntity> ReworkFeedback => Set<ReworkFeedbackEntity>();
     public DbSet<NamedSecretEntity> NamedSecrets => Set<NamedSecretEntity>();
     public DbSet<SecretVersionEntity> SecretVersions => Set<SecretVersionEntity>();
-    public DbSet<RepositoryHostConnectionEntity> RepositoryHostConnections =>
-        Set<RepositoryHostConnectionEntity>();
     public DbSet<ConnectionEntity> Connections => Set<ConnectionEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -52,7 +50,6 @@ internal sealed class AgentControllerDbContext : DbContext
         modelBuilder.ApplyConfiguration(new ReworkFeedbackEntityConfiguration());
         modelBuilder.ApplyConfiguration(new NamedSecretEntityConfiguration());
         modelBuilder.ApplyConfiguration(new SecretVersionEntityConfiguration());
-        modelBuilder.ApplyConfiguration(new RepositoryHostConnectionEntityConfiguration());
         modelBuilder.ApplyConfiguration(new ConnectionEntityConfiguration());
     }
 }

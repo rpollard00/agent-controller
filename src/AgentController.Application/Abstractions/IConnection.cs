@@ -18,11 +18,9 @@ public sealed record ConnectionProject(
 /// <summary>
 /// Unified, capability-aware port for interacting with a repository host,
 /// work-source, or runtime-environment provider.
-/// 
-/// Generalizes <see cref="IRepositoryHostConnection"/> and
-/// <see cref="IWorkSourceConnectivityVerifier"/> into a single interface
-/// keyed by <see cref="ConnectionProfile.Provider"/>.
-/// 
+///
+/// Keyed by <see cref="ConnectionProfile.Provider"/>.
+///
 /// Supported provider discriminator values:
 /// <list type="table">
 ///   <item><term>AzureDevOps</term><description>Azure DevOps (Repositories + WorkTracking)</description></item>

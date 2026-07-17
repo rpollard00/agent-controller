@@ -8,7 +8,7 @@ namespace AgentController.Infrastructure.Tests;
 public sealed class ManagedDiagnosticRegistrationTests
 {
     [Fact]
-    public void ConnectivityVerifierResolver_ResolvesWithoutConfiguredBoardsClient()
+    public void ConnectionResolver_ResolvesWithoutConfiguredBoardsClient()
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(
@@ -30,9 +30,7 @@ public sealed class ManagedDiagnosticRegistrationTests
         using var serviceProvider = services.BuildServiceProvider();
         using var scope = serviceProvider.CreateScope();
 
-        Assert.NotNull(
-            scope.ServiceProvider.GetRequiredService<IWorkSourceConnectivityVerifierResolver>()
-        );
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<IConnectionResolver>());
         Assert.Null(scope.ServiceProvider.GetService<IAzureDevOpsBoardsClient>());
     }
 

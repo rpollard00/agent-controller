@@ -61,7 +61,7 @@ public sealed class RepositoryOnboardingHandlerTests
     {
         var repositories = new FakeRepositoryStore();
         var runtimeEnvironments = new FakeRuntimeEnvironmentStore("runtime-local");
-        var hostConnections = new FakeRepositoryHostConnectionStore("host-primary");
+        var hostConnections = new FakeConnectionStore("host-primary");
         var handler = new CreateRepositoryCommandHandler(
             repositories,
             runtimeEnvironments,
@@ -105,7 +105,7 @@ public sealed class RepositoryOnboardingHandlerTests
         var handler = new CreateRepositoryCommandHandler(
             repositories,
             new FakeRuntimeEnvironmentStore(),
-            new FakeRepositoryHostConnectionStore()
+            new FakeConnectionStore()
         );
         var profile = CreateProfile("invalid") with
         {
@@ -135,7 +135,7 @@ public sealed class RepositoryOnboardingHandlerTests
         var handler = new CreateRepositoryCommandHandler(
             repositories,
             new FakeRuntimeEnvironmentStore(),
-            new FakeRepositoryHostConnectionStore()
+            new FakeConnectionStore()
         );
         var profile = CreateProfile("referencing") with
         {
@@ -161,7 +161,7 @@ public sealed class RepositoryOnboardingHandlerTests
         var handler = new CreateRepositoryCommandHandler(
             repositories,
             new FakeRuntimeEnvironmentStore(),
-            new FakeRepositoryHostConnectionStore()
+            new FakeConnectionStore()
         );
 
         var result = await handler.HandleAsync(
@@ -181,7 +181,7 @@ public sealed class RepositoryOnboardingHandlerTests
         var handler = new UpdateRepositoryCommandHandler(
             repositories,
             new FakeRuntimeEnvironmentStore(),
-            new FakeRepositoryHostConnectionStore()
+            new FakeConnectionStore()
         );
         var update = CreateProfile(" SERVICE ") with
         {
@@ -208,7 +208,7 @@ public sealed class RepositoryOnboardingHandlerTests
         var handler = new UpdateRepositoryCommandHandler(
             repositories,
             new FakeRuntimeEnvironmentStore(),
-            new FakeRepositoryHostConnectionStore()
+            new FakeConnectionStore()
         );
 
         var result = await handler.HandleAsync(
@@ -232,7 +232,7 @@ public sealed class RepositoryOnboardingHandlerTests
         var handler = new UpdateRepositoryCommandHandler(
             repositories,
             new FakeRuntimeEnvironmentStore(),
-            new FakeRepositoryHostConnectionStore()
+            new FakeConnectionStore()
         );
 
         var result = await handler.HandleAsync(
@@ -453,33 +453,33 @@ public sealed class RepositoryOnboardingHandlerTests
             throw new NotSupportedException();
     }
 
-    private sealed class FakeRepositoryHostConnectionStore(params string[] keys)
-        : IRepositoryHostConnectionStore
+    private sealed class FakeConnectionStore(params string[] keys)
+        : IConnectionStore
     {
         private readonly HashSet<string> _keys = new(keys, StringComparer.OrdinalIgnoreCase);
 
-        public Task<IReadOnlyList<RepositoryHostConnectionProfile>> ListAsync(
+        public Task<IReadOnlyList<ConnectionProfile>> ListAsync(
             CancellationToken cancellationToken
         ) => throw new NotSupportedException();
 
-        public Task<RepositoryHostConnectionProfile?> GetByKeyAsync(
+        public Task<ConnectionProfile?> GetByKeyAsync(
             string key,
             CancellationToken cancellationToken
         )
         {
-            RepositoryHostConnectionProfile? profile = _keys.Contains(key)
-                ? new RepositoryHostConnectionProfile { Key = key }
+            ConnectionProfile? profile = _keys.Contains(key)
+                ? new ConnectionProfile { Key = key }
                 : null;
             return Task.FromResult(profile);
         }
 
         public Task<bool> CreateAsync(
-            RepositoryHostConnectionProfile profile,
+            ConnectionProfile profile,
             CancellationToken cancellationToken
         ) => throw new NotSupportedException();
 
         public Task<bool> UpdateAsync(
-            RepositoryHostConnectionProfile profile,
+            ConnectionProfile profile,
             CancellationToken cancellationToken
         ) => throw new NotSupportedException();
 
