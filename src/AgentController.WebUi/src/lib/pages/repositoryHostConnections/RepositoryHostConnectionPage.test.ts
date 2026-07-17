@@ -8,6 +8,8 @@ import type {
   RepositoryHostConnectivityResult,
   RepositoryProfile,
   RuntimeEnvironmentProfile,
+  SecretInfo,
+  SecretsResourceClient,
   WorkSourceEnvironmentProfile,
 } from '../../api/types';
 
@@ -18,7 +20,7 @@ const connection: RepositoryHostConnectionProfile = {
   provider: 'AzureDevOpsRepos',
   organizationUrl: 'https://dev.azure.com/example',
   project: 'Agent Controller',
-  personalAccessTokenReference: { kind: 'EnvVar', id: 'ADO_PAT' },
+  personalAccessTokenReference: { name: 'ADO_PAT', version: null },
   createdAt: '2026-07-16T00:00:00Z',
   updatedAt: '2026-07-16T00:00:00Z',
 };
@@ -27,8 +29,10 @@ function createApi(
   initialConnections: RepositoryHostConnectionProfile[] = [connection],
   verifyResult?: RepositoryHostConnectivityResult,
   repos?: HostRepository[],
+  initialSecrets: SecretInfo[] = [{ name: 'ADO_PAT', latestVersion: 1, createdAt: '2026-07-16T00:00:00Z', updatedAt: '2026-07-16T00:00:00Z' }],
 ) {
   let profiles = [...initialConnections];
+  let secrets = [...initialSecrets];
 
   const defaultVerifyResult: RepositoryHostConnectivityResult = {
     success: true,
@@ -73,6 +77,13 @@ function createApi(
     })),
   };
 
+  const secretsClient: SecretsResourceClient = {
+    list: vi.fn(async () => [...secrets]),
+    listVersions: vi.fn(async () => []),
+    create: vi.fn(async (req) => { secrets.push({ name: req.name, latestVersion: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }); return { name: req.name }; }),
+    createVersion: vi.fn(async (name) => ({ name, version: 2 })),
+  };
+
   const client: WebUiApiClient = {
     repositories: staticResource<RepositoryProfile>([]),
     workSourceEnvironments: {
@@ -85,9 +96,10 @@ function createApi(
     },
     repositoryHostConnections,
     runtimeEnvironments: staticResource<RuntimeEnvironmentProfile>([]),
+    secrets: secretsClient,
   };
 
-  return { client, connections: repositoryHostConnections };
+  return { client, connections: repositoryHostConnections, secrets: secretsClient };
 }
 
 function staticResource<T>(profiles: T[]): ResourceClient<T> {
@@ -113,9 +125,10 @@ async function completeRequiredCreateFields(): Promise<void> {
   await fireEvent.input(screen.getByLabelText(/^Project/), {
     target: { value: 'Secondary Project' },
   });
-  await fireEvent.input(screen.getByLabelText(/Environment variable name/), {
-    target: { value: 'SECONDARY_ADO_PAT' },
-  });
+  // Select a secret from the combobox picker
+  await fireEvent.click(screen.getByRole('button', { name: 'PAT secret (required)' }));
+  await waitFor(() => expect(screen.getByText('ADO_PAT')).toBeVisible());
+  fireEvent.click(screen.getByRole('option', { name: /ADO_PAT/ }));
 }
 
 describe('repository host connection screens', () => {
@@ -131,7 +144,6 @@ describe('repository host connection screens', () => {
     expect(
       await screen.findByRole('heading', { level: 1, name: 'Add repository host connection' }),
     ).toBeVisible();
-    expect(screen.getByText('Secrets are stored encrypted')).toBeVisible();
 
     // Verify provider selector defaults to Azure DevOps Repos
     expect(screen.getByLabelText(/Repository host provider/)).toHaveValue('AzureDevOpsRepos');
@@ -148,7 +160,7 @@ describe('repository host connection screens', () => {
         provider: 'AzureDevOpsRepos',
         organizationUrl: 'https://dev.azure.com/example',
         project: 'Secondary Project',
-        personalAccessTokenReference: { kind: 'EnvVar', id: 'SECONDARY_ADO_PAT' },
+        personalAccessTokenReference: { name: 'ADO_PAT', version: null },
       }),
       expect.any(AbortSignal),
     );
@@ -168,7 +180,7 @@ describe('repository host connection screens', () => {
     expect(await screen.findByText('Correct the highlighted fields')).toBeVisible();
     expect(screen.getByText('A key is required.')).toBeVisible();
     expect(screen.getByText('An Azure DevOps organization URL is required.')).toBeVisible();
-    expect(screen.getByText('A secret reference identifier is required.')).toBeVisible();
+    expect(screen.getByText('A secret reference for the PAT is required.')).toBeVisible();
     expect(api.connections.create).not.toHaveBeenCalled();
   });
 
