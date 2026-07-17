@@ -2,14 +2,13 @@ namespace AgentController.Application.Abstractions;
 
 /// <summary>
 /// Minimal abstraction over work-source configuration options.
-/// Allows the Application layer to read organization/project settings
+/// Allows the Application layer to read project/state settings
 /// without depending on the Infrastructure options types directly.
+/// Connection-level settings (OrganizationUrl, PAT) are carried on
+/// the referenced <see cref="Domain.ConnectionProfile"/>.
 /// </summary>
 public interface IWorkSourceOptions
 {
-    /// <summary>Azure DevOps organization URL, or <c>null</c> if not configured.</summary>
-    string? OrganizationUrl { get; }
-
     /// <summary>Azure DevOps project name, or <c>null</c> if not configured.</summary>
     string? Project { get; }
 

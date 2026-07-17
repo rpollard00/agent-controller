@@ -33,7 +33,7 @@ public sealed class AzureDevOpsBoardsOptions : IAzureDevOpsBoardsOptions
 
     /// <summary>
     /// Base URL for the Azure DevOps REST API.
-    /// Derived from <see cref="WorkSourceOptions.OrganizationUrl"/>
+    /// Derived from the resolved ConnectionProfile's AzureDevOps settings
     /// (e.g. "https://dev.azure.com/myorg").
     /// Required when the work source provider is "AzureDevOpsBoards".
     /// </summary>
@@ -41,7 +41,7 @@ public sealed class AzureDevOpsBoardsOptions : IAzureDevOpsBoardsOptions
 
     /// <summary>
     /// Project name for the Azure DevOps Boards project.
-    /// Derived from <see cref="WorkSourceOptions.Project"/>.
+    /// Derived from <see cref="WorkSourceOptions.Project"/> (consumer-level).
     /// Required when the work source provider is "AzureDevOpsBoards".
     /// </summary>
     public string? Project { get; set; }

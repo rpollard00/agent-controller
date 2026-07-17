@@ -1,6 +1,7 @@
 using AgentController.Application;
 using AgentController.Application.Abstractions;
 using AgentController.Application.Services;
+using AgentController.Domain;
 using AgentController.Domain.Secrets;
 using AgentController.Infrastructure;
 using AgentController.Infrastructure.Data;
@@ -59,7 +60,6 @@ public static class AgentControllerServiceCollectionExtensions
 
             if (wsOptions is not null)
             {
-                wsOptionsView.OrganizationUrl = wsOptions.OrganizationUrl;
                 wsOptionsView.Project = wsOptions.Project;
                 wsOptionsView.ActiveState = wsOptions.ActiveState;
                 wsOptionsView.CompletedState = wsOptions.CompletedState;
@@ -476,25 +476,35 @@ public static class AgentControllerServiceCollectionExtensions
     {
         // Register the Azure DevOps Boards HTTP client as scoped.
         // Each operation (poll cycle, request) gets a fresh client.
-        // PAT is resolved from a named secret via ISecretStore.
+        // OrganizationUrl is derived from the resolved ConnectionProfile;
+        // PAT is resolved from the connection's secret via ISecretStore.
         services.AddScoped<IAzureDevOpsBoardsClient>(sp =>
         {
             var boardsOptions = sp.GetRequiredService<IOptions<AzureDevOpsBoardsOptions>>().Value;
             var workSourceOptions = sp.GetRequiredService<IOptions<WorkSourceOptions>>().Value;
+            var connectionStore = sp.GetRequiredService<IConnectionStore>();
 
-            // Derive BaseUrl and Project from WorkSourceOptions into BoardsOptions
-            boardsOptions.BaseUrl = workSourceOptions.OrganizationUrl;
-            boardsOptions.Project = workSourceOptions.Project;
+            // Resolve the connection to derive OrganizationUrl and PAT secret name.
+            var connection = connectionStore
+                .GetByKeyAsync(workSourceOptions.ConnectionKey ?? string.Empty, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
 
-            if (validateConnection)
+            if (connection is null || connection.ProviderSettings is not AzureDevOpsConnectionSettings adoSettings)
             {
-                AzureDevOpsBoardsValidator.Validate(workSourceOptions, boardsOptions);
+                throw new InvalidOperationException(
+                    $"Cannot create Azure DevOps Boards client: connection '{workSourceOptions.ConnectionKey}' " +
+                    "not found or does not have AzureDevOps settings.");
             }
 
-            // Resolve PAT from a named, envelope-encrypted secret via ISecretStore.
+            // Derive BaseUrl from the connection's OrganizationUrl; Project from WorkSourceOptions.
+            boardsOptions.BaseUrl = adoSettings.OrganizationUrl;
+            boardsOptions.Project = workSourceOptions.Project;
+
+            // Resolve PAT from the connection's secret reference via ISecretStore.
             var secretStore = sp.GetRequiredService<ISecretStore>();
             var resolvedPat = secretStore
-                .ResolveAsync(boardsOptions.PersonalAccessToken, cancellationToken: CancellationToken.None)
+                .ResolveAsync(adoSettings.PersonalAccessTokenReference.Name, cancellationToken: CancellationToken.None)
                 .GetAwaiter()
                 .GetResult();
 
@@ -594,15 +604,36 @@ public static class AgentControllerServiceCollectionExtensions
         // so the label source must not be scoped.
         services.AddSingleton<IPrLabelSource>(sp =>
         {
-            var boardsOptions = sp.GetRequiredService<IOptions<AzureDevOpsBoardsOptions>>().Value;
             var workSourceOptions = sp.GetRequiredService<IOptions<WorkSourceOptions>>().Value;
+            var connectionStore = sp.GetRequiredService<IConnectionStore>();
+            var secretStore = sp.GetRequiredService<ISecretStore>();
             var logger = sp.GetRequiredService<ILogger<AzureDevOpsReposPrLabelSource>>();
 
-            boardsOptions.BaseUrl = workSourceOptions.OrganizationUrl;
-            boardsOptions.Project = workSourceOptions.Project;
+            // Resolve the connection to derive BaseUrl and PAT.
+            var connection = connectionStore
+                .GetByKeyAsync(workSourceOptions.ConnectionKey ?? string.Empty, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            if (connection is null || connection.ProviderSettings is not AzureDevOpsConnectionSettings adoSettings)
+            {
+                throw new InvalidOperationException(
+                    $"Cannot create PR label source: connection '{workSourceOptions.ConnectionKey}' " +
+                    "not found or does not have AzureDevOps settings.");
+            }
+
+            // Resolve PAT from the connection's secret reference.
+            var resolvedPat = secretStore
+                .ResolveAsync(adoSettings.PersonalAccessTokenReference.Name, cancellationToken: CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
 
             var http = new HttpClient();
-            return new AzureDevOpsReposPrLabelSource(http, boardsOptions, logger);
+            return new AzureDevOpsReposPrLabelSource(
+                http,
+                adoSettings.OrganizationUrl,
+                resolvedPat,
+                logger);
         });
 
         return services;

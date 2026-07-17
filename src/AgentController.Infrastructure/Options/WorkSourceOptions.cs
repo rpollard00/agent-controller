@@ -18,12 +18,14 @@ public sealed class WorkSourceOptions : IWorkSourceOptions
     public string Provider { get; init; } = string.Empty;
 
     /// <summary>
-    /// Azure DevOps organization URL (required for AzureDevOpsBoards).
+    /// Key of the unified ConnectionProfile to use for this work source.
+    /// The connection carries OrganizationUrl and PAT; the consumer profile
+    /// carries only the consumer-level Project.
     /// </summary>
-    public string? OrganizationUrl { get; init; }
+    public string? ConnectionKey { get; init; }
 
     /// <summary>
-    /// Azure DevOps project name.
+    /// Azure DevOps project name (consumer-level, not connection-level).
     /// </summary>
     public string? Project { get; init; }
 

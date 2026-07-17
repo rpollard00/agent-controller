@@ -3,14 +3,11 @@ namespace AgentController.Application.Abstractions;
 /// <summary>
 /// Concrete options class implementing <see cref="IWorkSourceOptions"/>.
 /// Used by the Application layer to read work-source configuration
-/// (organization URL, project, active/completed states) without depending
+/// (project, active/completed states) without depending
 /// on the Infrastructure <c>WorkSourceOptions</c> type directly.
 /// </summary>
 public sealed class WorkSourceOptionsView : IWorkSourceOptions
 {
-    /// <inheritdoc />
-    public string? OrganizationUrl { get; set; }
-
     /// <inheritdoc />
     public string? Project { get; set; }
 

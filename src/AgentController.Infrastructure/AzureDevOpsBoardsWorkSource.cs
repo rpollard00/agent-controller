@@ -107,22 +107,21 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
         if (!selection.IsManaged)
         {
             var options = _options.CurrentValue;
+            if (string.IsNullOrWhiteSpace(options.ConnectionKey))
+            {
+                return new ClaimResult
+                {
+                    Success = false,
+                    FailureReason = "Azure DevOps connection key is not configured in workSource:connectionKey.",
+                };
+            }
+
             if (string.IsNullOrWhiteSpace(options.Project))
             {
                 return new ClaimResult
                 {
                     Success = false,
                     FailureReason = "Azure DevOps project is not configured in workSource:project.",
-                };
-            }
-
-            if (string.IsNullOrWhiteSpace(options.OrganizationUrl))
-            {
-                return new ClaimResult
-                {
-                    Success = false,
-                    FailureReason =
-                        "Azure DevOps organization URL is not configured in workSource:organizationUrl.",
                 };
             }
         }

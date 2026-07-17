@@ -157,15 +157,40 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
         }
 
         // Fall back to configured (appsettings) path.
-        var boards = _boardsOptions.Value;
+        // Resolve the connection to derive OrganizationUrl and PAT.
+        var connectionStore = services.GetRequiredService<IConnectionStore>();
+        var connectionKey = workSource.ConnectionKey;
 
-        // Resolve PAT — skip if not available (PAT validation is handled elsewhere).
+        if (string.IsNullOrWhiteSpace(connectionKey))
+        {
+            SkipValidationMissingConnectionKey(_logger);
+            return;
+        }
+
+        var fallbackConnection = await connectionStore.GetByKeyAsync(connectionKey, cancellationToken);
+        if (fallbackConnection is null || fallbackConnection.ProviderSettings is not AzureDevOpsConnectionSettings adoSettings)
+        {
+            WarnMissingConnectionConfig(_logger, connectionKey ?? "(null)");
+            return;
+        }
+
+        var project = workSource.Project;
+        if (string.IsNullOrWhiteSpace(project))
+        {
+            WarnMissingProject(_logger, "(configured)");
+            return;
+        }
+
+        // Resolve PAT from the connection's secret reference.
+        var secretStore = services.GetRequiredService<Domain.Secrets.ISecretStore>();
         string? pat;
         try
         {
-            pat = boards.ResolvePersonalAccessToken();
+            pat = await secretStore.ResolveAsync(
+                adoSettings.PersonalAccessTokenReference.Name,
+                cancellationToken: cancellationToken);
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex)
         {
             SkipValidationPatFailed(_logger, ex);
             return;
@@ -177,24 +202,20 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
             return;
         }
 
-        var project = workSource.Project;
-
-        if (string.IsNullOrWhiteSpace(workSource.OrganizationUrl) || string.IsNullOrWhiteSpace(project))
-        {
-            SkipValidationMissingConfig(_logger);
-            return;
-        }
-
-        // Query ADO for valid states via the scoped IAzureDevOpsBoardsClient.
-        // The client is registered with the correct base URL and PAT from options.
+        // Query ADO for valid states using the connection's OrganizationUrl + consumer Project.
         IReadOnlyDictionary<string, IReadOnlyList<string>> groupedStates;
         try
         {
-            groupedStates = await FetchValidStatesGroupedAsync(project!, cancellationToken);
+            groupedStates = await FetchValidStatesForConnectionAsync(
+                services,
+                adoSettings.OrganizationUrl,
+                project,
+                pat,
+                cancellationToken);
         }
         catch (Exception ex)
         {
-            WarnStateQueryFailed(_logger, project!, ex.Message);
+            WarnStateQueryFailed(_logger, project, ex.Message);
             return;
         }
 
@@ -206,12 +227,12 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
 
         if (validStates.Count == 0)
         {
-            WarnNoValidStates(_logger, project!);
+            WarnNoValidStates(_logger, project);
             return;
         }
 
 #pragma warning disable CA1873
-        ValidStatesEnumerated(_logger, project!, string.Join(", ", validStates));
+        ValidStatesEnumerated(_logger, project, string.Join(", ", validStates));
 #pragma warning restore CA1873
 
         var failures = ValidateStates(
@@ -297,15 +318,20 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
     }
 
     /// <summary>
-    /// Fetches valid states grouped by work item type by resolving the scoped
-    /// <see cref="IAzureDevOpsBoardsClient"/> through <see cref="IServiceScopeFactory"/>.
+    /// Fetches valid states for the configured (appsettings) fallback path
+    /// by creating a client from the resolved connection's OrganizationUrl + PAT.
     /// </summary>
-    private async Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> FetchValidStatesGroupedAsync(
+    private static async Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> FetchValidStatesForConnectionAsync(
+        IServiceProvider services,
+        string organizationUrl,
         string project,
+        string pat,
         CancellationToken cancellationToken)
     {
-        using var scope = _scopeFactory.CreateScope();
-        var client = scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClient>();
+        var clientFactory = services.GetRequiredService<AzureDevOpsClientFactory>();
+        var logger = services.GetRequiredService<ILogger<AzureDevOpsBoardStateStartupValidator>>();
+        var client = clientFactory.Create(organizationUrl, project, pat);
+        using var disposable = client as IDisposable;
         return await client.GetValidStatesAsync(project, cancellationToken);
     }
 
@@ -336,8 +362,8 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
     private static partial void SkipValidationNoPat(ILogger logger);
 
     [LoggerMessage(Level = LogLevel.Warning,
-        Message = "Skipping ADO board state validation: organizationUrl or project is not configured.")]
-    private static partial void SkipValidationMissingConfig(ILogger logger);
+        Message = "Skipping ADO board state validation: connectionKey is not configured.")]
+    private static partial void SkipValidationMissingConnectionKey(ILogger logger);
 
     [LoggerMessage(Level = LogLevel.Warning,
         Message = "ADO state query failed for project='{Project}': {Error}. " +

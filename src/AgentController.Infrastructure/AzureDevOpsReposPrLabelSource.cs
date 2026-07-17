@@ -16,26 +16,27 @@ namespace AgentController.Infrastructure;
 internal sealed partial class AzureDevOpsReposPrLabelSource : IPrLabelSource
 {
     private readonly HttpClient _http;
-    private readonly AzureDevOpsBoardsOptions _options;
     private readonly ILogger<AzureDevOpsReposPrLabelSource> _logger;
 
-    public AzureDevOpsReposPrLabelSource(HttpClient http, AzureDevOpsBoardsOptions options, ILogger<AzureDevOpsReposPrLabelSource> logger)
+    public AzureDevOpsReposPrLabelSource(
+        HttpClient http,
+        string baseUrl,
+        string? personalAccessToken,
+        ILogger<AzureDevOpsReposPrLabelSource> logger)
     {
         _http = http;
-        _options = options;
         _logger = logger;
 
-        // Configure base address from options (same pattern as AzureDevOpsReposFeedbackSource).
-        if (!string.IsNullOrWhiteSpace(options.BaseUrl))
+        // Configure base address.
+        if (!string.IsNullOrWhiteSpace(baseUrl))
         {
-            _http.BaseAddress = new Uri(options.BaseUrl.TrimEnd('/') + "/");
+            _http.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
         }
 
         // Set Basic auth header with PAT.
-        var pat = options.ResolvePersonalAccessToken();
-        if (!string.IsNullOrWhiteSpace(pat))
+        if (!string.IsNullOrWhiteSpace(personalAccessToken))
         {
-            var authBytes = Encoding.ASCII.GetBytes($":{pat}");
+            var authBytes = Encoding.ASCII.GetBytes($":{personalAccessToken}");
             _http.DefaultRequestHeaders.Authorization =
                 new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
         }

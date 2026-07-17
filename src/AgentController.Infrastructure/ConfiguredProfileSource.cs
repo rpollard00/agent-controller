@@ -83,7 +83,7 @@ internal sealed class ConfiguredProfileSource : IConfiguredProfileSource
     {
         var workSource = _workSource.CurrentValue;
 
-        if (string.IsNullOrWhiteSpace(workSource.Project))
+        if (string.IsNullOrWhiteSpace(workSource.ConnectionKey))
         {
             return null;
         }
@@ -95,7 +95,7 @@ internal sealed class ConfiguredProfileSource : IConfiguredProfileSource
             Enabled = true,
             Provider = "AzureDevOpsBoards",
             TagPrefix = workSource.TagPrefix,
-            ConnectionKey = string.Empty,
+            ConnectionKey = workSource.ConnectionKey,
             Project = workSource.Project ?? string.Empty,
             ActiveState = workSource.ActiveState,
             CompletedState = workSource.CompletedState,
