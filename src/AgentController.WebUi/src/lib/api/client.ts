@@ -50,6 +50,7 @@ export interface SecretsResourceClient {
   listVersions(name: string, signal?: AbortSignal): Promise<SecretVersionInfo[]>;
   create(request: CreateSecretRequest, signal?: AbortSignal): Promise<CreatedSecretResponse>;
   createVersion(name: string, request: CreateSecretVersionRequest, signal?: AbortSignal): Promise<CreatedSecretVersionResponse>;
+  delete(name: string, signal?: AbortSignal): Promise<void>;
 }
 
 export interface WebUiApiClient {
@@ -222,6 +223,8 @@ export function createWebUiApiClient(options: ApiClientOptions = {}): WebUiApiCl
             body: JSON.stringify(req),
           },
         ),
+      delete: (name, signal) =>
+        request<void>(`/secrets/${encodeURIComponent(name)}`, { method: 'DELETE', signal }),
     },
   };
 }

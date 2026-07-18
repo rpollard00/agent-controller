@@ -123,6 +123,7 @@ function createApi(
       listVersions: vi.fn(async () => []),
       create: vi.fn(async () => ({ name: 'test' })),
       createVersion: vi.fn(async () => ({ name: 'test', version: 1 })),
+      delete: vi.fn(async () => undefined),
     },
   };
 

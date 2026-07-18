@@ -106,6 +106,7 @@ function createApi(
     listVersions: vi.fn(async () => []),
     create: vi.fn(async (req) => { secrets.push({ name: req.name, latestVersion: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }); return { name: req.name }; }),
     createVersion: vi.fn(async (name) => ({ name, version: 2 })),
+    delete: vi.fn(async () => undefined),
   };
 
   const client: WebUiApiClient = {

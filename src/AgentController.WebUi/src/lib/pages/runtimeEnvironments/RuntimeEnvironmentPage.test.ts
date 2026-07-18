@@ -88,6 +88,9 @@ function createApi(initialEnvironments: RuntimeEnvironmentProfile[] = [environme
       createVersion: vi.fn(async (): Promise<never> => {
         throw new Error('Not implemented in this component test.');
       }),
+      delete: vi.fn(async (): Promise<never> => {
+        throw new Error('Not implemented in this component test.');
+      }),
     },
   };
 

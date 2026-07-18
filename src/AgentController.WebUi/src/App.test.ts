@@ -33,6 +33,7 @@ function secretsClient(): SecretsResourceClient {
     listVersions: async () => [],
     create: notImplemented,
     createVersion: notImplemented,
+    delete: notImplemented,
   };
 }
 
