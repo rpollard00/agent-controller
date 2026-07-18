@@ -460,6 +460,23 @@ public static class WebUiControllers
                 return MapSecretVersionResult(result);
             }
         );
+
+        // DELETE /api/webui/secrets/{name} — delete a secret (blocked while referenced)
+        group.MapDelete(
+            "/{name}",
+            async (
+                string name,
+                ICommandHandler<DeleteSecretCommand, DeleteSecretResult> handler,
+                CancellationToken cancellationToken
+            ) =>
+            {
+                var result = await handler.HandleAsync(
+                    new DeleteSecretCommand(name),
+                    cancellationToken
+                );
+                return MapDeleteSecretResult(result);
+            }
+        );
     }
 
     private static IResult MapSecretResult(CreateSecretResult result) =>
@@ -488,6 +505,18 @@ public static class WebUiControllers
             SecretOperationStatus.NotFound => NotFoundProblem(result.Detail),
             _ => throw new InvalidOperationException(
                 $"Unsupported secret version operation status '{result.Status}'."
+            ),
+        };
+
+    private static IResult MapDeleteSecretResult(DeleteSecretResult result) =>
+        result.Status switch
+        {
+            SecretOperationStatus.Succeeded => Results.NoContent(),
+            SecretOperationStatus.ValidationFailed => ValidationProblem(result.ValidationErrors),
+            SecretOperationStatus.Conflict => ConflictProblem(result.Detail),
+            SecretOperationStatus.NotFound => NotFoundProblem(result.Detail),
+            _ => throw new InvalidOperationException(
+                $"Unsupported secret delete operation status '{result.Status}'."
             ),
         };
 
