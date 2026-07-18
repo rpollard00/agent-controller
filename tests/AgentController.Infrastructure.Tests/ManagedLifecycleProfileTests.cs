@@ -59,11 +59,10 @@ public sealed class ManagedLifecycleProfileTests : IDisposable
                     Enabled = true,
                     Provider = "AzureDevOpsBoards",
                     TagPrefix = "agent",
-                    OrganizationUrl = "https://dev.azure.com/example",
+                    ConnectionKey = "azuredevops-example",
                     Project = "Example",
                     ActiveState = "Managed Active",
                     CompletedState = "Managed Done",
-                    PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByName("MANAGED_LIFECYCLE_TEST_PAT"),
                 },
                 CancellationToken.None
             )

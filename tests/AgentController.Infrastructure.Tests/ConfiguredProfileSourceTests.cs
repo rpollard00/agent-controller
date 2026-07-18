@@ -35,8 +35,7 @@ public sealed class ConfiguredProfileSourceTests
             OptionsMonitor(new Dictionary<string, RepositoryProfileOptions>()),
             OptionsMonitor(new EnvironmentProviderOptions { Provider = "LocalWorkspace" }),
             OptionsMonitor(runtime),
-            OptionsMonitor(new WorkSourceOptions()),
-            OptionsMonitor(new AzureDevOpsBoardsOptions())
+            OptionsMonitor(new WorkSourceOptions())
         );
 
         var profile = source.GetRuntimeEnvironment(

@@ -352,8 +352,8 @@ public class LocalFileWorkSourceTests
 
         Assert.Equal("LocalFile", options.Provider);
         Assert.Equal("agent", options.TagPrefix);
-        // Azure DevOps fields are optional and not required for LocalFile
-        Assert.Null(options.OrganizationUrl);
+        // Connection-level fields are optional and not required for LocalFile
+        Assert.Null(options.ConnectionKey);
         Assert.Null(options.Project);
     }
 

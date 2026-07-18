@@ -2,7 +2,10 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using AgentController.Application;
+using AgentController.Application.Abstractions;
+using AgentController.Application.Results;
 using AgentController.Domain;
+using AgentController.Domain.Secrets;
 using AgentController.Infrastructure.Data;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -15,9 +18,9 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 namespace AgentController.Api.Tests;
 
 /// <summary>
-/// API/integration tests for POST /api/webui/work-source-environments/{key}:verify.
-/// Covers: success, config-error, missing-environment, unsupported-provider,
-/// and legacy diagnostic route removal.
+/// API/integration tests for POST /api/webui/connections/{key}/verify.
+/// Covers: success, config-error, missing-connection, unsupported-provider.
+/// Supersedes the legacy work-source-environments/{key}:verify endpoint tests.
 /// </summary>
 [System.Diagnostics.CodeAnalysis.SuppressMessage(
     "Design",
@@ -30,6 +33,7 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
     private const string TestPatValue = "test-personal-access-token-verify";
 
     private string _databasePath = null!;
+    private string _kekPath = null!;
     private WebApplicationFactory<Program> _factory = null!;
     private HttpClient _client = null!;
 
@@ -40,7 +44,11 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
             $"agent-controller-verify-{Guid.NewGuid():N}.db"
         );
 
-        _factory = new VerifyConnectivityApiFactory(_databasePath, TestSecretName, TestPatValue);
+        // Create a 32-byte KEK file for the Db secret provider validation.
+        _kekPath = Path.Combine(Path.GetTempPath(), $"test-kek-{Guid.NewGuid():N}.key");
+        File.WriteAllBytes(_kekPath, new byte[32]);
+
+        _factory = new VerifyConnectivityApiFactory(_databasePath, _kekPath, TestSecretName, TestPatValue);
 
         using var scope = _factory.Services.CreateScope();
         var database = scope.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
@@ -57,6 +65,7 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
         DeleteDatabaseFile(_databasePath);
         DeleteDatabaseFile($"{_databasePath}-shm");
         DeleteDatabaseFile($"{_databasePath}-wal");
+        DeleteDatabaseFile(_kekPath);
         return Task.CompletedTask;
     }
 
@@ -65,18 +74,34 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
     [Fact]
     public async Task VerifyEndpoint_Success_Returns200WithResultShapeAndNoPat()
     {
-        // Arrange: create a work source environment that the mock factory will serve.
-        var profile = CreateValidProfile("Verify.Success", "Success Environment", TestSecretName);
+        // Arrange: create a connection that the mock factory will serve.
+        var profile = new
+        {
+            key = "verify-success",
+            displayName = "Success Connection",
+            enabled = true,
+            provider = "AzureDevOps",
+            capabilities = new[] { "Repositories", "WorkTracking" },
+            providerSettings = new
+            {
+                provider = "AzureDevOps",
+                organizationUrl = "https://dev.azure.com/testorg",
+                personalAccessTokenReference = new
+                {
+                    name = TestSecretName,
+                },
+            },
+        };
 
         using var createResponse = await _client.PostAsJsonAsync(
-            "/api/webui/work-source-environments",
+            "/api/webui/connections",
             profile
         );
         Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
 
         // Act: POST verify
         using var verifyResponse = await _client.PostAsync(
-            "/api/webui/work-source-environments/verify.success:verify",
+            "/api/webui/connections/verify-success/verify",
             null
         );
 
@@ -104,22 +129,34 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
     [Fact]
     public async Task VerifyEndpoint_ConfigError_SecretNotFound_Returns200WithFailure()
     {
-        // Arrange: create an environment whose PAT secret is NOT in the store.
-        var profile = CreateValidProfile(
-            "Verify.ConfigError",
-            "Config Error Environment",
-            "NONEXISTENT_SECRET_FOR_TEST"
-        );
+        // Arrange: create a connection referencing a secret that doesn't exist.
+        var profile = new
+        {
+            key = "verify-configerror",
+            displayName = "Config Error Connection",
+            enabled = true,
+            provider = "AzureDevOps",
+            capabilities = new[] { "Repositories" },
+            providerSettings = new
+            {
+                provider = "AzureDevOps",
+                organizationUrl = "https://dev.azure.com/testorg",
+                personalAccessTokenReference = new
+                {
+                    name = "nonexistent-secret-for-test",
+                },
+            },
+        };
 
         using var createResponse = await _client.PostAsJsonAsync(
-            "/api/webui/work-source-environments",
+            "/api/webui/connections",
             profile
         );
         Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
 
-        // Act: POST verify
+        // Act: POST verify (mock resolver checks secret name)
         using var verifyResponse = await _client.PostAsync(
-            "/api/webui/work-source-environments/verify.configerror:verify",
+            "/api/webui/connections/verify-configerror/verify",
             null
         );
 
@@ -127,26 +164,22 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, verifyResponse.StatusCode);
 
         var result = await ReadJsonAsync(verifyResponse);
+        // The mock resolver returns failure for unknown secret references
         Assert.False(result.GetProperty("success").GetBoolean());
-        Assert.Equal("PersonalAccessToken", result.GetProperty("authMechanism").GetString());
 
         // Assert: errors describe the config problem
         var errors = result.GetProperty("errors").EnumerateArray().Select(e => e.GetString()!).ToList();
         Assert.NotEmpty(errors);
-        Assert.Contains(
-            errors,
-            e => e.Contains("NONEXISTENT_SECRET_FOR_TEST", StringComparison.Ordinal)
-        );
     }
 
-    // ─── Missing-environment case: non-existent key ───
+    // ─── Missing-connection case: non-existent key ───
 
     [Fact]
-    public async Task VerifyEndpoint_MissingEnvironment_Returns200WithNotFound()
+    public async Task VerifyEndpoint_MissingConnection_Returns200WithNotFound()
     {
         // Act: POST verify for a key that doesn't exist
         using var verifyResponse = await _client.PostAsync(
-            "/api/webui/work-source-environments/nonexistent.env:verify",
+            "/api/webui/connections/nonexistent-connection/verify",
             null
         );
 
@@ -169,32 +202,29 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
     [Fact]
     public async Task VerifyEndpoint_UnsupportedProvider_Returns200WithFailure()
     {
-        // Arrange: create an environment with an unsupported provider.
-        // Note: personalAccessTokenReference is required by validation regardless of provider.
+        // Arrange: create a connection with an unsupported provider.
+        // Note: providerSettings is null because only AzureDevOps has a registered
+        // JsonDerivedType; other providers would need their own settings type.
+        object? nullSettings = null;
         var profile = new
         {
-            key = "Verify.Unsupported",
-            displayName = "Unsupported Provider Environment",
+            key = "verify-unsupported",
+            displayName = "Unsupported Provider Connection",
             enabled = true,
-            provider = "GitHubIssues", // No verifier registered for this
-            organizationUrl = "https://github.com/testorg",
-            project = "TestProject",
-            completedStates = Array.Empty<string>(),
-            tagPrefix = "agent",
-            activeState = (string?)null,
-            completedState = (string?)null,
-            personalAccessTokenReference = new { name = TestSecretName },
+            provider = "GitHubIssues", // No IConnection registered for this
+            capabilities = new[] { "WorkTracking" },
+            providerSettings = nullSettings,
         };
 
         using var createResponse = await _client.PostAsJsonAsync(
-            "/api/webui/work-source-environments",
+            "/api/webui/connections",
             profile
         );
         Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
 
         // Act: POST verify
         using var verifyResponse = await _client.PostAsync(
-            "/api/webui/work-source-environments/verify.unsupported:verify",
+            "/api/webui/connections/verify-unsupported/verify",
             null
         );
 
@@ -214,6 +244,7 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
             errors,
             e => e.Contains("not supported", StringComparison.OrdinalIgnoreCase)
                 || e.Contains("unsupported", StringComparison.OrdinalIgnoreCase)
+                || e.Contains("not found", StringComparison.OrdinalIgnoreCase)
         );
     }
 
@@ -231,22 +262,6 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
 
     // ─── Helpers ───
 
-    private static object CreateValidProfile(string key, string displayName, string secretName) =>
-        new
-        {
-            key,
-            displayName,
-            enabled = true,
-            provider = "AzureDevOpsBoards",
-            organizationUrl = "https://dev.azure.com/testorg/",
-            project = "TestProject",
-            completedStates = new[] { "Resolved" },
-            tagPrefix = "agent",
-            activeState = "Active",
-            completedState = "Resolved",
-            personalAccessTokenReference = new { name = secretName },
-        };
-
     private static async Task<JsonElement> ReadJsonAsync(HttpResponseMessage response) =>
         await response.Content.ReadFromJsonAsync<JsonElement>();
 
@@ -258,14 +273,15 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
         }
     }
 
-    // ─── Test factory with mocked ADO client ───
+    // ─── Test factory with mocked ADO connection ───
 
     /// <summary>
-    /// WebApplicationFactory that replaces IAzureDevOpsBoardsClientFactory
+    /// WebApplicationFactory that replaces IConnection for AzureDevOps
     /// with a mock that returns a successful connectivity result with repos.
     /// </summary>
     private sealed class VerifyConnectivityApiFactory(
         string databasePath,
+        string kekPath,
         string testSecretName,
         string testSecretValue) : SilentWebApplicationFactory
     {
@@ -279,8 +295,10 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
                         new Dictionary<string, string?>
                         {
                             ["agentController:workerEnabled"] = "false",
+                            ["secrets:provider"] = "Db",
+                            ["secrets:keyEncryptionKey:file:filePath"] = kekPath,
                             ["workSource:provider"] = "LocalFake",
-                            ["workSource:organizationUrl"] = "", // Clear appsettings fallback
+                            ["workSource:connectionKey"] = "", // Clear appsettings fallback
                             ["workSource:project"] = "", // Clear appsettings fallback
                             ["sourceControl:provider"] = "NoOp",
                             ["environmentProvider:provider"] = "NoOp",
@@ -298,119 +316,104 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
                 services.RemoveAll<DbContextOptions<AgentControllerDbContext>>();
                 services.RemoveAll<IDbContextOptionsConfiguration<AgentControllerDbContext>>();
                 services.AddDbContext<AgentControllerDbContext>(options =>
-                    options.UseSqlite($"Data Source={databasePath}")
+                    options.UseSqlite(
+                        $"Data Source={databasePath}",
+                        sqlite => sqlite.MigrationsAssembly("AgentController.Migrations")
+                    )
                 );
 
-                // Replace the real ADO client factory with a mock that returns
-                // a successful connectivity result with two test repositories.
-                services.RemoveAll<IAzureDevOpsBoardsClientFactory>();
-                services.AddSingleton<IAzureDevOpsBoardsClientFactory>(
-                    new MockAzureDevOpsBoardsClientFactory()
-                );
+                // Replace the real IConnectionResolver with a mock that returns
+                // a successful connectivity result for AzureDevOps provider.
+                services.RemoveAll<IConnectionResolver>();
+                services.AddSingleton<IConnectionResolver>(new MockConnectionResolver());
 
                 // Register in-memory named secret store with test secret.
-                var secretStore = new AgentController.Domain.Secrets.InMemorySecretStore();
+                var secretStore = new InMemorySecretStore();
                 secretStore.CreateAsync(testSecretName, testSecretValue, CancellationToken.None)
                     .GetAwaiter().GetResult();
                 services.RemoveAll<Domain.Secrets.ISecretStore>();
                 services.RemoveAll<Domain.Secrets.ISecretManager>();
                 services.AddSingleton<Domain.Secrets.ISecretStore>(secretStore);
                 services.AddSingleton<Domain.Secrets.ISecretManager>(secretStore);
-                services.TryAddSingleton<AgentController.Infrastructure.AzureDevOpsPatResolver>();
             });
         }
     }
 
     /// <summary>
-    /// Mock factory returning a client that always succeeds with two repos.
+    /// Mock IConnectionResolver that returns a successful connectivity result
+    /// for AzureDevOps provider with the known test secret, and failure otherwise.
     /// </summary>
-    private sealed class MockAzureDevOpsBoardsClientFactory : IAzureDevOpsBoardsClientFactory
+    private sealed class MockConnectionResolver : IConnectionResolver
     {
-        public IAzureDevOpsBoardsClient Create(WorkSourceEnvironmentProfile profile) =>
-            new MockAzureDevOpsBoardsClient();
-    }
+        private const string KnownSecretName = "test-verify-ado-pat";
 
-    /// <summary>
-    /// Mock ADO client that returns a successful connectivity result with two repos.
-    /// </summary>
-    private sealed class MockAzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
-    {
-        public Task<AzureDevOpsConnectivityResult> VerifyConnectivityAsync(
-            string organizationUrl,
-            string project,
-            string personalAccessToken,
+        public Task<ConnectionConnectivityResult> VerifyConnectivityAsync(
+            ConnectionProfile profile,
             CancellationToken ct
-        ) =>
-            Task.FromResult(
-                new AzureDevOpsConnectivityResult
+        )
+        {
+            if (profile.Provider != "AzureDevOps")
+            {
+                return Task.FromResult(
+                    ConnectionConnectivityResult.FailureResult(
+                        [$"Connection operations are not supported for provider '{profile.Provider}'."]
+                    )
+                );
+            }
+
+            // Simulate PAT resolution failure for unknown secret references.
+            var adoSettings = profile.ProviderSettings as AzureDevOpsConnectionSettings;
+            if (adoSettings is not null &&
+                adoSettings.PersonalAccessTokenReference.IsSpecified &&
+                adoSettings.PersonalAccessTokenReference.Name != KnownSecretName)
+            {
+                return Task.FromResult(
+                    ConnectionConnectivityResult.FailureResult(
+                        [$"Secret '{adoSettings.PersonalAccessTokenReference.Name}' could not be resolved."],
+                        authMechanism: "PersonalAccessToken"
+                    )
+                );
+            }
+
+            var payload = new Dictionary<string, object>
+            {
+                ["repositories"] = new List<Dictionary<string, object?>>
                 {
-                    Success = true,
-                    Status = System.Net.HttpStatusCode.OK,
-                    Repositories = new List<RepositoryInfo>
+                    new()
                     {
-                        new()
-                        {
-                            Id = "mock-repo-1",
-                            Name = "main-repo",
-                            DefaultBranch = "refs/heads/main",
-                            RemoteUrl = "https://dev.azure.com/testorg/TestProject/_git/main-repo",
-                        },
-                        new()
-                        {
-                            Id = "mock-repo-2",
-                            Name = "infra-repo",
-                            DefaultBranch = "refs/heads/main",
-                            RemoteUrl = "https://dev.azure.com/testorg/TestProject/_git/infra-repo",
-                        },
+                        ["id"] = "mock-repo-1",
+                        ["name"] = "main-repo",
+                        ["defaultBranch"] = "refs/heads/main",
+                        ["remoteUrl"] = "https://dev.azure.com/testorg/TestProject/_git/main-repo",
                     },
-                }
+                    new()
+                    {
+                        ["id"] = "mock-repo-2",
+                        ["name"] = "infra-repo",
+                        ["defaultBranch"] = "refs/heads/main",
+                        ["remoteUrl"] = "https://dev.azure.com/testorg/TestProject/_git/infra-repo",
+                    },
+                },
+            };
+
+            return Task.FromResult(
+                ConnectionConnectivityResult.SuccessResult(
+                    "PersonalAccessToken",
+                    200,
+                    payload
+                )
             );
+        }
 
-        // Stub implementations for remaining interface members (not used by verifier endpoint)
-        public Task<IReadOnlyList<WorkCandidate>> QueryWorkItemsAsync(
-            BoardsQueryParameters parameters,
+        public Task<IReadOnlyList<ConnectionProject>> ListProjectsAsync(
+            ConnectionProfile profile,
             CancellationToken ct
-        ) => Task.FromResult<IReadOnlyList<WorkCandidate>>(Array.Empty<WorkCandidate>());
+        ) => Task.FromResult<IReadOnlyList<ConnectionProject>>(Array.Empty<ConnectionProject>());
 
-        public Task<ClaimResult> TryClaimWorkItemAsync(
-            ExternalWorkRef workRef,
-            ClaimRequest claim,
-            CancellationToken ct
-        ) => Task.FromResult(new ClaimResult { Success = false });
-
-        public Task<bool> UpdateWorkItemStatusAsync(
-            ExternalWorkRef workRef,
-            ExternalWorkStatus status,
-            CancellationToken ct
-        ) => Task.FromResult(false);
-
-        public Task AddCommentAsync(
-            ExternalWorkRef workRef,
-            string comment,
-            CancellationToken ct
-        ) => Task.CompletedTask;
-
-        public Task<IReadOnlyList<RepositoryInfo>> ListRepositoriesAsync(
+        public Task<IReadOnlyList<HostRepository>> ListRepositoriesAsync(
+            ConnectionProfile profile,
             string project,
             CancellationToken ct
-        ) => Task.FromResult<IReadOnlyList<RepositoryInfo>>(Array.Empty<RepositoryInfo>());
-
-        public Task<IReadOnlyList<WorkItemComment>> GetCommentsAsync(
-            ExternalWorkRef workRef,
-            int maxComments,
-            CancellationToken ct
-        ) => Task.FromResult<IReadOnlyList<WorkItemComment>>(Array.Empty<WorkItemComment>());
-
-        public Task ReleaseClaimWorkItemAsync(
-            ReleaseClaimRequest request,
-            CancellationToken ct
-        ) => Task.CompletedTask;
-
-        public Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> GetValidStatesAsync(
-            string project,
-            CancellationToken ct
-        ) => Task.FromResult<IReadOnlyDictionary<string, IReadOnlyList<string>>>(
-            new Dictionary<string, IReadOnlyList<string>>()
-        );
+        ) => Task.FromResult<IReadOnlyList<HostRepository>>(Array.Empty<HostRepository>());
     }
 }

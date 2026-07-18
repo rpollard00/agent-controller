@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using AgentController.Domain.Secrets;
 
 namespace AgentController.Domain;
@@ -27,6 +28,8 @@ public enum ConnectionCapability
 /// <summary>
 /// Base type for provider-specific connection settings.
 /// </summary>
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "provider")]
+[JsonDerivedType(typeof(AzureDevOpsConnectionSettings), typeDiscriminator: "AzureDevOps")]
 public abstract record ConnectionSettings;
 
 /// <summary>

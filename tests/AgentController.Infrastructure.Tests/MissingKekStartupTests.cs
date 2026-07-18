@@ -10,8 +10,27 @@ namespace AgentController.Infrastructure.Tests;
 /// Tests for the loud-failure behavior when KEK is not configured
 /// and secrets:provider=Db (the default).
 /// </summary>
-public sealed class MissingKekStartupTests
+public sealed class MissingKekStartupTests : IAsyncLifetime
 {
+    private string? _savedKekFilePath;
+
+    public Task InitializeAsync()
+    {
+        // Save and clear the KEK env var so the tests exercise the missing-KEK path.
+        _savedKekFilePath = Environment.GetEnvironmentVariable("AGENT_CONTROLLER_SECRET_KEK_FILE_PATH");
+        Environment.SetEnvironmentVariable("AGENT_CONTROLLER_SECRET_KEK_FILE_PATH", null);
+        return Task.CompletedTask;
+    }
+
+    public Task DisposeAsync()
+    {
+        // Restore the original env var.
+        if (_savedKekFilePath is not null)
+        {
+            Environment.SetEnvironmentVariable("AGENT_CONTROLLER_SECRET_KEK_FILE_PATH", _savedKekFilePath);
+        }
+        return Task.CompletedTask;
+    }
     /// <summary>
     /// When KEK is missing, AddAgentControllerNamedSecrets emits a critical
     /// log line containing 'KEK' and actionable guidance, then throws.

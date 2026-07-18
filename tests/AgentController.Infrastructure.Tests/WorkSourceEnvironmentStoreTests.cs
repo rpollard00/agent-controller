@@ -13,7 +13,7 @@ namespace AgentController.Infrastructure.Tests;
 public sealed class WorkSourceEnvironmentStoreTests
 {
     [Fact]
-    public async Task CreateAndGet_RoundTripsProfileAndSecretReference()
+    public async Task CreateAndGet_RoundTripsProfileAndConnectionKey()
     {
         await using var fixture = await StoreFixture.CreateAsync();
         var profile = CreateProfile("production");
@@ -25,10 +25,10 @@ public sealed class WorkSourceEnvironmentStoreTests
         AssertProfile(profile, Assert.IsType<WorkSourceEnvironmentProfile>(persisted));
 
         await using var command = fixture.Connection.CreateCommand();
-        command.CommandText = "SELECT PersonalAccessTokenSecretName FROM WorkSourceEnvironments WHERE Key = $key";
+        command.CommandText = "SELECT ConnectionKey FROM WorkSourceEnvironments WHERE Key = $key";
         command.Parameters.AddWithValue("$key", profile.Key);
-        var storedReference = Assert.IsType<string>(await command.ExecuteScalarAsync());
-        Assert.Equal("ADO_PRODUCTION_PAT", storedReference);
+        var storedConnectionKey = Assert.IsType<string>(await command.ExecuteScalarAsync());
+        Assert.Equal("azuredevops-example", storedConnectionKey);
     }
 
     [Fact]
@@ -71,11 +71,10 @@ public sealed class WorkSourceEnvironmentStoreTests
             Enabled = false,
             Provider = "AzureDevOpsBoards",
             TagPrefix = "ac",
-            OrganizationUrl = "https://dev.azure.com/updated-organization",
+            ConnectionKey = "azuredevops-updated-organization",
             Project = "Updated Project",
             ActiveState = "Doing",
             CompletedState = "Done",
-            PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByName("ADO_STAGING_PAT_V2"),
             UpdatedAt = new DateTimeOffset(2026, 7, 13, 18, 0, 0, TimeSpan.Zero),
         };
 
@@ -112,7 +111,7 @@ public sealed class WorkSourceEnvironmentStoreTests
     }
 
     [Fact]
-    public async Task Migration_CreatesProfileTableWithSecretReferenceColumns()
+    public async Task Migration_CreatesProfileTableWithConnectionKeyColumn()
     {
         await using var fixture = await StoreFixture.CreateAsync(useMigrations: true);
 
@@ -132,13 +131,15 @@ public sealed class WorkSourceEnvironmentStoreTests
             columns.Add(reader.GetString(1));
         }
 
-        Assert.Contains("PersonalAccessTokenSecretName", columns);
-        Assert.Contains("PersonalAccessTokenSecretVersion", columns);
+        Assert.Contains("ConnectionKey", columns);
+        Assert.Contains("Provider", columns);
+        Assert.Contains("TagPrefix", columns);
+        Assert.DoesNotContain("OrganizationUrl", columns);
+        Assert.DoesNotContain("PersonalAccessTokenSecretName", columns);
+        Assert.DoesNotContain("PersonalAccessTokenSecretVersion", columns);
         Assert.DoesNotContain("PatEnvironmentVariable", columns);
         Assert.DoesNotContain("PersonalAccessToken", columns);
         Assert.DoesNotContain("Pat", columns);
-        Assert.Contains("Provider", columns);
-        Assert.Contains("TagPrefix", columns);
         Assert.DoesNotContain("CompletedStatesJson", columns);
         Assert.DoesNotContain("WorkItemType", columns);
         Assert.DoesNotContain("EligibleTagsJson", columns);
@@ -180,11 +181,10 @@ public sealed class WorkSourceEnvironmentStoreTests
             Enabled = true,
             Provider = "AzureDevOpsBoards",
             TagPrefix = "agent",
-            OrganizationUrl = "https://dev.azure.com/example",
+            ConnectionKey = "azuredevops-example",
             Project = "Agent Controller",
             ActiveState = "Active",
             CompletedState = "Resolved",
-            PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByName("ADO_PRODUCTION_PAT"),
             CreatedAt = new DateTimeOffset(2026, 7, 13, 17, 0, 0, TimeSpan.Zero),
             UpdatedAt = new DateTimeOffset(2026, 7, 13, 17, 30, 0, TimeSpan.Zero),
         };
@@ -199,12 +199,10 @@ public sealed class WorkSourceEnvironmentStoreTests
         Assert.Equal(expected.Enabled, actual.Enabled);
         Assert.Equal(expected.Provider, actual.Provider);
         Assert.Equal(expected.TagPrefix, actual.TagPrefix);
-        Assert.Equal(expected.OrganizationUrl, actual.OrganizationUrl);
+        Assert.Equal(expected.ConnectionKey, actual.ConnectionKey);
         Assert.Equal(expected.Project, actual.Project);
         Assert.Equal(expected.ActiveState, actual.ActiveState);
         Assert.Equal(expected.CompletedState, actual.CompletedState);
-        Assert.Equal(expected.PersonalAccessTokenReference.Name, actual.PersonalAccessTokenReference.Name);
-        Assert.Equal(expected.PersonalAccessTokenReference.Version, actual.PersonalAccessTokenReference.Version);
         Assert.Equal(expected.CreatedAt, actual.CreatedAt);
         Assert.Equal(expected.UpdatedAt, actual.UpdatedAt);
     }

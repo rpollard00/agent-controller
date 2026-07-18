@@ -135,20 +135,18 @@ public sealed class WebUiControllerTests : IAsyncLifetime
     [Fact]
     public async Task WorkSourceEnvironmentEndpoints_SupportEveryVerbAndRedactCredentials()
     {
-        const string secretName = "webui-test-ado-pat";
         var profile = new
         {
             key = " ADO.Main ",
             displayName = " Main Azure DevOps ",
             enabled = true,
             provider = "AzureDevOpsBoards",
-            organizationUrl = "https://dev.azure.com/example/",
+            connectionKey = "azuredevops-example",
             project = "Agent Controller",
             completedStates = new[] { "Resolved", "Removed" },
             tagPrefix = "agent",
             activeState = "Active",
             completedState = "Resolved",
-            personalAccessTokenReference = new { name = secretName },
         };
 
         using var createResponse = await _client.PostAsJsonAsync(
@@ -186,8 +184,9 @@ public sealed class WebUiControllerTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
         var getBody = await getResponse.Content.ReadAsStringAsync();
         using var getJson = JsonDocument.Parse(getBody);
-        Assert.True(getJson.RootElement.TryGetProperty("personalAccessTokenReference", out var refProp));
-        Assert.Equal(secretName, refProp.GetProperty("name").GetString());
+        Assert.True(getJson.RootElement.TryGetProperty("connectionKey", out var connKeyProp));
+        Assert.Equal("azuredevops-example", connKeyProp.GetString());
+        Assert.False(getJson.RootElement.TryGetProperty("organizationUrl", out _));
         Assert.False(getJson.RootElement.TryGetProperty("personalAccessToken", out _));
 
         var update = new
@@ -196,13 +195,12 @@ public sealed class WebUiControllerTests : IAsyncLifetime
             displayName = "Updated Azure DevOps",
             enabled = false,
             provider = "AzureDevOpsBoards",
-            organizationUrl = "https://dev.azure.com/example",
+            connectionKey = "azuredevops-example",
             project = "Agent Controller",
             completedStates = new[] { "Resolved" },
             tagPrefix = "agent",
             activeState = "Active",
             completedState = "Done",
-            personalAccessTokenReference = new { name = secretName },
         };
         using var updateResponse = await _client.PutAsJsonAsync(
             "/api/webui/work-source-environments/ado.main",
@@ -448,7 +446,10 @@ public sealed class WebUiControllerTests : IAsyncLifetime
                 services.RemoveAll<DbContextOptions<AgentControllerDbContext>>();
                 services.RemoveAll<IDbContextOptionsConfiguration<AgentControllerDbContext>>();
                 services.AddDbContext<AgentControllerDbContext>(options =>
-                    options.UseSqlite($"Data Source={databasePath}")
+                    options.UseSqlite(
+                        $"Data Source={databasePath}",
+                        sqlite => sqlite.MigrationsAssembly("AgentController.Migrations")
+                    )
                 );
             });
         }

@@ -88,35 +88,29 @@ public class SecretReferenceTests
     }
 
     [Fact]
-    public void WorkSourceEnvironmentProfile_HasDefaultSecretReference()
+    public void ConnectionProfile_AzureDevOpsSettings_HasDefaultSecretReference()
     {
-        var profile = new WorkSourceEnvironmentProfile
+        var settings = new AzureDevOpsConnectionSettings
         {
-            Key = "test",
-            DisplayName = "Test",
             OrganizationUrl = "https://dev.azure.com/example",
-            Project = "TestProject",
         };
 
-        Assert.False(profile.PersonalAccessTokenReference.IsSpecified);
-        Assert.Empty(profile.PersonalAccessTokenReference.Name);
-        Assert.Null(profile.PersonalAccessTokenReference.Version);
+        Assert.False(settings.PersonalAccessTokenReference.IsSpecified);
+        Assert.Empty(settings.PersonalAccessTokenReference.Name);
+        Assert.Null(settings.PersonalAccessTokenReference.Version);
     }
 
     [Fact]
-    public void WorkSourceEnvironmentProfile_CanSetSecretReference()
+    public void ConnectionProfile_AzureDevOpsSettings_CanSetSecretReference()
     {
-        var profile = new WorkSourceEnvironmentProfile
+        var settings = new AzureDevOpsConnectionSettings
         {
-            Key = "test",
-            DisplayName = "Test",
             OrganizationUrl = "https://dev.azure.com/example",
-            Project = "TestProject",
             PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByNameAndVersion("ado-pat", 2),
         };
 
-        Assert.True(profile.PersonalAccessTokenReference.IsSpecified);
-        Assert.Equal("ado-pat", profile.PersonalAccessTokenReference.Name);
-        Assert.Equal(2, profile.PersonalAccessTokenReference.Version);
+        Assert.True(settings.PersonalAccessTokenReference.IsSpecified);
+        Assert.Equal("ado-pat", settings.PersonalAccessTokenReference.Name);
+        Assert.Equal(2, settings.PersonalAccessTokenReference.Version);
     }
 }

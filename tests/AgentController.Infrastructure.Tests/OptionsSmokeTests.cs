@@ -550,25 +550,25 @@ public class OptionsSmokeTests
     }
 
     [Fact]
-    public void AzureDevOpsBoardsOptions_ValidationCatchesEmptyPat()
+    public void AzureDevOpsBoardsOptions_ValidationCatchesMissingConnectionKey()
     {
         // Validation is deferred to AzureDevOpsBoardsValidator, not data annotations.
         var workSource = new WorkSourceOptions
         {
             Provider = "AzureDevOpsBoards",
-            OrganizationUrl = "https://dev.azure.com/myorg",
+            ConnectionKey = null,
             Project = "MyProject",
         };
 
         var boards = new AzureDevOpsBoardsOptions
         {
-            PersonalAccessToken = "",
+            PersonalAccessToken = "test-pat",
         };
 
         var ex = Assert.Throws<InvalidOperationException>(() =>
             AzureDevOpsBoardsValidator.Validate(workSource, boards));
 
-        Assert.Contains("PAT", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("connection key", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     // ──────────────────────────────────────────────
@@ -581,7 +581,7 @@ public class OptionsSmokeTests
         var workSource = new WorkSourceOptions
         {
             Provider = "AzureDevOpsBoards",
-            OrganizationUrl = "https://dev.azure.com/myorg",
+            ConnectionKey = "azuredevops-myorg",
             Project = "MyProject",
         };
 
@@ -598,12 +598,12 @@ public class OptionsSmokeTests
     }
 
     [Fact]
-    public void AzureDevOpsBoardsValidator_ThrowsWhenOrganizationUrlMissing()
+    public void AzureDevOpsBoardsValidator_ThrowsWhenConnectionKeyMissing()
     {
         var workSource = new WorkSourceOptions
         {
             Provider = "AzureDevOpsBoards",
-            OrganizationUrl = null,
+            ConnectionKey = null,
             Project = "MyProject",
         };
 
@@ -615,28 +615,7 @@ public class OptionsSmokeTests
         var ex = Assert.Throws<InvalidOperationException>(() =>
             AzureDevOpsBoardsValidator.Validate(workSource, boards));
 
-        Assert.Contains("organization URL", ex.Message, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public void AzureDevOpsBoardsValidator_ThrowsWhenOrganizationUrlInvalid()
-    {
-        var workSource = new WorkSourceOptions
-        {
-            Provider = "AzureDevOpsBoards",
-            OrganizationUrl = "not-a-valid-url",
-            Project = "MyProject",
-        };
-
-        var boards = new AzureDevOpsBoardsOptions
-        {
-            PersonalAccessToken = "test-pat",
-        };
-
-        var ex = Assert.Throws<InvalidOperationException>(() =>
-            AzureDevOpsBoardsValidator.Validate(workSource, boards));
-
-        Assert.Contains("not a valid", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("connection key", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -645,7 +624,7 @@ public class OptionsSmokeTests
         var workSource = new WorkSourceOptions
         {
             Provider = "AzureDevOpsBoards",
-            OrganizationUrl = "https://dev.azure.com/myorg",
+            ConnectionKey = "azuredevops-myorg",
             Project = null,
         };
 
@@ -661,49 +640,27 @@ public class OptionsSmokeTests
     }
 
     [Fact]
-    public void AzureDevOpsBoardsValidator_ThrowsWhenPatMissing()
-    {
-        var workSource = new WorkSourceOptions
-        {
-            Provider = "AzureDevOpsBoards",
-            OrganizationUrl = "https://dev.azure.com/myorg",
-            Project = "MyProject",
-        };
-
-        var boards = new AzureDevOpsBoardsOptions
-        {
-            PersonalAccessToken = "",
-        };
-
-        var ex = Assert.Throws<InvalidOperationException>(() =>
-            AzureDevOpsBoardsValidator.Validate(workSource, boards));
-
-        Assert.Contains("PAT", ex.Message, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
     public void AzureDevOpsBoardsValidator_ReportsMultipleFailures()
     {
         var workSource = new WorkSourceOptions
         {
             Provider = "AzureDevOpsBoards",
-            OrganizationUrl = null,
+            ConnectionKey = null,
             Project = null,
         };
 
         var boards = new AzureDevOpsBoardsOptions
         {
-            PersonalAccessToken = "",
+            PersonalAccessToken = "test-pat",
         };
 
         var ex = Assert.Throws<InvalidOperationException>(() =>
             AzureDevOpsBoardsValidator.Validate(workSource, boards));
 
-        // Should report all failures (at least 3: org url, project, PAT)
+        // Should report all failures (2: connection key, project)
         var message = ex.Message;
         Assert.Contains("1.", message);
         Assert.Contains("2.", message);
-        Assert.Contains("3.", message);
     }
 
     // ──────────────────────────────────────────────
@@ -1007,6 +964,25 @@ public class OptionsSmokeTests
 
     [Fact]
     public void SecretProviderOptions_DbWithoutKek_ThrowsOptionsValidationException()
+    {
+        // Save and clear the KEK env var so the validation exercises the missing-KEK path.
+        var savedKek = Environment.GetEnvironmentVariable("AGENT_CONTROLLER_SECRET_KEK_FILE_PATH");
+        Environment.SetEnvironmentVariable("AGENT_CONTROLLER_SECRET_KEK_FILE_PATH", null);
+        try
+        {
+            DoSecretProviderOptions_DbWithoutKek_Test();
+        }
+        finally
+        {
+            // Restore the original env var.
+            if (savedKek is not null)
+            {
+                Environment.SetEnvironmentVariable("AGENT_CONTROLLER_SECRET_KEK_FILE_PATH", savedKek);
+            }
+        }
+    }
+
+    private static void DoSecretProviderOptions_DbWithoutKek_Test()
     {
         // Arrange: provider=Db (default) with no KEK configured
         var config = BuildConfiguration();

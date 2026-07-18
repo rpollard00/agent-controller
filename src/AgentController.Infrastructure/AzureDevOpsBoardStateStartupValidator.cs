@@ -158,7 +158,6 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
 
         // Fall back to configured (appsettings) path.
         // Resolve the connection to derive OrganizationUrl and PAT.
-        var connectionStore = services.GetRequiredService<IConnectionStore>();
         var connectionKey = workSource.ConnectionKey;
 
         if (string.IsNullOrWhiteSpace(connectionKey))
@@ -167,6 +166,7 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
             return;
         }
 
+        var connectionStore = services.GetRequiredService<IConnectionStore>();
         var fallbackConnection = await connectionStore.GetByKeyAsync(connectionKey, cancellationToken);
         if (fallbackConnection is null || fallbackConnection.ProviderSettings is not AzureDevOpsConnectionSettings adoSettings)
         {

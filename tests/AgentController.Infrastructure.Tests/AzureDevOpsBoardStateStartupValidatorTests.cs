@@ -51,19 +51,10 @@ public class AzureDevOpsBoardStateStartupValidatorTests
     }
 
     [Fact]
-    public async Task StartAsync_MissingPat_SkipsValidation()
+    public async Task StartAsync_MissingConnectionKey_SkipsValidation()
     {
         var validator = CreateValidator(
-            boards: CreateBoardsOptions(pat: string.Empty));
-
-        await validator.StartAsync(CancellationToken.None);
-    }
-
-    [Fact]
-    public async Task StartAsync_MissingOrganizationUrl_SkipsValidation()
-    {
-        var validator = CreateValidator(
-            workSource: CreateWorkSourceOptions(organizationUrl: null),
+            workSource: CreateWorkSourceOptions(connectionKey: null),
             boards: CreateBoardsOptions(pat: "test-pat"));
 
         await validator.StartAsync(CancellationToken.None);
@@ -73,20 +64,8 @@ public class AzureDevOpsBoardStateStartupValidatorTests
     public async Task StartAsync_MissingProject_SkipsValidation()
     {
         var validator = CreateValidator(
-            workSource: CreateWorkSourceOptions(project: null),
+            workSource: CreateWorkSourceOptions(connectionKey: null, project: null),
             boards: CreateBoardsOptions(pat: "test-pat"));
-
-        await validator.StartAsync(CancellationToken.None);
-    }
-
-    [Fact]
-    public async Task StartAsync_EmptyPat_SkipsValidation()
-    {
-        var validator = CreateValidator(
-            workSource: CreateWorkSourceOptions(
-                organizationUrl: "https://dev.azure.com/testorg",
-                project: "TestProject"),
-            boards: CreateBoardsOptions(pat: string.Empty));
 
         await validator.StartAsync(CancellationToken.None);
     }
@@ -118,7 +97,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         var validator = CreateValidatorWithMockClient(
             mockClient,
             workSource: CreateWorkSourceOptions(
-                organizationUrl: "https://dev.azure.com/testorg",
+                connectionKey: "https://dev.azure.com/testorg",
                 project: "TestProject",
                 activeState: "Active", // Not in valid states, but we'll test below
                 completedState: "Resolved"));
@@ -128,7 +107,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         var validatorSuccess = CreateValidatorWithMockClient(
             mockClient,
             workSource: CreateWorkSourceOptions(
-                organizationUrl: "https://dev.azure.com/testorg",
+                connectionKey: "https://dev.azure.com/testorg",
                 project: "TestProject",
                 activeState: "InProgress",
                 completedState: "Resolved"));
@@ -148,7 +127,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         var validator = CreateValidatorWithMockClient(
             mockClient,
             workSource: CreateWorkSourceOptions(
-                organizationUrl: "https://dev.azure.com/testorg",
+                connectionKey: "https://dev.azure.com/testorg",
                 project: "TestProject",
                 activeState: "Active", // NOT in valid states
                 completedState: "Resolved"));
@@ -172,7 +151,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         var validator = CreateValidatorWithMockClient(
             mockClient,
             workSource: CreateWorkSourceOptions(
-                organizationUrl: "https://dev.azure.com/testorg",
+                connectionKey: "https://dev.azure.com/testorg",
                 project: "TestProject",
                 activeState: "InProgress",
                 completedState: "Done" // NOT in valid states
@@ -196,7 +175,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         var validator = CreateValidatorWithMockClient(
             mockClient,
             workSource: CreateWorkSourceOptions(
-                organizationUrl: "https://dev.azure.com/testorg",
+                connectionKey: "https://dev.azure.com/testorg",
                 project: "TestProject",
                 activeState: "Active", // invalid
                 completedState: "Done" // invalid
@@ -221,7 +200,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         var validator = CreateValidatorWithMockClient(
             mockClient,
             workSource: CreateWorkSourceOptions(
-                organizationUrl: "https://dev.azure.com/testorg",
+                connectionKey: "https://dev.azure.com/testorg",
                 project: "TestProject",
                 activeState: "Resolved",
                 completedState: "Resolved"));
@@ -243,7 +222,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         var validator = CreateValidatorWithMockClient(
             mockClient,
             workSource: CreateWorkSourceOptions(
-                organizationUrl: "https://dev.azure.com/testorg",
+                connectionKey: "https://dev.azure.com/testorg",
                 project: "TestProject",
                 activeState: "resolved",
                 completedState: "Resolved"));
@@ -267,7 +246,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         var validator = CreateValidatorWithMockClient(
             mockClient,
             workSource: CreateWorkSourceOptions(
-                organizationUrl: "https://dev.azure.com/testorg",
+                connectionKey: "https://dev.azure.com/testorg",
                 project: "TestProject",
                 activeState: "Active",
                 completedState: "Resolved"));
@@ -289,7 +268,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         var validator = CreateValidatorWithMockClient(
             mockClient,
             workSource: CreateWorkSourceOptions(
-                organizationUrl: "https://dev.azure.com/testorg",
+                connectionKey: "https://dev.azure.com/testorg",
                 project: "TestProject",
                 activeState: "Active",
                 completedState: "Resolved"));
@@ -310,7 +289,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         var validator = CreateValidatorWithMockClient(
             mockClient,
             workSource: CreateWorkSourceOptions(
-                organizationUrl: "https://dev.azure.com/testorg",
+                connectionKey: "https://dev.azure.com/testorg",
                 project: "TestProject",
                 activeState: null,
                 completedState: "Resolved"));
@@ -329,7 +308,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         var validator = CreateValidatorWithMockClient(
             mockClient,
             workSource: CreateWorkSourceOptions(
-                organizationUrl: "https://dev.azure.com/testorg",
+                connectionKey: "https://dev.azure.com/testorg",
                 project: "TestProject",
                 activeState: "InProgress",
                 completedState: null));
@@ -343,7 +322,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
 
     private static IOptions<WorkSourceOptions> CreateWorkSourceOptions(
         string provider = "AzureDevOpsBoards",
-        string? organizationUrl = null,
+        string? connectionKey = null,
         string? project = null,
         string? activeState = "Active",
         string? completedState = "Resolved")
@@ -351,7 +330,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         return global::Microsoft.Extensions.Options.Options.Create(new WorkSourceOptions
         {
             Provider = provider,
-            OrganizationUrl = organizationUrl,
+            ConnectionKey = connectionKey,
             Project = project,
             ActiveState = activeState,
             CompletedState = completedState,
@@ -367,22 +346,37 @@ public class AzureDevOpsBoardStateStartupValidatorTests
     }
 
     /// <summary>
-    /// Create a validator for skip-path tests that use a no-op scope factory.
-    /// The scope factory is never called because skip paths return early.
+    /// Create a validator for skip-path tests.
+    /// Uses a scope factory with IManagedProfileResolver returning empty results,
+    /// so the validator falls through to the appsettings fallback path.
     /// </summary>
     private static AzureDevOpsBoardStateStartupValidator CreateValidator(
         IOptions<WorkSourceOptions>? workSource = null,
         IOptions<AzureDevOpsBoardsOptions>? boards = null)
     {
+        var workSourceOptions = workSource ?? CreateWorkSourceOptions();
+        var boardsOptions = boards ?? CreateBoardsOptions();
+
+        var services = new ServiceCollection();
+        services.AddSingleton(workSourceOptions);
+        services.AddSingleton(boardsOptions);
+        // Register a resolver that returns no managed profiles so the validator
+        // falls through to the appsettings fallback path (which checks ConnectionKey).
+        services.AddSingleton<IManagedProfileResolver>(new EmptyManagedProfileResolver());
+
+        var provider = services.BuildServiceProvider();
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+
         return new AzureDevOpsBoardStateStartupValidator(
-            workSource ?? CreateWorkSourceOptions(),
-            boards ?? CreateBoardsOptions(),
-            new NoOpScopeFactory(),
+            workSourceOptions,
+            boardsOptions,
+            scopeFactory,
             NullLogger<AzureDevOpsBoardStateStartupValidator>.Instance);
     }
 
     /// <summary>
     /// Create a validator backed by a DI container with a mocked <see cref="IAzureDevOpsBoardsClient"/>.
+    /// Routes through the managed profiles path so the mock client factory is used.
     /// </summary>
     private static AzureDevOpsBoardStateStartupValidator CreateValidatorWithMockClient(
         IAzureDevOpsBoardsClient mockClient,
@@ -391,8 +385,40 @@ public class AzureDevOpsBoardStateStartupValidatorTests
     {
         var boardsOptions = boards ?? CreateBoardsOptions(pat: "test-pat");
 
+        // Build a mock managed profile resolver that returns a ResolvedWorkSourceEnvironment
+        // so the validator uses the managed profiles path (which uses IAzureDevOpsBoardsClientFactory).
+        var mockConnection = new ConnectionProfile
+        {
+            Key = "azuredevops-testorg",
+            Provider = "AzureDevOps",
+            ProviderSettings = new AzureDevOpsConnectionSettings
+            {
+                OrganizationUrl = "https://dev.azure.com/testorg",
+            },
+        };
+        // Create a WorkSourceEnvironmentProfile from the WorkSourceOptions for the resolver.
+        var mockProfile = new WorkSourceEnvironmentProfile
+        {
+            Key = "test-environment",
+            DisplayName = "Test Environment",
+            Enabled = true,
+            Provider = workSource.Value.Provider,
+            TagPrefix = workSource.Value.TagPrefix,
+            ConnectionKey = "azuredevops-testorg",
+            Project = workSource.Value.Project ?? "TestProject",
+            ActiveState = workSource.Value.ActiveState,
+            CompletedState = workSource.Value.CompletedState,
+        };
+        var mockEnvironment = new ResolvedWorkSourceEnvironment(
+            mockProfile, mockConnection, IsManaged: true);
+        var mockResolver = new SingleProfileResolver(mockEnvironment);
+
+        // Mock client factory that returns our mock client.
+        var mockFactory = new SingleClientFactory(mockClient);
+
         var services = new ServiceCollection();
-        services.AddScoped<IAzureDevOpsBoardsClient>(_ => mockClient);
+        services.AddSingleton<IManagedProfileResolver>(mockResolver);
+        services.AddSingleton<IAzureDevOpsBoardsClientFactory>(mockFactory);
         services.AddSingleton(workSource);
         services.AddSingleton(boardsOptions);
 
@@ -406,15 +432,53 @@ public class AzureDevOpsBoardStateStartupValidatorTests
             NullLogger<AzureDevOpsBoardStateStartupValidator>.Instance);
     }
 
+    /// <summary>
+    /// Managed profile resolver that returns a single pre-configured environment.
+    /// </summary>
+    private sealed class SingleProfileResolver(ResolvedWorkSourceEnvironment environment) : IManagedProfileResolver
+    {
+        public Task<ResolvedControllerProfiles?> ResolveForRepositoryAsync(
+            string repositoryKey, CancellationToken ct) =>
+            Task.FromResult<ResolvedControllerProfiles?>(null);
+
+        public Task<ResolvedWorkSourceEnvironment?> ResolveWorkSourceEnvironmentAsync(
+            string? key, CancellationToken ct) =>
+            Task.FromResult<ResolvedWorkSourceEnvironment?>(environment);
+
+        public Task<IReadOnlyList<ResolvedWorkSourceEnvironment>> ListWorkSourceEnvironmentsAsync(
+            CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<ResolvedWorkSourceEnvironment>>([environment]);
+    }
+
+    /// <summary>
+    /// Client factory that always returns the same mock client.
+    /// </summary>
+    private sealed class SingleClientFactory(IAzureDevOpsBoardsClient client) : IAzureDevOpsBoardsClientFactory
+    {
+        public Task<IAzureDevOpsBoardsClient> CreateAsync(
+            ResolvedWorkSourceEnvironment resolved, CancellationToken ct) =>
+            Task.FromResult(client);
+    }
+
     // ── Test infrastructure ────────────────────────────────────────
 
     /// <summary>
-    /// No-op scope factory for tests where the scope is never created (skip paths).
+    /// Empty managed profile resolver that returns no profiles,
+    /// causing the validator to fall through to the appsettings fallback path.
     /// </summary>
-    private sealed class NoOpScopeFactory : IServiceScopeFactory
+    private sealed class EmptyManagedProfileResolver : IManagedProfileResolver
     {
-        public IServiceScope CreateScope() =>
-            throw new NotSupportedException("Scope should not be created in skip-path tests.");
+        public Task<ResolvedControllerProfiles?> ResolveForRepositoryAsync(
+            string repositoryKey, CancellationToken ct) =>
+            Task.FromResult<ResolvedControllerProfiles?>(null);
+
+        public Task<ResolvedWorkSourceEnvironment?> ResolveWorkSourceEnvironmentAsync(
+            string? key, CancellationToken ct) =>
+            Task.FromResult<ResolvedWorkSourceEnvironment?>(null);
+
+        public Task<IReadOnlyList<ResolvedWorkSourceEnvironment>> ListWorkSourceEnvironmentsAsync(
+            CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<ResolvedWorkSourceEnvironment>>(Array.Empty<ResolvedWorkSourceEnvironment>());
     }
 
     /// <summary>

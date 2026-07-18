@@ -16,12 +16,11 @@ public sealed class WorkSourceEnvironmentHandlerTests
     [Fact]
     public async Task ListAndGet_ReturnStoredProfilesAndNormalizeLookupKeyWithoutResolvingPat()
     {
-        const string secretName = "ado-primary-pat";
         var environments = new FakeWorkSourceEnvironmentStore(
             CreateProfile("zulu"),
             CreateProfile("ado-primary") with
             {
-                PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByName(secretName),
+                ConnectionKey = "azuredevops-primary-org",
             }
         );
         var listHandler = new ListWorkSourceEnvironmentsQueryHandler(environments);
@@ -39,7 +38,7 @@ public sealed class WorkSourceEnvironmentHandlerTests
         Assert.Equal(["ado-primary", "zulu"], listed.Select(profile => profile.Key));
         Assert.Equal(WorkSourceEnvironmentOperationStatus.Succeeded, read.Status);
         var profile = Assert.IsType<WorkSourceEnvironmentProfile>(read.Environment);
-        Assert.Equal(secretName, profile.PersonalAccessTokenReference.Name);
+        Assert.Equal("azuredevops-primary-org", profile.ConnectionKey);
         Assert.Equal("ado-primary", environments.LastReadKey);
     }
 
@@ -74,13 +73,12 @@ public sealed class WorkSourceEnvironmentHandlerTests
         var profile = CreateProfile("  ADO.Primary  ") with
         {
             DisplayName = "  Primary Boards  ",
-            OrganizationUrl = "  https://dev.azure.com/example/  ",
+            ConnectionKey = "  azuredevops-example  ",
             Project = "  Agent Controller  ",
             Provider = "  AzureDevOpsBoards  ",
             TagPrefix = "  agent  ",
             ActiveState = " Active ",
             CompletedState = " Resolved ",
-            PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByName("  ADO_PRIMARY_PAT  "),
             CreatedAt = suppliedTimestamp,
             UpdatedAt = suppliedTimestamp,
         };
@@ -96,13 +94,12 @@ public sealed class WorkSourceEnvironmentHandlerTests
         Assert.Same(persisted, result.Environment);
         Assert.Equal("ado.primary", persisted.Key);
         Assert.Equal("Primary Boards", persisted.DisplayName);
-        Assert.Equal("https://dev.azure.com/example", persisted.OrganizationUrl);
+        Assert.Equal("azuredevops-example", persisted.ConnectionKey);
         Assert.Equal("Agent Controller", persisted.Project);
         Assert.Equal("AzureDevOpsBoards", persisted.Provider);
         Assert.Equal("agent", persisted.TagPrefix);
         Assert.Equal("Active", persisted.ActiveState);
         Assert.Equal("Resolved", persisted.CompletedState);
-        Assert.Equal("ADO_PRIMARY_PAT", persisted.PersonalAccessTokenReference.Name);
         Assert.Equal(persisted.CreatedAt, persisted.UpdatedAt);
         Assert.InRange(persisted.CreatedAt, before, after);
     }
@@ -116,12 +113,11 @@ public sealed class WorkSourceEnvironmentHandlerTests
         {
             Key = "not valid",
             DisplayName = " ",
-            OrganizationUrl = "ftp://user:secret@example.test/org?token=secret",
+            ConnectionKey = " ",
             Project = " ",
             TagPrefix = "  ",
             ActiveState = "Active",
             CompletedState = "active",
-            // No PersonalAccessTokenReference — should fail validation
         };
 
         var result = await handler.HandleAsync(
@@ -132,10 +128,9 @@ public sealed class WorkSourceEnvironmentHandlerTests
         Assert.Equal(WorkSourceEnvironmentOperationStatus.ValidationFailed, result.Status);
         Assert.Contains("key", result.ValidationErrors.Keys);
         Assert.Contains("displayName", result.ValidationErrors.Keys);
-        Assert.Contains("organizationUrl", result.ValidationErrors.Keys);
+        Assert.Contains("connectionKey", result.ValidationErrors.Keys);
         Assert.Contains("project", result.ValidationErrors.Keys);
         Assert.Contains("completedState", result.ValidationErrors.Keys);
-        Assert.Contains("personalAccessTokenReference", result.ValidationErrors.Keys);
         Assert.Null(environments.LastCreated);
     }
 
@@ -183,7 +178,7 @@ public sealed class WorkSourceEnvironmentHandlerTests
             Enabled = false,
             Project = " Updated Project ",
             TagPrefix = " custom ",
-            PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByName(" ADO_UPDATED_PAT "),
+            ConnectionKey = " azuredevops-updated ",
             CreatedAt = suppliedTimestamp,
             UpdatedAt = suppliedTimestamp,
         };
@@ -202,7 +197,7 @@ public sealed class WorkSourceEnvironmentHandlerTests
         Assert.False(persisted.Enabled);
         Assert.Equal("Updated Project", persisted.Project);
         Assert.Equal("custom", persisted.TagPrefix);
-        Assert.Equal("ADO_UPDATED_PAT", persisted.PersonalAccessTokenReference.Name);
+        Assert.Equal("azuredevops-updated", persisted.ConnectionKey);
         Assert.Equal(createdAt, persisted.CreatedAt);
         Assert.InRange(persisted.UpdatedAt, before, after);
         Assert.Same(persisted, result.Environment);
@@ -305,11 +300,10 @@ public sealed class WorkSourceEnvironmentHandlerTests
             Enabled = true,
             Provider = "AzureDevOpsBoards",
             TagPrefix = "agent",
-            OrganizationUrl = "https://dev.azure.com/example",
+            ConnectionKey = "azuredevops-example",
             Project = "Agent Controller",
             ActiveState = "Active",
             CompletedState = "Resolved",
-            PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByName("ADO_TEST_PAT"),
         };
 
     private static void AssertRegistration<TService, TImplementation>(IServiceCollection services)

@@ -18,7 +18,8 @@ namespace AgentController.Infrastructure;
 internal sealed partial class AzureDevOpsConnection(
     AzureDevOpsClientFactory clientFactory,
     AzureDevOpsPatResolver patResolver,
-    ILogger<AzureDevOpsConnection> logger
+    ILogger<AzureDevOpsConnection> logger,
+    HttpMessageHandler? httpHandler = null
 ) : IConnection
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -189,8 +190,9 @@ internal sealed partial class AzureDevOpsConnection(
             }
 
             // Call ADO org-level projects API: GET {OrganizationUrl}/_apis/projects
-            using var http = new HttpClient();
-            http.BaseAddress = new Uri(settings.OrganizationUrl.TrimEnd('/') + "/");
+            using var http = httpHandler is { }
+                ? new HttpClient(httpHandler) { BaseAddress = new Uri(settings.OrganizationUrl.TrimEnd('/') + "/") }
+                : new HttpClient { BaseAddress = new Uri(settings.OrganizationUrl.TrimEnd('/') + "/") };
 
             var authBytes = Encoding.ASCII.GetBytes($":{resolvedPat}");
             http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(

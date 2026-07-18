@@ -226,11 +226,11 @@ public static class AgentControllerServiceCollectionExtensions
         services.AddScoped<IRunLifecycleService, RunLifecycleService>();
 
         // Shared ADO client factory — used by both work-source (Boards) and repo-host (Repos) paths.
-        services.AddSingleton<AzureDevOpsClientFactory>();
+        services.AddSingleton<AzureDevOpsClientFactory, DefaultAzureDevOpsClientFactory>();
 
         // Shared PAT resolver used by both work-source (Boards) and repo-host (Repos) ADO paths.
         // Scoped because it depends on ISecretStore which is scoped (DbNamedSecretProvider).
-        services.AddScoped<AzureDevOpsPatResolver>();
+        services.AddScoped<AzureDevOpsPatResolver, DefaultAzureDevOpsPatResolver>();
 
         // Boards client factory delegates to the shared AzureDevOpsClientFactory.
         // Scoped because it depends on AzureDevOpsPatResolver which is scoped.
@@ -525,12 +525,12 @@ public static class AgentControllerServiceCollectionExtensions
         services.AddHostedService<AzureDevOpsBoardStateStartupValidator>();
 
         // Shared ADO client factory — used by both work-source (Boards) and repo-host (Repos) paths.
-        services.TryAddSingleton<AzureDevOpsClientFactory>();
+        services.TryAddSingleton<AzureDevOpsClientFactory, DefaultAzureDevOpsClientFactory>();
 
         // Register the shared PAT resolver used by both work-source (Boards)
         // and repo-host (Repos) ADO paths. Routes resolution through ISecretStore.
         // Scoped because it depends on ISecretStore which is scoped (DbNamedSecretProvider).
-        services.TryAddScoped<AzureDevOpsPatResolver>();
+        services.TryAddScoped<AzureDevOpsPatResolver, DefaultAzureDevOpsPatResolver>();
 
         // Boards client factory delegates to the shared AzureDevOpsClientFactory.
         // Scoped because it depends on AzureDevOpsPatResolver which is scoped.

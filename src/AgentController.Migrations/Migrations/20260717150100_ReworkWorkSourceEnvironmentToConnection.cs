@@ -24,7 +24,7 @@ namespace AgentController.Migrations
                 defaultValue: "");
 
             // 2. Backfill ConnectionKey from the Connections table.
-            // Match on (normalized Provider, OrganizationUrl).
+            // Match on (normalized Provider, OrganizationUrl extracted from JSON settings).
             // Provider mapping: AzureDevOpsBoards -> AzureDevOps.
             // Connection key derivation: azuredevops-{org-name-from-url}.
             migrationBuilder.Sql(
@@ -33,7 +33,7 @@ namespace AgentController.Migrations
                       SELECT c.""Key""
                       FROM ""Connections"" c
                       WHERE c.""Provider"" = 'AzureDevOps'
-                        AND c.""OrganizationUrl"" = WorkSourceEnvironments.""OrganizationUrl""
+                        AND json_extract(c.""ProviderSettingsJson"", '$.OrganizationUrl') = WorkSourceEnvironments.""OrganizationUrl""
                       LIMIT 1
                   )
                   WHERE ConnectionKey IS NULL

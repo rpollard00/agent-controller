@@ -218,9 +218,8 @@ public sealed class ManagedProfileResolverTests
             Enabled = enabled,
             Provider = "AzureDevOpsBoards",
             TagPrefix = "agent",
-            OrganizationUrl = "https://dev.azure.com/example",
+            ConnectionKey = "azuredevops-example",
             Project = project,
-            PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByName("TEST_ADO_PAT"),
         };
     }
 

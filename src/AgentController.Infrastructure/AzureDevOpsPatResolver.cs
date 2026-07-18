@@ -3,35 +3,24 @@ using AgentController.Domain.Secrets;
 namespace AgentController.Infrastructure;
 
 /// <summary>
-/// Shared helper for resolving Azure DevOps Personal Access Tokens.
+/// Abstract base for resolving Azure DevOps Personal Access Tokens.
 /// Routes resolution through <see cref="ISecretStore"/> for named,
 /// envelope-encrypted secrets.
 ///
 /// Used by both the work-source (Boards) and repo-host (Repos) ADO paths
 /// so they share the same resolution logic.
+/// Concrete implementation: <see cref="DefaultAzureDevOpsPatResolver"/>.
 /// </summary>
-internal sealed class AzureDevOpsPatResolver(
-    ISecretStore secretStore)
+internal abstract class AzureDevOpsPatResolver
 {
     /// <summary>
     /// Resolves a PAT from a <see cref="SecretReference"/> (named + versioned)
     /// via <see cref="ISecretStore"/>.
     /// </summary>
-    public Task<string?> ResolveFromSecretReferenceAsync(
+    public abstract Task<string?> ResolveFromSecretReferenceAsync(
         SecretReference reference,
         CancellationToken cancellationToken
-    )
-    {
-        if (!reference.IsSpecified)
-        {
-            return Task.FromResult<string?>(null);
-        }
-
-        return secretStore.ResolveAsync(
-            reference.Name,
-            reference.Version,
-            cancellationToken);
-    }
+    );
 
     /// <summary>
     /// Resolves a PAT from a direct PAT value.

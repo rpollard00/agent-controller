@@ -40,7 +40,7 @@ namespace AgentController.Migrations
                     AND ""RepositoryHostConnectionKey"" != ''");
 
             // 3. Retarget RepositoryHostConnectionKey to the unified Connection key.
-            // Match via RepositoryHostConnections -> (Provider mapped, OrganizationUrl) -> Connections.
+            // Match via RepositoryHostConnections -> (Provider mapped, OrganizationUrl from JSON) -> Connections.
             // Provider mapping: AzureDevOpsRepos -> AzureDevOps.
             migrationBuilder.Sql(
                 @"UPDATE Repositories
@@ -49,7 +49,7 @@ namespace AgentController.Migrations
                       FROM ""Connections"" c
                       INNER JOIN ""RepositoryHostConnections"" rhc
                         ON c.""Provider"" = 'AzureDevOps'
-                        AND c.""OrganizationUrl"" = rhc.""OrganizationUrl""
+                        AND json_extract(c.""ProviderSettingsJson"", '$.OrganizationUrl') = rhc.""OrganizationUrl""
                       WHERE rhc.""Key"" = Repositories.""RepositoryHostConnectionKey""
                       LIMIT 1
                   )
@@ -73,7 +73,7 @@ namespace AgentController.Migrations
                       INNER JOIN ""Connections"" c
                         ON c.""Key"" = Repositories.""RepositoryHostConnectionKey""
                         AND c.""Provider"" = 'AzureDevOps'
-                        AND c.""OrganizationUrl"" = rhc.""OrganizationUrl""
+                        AND json_extract(c.""ProviderSettingsJson"", '$.OrganizationUrl') = rhc.""OrganizationUrl""
                       LIMIT 1
                   )
                   WHERE ""RepositoryHostConnectionKey"" IS NOT NULL

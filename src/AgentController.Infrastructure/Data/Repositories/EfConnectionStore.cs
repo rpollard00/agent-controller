@@ -174,7 +174,8 @@ internal sealed class EfConnectionStore : IConnectionStore
             return null;
         }
 
-        return JsonSerializer.Serialize(settings, JsonOptions);
+        // Serialize using the concrete runtime type so derived properties are included.
+        return JsonSerializer.Serialize(settings, settings.GetType(), JsonOptions);
     }
 
     // CA1859: return type is the abstract base because provider-specific subtypes

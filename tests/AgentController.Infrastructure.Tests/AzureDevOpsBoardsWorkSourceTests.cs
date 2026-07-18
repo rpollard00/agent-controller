@@ -238,7 +238,7 @@ public class AzureDevOpsBoardsWorkSourceTests
         var options = new WorkSourceOptions
         {
             Project = Project,
-            OrganizationUrl = OrgUrl,
+            ConnectionKey = "azuredevops-testorg",
             ActiveState = null, // No active state configured
         };
         var optionsMonitor = new FakeOptionsMonitor<WorkSourceOptions>(options);
@@ -659,7 +659,7 @@ public class AzureDevOpsBoardsWorkSourceTests
         var options = new WorkSourceOptions
         {
             Project = project,
-            OrganizationUrl = OrgUrl,
+            ConnectionKey = "azuredevops-testorg",
             ActiveState = activeState ?? ActiveState,
         };
 
@@ -681,9 +681,8 @@ public class AzureDevOpsBoardsWorkSourceTests
             Enabled = true,
             Provider = "AzureDevOpsBoards",
             TagPrefix = "agent",
-            OrganizationUrl = $"https://dev.azure.com/{key}",
+            ConnectionKey = $"azuredevops-{key}",
             Project = project,
-            PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByName("TEST_ADO_PAT"),
         };
     }
 
@@ -801,7 +800,7 @@ public class AzureDevOpsBoardsWorkSourceTests
             return Task.FromResult(
                 profile is null
                     ? null
-                    : new ResolvedWorkSourceEnvironment(profile, IsManaged: true)
+                    : new ResolvedWorkSourceEnvironment(profile, Connection: null, IsManaged: true)
             );
         }
 
@@ -811,7 +810,7 @@ public class AzureDevOpsBoardsWorkSourceTests
         {
             return Task.FromResult<IReadOnlyList<ResolvedWorkSourceEnvironment>>(
                 profiles
-                    .Select(profile => new ResolvedWorkSourceEnvironment(profile, IsManaged: true))
+                    .Select(profile => new ResolvedWorkSourceEnvironment(profile, Connection: null, IsManaged: true))
                     .ToList()
             );
         }
@@ -821,8 +820,10 @@ public class AzureDevOpsBoardsWorkSourceTests
         IReadOnlyDictionary<string, IAzureDevOpsBoardsClient> clients
     ) : IAzureDevOpsBoardsClientFactory
     {
-        public IAzureDevOpsBoardsClient Create(WorkSourceEnvironmentProfile profile) =>
-            clients[profile.Key];
+        public Task<IAzureDevOpsBoardsClient> CreateAsync(
+            ResolvedWorkSourceEnvironment resolved,
+            CancellationToken ct
+        ) => Task.FromResult(clients[resolved.Profile.Key]);
     }
 
     /// <summary>

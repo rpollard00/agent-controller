@@ -19,7 +19,7 @@ public class ManagedOnboardingProfileTests
         Assert.Equal("agent", profile.TagPrefix);
         Assert.Null(profile.ActiveState);
         Assert.Null(profile.CompletedState);
-        Assert.False(profile.PersonalAccessTokenReference.IsSpecified);
+        Assert.Empty(profile.ConnectionKey);
         Assert.InRange(profile.CreatedAt, before, after);
         Assert.InRange(profile.UpdatedAt, profile.CreatedAt, after);
     }
@@ -63,7 +63,7 @@ public class ManagedOnboardingProfileTests
     }
 
     [Fact]
-    public void WorkSourceEnvironmentProfile_SerializesSecretReference()
+    public void WorkSourceEnvironmentProfile_SerializesConnectionKey()
     {
         var createdAt = new DateTimeOffset(2026, 7, 13, 12, 0, 0, TimeSpan.Zero);
         var profile = new WorkSourceEnvironmentProfile
@@ -73,12 +73,10 @@ public class ManagedOnboardingProfileTests
             Enabled = false,
             Provider = "AzureDevOpsBoards",
             TagPrefix = "ac",
-            OrganizationUrl = "https://dev.azure.com/example",
+            ConnectionKey = "azuredevops-example-org",
             Project = "Agent Controller",
             ActiveState = "Active",
             CompletedState = "Closed",
-            PersonalAccessTokenReference = Domain.Secrets.SecretReference.ByNameAndVersion(
-                "AZURE_DEVOPS_PAT_PRIMARY", 1),
             CreatedAt = createdAt,
             UpdatedAt = createdAt.AddHours(1),
         };
@@ -87,12 +85,11 @@ public class ManagedOnboardingProfileTests
 
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
-        Assert.False(root.TryGetProperty("patEnvironmentVariable", out _));
+        Assert.False(root.TryGetProperty("organizationUrl", out _));
         Assert.False(root.TryGetProperty("personalAccessToken", out _));
         Assert.False(root.TryGetProperty("pat", out _));
-        Assert.True(root.TryGetProperty("personalAccessTokenReference", out var refProp));
-        Assert.Equal("AZURE_DEVOPS_PAT_PRIMARY", refProp.GetProperty("name").GetString());
-        Assert.Equal(1, refProp.GetProperty("version").GetInt32());
+        Assert.True(root.TryGetProperty("connectionKey", out var connKeyProp));
+        Assert.Equal("azuredevops-example-org", connKeyProp.GetString());
 
         var roundTripped = JsonSerializer.Deserialize<WorkSourceEnvironmentProfile>(json, JsonOptions);
 
@@ -102,12 +99,10 @@ public class ManagedOnboardingProfileTests
         Assert.Equal(profile.Enabled, roundTripped.Enabled);
         Assert.Equal(profile.Provider, roundTripped.Provider);
         Assert.Equal(profile.TagPrefix, roundTripped.TagPrefix);
-        Assert.Equal(profile.OrganizationUrl, roundTripped.OrganizationUrl);
+        Assert.Equal(profile.ConnectionKey, roundTripped.ConnectionKey);
         Assert.Equal(profile.Project, roundTripped.Project);
         Assert.Equal(profile.ActiveState, roundTripped.ActiveState);
         Assert.Equal(profile.CompletedState, roundTripped.CompletedState);
-        Assert.Equal(profile.PersonalAccessTokenReference.Name, roundTripped.PersonalAccessTokenReference.Name);
-        Assert.Equal(profile.PersonalAccessTokenReference.Version, roundTripped.PersonalAccessTokenReference.Version);
         Assert.Equal(profile.CreatedAt, roundTripped.CreatedAt);
         Assert.Equal(profile.UpdatedAt, roundTripped.UpdatedAt);
     }

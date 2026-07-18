@@ -130,7 +130,10 @@ public sealed class WebUiHostingTests : IAsyncLifetime
                 services.RemoveAll<DbContextOptions<AgentControllerDbContext>>();
                 services.RemoveAll<IDbContextOptionsConfiguration<AgentControllerDbContext>>();
                 services.AddDbContext<AgentControllerDbContext>(options =>
-                    options.UseSqlite($"Data Source={databasePath}")
+                    options.UseSqlite(
+                        $"Data Source={databasePath}",
+                        sqlite => sqlite.MigrationsAssembly("AgentController.Migrations")
+                    )
                 );
             });
         }
