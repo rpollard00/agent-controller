@@ -22,6 +22,7 @@ const connection: ConnectionProfile = {
   provider: 'AzureDevOps',
   capabilities: ['Repositories', 'WorkTracking'],
   providerSettings: {
+    provider: 'AzureDevOps',
     organizationUrl: 'https://dev.azure.com/example',
     personalAccessTokenReference: { name: 'ADO_PAT', version: null },
   },

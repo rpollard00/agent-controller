@@ -21,6 +21,7 @@ const connection: ConnectionProfile = {
   provider: 'AzureDevOps',
   capabilities: ['Repositories', 'WorkTracking'],
   providerSettings: {
+    provider: 'AzureDevOps',
     organizationUrl: 'https://dev.azure.com/example',
     personalAccessTokenReference: { name: 'ADO_PAT', version: null },
   },
@@ -153,6 +154,25 @@ describe('connection screens', () => {
     window.history.replaceState({}, '', '/connections');
   });
 
+  it('emits provider type discriminator in providerSettings payload (regression)', async () => {
+    window.history.replaceState({}, '', '/connections/new');
+    const api = createApi([]);
+    render(App, { client: api.client });
+
+    await completeRequiredCreateFields();
+    await fireEvent.click(screen.getByRole('button', { name: 'Create connection' }));
+
+    await waitFor(() => expect(api.connections.create).toHaveBeenCalledOnce());
+    const callArgs = api.connections.create.mock.calls[0];
+    const payload = callArgs[0] as ConnectionProfile;
+    // Regression: providerSettings must carry the "provider" discriminator
+    // so the backend's JsonPolymorphic binder can resolve the concrete subtype.
+    // Without this, ReadFromJsonAsync throws NotSupportedException -> 500.
+    expect(payload.providerSettings).not.toBeNull();
+    expect(payload.providerSettings!.provider).toBe('AzureDevOps');
+    expect(window.location.pathname).toBe('/connections/ado-secondary');
+  });
+
   it('creates a connection with secret reference', async () => {
     window.history.replaceState({}, '', '/connections/new');
     const api = createApi([]);
@@ -176,6 +196,7 @@ describe('connection screens', () => {
         enabled: true,
         provider: 'AzureDevOps',
         providerSettings: expect.objectContaining({
+          provider: 'AzureDevOps',
           organizationUrl: 'https://dev.azure.com/example',
           personalAccessTokenReference: { name: 'ADO_PAT', version: null },
         }),
