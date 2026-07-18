@@ -1,17 +1,17 @@
 namespace AgentController.Application.Results;
 
 /// <summary>
-/// Status of a secret creation operation.
+/// Status of a secret management operation.
 /// </summary>
 public enum SecretOperationStatus
 {
-    /// <summary>The secret was created successfully.</summary>
+    /// <summary>The operation completed successfully.</summary>
     Succeeded,
 
     /// <summary>Input validation failed.</summary>
     ValidationFailed,
 
-    /// <summary>A secret with the same name already exists.</summary>
+    /// <summary>A secret with the same name already exists, or the secret is in use.</summary>
     Conflict,
 
     /// <summary>The secret was not found.</summary>
@@ -109,6 +109,49 @@ public sealed record CreateSecretVersionResult
         };
 
     public static CreateSecretVersionResult NotFound(string? detail = null) =>
+        new()
+        {
+            Status = SecretOperationStatus.NotFound,
+            Detail = detail,
+        };
+}
+
+/// <summary>
+/// Result of deleting a named secret and all of its versions.
+/// </summary>
+public sealed record DeleteSecretResult
+{
+    /// <summary>Operation status.</summary>
+    public SecretOperationStatus Status { get; init; }
+
+    /// <summary>Optional detail message for error cases.</summary>
+    public string? Detail { get; init; }
+
+    /// <summary>Validation errors when status is ValidationFailed.</summary>
+    public IReadOnlyDictionary<string, string[]> ValidationErrors { get; init; } =
+        new Dictionary<string, string[]>();
+
+    public static DeleteSecretResult Succeeded() =>
+        new()
+        {
+            Status = SecretOperationStatus.Succeeded,
+        };
+
+    public static DeleteSecretResult ValidationFailed(IReadOnlyDictionary<string, string[]> errors) =>
+        new()
+        {
+            Status = SecretOperationStatus.ValidationFailed,
+            ValidationErrors = errors,
+        };
+
+    public static DeleteSecretResult Conflict(string? detail = null) =>
+        new()
+        {
+            Status = SecretOperationStatus.Conflict,
+            Detail = detail,
+        };
+
+    public static DeleteSecretResult NotFound(string? detail = null) =>
         new()
         {
             Status = SecretOperationStatus.NotFound,
