@@ -12,6 +12,12 @@ internal sealed class NamedSecretEntity
     /// <summary>Unique human-readable name for the secret.</summary>
     public string Name { get; set; } = string.Empty;
 
+    /// <summary>
+    /// The stable secret-type discriminator (e.g. <c>"personal-access-token"</c> or <c>"ssh-key"</c>).
+    /// Immutable after the secret is created.
+    /// </summary>
+    public string SecretType { get; set; } = string.Empty;
+
     /// <summary>When the secret was first created.</summary>
     public DateTimeOffset CreatedAt { get; set; }
 

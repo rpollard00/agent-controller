@@ -27,6 +27,12 @@ internal sealed class NamedSecretEntityConfiguration
         builder.HasIndex(x => x.Name)
             .IsUnique();
 
+        builder.Property(x => x.SecretType)
+            .IsRequired()
+            .HasMaxLength(64);
+
+        builder.HasIndex(x => x.SecretType);
+
         builder.Property(x => x.CreatedAt)
             .IsRequired();
 

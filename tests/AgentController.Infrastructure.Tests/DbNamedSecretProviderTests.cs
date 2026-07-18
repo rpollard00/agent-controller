@@ -1,5 +1,6 @@
 using AgentController.Domain.Secrets;
 using AgentController.Infrastructure.Data;
+using AgentController.Infrastructure.Data.Entities;
 using AgentController.Infrastructure.Secrets;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -501,6 +502,383 @@ public sealed class DbNamedSecretProviderTests : IDisposable
 
         var decrypted = encryption.Decrypt(encryptedValue, nonce, wrappedDek);
         Assert.Equal(plaintext, decrypted);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Typed SSH-key persistence
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task CreateAsync_SshKeyPayload_StoresAndResolves()
+    {
+        using var scope = CreateScope();
+        var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
+
+        var payload = new SshKeyPayload
+        {
+            PrivateKey = "ssh-private-key-content-abc",
+            PublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5aaaa",
+            Passphrase = null,
+        };
+
+        await manager.CreateAsync("ssh-test-key", payload, CancellationToken.None);
+
+        using var scope2 = CreateScope();
+        var store = scope2.ServiceProvider.GetRequiredService<ISecretStore>();
+        var result = await store.ResolveAsync("ssh-test-key", cancellationToken: CancellationToken.None);
+
+        Assert.IsType<SshKeyPayload>(result);
+        var sshResult = (SshKeyPayload)result!;
+        Assert.Equal("ssh-private-key-content-abc", sshResult.PrivateKey);
+        Assert.Equal("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5aaaa", sshResult.PublicKey);
+        Assert.Null(sshResult.Passphrase);
+    }
+
+    [Fact]
+    public async Task CreateAsync_SshKeyPayload_WithPassphrase()
+    {
+        using var scope = CreateScope();
+        var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
+
+        var payload = new SshKeyPayload
+        {
+            PrivateKey = "encrypted-private-key",
+            PublicKey = "ssh-rsa AAAAB3NzaC1yc2E...",
+            Passphrase = "my-secret-passphrase",
+        };
+
+        await manager.CreateAsync("ssh-with-passphrase", payload, CancellationToken.None);
+
+        using var scope2 = CreateScope();
+        var store = scope2.ServiceProvider.GetRequiredService<ISecretStore>();
+        var result = await store.ResolveAsync("ssh-with-passphrase", cancellationToken: CancellationToken.None);
+
+        Assert.IsType<SshKeyPayload>(result);
+        var sshResult = (SshKeyPayload)result!;
+        Assert.Equal("encrypted-private-key", sshResult.PrivateKey);
+        Assert.Equal("ssh-rsa AAAAB3NzaC1yc2E...", sshResult.PublicKey);
+        Assert.Equal("my-secret-passphrase", sshResult.Passphrase);
+    }
+
+    [Fact]
+    public async Task CreateAsync_SshKeyPayload_SecretInfoReturnsSshType()
+    {
+        using var scope = CreateScope();
+        var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
+
+        await manager.CreateAsync("ssh-type-check", new SshKeyPayload
+        {
+            PrivateKey = "pk",
+            PublicKey = "ssh-ed25519 abc",
+            Passphrase = null,
+        }, CancellationToken.None);
+
+        using var scope2 = CreateScope();
+        var manager2 = scope2.ServiceProvider.GetRequiredService<ISecretManager>();
+        var secrets = await manager2.ListAsync(CancellationToken.None);
+
+        var secret = secrets.Single(s => s.Name == "ssh-type-check");
+        Assert.Equal(Domain.Secrets.SecretType.SshKey, secret.SecretType);
+    }
+
+    [Fact]
+    public async Task ListVersionsAsync_SshKey_ReturnsPublicKey()
+    {
+        using var scope = CreateScope();
+        var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
+
+        await manager.CreateAsync("ssh-pubkey", new SshKeyPayload
+        {
+            PrivateKey = "private-key-data",
+            PublicKey = "ssh-ed25519 AAAAC3N...public-key",
+            Passphrase = null,
+        }, CancellationToken.None);
+
+        using var scope2 = CreateScope();
+        var manager2 = scope2.ServiceProvider.GetRequiredService<ISecretManager>();
+        var versions = await manager2.ListVersionsAsync("ssh-pubkey", CancellationToken.None);
+
+        Assert.NotNull(versions);
+        Assert.Single(versions);
+        Assert.Equal(Domain.Secrets.SecretType.SshKey, versions[0].SecretType);
+        Assert.Equal("ssh-ed25519 AAAAC3N...public-key", versions[0].PublicKey);
+    }
+
+    [Fact]
+    public async Task ListVersionsAsync_Pat_ReturnsNullPublicKey()
+    {
+        using var scope = CreateScope();
+        var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
+
+        await manager.CreateAsync("pat-pubkey", new PersonalAccessTokenPayload { Value = "token" }, CancellationToken.None);
+
+        using var scope2 = CreateScope();
+        var manager2 = scope2.ServiceProvider.GetRequiredService<ISecretManager>();
+        var versions = await manager2.ListVersionsAsync("pat-pubkey", CancellationToken.None);
+
+        Assert.NotNull(versions);
+        Assert.Single(versions);
+        Assert.Equal(Domain.Secrets.SecretType.PersonalAccessToken, versions[0].SecretType);
+        Assert.Null(versions[0].PublicKey);
+    }
+
+    [Fact]
+    public async Task ListVersionsAsync_SshKey_MultipleVersions_AllHavePublicKeys()
+    {
+        using var scope = CreateScope();
+        var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
+
+        await manager.CreateAsync("ssh-multi", new SshKeyPayload
+        {
+            PrivateKey = "pk-v1",
+            PublicKey = "public-key-v1",
+            Passphrase = null,
+        }, CancellationToken.None);
+
+        await manager.CreateVersionAsync("ssh-multi", new SshKeyPayload
+        {
+            PrivateKey = "pk-v2",
+            PublicKey = "public-key-v2",
+            Passphrase = "passphrase-v2",
+        }, CancellationToken.None);
+
+        using var scope2 = CreateScope();
+        var manager2 = scope2.ServiceProvider.GetRequiredService<ISecretManager>();
+        var versions = await manager2.ListVersionsAsync("ssh-multi", CancellationToken.None);
+
+        Assert.NotNull(versions);
+        Assert.Equal(2, versions.Count);
+        Assert.Equal("public-key-v1", versions[0].PublicKey);
+        Assert.Equal("public-key-v2", versions[1].PublicKey);
+        Assert.Equal(Domain.Secrets.SecretType.SshKey, versions[0].SecretType);
+        Assert.Equal(Domain.Secrets.SecretType.SshKey, versions[1].SecretType);
+    }
+
+    [Fact]
+    public async Task CreateVersionAsync_TypeMismatch_Throws()
+    {
+        using var scope = CreateScope();
+        var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
+
+        // Create a PAT secret.
+        await manager.CreateAsync("type-mismatch", new PersonalAccessTokenPayload { Value = "pat-value" }, CancellationToken.None);
+
+        // Attempt to add an SSH-key version — should throw.
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            manager.CreateVersionAsync("type-mismatch", new SshKeyPayload
+            {
+                PrivateKey = "pk",
+                PublicKey = "ssh-ed25519 abc",
+                Passphrase = null,
+            }, CancellationToken.None));
+
+        Assert.Contains("ssh-key", ex.Message);
+        Assert.Contains("personal-access-token", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateVersionAsync_ReverseTypeMismatch_Throws()
+    {
+        using var scope = CreateScope();
+        var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
+
+        // Create an SSH secret.
+        await manager.CreateAsync("reverse-mismatch", new SshKeyPayload
+        {
+            PrivateKey = "pk",
+            PublicKey = "ssh-ed25519 abc",
+            Passphrase = null,
+        }, CancellationToken.None);
+
+        // Attempt to add a PAT version — should throw.
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            manager.CreateVersionAsync("reverse-mismatch", new PersonalAccessTokenPayload { Value = "pat" }, CancellationToken.None));
+
+        Assert.Contains("personal-access-token", ex.Message);
+        Assert.Contains("ssh-key", ex.Message);
+    }
+
+    [Fact]
+    public async Task SshKey_RoundTripPersistence_AfterReboot_ResolvesCorrectly()
+    {
+        var tempDbPath = Path.Combine(Path.GetTempPath(), $"ssh-reboot-test-{Guid.NewGuid():N}.db");
+        var kek = CreateTestKek();
+        try
+        {
+            // Phase 1: create schema and an SSH key secret.
+            var connection1 = new SqliteConnection($"Data Source={tempDbPath}");
+            connection1.Open();
+            using (var scope1 = CreateScopeWithConnection(connection1, kek))
+            {
+                var ctx1 = scope1.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
+                ctx1.Database.EnsureCreated();
+
+                var manager = scope1.ServiceProvider.GetRequiredService<ISecretManager>();
+                await manager.CreateAsync("reboot-ssh", new SshKeyPayload
+                {
+                    PrivateKey = "persistent-private-key",
+                    PublicKey = "ssh-ed25519 persistent-public",
+                    Passphrase = "persistent-passphrase",
+                }, CancellationToken.None);
+            }
+            connection1.Dispose();
+
+            // Phase 2: "after reboot" — fresh connection.
+            var connection2 = new SqliteConnection($"Data Source={tempDbPath}");
+            connection2.Open();
+            using (var scope2 = CreateScopeWithConnection(connection2, kek))
+            {
+                var store = scope2.ServiceProvider.GetRequiredService<ISecretStore>();
+                var result = await store.ResolveAsync("reboot-ssh", cancellationToken: CancellationToken.None);
+
+                Assert.IsType<SshKeyPayload>(result);
+                var sshResult = (SshKeyPayload)result!;
+                Assert.Equal("persistent-private-key", sshResult.PrivateKey);
+                Assert.Equal("ssh-ed25519 persistent-public", sshResult.PublicKey);
+                Assert.Equal("persistent-passphrase", sshResult.Passphrase);
+
+                // Also verify metadata shows SSH type with public key.
+                var manager = scope2.ServiceProvider.GetRequiredService<ISecretManager>();
+                var versions = await manager.ListVersionsAsync("reboot-ssh", CancellationToken.None);
+                Assert.NotNull(versions);
+                Assert.Equal(Domain.Secrets.SecretType.SshKey, versions[0].SecretType);
+                Assert.Equal("ssh-ed25519 persistent-public", versions[0].PublicKey);
+            }
+            connection2.Dispose();
+        }
+        finally
+        {
+            if (File.Exists(tempDbPath))
+            {
+                File.Delete(tempDbPath);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SshKey_PinnedVersion_ResolvesCorrectVersion()
+    {
+        using var scope = CreateScope();
+        var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
+
+        await manager.CreateAsync("ssh-pinned", new SshKeyPayload
+        {
+            PrivateKey = "pk-v1",
+            PublicKey = "pub-v1",
+            Passphrase = null,
+        }, CancellationToken.None);
+
+        await manager.CreateVersionAsync("ssh-pinned", new SshKeyPayload
+        {
+            PrivateKey = "pk-v2",
+            PublicKey = "pub-v2",
+            Passphrase = "p2",
+        }, CancellationToken.None);
+
+        using var scope2 = CreateScope();
+        var store = scope2.ServiceProvider.GetRequiredService<ISecretStore>();
+
+        var v1 = await store.ResolveAsync("ssh-pinned", version: 1, cancellationToken: CancellationToken.None);
+        var v2 = await store.ResolveAsync("ssh-pinned", version: 2, cancellationToken: CancellationToken.None);
+        var latest = await store.ResolveAsync("ssh-pinned", cancellationToken: CancellationToken.None);
+
+        Assert.IsType<SshKeyPayload>(v1);
+        Assert.IsType<SshKeyPayload>(v2);
+        Assert.IsType<SshKeyPayload>(latest);
+
+        Assert.Equal("pk-v1", ((SshKeyPayload)v1!).PrivateKey);
+        Assert.Null(((SshKeyPayload)v1!).Passphrase);
+
+        Assert.Equal("pk-v2", ((SshKeyPayload)v2!).PrivateKey);
+        Assert.Equal("p2", ((SshKeyPayload)v2!).Passphrase);
+
+        Assert.Equal("pk-v2", ((SshKeyPayload)latest!).PrivateKey);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Legacy PAT format compatibility
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task LegacyPatValue_RawStringEncryptedByOldProvider_ResolvesCorrectly()
+    {
+        // The old DbNamedSecretProvider encrypted the raw PAT value string directly,
+        // not as a JSON {"value":"..."} envelope. After migration backfills SecretType
+        // to "personal-access-token", legacy rows must still resolve correctly.
+        //
+        // This test simulates that scenario by writing a version row with a raw
+        // encrypted PAT string (bypassing the new CreateAsync which always uses JSON).
+
+        var tempDbPath = Path.Combine(Path.GetTempPath(), $"legacy-pat-test-{Guid.NewGuid():N}.db");
+        var kek = CreateTestKek();
+        try
+        {
+            // Phase 1: create schema and seed a legacy PAT version (raw encrypted string).
+            var connection1 = new SqliteConnection($"Data Source={tempDbPath}");
+            connection1.Open();
+            using (var scope1 = CreateScopeWithConnection(connection1, kek))
+            {
+                var ctx1 = scope1.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
+                ctx1.Database.EnsureCreated();
+
+                // Simulate the old provider's behavior: encrypt a raw PAT string.
+                var encryption = new AesGcmEnvelopeEncryption(new TestKeyEncryptionKeySource(kek));
+                var legacyPatValue = "ghp_legacyTokenValue123!@#";
+                var (encryptedValue, nonce, wrappedDek) = encryption.Encrypt(legacyPatValue);
+
+                // Insert a NamedSecret with PAT type and a version containing the raw encrypted value.
+                var now = DateTimeOffset.UtcNow;
+                var secretEntity = new NamedSecretEntity
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    Name = "legacy-pat-secret",
+                    SecretType = Domain.Secrets.SecretType.PersonalAccessToken,
+                    CreatedAt = now,
+                };
+                ctx1.NamedSecrets.Add(secretEntity);
+                ctx1.SecretVersions.Add(new SecretVersionEntity
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    NamedSecretId = secretEntity.Id,
+                    VersionNumber = 1,
+                    EncryptedValue = encryptedValue,
+                    Nonce = nonce,
+                    WrappedDek = wrappedDek,
+                    CreatedAt = now,
+                });
+                await ctx1.SaveChangesAsync();
+            }
+            connection1.Dispose();
+
+            // Phase 2: resolve through the new provider — must work compatibly.
+            var connection2 = new SqliteConnection($"Data Source={tempDbPath}");
+            connection2.Open();
+            using (var scope2 = CreateScopeWithConnection(connection2, kek))
+            {
+                var store = scope2.ServiceProvider.GetRequiredService<ISecretStore>();
+                var result = await store.ResolveAsync("legacy-pat-secret", cancellationToken: CancellationToken.None);
+
+                Assert.NotNull(result);
+                Assert.IsType<PersonalAccessTokenPayload>(result);
+                Assert.Equal("ghp_legacyTokenValue123!@#", ((PersonalAccessTokenPayload)result!).Value);
+
+                // Also verify ListVersionsAsync works.
+                var manager = scope2.ServiceProvider.GetRequiredService<ISecretManager>();
+                var versions = await manager.ListVersionsAsync("legacy-pat-secret", CancellationToken.None);
+                Assert.NotNull(versions);
+                Assert.Single(versions);
+                Assert.Equal(Domain.Secrets.SecretType.PersonalAccessToken, versions[0].SecretType);
+                Assert.Null(versions[0].PublicKey); // PAT secrets have no public key
+            }
+            connection2.Dispose();
+        }
+        finally
+        {
+            if (File.Exists(tempDbPath))
+            {
+                File.Delete(tempDbPath);
+            }
+        }
     }
 
     // ═══════════════════════════════════════════════════════════
