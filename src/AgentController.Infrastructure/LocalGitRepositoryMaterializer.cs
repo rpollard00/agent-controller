@@ -190,7 +190,8 @@ public sealed partial class LocalGitRepositoryMaterializer : IRepositoryMaterial
             return null;
         }
 
-        return await _secretStore.ResolveAsync(secretName, cancellationToken: cancellationToken);
+        var payload = await _secretStore.ResolveAsync(secretName, cancellationToken: cancellationToken);
+        return payload is PersonalAccessTokenPayload pat ? pat.Value : null;
     }
 
     /// <summary>

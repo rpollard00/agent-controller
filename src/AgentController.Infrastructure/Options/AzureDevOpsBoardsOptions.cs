@@ -77,7 +77,7 @@ public sealed class AzureDevOpsBoardsOptions : IAzureDevOpsBoardsOptions
     /// <param name="cancellationToken">
     /// Cancellation token.
     /// </param>
-    public Task<string?> ResolvePersonalAccessTokenAsync(
+    public async Task<string?> ResolvePersonalAccessTokenAsync(
         Domain.Secrets.ISecretStore secretStore,
         CancellationToken cancellationToken
     )
@@ -86,9 +86,10 @@ public sealed class AzureDevOpsBoardsOptions : IAzureDevOpsBoardsOptions
 
         var configured = PersonalAccessToken;
         if (string.IsNullOrWhiteSpace(configured))
-            return Task.FromResult<string?>(null);
+            return null;
 
         // Resolve the named secret through ISecretStore.
-        return secretStore.ResolveAsync(configured.Trim(), cancellationToken: cancellationToken);
+        var payload = await secretStore.ResolveAsync(configured.Trim(), cancellationToken: cancellationToken);
+        return payload is Domain.Secrets.PersonalAccessTokenPayload pat ? pat.Value : null;
     }
 }

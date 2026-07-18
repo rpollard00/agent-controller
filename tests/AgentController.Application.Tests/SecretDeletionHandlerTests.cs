@@ -11,7 +11,7 @@ public sealed class SecretDeletionHandlerTests
     public async Task Delete_RemovesUnreferencedSecret()
     {
         var secrets = new InMemorySecretStore();
-        await secrets.CreateAsync("test-secret", "write-only-value");
+        await secrets.CreateAsync("test-secret", new Domain.Secrets.PersonalAccessTokenPayload { Value = "write-only-value" });
         var handler = CreateHandler(secrets);
 
         var result = await handler.HandleAsync(
@@ -82,7 +82,7 @@ public sealed class SecretDeletionHandlerTests
     public async Task Delete_ReturnsConflictWhileAConnectionReferencesSecret()
     {
         var secrets = new InMemorySecretStore();
-        await secrets.CreateAsync("test-secret", "write-only-value");
+        await secrets.CreateAsync("test-secret", new Domain.Secrets.PersonalAccessTokenPayload { Value = "write-only-value" });
         var connections = new FakeConnectionStore(
             CreateAdoConnection("ado-main", "test-secret")
         );
@@ -109,7 +109,7 @@ public sealed class SecretDeletionHandlerTests
     public async Task Delete_AllowsDeletionWhenConnectionsReferenceOtherSecrets()
     {
         var secrets = new InMemorySecretStore();
-        await secrets.CreateAsync("test-secret", "write-only-value");
+        await secrets.CreateAsync("test-secret", new Domain.Secrets.PersonalAccessTokenPayload { Value = "write-only-value" });
         var connections = new FakeConnectionStore(
             CreateAdoConnection("ado-main", "other-secret"),
             CreateAdoConnection("ado-unconfigured", null)
@@ -132,7 +132,7 @@ public sealed class SecretDeletionHandlerTests
     public async Task Delete_ReturnsConflictWhileARepositoryReferencesSecret()
     {
         var secrets = new InMemorySecretStore();
-        await secrets.CreateAsync("test-secret", "write-only-value");
+        await secrets.CreateAsync("test-secret", new Domain.Secrets.PersonalAccessTokenPayload { Value = "write-only-value" });
         var repositories = new FakeRepositoryStore(
             new RepositoryProfile
             {

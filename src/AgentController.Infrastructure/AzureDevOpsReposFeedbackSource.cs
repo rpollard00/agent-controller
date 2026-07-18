@@ -163,7 +163,8 @@ internal sealed class AzureDevOpsReposFeedbackSource : IFeedbackSource
             return null;
         }
 
-        return await _secretStore.ResolveAsync(secretName.Trim(), cancellationToken: cancellationToken);
+        var payload = await _secretStore.ResolveAsync(secretName.Trim(), cancellationToken: cancellationToken);
+        return payload is Domain.Secrets.PersonalAccessTokenPayload pat ? pat.Value : null;
     }
 
     /// <summary>

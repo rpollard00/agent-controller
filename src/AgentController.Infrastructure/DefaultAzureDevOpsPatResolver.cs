@@ -10,19 +10,21 @@ namespace AgentController.Infrastructure;
 internal sealed class DefaultAzureDevOpsPatResolver(ISecretStore secretStore)
     : AzureDevOpsPatResolver
 {
-    public override Task<string?> ResolveFromSecretReferenceAsync(
+    public override async Task<string?> ResolveFromSecretReferenceAsync(
         SecretReference reference,
         CancellationToken cancellationToken
     )
     {
         if (!reference.IsSpecified)
         {
-            return Task.FromResult<string?>(null);
+            return null;
         }
 
-        return secretStore.ResolveAsync(
+        var payload = await secretStore.ResolveAsync(
             reference.Name,
             reference.Version,
             cancellationToken);
+
+        return payload is PersonalAccessTokenPayload pat ? pat.Value : null;
     }
 }

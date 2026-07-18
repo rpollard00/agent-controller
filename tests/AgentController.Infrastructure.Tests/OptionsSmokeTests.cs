@@ -1092,7 +1092,7 @@ public class OptionsSmokeTests
     private sealed class InMemoryFakeSecretStoreForBoards(Dictionary<string, string> secrets)
         : Domain.Secrets.ISecretStore
     {
-        public Task<string?> ResolveAsync(
+        public Task<Domain.Secrets.SecretPayload?> ResolveAsync(
             string name,
             int? version = null,
             CancellationToken cancellationToken = default
@@ -1100,7 +1100,8 @@ public class OptionsSmokeTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             secrets.TryGetValue(name, out var value);
-            return Task.FromResult(value);
+            return Task.FromResult<Domain.Secrets.SecretPayload?>(
+                value is not null ? new Domain.Secrets.PersonalAccessTokenPayload { Value = value } : null);
         }
     }
 }

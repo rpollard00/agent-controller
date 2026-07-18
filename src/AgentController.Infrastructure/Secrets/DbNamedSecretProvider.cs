@@ -43,7 +43,7 @@ internal sealed class DbNamedSecretProvider : ISecretStore, ISecretManager
     // ═══════════════════════════════════════════════════════════
 
     /// <inheritdoc />
-    public async Task<string?> ResolveAsync(
+    public async Task<SecretPayload?> ResolveAsync(
         string name,
         int? version = null,
         CancellationToken cancellationToken = default)
@@ -74,10 +74,14 @@ internal sealed class DbNamedSecretProvider : ISecretStore, ISecretManager
             return null;
         }
 
-        return _encryption.Decrypt(
+        var plaintext = _encryption.Decrypt(
             versionEntity.EncryptedValue,
             versionEntity.Nonce,
             versionEntity.WrappedDek);
+
+        // For now, all stored secrets are treated as PAT payloads.
+        // Typed SSH-key persistence will be added with secret type migrations.
+        return new PersonalAccessTokenPayload { Value = plaintext };
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -87,7 +91,7 @@ internal sealed class DbNamedSecretProvider : ISecretStore, ISecretManager
     /// <inheritdoc />
     public async Task<bool> CreateAsync(
         string name,
-        string value,
+        SecretPayload payload,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -101,7 +105,10 @@ internal sealed class DbNamedSecretProvider : ISecretStore, ISecretManager
             return false;
         }
 
-        var (encryptedValue, nonce, wrappedDek) = _encryption.Encrypt(value);
+        // For now, only PAT payloads are persisted; typed SSH-key storage
+        // will be added with secret type migrations.
+        var patPayload = (PersonalAccessTokenPayload)payload;
+        var (encryptedValue, nonce, wrappedDek) = _encryption.Encrypt(patPayload.Value);
         var now = DateTimeOffset.UtcNow;
 
         var entity = new NamedSecretEntity
@@ -132,7 +139,7 @@ internal sealed class DbNamedSecretProvider : ISecretStore, ISecretManager
     /// <inheritdoc />
     public async Task<int?> CreateVersionAsync(
         string name,
-        string value,
+        SecretPayload payload,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -146,12 +153,16 @@ internal sealed class DbNamedSecretProvider : ISecretStore, ISecretManager
             return null;
         }
 
+        // For now, only PAT payloads are persisted; typed SSH-key storage
+        // will be added with secret type migrations.
+        var patPayload = (PersonalAccessTokenPayload)payload;
+
         var newVersionNumber = secret.Versions
             .Select(v => v.VersionNumber)
             .DefaultIfEmpty(0)
             .Max() + 1;
 
-        var (encryptedValue, nonce, wrappedDek) = _encryption.Encrypt(value);
+        var (encryptedValue, nonce, wrappedDek) = _encryption.Encrypt(patPayload.Value);
 
         var versionEntity = new SecretVersionEntity
         {
@@ -210,11 +221,14 @@ internal sealed class DbNamedSecretProvider : ISecretStore, ISecretManager
                     .OrderByDescending(v => v.VersionNumber)
                     .FirstOrDefault();
 
+                // For now, all stored secrets are treated as PAT type.
+                // Typed secret-type persistence will be added with secret type migrations.
                 return new SecretInfo(
                     Name: s.Name,
                     LatestVersion: latestVersion?.VersionNumber ?? 0,
                     CreatedAt: s.CreatedAt,
-                    UpdatedAt: latestVersion?.CreatedAt ?? s.CreatedAt
+                    UpdatedAt: latestVersion?.CreatedAt ?? s.CreatedAt,
+                    SecretType: Domain.Secrets.SecretType.PersonalAccessToken
                 );
             })
             .ToArray();
@@ -240,7 +254,8 @@ internal sealed class DbNamedSecretProvider : ISecretStore, ISecretManager
             .OrderBy(v => v.VersionNumber)
             .Select(v => new SecretVersionInfo(
                 Version: v.VersionNumber,
-                CreatedAt: v.CreatedAt
+                CreatedAt: v.CreatedAt,
+                SecretType: Domain.Secrets.SecretType.PersonalAccessToken
             ))
             .ToArray();
     }

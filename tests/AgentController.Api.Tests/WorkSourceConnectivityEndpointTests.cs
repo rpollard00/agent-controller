@@ -330,7 +330,7 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
 
                 // Register in-memory named secret store with test secret.
                 var secretStore = new InMemorySecretStore();
-                secretStore.CreateAsync(testSecretName, testSecretValue, CancellationToken.None)
+                secretStore.CreateAsync(testSecretName, new Domain.Secrets.PersonalAccessTokenPayload { Value = testSecretValue }, CancellationToken.None)
                     .GetAwaiter().GetResult();
                 services.RemoveAll<Domain.Secrets.ISecretStore>();
                 services.RemoveAll<Domain.Secrets.ISecretManager>();

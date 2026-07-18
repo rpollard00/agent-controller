@@ -503,10 +503,11 @@ public static class AgentControllerServiceCollectionExtensions
 
             // Resolve PAT from the connection's secret reference via ISecretStore.
             var secretStore = sp.GetRequiredService<ISecretStore>();
-            var resolvedPat = secretStore
+            var patPayload = secretStore
                 .ResolveAsync(adoSettings.PersonalAccessTokenReference.Name, cancellationToken: CancellationToken.None)
                 .GetAwaiter()
                 .GetResult();
+            var resolvedPat = patPayload is PersonalAccessTokenPayload pat ? pat.Value : null;
 
             var http = new HttpClient();
             var logger = sp.GetRequiredService<ILogger<AzureDevOpsBoardsClient>>();
@@ -623,10 +624,11 @@ public static class AgentControllerServiceCollectionExtensions
             }
 
             // Resolve PAT from the connection's secret reference.
-            var resolvedPat = secretStore
+            var patPayload = secretStore
                 .ResolveAsync(adoSettings.PersonalAccessTokenReference.Name, cancellationToken: CancellationToken.None)
                 .GetAwaiter()
                 .GetResult();
+            var resolvedPat = patPayload is PersonalAccessTokenPayload pat ? pat.Value : null;
 
             var http = new HttpClient();
             return new AzureDevOpsReposPrLabelSource(

@@ -35,9 +35,11 @@ public sealed class CreateSecretVersionCommandHandler(ISecretManager secretManag
             );
         }
 
+        // For now, all secret versions created through the command layer default to PAT type.
+        // SSH-key versions will be supported once typed command payloads are introduced.
         var version = await _secretManager.CreateVersionAsync(
             command.Name,
-            command.Value,
+            new PersonalAccessTokenPayload { Value = command.Value },
             cancellationToken
         );
 

@@ -73,13 +73,14 @@ public sealed class DbNamedSecretProviderTests : IDisposable
     {
         using var scope = CreateScope();
         var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
-        await manager.CreateAsync("test-secret", "my-secret-value", CancellationToken.None);
+        await manager.CreateAsync("test-secret", new PersonalAccessTokenPayload { Value = "my-secret-value" }, CancellationToken.None);
 
         using var scope2 = CreateScope();
         var store = scope2.ServiceProvider.GetRequiredService<ISecretStore>();
         var result = await store.ResolveAsync("test-secret", cancellationToken: CancellationToken.None);
 
-        Assert.Equal("my-secret-value", result);
+        Assert.IsType<PersonalAccessTokenPayload>(result);
+        Assert.Equal("my-secret-value", ((PersonalAccessTokenPayload)result!).Value);
     }
 
     [Fact]
@@ -97,16 +98,18 @@ public sealed class DbNamedSecretProviderTests : IDisposable
     {
         using var scope = CreateScope();
         var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
-        await manager.CreateAsync("versioned-secret", "value-v1", CancellationToken.None);
-        await manager.CreateVersionAsync("versioned-secret", "value-v2", CancellationToken.None);
+        await manager.CreateAsync("versioned-secret", new PersonalAccessTokenPayload { Value = "value-v1" }, CancellationToken.None);
+        await manager.CreateVersionAsync("versioned-secret", new PersonalAccessTokenPayload { Value = "value-v2" }, CancellationToken.None);
 
         using var scope2 = CreateScope();
         var store = scope2.ServiceProvider.GetRequiredService<ISecretStore>();
         var v1 = await store.ResolveAsync("versioned-secret", version: 1, cancellationToken: CancellationToken.None);
         var v2 = await store.ResolveAsync("versioned-secret", version: 2, cancellationToken: CancellationToken.None);
 
-        Assert.Equal("value-v1", v1);
-        Assert.Equal("value-v2", v2);
+        Assert.IsType<PersonalAccessTokenPayload>(v1);
+        Assert.IsType<PersonalAccessTokenPayload>(v2);
+        Assert.Equal("value-v1", ((PersonalAccessTokenPayload)v1!).Value);
+        Assert.Equal("value-v2", ((PersonalAccessTokenPayload)v2!).Value);
     }
 
     [Fact]
@@ -114,14 +117,15 @@ public sealed class DbNamedSecretProviderTests : IDisposable
     {
         using var scope = CreateScope();
         var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
-        await manager.CreateAsync("latest-secret", "old-value", CancellationToken.None);
-        await manager.CreateVersionAsync("latest-secret", "new-value", CancellationToken.None);
+        await manager.CreateAsync("latest-secret", new PersonalAccessTokenPayload { Value = "old-value" }, CancellationToken.None);
+        await manager.CreateVersionAsync("latest-secret", new PersonalAccessTokenPayload { Value = "new-value" }, CancellationToken.None);
 
         using var scope2 = CreateScope();
         var store = scope2.ServiceProvider.GetRequiredService<ISecretStore>();
         var result = await store.ResolveAsync("latest-secret", cancellationToken: CancellationToken.None);
 
-        Assert.Equal("new-value", result);
+        Assert.IsType<PersonalAccessTokenPayload>(result);
+        Assert.Equal("new-value", ((PersonalAccessTokenPayload)result!).Value);
     }
 
     [Fact]
@@ -129,7 +133,7 @@ public sealed class DbNamedSecretProviderTests : IDisposable
     {
         using var scope = CreateScope();
         var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
-        await manager.CreateAsync("single-version", "value", CancellationToken.None);
+        await manager.CreateAsync("single-version", new PersonalAccessTokenPayload { Value = "value" }, CancellationToken.None);
 
         using var scope2 = CreateScope();
         var store = scope2.ServiceProvider.GetRequiredService<ISecretStore>();
@@ -147,7 +151,7 @@ public sealed class DbNamedSecretProviderTests : IDisposable
     {
         using var scope = CreateScope();
         var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
-        var result = await manager.CreateAsync("new-secret-1", "secret-value", CancellationToken.None);
+        var result = await manager.CreateAsync("new-secret-1", new PersonalAccessTokenPayload { Value = "secret-value" }, CancellationToken.None);
 
         Assert.True(result);
     }
@@ -157,11 +161,11 @@ public sealed class DbNamedSecretProviderTests : IDisposable
     {
         using var scope = CreateScope();
         var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
-        await manager.CreateAsync("dup-secret-1", "value1", CancellationToken.None);
+        await manager.CreateAsync("dup-secret-1", new PersonalAccessTokenPayload { Value = "value1" }, CancellationToken.None);
 
         using var scope2 = CreateScope();
         var manager2 = scope2.ServiceProvider.GetRequiredService<ISecretManager>();
-        var result = await manager2.CreateAsync("dup-secret-1", "value2", CancellationToken.None);
+        var result = await manager2.CreateAsync("dup-secret-1", new PersonalAccessTokenPayload { Value = "value2" }, CancellationToken.None);
 
         Assert.False(result);
     }
@@ -171,7 +175,7 @@ public sealed class DbNamedSecretProviderTests : IDisposable
     {
         using var scope = CreateScope();
         var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
-        await manager.CreateAsync("create-v1-1", "initial-value", CancellationToken.None);
+        await manager.CreateAsync("create-v1-1", new PersonalAccessTokenPayload { Value = "initial-value" }, CancellationToken.None);
 
         var versions = await manager.ListVersionsAsync("create-v1-1", CancellationToken.None);
 
@@ -185,9 +189,9 @@ public sealed class DbNamedSecretProviderTests : IDisposable
     {
         using var scope = CreateScope();
         var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
-        await manager.CreateAsync("version-test-1", "v1-value", CancellationToken.None);
+        await manager.CreateAsync("version-test-1", new PersonalAccessTokenPayload { Value = "v1-value" }, CancellationToken.None);
 
-        var newVersion = await manager.CreateVersionAsync("version-test-1", "v2-value", CancellationToken.None);
+        var newVersion = await manager.CreateVersionAsync("version-test-1", new PersonalAccessTokenPayload { Value = "v2-value" }, CancellationToken.None);
 
         Assert.Equal(2, newVersion);
     }
@@ -197,7 +201,7 @@ public sealed class DbNamedSecretProviderTests : IDisposable
     {
         using var scope = CreateScope();
         var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
-        var result = await manager.CreateVersionAsync("no-such-secret-1", "value", CancellationToken.None);
+        var result = await manager.CreateVersionAsync("no-such-secret-1", new PersonalAccessTokenPayload { Value = "value" }, CancellationToken.None);
 
         Assert.Null(result);
     }
@@ -207,10 +211,10 @@ public sealed class DbNamedSecretProviderTests : IDisposable
     {
         using var scope = CreateScope();
         var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
-        await manager.CreateAsync("mono-test-1", "v1", CancellationToken.None);
+        await manager.CreateAsync("mono-test-1", new PersonalAccessTokenPayload { Value = "v1" }, CancellationToken.None);
 
-        var v2 = await manager.CreateVersionAsync("mono-test-1", "v2", CancellationToken.None);
-        var v3 = await manager.CreateVersionAsync("mono-test-1", "v3", CancellationToken.None);
+        var v2 = await manager.CreateVersionAsync("mono-test-1", new PersonalAccessTokenPayload { Value = "v2" }, CancellationToken.None);
+        var v3 = await manager.CreateVersionAsync("mono-test-1", new PersonalAccessTokenPayload { Value = "v3" }, CancellationToken.None);
 
         Assert.Equal(2, v2);
         Assert.Equal(3, v3);
@@ -221,9 +225,9 @@ public sealed class DbNamedSecretProviderTests : IDisposable
     {
         using var scope = CreateScope();
         var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
-        await manager.CreateAsync("bravo-1", "val-b", CancellationToken.None);
-        await manager.CreateAsync("alpha-1", "val-a", CancellationToken.None);
-        await manager.CreateAsync("charlie-1", "val-c", CancellationToken.None);
+        await manager.CreateAsync("bravo-1", new PersonalAccessTokenPayload { Value = "val-b" }, CancellationToken.None);
+        await manager.CreateAsync("alpha-1", new PersonalAccessTokenPayload { Value = "val-a" }, CancellationToken.None);
+        await manager.CreateAsync("charlie-1", new PersonalAccessTokenPayload { Value = "val-c" }, CancellationToken.None);
 
         var secrets = await manager.ListAsync(CancellationToken.None);
 
@@ -238,15 +242,16 @@ public sealed class DbNamedSecretProviderTests : IDisposable
     {
         using var scope = CreateScope();
         var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
-        await manager.CreateAsync("meta-test-1", "v1", CancellationToken.None);
+        await manager.CreateAsync("meta-test-1", new PersonalAccessTokenPayload { Value = "v1" }, CancellationToken.None);
         await Task.Delay(50); // Ensure timestamp difference
-        await manager.CreateVersionAsync("meta-test-1", "v2", CancellationToken.None);
+        await manager.CreateVersionAsync("meta-test-1", new PersonalAccessTokenPayload { Value = "v2" }, CancellationToken.None);
 
         var secrets = await manager.ListAsync(CancellationToken.None);
 
         var secret = secrets.Single(s => s.Name == "meta-test-1");
         Assert.Equal(2, secret.LatestVersion);
         Assert.True(secret.UpdatedAt >= secret.CreatedAt);
+        Assert.Equal(Domain.Secrets.SecretType.PersonalAccessToken, secret.SecretType);
     }
 
     [Fact]
@@ -254,9 +259,9 @@ public sealed class DbNamedSecretProviderTests : IDisposable
     {
         using var scope = CreateScope();
         var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
-        await manager.CreateAsync("list-ver-test-1", "v1", CancellationToken.None);
-        await manager.CreateVersionAsync("list-ver-test-1", "v2", CancellationToken.None);
-        await manager.CreateVersionAsync("list-ver-test-1", "v3", CancellationToken.None);
+        await manager.CreateAsync("list-ver-test-1", new PersonalAccessTokenPayload { Value = "v1" }, CancellationToken.None);
+        await manager.CreateVersionAsync("list-ver-test-1", new PersonalAccessTokenPayload { Value = "v2" }, CancellationToken.None);
+        await manager.CreateVersionAsync("list-ver-test-1", new PersonalAccessTokenPayload { Value = "v3" }, CancellationToken.None);
 
         var versions = await manager.ListVersionsAsync("list-ver-test-1", CancellationToken.None);
 
@@ -286,7 +291,7 @@ public sealed class DbNamedSecretProviderTests : IDisposable
     {
         using var scope = CreateScope();
         var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
-        await manager.CreateAsync("delete-existing-1", "value", CancellationToken.None);
+        await manager.CreateAsync("delete-existing-1", new PersonalAccessTokenPayload { Value = "value" }, CancellationToken.None);
 
         var result = await manager.DeleteAsync("delete-existing-1", CancellationToken.None);
 
@@ -310,9 +315,9 @@ public sealed class DbNamedSecretProviderTests : IDisposable
         using (var scope = CreateScope())
         {
             var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
-            await manager.CreateAsync("delete-cascade-1", "v1", CancellationToken.None);
-            await manager.CreateVersionAsync("delete-cascade-1", "v2", CancellationToken.None);
-            await manager.CreateVersionAsync("delete-cascade-1", "v3", CancellationToken.None);
+            await manager.CreateAsync("delete-cascade-1", new PersonalAccessTokenPayload { Value = "v1" }, CancellationToken.None);
+            await manager.CreateVersionAsync("delete-cascade-1", new PersonalAccessTokenPayload { Value = "v2" }, CancellationToken.None);
+            await manager.CreateVersionAsync("delete-cascade-1", new PersonalAccessTokenPayload { Value = "v3" }, CancellationToken.None);
 
             var deleted = await manager.DeleteAsync("delete-cascade-1", CancellationToken.None);
             Assert.True(deleted);
@@ -335,8 +340,8 @@ public sealed class DbNamedSecretProviderTests : IDisposable
         using (var scope = CreateScope())
         {
             var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
-            await manager.CreateAsync("delete-resolve-1", "value", CancellationToken.None);
-            await manager.CreateAsync("delete-resolve-2", "value", CancellationToken.None);
+            await manager.CreateAsync("delete-resolve-1", new PersonalAccessTokenPayload { Value = "value" }, CancellationToken.None);
+            await manager.CreateAsync("delete-resolve-2", new PersonalAccessTokenPayload { Value = "value" }, CancellationToken.None);
 
             Assert.True(await manager.DeleteAsync("delete-resolve-1", CancellationToken.None));
         }
@@ -376,7 +381,7 @@ public sealed class DbNamedSecretProviderTests : IDisposable
                 ctx1.Database.EnsureCreated();
 
                 var manager = scope1.ServiceProvider.GetRequiredService<ISecretManager>();
-                await manager.CreateAsync("reboot-secret", "persisted-value-abc123", CancellationToken.None);
+                await manager.CreateAsync("reboot-secret", new PersonalAccessTokenPayload { Value = "persisted-value-abc123" }, CancellationToken.None);
             }
             // Dispose the scope (and its DbContext), then close the connection entirely
             connection1.Dispose();
@@ -389,7 +394,8 @@ public sealed class DbNamedSecretProviderTests : IDisposable
                 var store = scope2.ServiceProvider.GetRequiredService<ISecretStore>();
                 var result = await store.ResolveAsync("reboot-secret", cancellationToken: CancellationToken.None);
 
-                Assert.Equal("persisted-value-abc123", result);
+                Assert.IsType<PersonalAccessTokenPayload>(result);
+                Assert.Equal("persisted-value-abc123", ((PersonalAccessTokenPayload)result!).Value);
             }
             connection2.Dispose();
         }
@@ -413,13 +419,14 @@ public sealed class DbNamedSecretProviderTests : IDisposable
         using var scope = CreateScope();
         var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
         var secretValue = "super-secret-token-abc123!@#";
-        await manager.CreateAsync("e2e-test-1", secretValue, CancellationToken.None);
+        await manager.CreateAsync("e2e-test-1", new PersonalAccessTokenPayload { Value = secretValue }, CancellationToken.None);
 
         using var scope2 = CreateScope();
         var store = scope2.ServiceProvider.GetRequiredService<ISecretStore>();
         var result = await store.ResolveAsync("e2e-test-1", cancellationToken: CancellationToken.None);
 
-        Assert.Equal(secretValue, result);
+        Assert.IsType<PersonalAccessTokenPayload>(result);
+        Assert.Equal(secretValue, ((PersonalAccessTokenPayload)result!).Value);
     }
 
     [Fact]
@@ -427,9 +434,9 @@ public sealed class DbNamedSecretProviderTests : IDisposable
     {
         using var scope = CreateScope();
         var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
-        await manager.CreateAsync("multi-ver-1", "first", CancellationToken.None);
-        await manager.CreateVersionAsync("multi-ver-1", "second", CancellationToken.None);
-        await manager.CreateVersionAsync("multi-ver-1", "third", CancellationToken.None);
+        await manager.CreateAsync("multi-ver-1", new PersonalAccessTokenPayload { Value = "first" }, CancellationToken.None);
+        await manager.CreateVersionAsync("multi-ver-1", new PersonalAccessTokenPayload { Value = "second" }, CancellationToken.None);
+        await manager.CreateVersionAsync("multi-ver-1", new PersonalAccessTokenPayload { Value = "third" }, CancellationToken.None);
 
         using var scope2 = CreateScope();
         var store = scope2.ServiceProvider.GetRequiredService<ISecretStore>();
@@ -438,10 +445,14 @@ public sealed class DbNamedSecretProviderTests : IDisposable
         var v3 = await store.ResolveAsync("multi-ver-1", version: 3, cancellationToken: CancellationToken.None);
         var latest = await store.ResolveAsync("multi-ver-1", cancellationToken: CancellationToken.None);
 
-        Assert.Equal("first", v1);
-        Assert.Equal("second", v2);
-        Assert.Equal("third", v3);
-        Assert.Equal("third", latest);
+        Assert.IsType<PersonalAccessTokenPayload>(v1);
+        Assert.IsType<PersonalAccessTokenPayload>(v2);
+        Assert.IsType<PersonalAccessTokenPayload>(v3);
+        Assert.IsType<PersonalAccessTokenPayload>(latest);
+        Assert.Equal("first", ((PersonalAccessTokenPayload)v1!).Value);
+        Assert.Equal("second", ((PersonalAccessTokenPayload)v2!).Value);
+        Assert.Equal("third", ((PersonalAccessTokenPayload)v3!).Value);
+        Assert.Equal("third", ((PersonalAccessTokenPayload)latest!).Value);
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -530,7 +541,7 @@ internal sealed class ScopedSecretStore : ISecretStore, IDisposable
         _scope = scope;
     }
 
-    public Task<string?> ResolveAsync(string name, int? version = null, CancellationToken cancellationToken = default)
+    public Task<SecretPayload?> ResolveAsync(string name, int? version = null, CancellationToken cancellationToken = default)
         => _inner.ResolveAsync(name, version, cancellationToken);
 
     public void Dispose() => _scope.Dispose();
@@ -547,11 +558,11 @@ internal sealed class ScopedSecretManager : ISecretManager, IDisposable
         _scope = scope;
     }
 
-    public Task<bool> CreateAsync(string name, string value, CancellationToken cancellationToken = default)
-        => _inner.CreateAsync(name, value, cancellationToken);
+    public Task<bool> CreateAsync(string name, SecretPayload payload, CancellationToken cancellationToken = default)
+        => _inner.CreateAsync(name, payload, cancellationToken);
 
-    public Task<int?> CreateVersionAsync(string name, string value, CancellationToken cancellationToken = default)
-        => _inner.CreateVersionAsync(name, value, cancellationToken);
+    public Task<int?> CreateVersionAsync(string name, SecretPayload payload, CancellationToken cancellationToken = default)
+        => _inner.CreateVersionAsync(name, payload, cancellationToken);
 
     public Task<bool> DeleteAsync(string name, CancellationToken cancellationToken = default)
         => _inner.DeleteAsync(name, cancellationToken);

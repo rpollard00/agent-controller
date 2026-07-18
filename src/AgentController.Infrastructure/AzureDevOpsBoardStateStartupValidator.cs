@@ -186,9 +186,10 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
         string? pat;
         try
         {
-            pat = await secretStore.ResolveAsync(
+            var payload = await secretStore.ResolveAsync(
                 adoSettings.PersonalAccessTokenReference.Name,
                 cancellationToken: cancellationToken);
+            pat = payload is Domain.Secrets.PersonalAccessTokenPayload patPayload ? patPayload.Value : null;
         }
         catch (Exception ex)
         {

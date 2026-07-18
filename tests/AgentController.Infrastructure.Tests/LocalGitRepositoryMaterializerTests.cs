@@ -377,13 +377,15 @@ internal sealed class FakeSecretStore : ISecretStore
 {
     public Dictionary<string, string> Secrets { get; } = new();
 
-    public Task<string?> ResolveAsync(
+    public Task<SecretPayload?> ResolveAsync(
         string name,
         int? version = null,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(Secrets.TryGetValue(name, out var value) ? value : (string?)null);
+        var value = Secrets.TryGetValue(name, out var v) ? v : null;
+        return Task.FromResult<SecretPayload?>(
+            value is not null ? new PersonalAccessTokenPayload { Value = value } : null);
     }
 }
 
@@ -392,12 +394,12 @@ internal sealed class FakeSecretStore : ISecretStore
 /// </summary>
 internal sealed class CancellationTrackingSecretStore : ISecretStore
 {
-    public Task<string?> ResolveAsync(
+    public Task<SecretPayload?> ResolveAsync(
         string name,
         int? version = null,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult<string?>(null);
+        return Task.FromResult<SecretPayload?>(null);
     }
 }
