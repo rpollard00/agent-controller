@@ -245,6 +245,168 @@ public sealed class ConnectionEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ConnectionEndpoints_POST_MissingProviderDiscriminator_Returns400()
+    {
+        // providerSettings present but no 'provider' discriminator — mirrors the bug report payload
+        var payload = """
+            {
+                "key": "ado.nodiscriminator",
+                "displayName": "No Discriminator",
+                "provider": "AzureDevOps",
+                "capabilities": ["Repositories"],
+                "providerSettings": {
+                    "organizationUrl": "https://dev.azure.com/testorg",
+                    "personalAccessTokenReference": { "name": "test-pat" }
+                }
+            }
+            """;
+
+        using var content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
+        using var response = await _client.PostAsync("/api/webui/connections", content);
+
+        // Must be 400, not 500
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var problem = await ReadJsonAsync(response);
+        Assert.Equal(400, problem.GetProperty("status").GetInt32());
+        Assert.Equal("Validation failed.", problem.GetProperty("title").GetString());
+        var errors = problem.GetProperty("errors");
+        Assert.True(errors.TryGetProperty("providerSettings", out _));
+    }
+
+    [Fact]
+    public async Task ConnectionEndpoints_PUT_MissingProviderDiscriminator_Returns400()
+    {
+        // Create a valid connection first
+        var profile = new
+        {
+            key = "ado.puttest",
+            displayName = "PUT Test",
+            provider = "AzureDevOps",
+            capabilities = new[] { "Repositories" },
+            providerSettings = new
+            {
+                provider = "AzureDevOps",
+                organizationUrl = "https://dev.azure.com/testorg",
+                personalAccessTokenReference = new { name = "test-pat" },
+            },
+        };
+
+        using (var createResponse = await _client.PostAsJsonAsync("/api/webui/connections", profile))
+        {
+            Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+        }
+
+        // PUT with providerSettings missing the 'provider' discriminator
+        var payload = """
+            {
+                "key": "ado.puttest",
+                "displayName": "Updated",
+                "provider": "AzureDevOps",
+                "capabilities": ["Repositories"],
+                "providerSettings": {
+                    "organizationUrl": "https://dev.azure.com/testorg",
+                    "personalAccessTokenReference": { "name": "test-pat" }
+                }
+            }
+            """;
+
+        using var content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
+        using var response = await _client.PutAsync("/api/webui/connections/ado.puttest", content);
+
+        // Must be 400, not 500
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var problem = await ReadJsonAsync(response);
+        Assert.Equal(400, problem.GetProperty("status").GetInt32());
+        Assert.Equal("Validation failed.", problem.GetProperty("title").GetString());
+        var errors = problem.GetProperty("errors");
+        Assert.True(errors.TryGetProperty("providerSettings", out _));
+    }
+
+    [Fact]
+    public async Task ConnectionEndpoints_POST_InvalidProviderDiscriminator_Returns400()
+    {
+        // providerSettings has 'provider' but with an unknown value
+        var payload = """
+            {
+                "key": "ado.invaliddisc",
+                "displayName": "Invalid Discriminator",
+                "provider": "AzureDevOps",
+                "capabilities": ["Repositories"],
+                "providerSettings": {
+                    "provider": "Unknown",
+                    "organizationUrl": "https://dev.azure.com/testorg",
+                    "personalAccessTokenReference": { "name": "test-pat" }
+                }
+            }
+            """;
+
+        using var content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
+        using var response = await _client.PostAsync("/api/webui/connections", content);
+
+        // Must be 400, not 500
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var problem = await ReadJsonAsync(response);
+        Assert.Equal(400, problem.GetProperty("status").GetInt32());
+        Assert.Equal("Validation failed.", problem.GetProperty("title").GetString());
+        var errors = problem.GetProperty("errors");
+        Assert.True(errors.TryGetProperty("providerSettings", out _));
+    }
+
+    [Fact]
+    public async Task ConnectionEndpoints_PUT_InvalidProviderDiscriminator_Returns400()
+    {
+        // Create a valid connection first
+        var profile = new
+        {
+            key = "ado.putinvalid",
+            displayName = "PUT Invalid Test",
+            provider = "AzureDevOps",
+            capabilities = new[] { "Repositories" },
+            providerSettings = new
+            {
+                provider = "AzureDevOps",
+                organizationUrl = "https://dev.azure.com/testorg",
+                personalAccessTokenReference = new { name = "test-pat" },
+            },
+        };
+
+        using (var createResponse = await _client.PostAsJsonAsync("/api/webui/connections", profile))
+        {
+            Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+        }
+
+        // PUT with an invalid discriminator value
+        var payload = """
+            {
+                "key": "ado.putinvalid",
+                "displayName": "Updated",
+                "provider": "AzureDevOps",
+                "capabilities": ["Repositories"],
+                "providerSettings": {
+                    "provider": "Unknown",
+                    "organizationUrl": "https://dev.azure.com/testorg",
+                    "personalAccessTokenReference": { "name": "test-pat" }
+                }
+            }
+            """;
+
+        using var content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
+        using var response = await _client.PutAsync("/api/webui/connections/ado.putinvalid", content);
+
+        // Must be 400, not 500
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var problem = await ReadJsonAsync(response);
+        Assert.Equal(400, problem.GetProperty("status").GetInt32());
+        Assert.Equal("Validation failed.", problem.GetProperty("title").GetString());
+        var errors = problem.GetProperty("errors");
+        Assert.True(errors.TryGetProperty("providerSettings", out _));
+    }
+
+    [Fact]
     public async Task ConnectionEndpoints_NotFound_ReturnsProblemDetails()
     {
         using var getResponse = await _client.GetAsync("/api/webui/connections/nonexistent");
