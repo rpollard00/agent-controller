@@ -278,6 +278,83 @@ public sealed class DbNamedSecretProviderTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════════════
+    // DeleteAsync
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task DeleteAsync_ExistingSecret_ReturnsTrue()
+    {
+        using var scope = CreateScope();
+        var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
+        await manager.CreateAsync("delete-existing-1", "value", CancellationToken.None);
+
+        var result = await manager.DeleteAsync("delete-existing-1", CancellationToken.None);
+
+        Assert.True(result);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_UnknownName_ReturnsFalse()
+    {
+        using var scope = CreateScope();
+        var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
+
+        var result = await manager.DeleteAsync("no-such-secret-3", CancellationToken.None);
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_RemovesSecretRowAndCascadesAllVersions()
+    {
+        using (var scope = CreateScope())
+        {
+            var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
+            await manager.CreateAsync("delete-cascade-1", "v1", CancellationToken.None);
+            await manager.CreateVersionAsync("delete-cascade-1", "v2", CancellationToken.None);
+            await manager.CreateVersionAsync("delete-cascade-1", "v3", CancellationToken.None);
+
+            var deleted = await manager.DeleteAsync("delete-cascade-1", CancellationToken.None);
+            Assert.True(deleted);
+        }
+
+        // Verify against the raw tables with a fresh context: the NamedSecrets
+        // row is gone and every SecretVersions row cascaded away.
+        using var verifyScope = CreateScope();
+        var context = verifyScope.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
+
+        Assert.False(await context.NamedSecrets.AnyAsync(s => s.Name == "delete-cascade-1"));
+        Assert.False(
+            await context.SecretVersions.AnyAsync(v => v.NamedSecret!.Name == "delete-cascade-1")
+        );
+    }
+
+    [Fact]
+    public async Task DeleteAsync_DeletedSecret_ResolveReturnsNullAndListOmitsIt()
+    {
+        using (var scope = CreateScope())
+        {
+            var manager = scope.ServiceProvider.GetRequiredService<ISecretManager>();
+            await manager.CreateAsync("delete-resolve-1", "value", CancellationToken.None);
+            await manager.CreateAsync("delete-resolve-2", "value", CancellationToken.None);
+
+            Assert.True(await manager.DeleteAsync("delete-resolve-1", CancellationToken.None));
+        }
+
+        using var verifyScope = CreateScope();
+        var store = verifyScope.ServiceProvider.GetRequiredService<ISecretStore>();
+        var manager2 = verifyScope.ServiceProvider.GetRequiredService<ISecretManager>();
+
+        Assert.Null(
+            await store.ResolveAsync("delete-resolve-1", cancellationToken: CancellationToken.None)
+        );
+
+        var secrets = await manager2.ListAsync(CancellationToken.None);
+        Assert.DoesNotContain(secrets, s => s.Name == "delete-resolve-1");
+        Assert.Contains(secrets, s => s.Name == "delete-resolve-2");
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // Round-trip persistence through a fresh DbContext (reboot simulation)
     // ═══════════════════════════════════════════════════════════
 

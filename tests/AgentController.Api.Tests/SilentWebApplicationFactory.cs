@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace AgentController.Api.Tests;
@@ -27,14 +28,24 @@ public class SilentWebApplicationFactory : WebApplicationFactory<Program>
     public SilentWebApplicationFactory()
     {
         // Create a deterministic 32-byte KEK file for envelope encryption in tests.
-        // Set the environment variable so RegisterDbNamedSecretProvider can find it.
+        // The path is handed to each host via in-memory configuration (see
+        // ConfigureWebHost) rather than a process-wide environment variable so
+        // that parallel test classes cannot clear each other's KEK setting.
         _testKekFilePath = Path.Combine(Path.GetTempPath(), $"agent-controller-test-kek-{Guid.NewGuid():N}.bin");
         File.WriteAllBytes(_testKekFilePath, new byte[32]);
-        Environment.SetEnvironmentVariable("AGENT_CONTROLLER_SECRET_KEK_FILE_PATH", _testKekFilePath);
     }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        builder.ConfigureAppConfiguration(
+            (_, configuration) =>
+                configuration.AddInMemoryCollection(
+                    new Dictionary<string, string?>
+                    {
+                        ["secrets:keyEncryptionKey:file:filePath"] = _testKekFilePath,
+                    }
+                )
+        );
         builder.ConfigureLogging(logging =>
         {
             // Remove every provider inherited from the app's host builder
@@ -53,8 +64,6 @@ public class SilentWebApplicationFactory : WebApplicationFactory<Program>
 
         if (disposing)
         {
-            Environment.SetEnvironmentVariable("AGENT_CONTROLLER_SECRET_KEK_FILE_PATH", null);
-
             if (File.Exists(_testKekFilePath))
             {
                 try { File.Delete(_testKekFilePath); } catch { }
