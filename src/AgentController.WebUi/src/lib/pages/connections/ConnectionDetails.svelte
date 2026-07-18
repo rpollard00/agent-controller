@@ -2,7 +2,6 @@
   import { onDestroy } from 'svelte';
   import type { WebUiApiClient } from '../../api/client';
   import type { ConnectionConnectivityResult, ConnectionProfile } from '../../api/types';
-  import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
   import Card from '../../components/ui/Card.svelte';
   import { connectionEditPath, connectionRepoPickerPath } from './connectionRoutes';
@@ -186,13 +185,6 @@
           </dd>
         </div>
       </dl>
-      <div class="mt-5">
-        <Alert
-          variant="info"
-          title="Secret value redacted"
-          message="Only the secret reference is shown. The raw credential is resolved at runtime and never displayed."
-        />
-      </div>
     </Card>
   {/if}
 
