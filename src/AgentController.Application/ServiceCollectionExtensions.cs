@@ -203,14 +203,15 @@ public static class ServiceCollectionExtensions
         this IServiceCollection services
     )
     {
-        // Build the type-keyed dictionary from the static registry at container build time.
-        // Provider-to-type mappings are accumulated via AddConnection<T>()
-        // calls before the container is built.
-        // We capture the dictionary inline to avoid conflicting with other resolvers
-        // that also register IReadOnlyDictionary<string, Type>.
-        var connectionTypes = ConnectionRegistry.Build();
+        // Defer Build() into the singleton factory lambda so the registry snapshot is
+        // captured at first resolution time — after all providers (including AzureDevOps)
+        // have been registered. AddConnectionResolver() can be called before or after
+        // AddConnection<T>() calls and the lookup order is independent of registration order.
         services.AddSingleton<IConnectionResolver>(sp =>
-            new ConnectionResolver(sp.GetRequiredService<IServiceScopeFactory>(), connectionTypes));
+            new ConnectionResolver(
+                sp.GetRequiredService<IServiceScopeFactory>(),
+                ConnectionRegistry.Build()
+            ));
         return services;
     }
 
