@@ -67,6 +67,21 @@ public interface ISecretManager
     );
 
     /// <summary>
+    /// Delete a secret and all of its versions.
+    /// </summary>
+    /// <param name="name">The secret name.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>
+    /// <c>true</c> if the secret (and all of its versions) was removed;
+    /// <c>false</c> if no secret with that name exists.
+    /// Stored plaintext values are never exposed or returned.
+    /// </returns>
+    Task<bool> DeleteAsync(
+        string name,
+        CancellationToken cancellationToken = default
+    );
+
+    /// <summary>
     /// List all secrets by name (metadata only, no values).
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>

@@ -171,6 +171,28 @@ internal sealed class DbNamedSecretProvider : ISecretStore, ISecretManager
     }
 
     /// <inheritdoc />
+    public async Task<bool> DeleteAsync(
+        string name,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var secret = await _context.NamedSecrets
+            .FirstOrDefaultAsync(s => s.Name == name, cancellationToken);
+
+        if (secret == null)
+        {
+            return false;
+        }
+
+        // SecretVersions rows are removed via the configured cascade delete.
+        _context.NamedSecrets.Remove(secret);
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return true;
+    }
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<SecretInfo>> ListAsync(
         CancellationToken cancellationToken = default)
     {

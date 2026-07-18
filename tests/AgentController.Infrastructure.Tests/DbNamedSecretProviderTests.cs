@@ -476,6 +476,9 @@ internal sealed class ScopedSecretManager : ISecretManager, IDisposable
     public Task<int?> CreateVersionAsync(string name, string value, CancellationToken cancellationToken = default)
         => _inner.CreateVersionAsync(name, value, cancellationToken);
 
+    public Task<bool> DeleteAsync(string name, CancellationToken cancellationToken = default)
+        => _inner.DeleteAsync(name, cancellationToken);
+
     public Task<IReadOnlyList<SecretInfo>> ListAsync(CancellationToken cancellationToken = default)
         => _inner.ListAsync(cancellationToken);
 

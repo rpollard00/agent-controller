@@ -103,6 +103,18 @@ public sealed class InMemorySecretStore : ISecretStore, ISecretManager
     }
 
     /// <inheritdoc />
+    public Task<bool> DeleteAsync(
+        string name,
+        CancellationToken cancellationToken = default
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var removed = _secrets.TryRemove(name, out _);
+        return Task.FromResult(removed);
+    }
+
+    /// <inheritdoc />
     public Task<IReadOnlyList<SecretInfo>> ListAsync(
         CancellationToken cancellationToken = default
     )
