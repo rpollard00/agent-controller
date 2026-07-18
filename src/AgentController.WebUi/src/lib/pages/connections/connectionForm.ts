@@ -94,6 +94,7 @@ export function toConnectionProfile(
   const providerSettings: AzureDevOpsConnectionSettings | null =
     values.provider === 'AzureDevOps'
       ? {
+          provider: 'AzureDevOps',
           organizationUrl: values.organizationUrl.trim().replace(/\/+$/, ''),
           personalAccessTokenReference: {
             name: values.secretName.trim(),

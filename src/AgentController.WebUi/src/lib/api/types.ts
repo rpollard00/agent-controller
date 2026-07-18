@@ -121,6 +121,7 @@ export interface ConnectionSecretReference {
 
 /** Azure DevOps provider settings for a connection. */
 export interface AzureDevOpsConnectionSettings {
+  provider: 'AzureDevOps';
   organizationUrl: string;
   personalAccessTokenReference: ConnectionSecretReference;
 }
