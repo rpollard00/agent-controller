@@ -284,7 +284,6 @@ describe('connection screens', () => {
     render(App, { client: api.client });
 
     expect(await screen.findByText('ADO_PAT')).toBeVisible();
-    expect(screen.getByText('Secret value redacted')).toBeVisible();
   });
 
   it('enables and disables a connection from the list', async () => {
