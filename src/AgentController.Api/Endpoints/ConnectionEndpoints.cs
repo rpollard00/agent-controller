@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AgentController.Application.Abstractions;
 using AgentController.Application.Commands;
 using AgentController.Application.Queries;
@@ -62,11 +63,53 @@ public static class ConnectionEndpoints
         group.MapPost(
             "",
             async (
-                ConnectionProfile profile,
+                HttpRequest request,
                 ICommandHandler<CreateConnectionCommand, ConnectionOperationResult> handler,
                 CancellationToken cancellationToken
             ) =>
             {
+                ConnectionProfile? profile;
+                try
+                {
+                    profile = await request.ReadFromJsonAsync<ConnectionProfile>(
+                        cancellationToken: cancellationToken
+                    );
+                }
+                catch (NotSupportedException)
+                {
+                    return ValidationProblem(
+                        new Dictionary<string, string[]>(StringComparer.Ordinal)
+                        {
+                            ["providerSettings"] =
+                            [
+                                "Missing or invalid 'provider' type discriminator."
+                            ]
+                        }
+                    );
+                }
+                catch (JsonException)
+                {
+                    return ValidationProblem(
+                        new Dictionary<string, string[]>(StringComparer.Ordinal)
+                        {
+                            ["providerSettings"] =
+                            [
+                                "Malformed JSON in request body."
+                            ]
+                        }
+                    );
+                }
+
+                if (profile is null)
+                {
+                    return ValidationProblem(
+                        new Dictionary<string, string[]>(StringComparer.Ordinal)
+                        {
+                            [""] = ["Request body is empty."]
+                        }
+                    );
+                }
+
                 var result = await handler.HandleAsync(
                     new CreateConnectionCommand(profile),
                     cancellationToken
@@ -87,11 +130,53 @@ public static class ConnectionEndpoints
             "/{key}",
             async (
                 string key,
-                ConnectionProfile profile,
+                HttpRequest request,
                 ICommandHandler<UpdateConnectionCommand, ConnectionOperationResult> handler,
                 CancellationToken cancellationToken
             ) =>
             {
+                ConnectionProfile? profile;
+                try
+                {
+                    profile = await request.ReadFromJsonAsync<ConnectionProfile>(
+                        cancellationToken: cancellationToken
+                    );
+                }
+                catch (NotSupportedException)
+                {
+                    return ValidationProblem(
+                        new Dictionary<string, string[]>(StringComparer.Ordinal)
+                        {
+                            ["providerSettings"] =
+                            [
+                                "Missing or invalid 'provider' type discriminator."
+                            ]
+                        }
+                    );
+                }
+                catch (JsonException)
+                {
+                    return ValidationProblem(
+                        new Dictionary<string, string[]>(StringComparer.Ordinal)
+                        {
+                            ["providerSettings"] =
+                            [
+                                "Malformed JSON in request body."
+                            ]
+                        }
+                    );
+                }
+
+                if (profile is null)
+                {
+                    return ValidationProblem(
+                        new Dictionary<string, string[]>(StringComparer.Ordinal)
+                        {
+                            [""] = ["Request body is empty."]
+                        }
+                    );
+                }
+
                 var result = await handler.HandleAsync(
                     new UpdateConnectionCommand(key, profile),
                     cancellationToken
