@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it } from 'vitest';
 import App from './App.svelte';
-import { ApiError, type ResourceClient, type WebUiApiClient } from './lib/api/client';
+import { ApiError, type ResourceClient, type SecretsResourceClient, type WebUiApiClient } from './lib/api/client';
 import type {
   ConnectionProfile,
   RepositoryProfile,
@@ -20,6 +20,19 @@ function resourceClient<T>(list: (signal?: AbortSignal) => Promise<T[]>): Resour
     create: notImplemented,
     update: notImplemented,
     delete: async () => undefined,
+  };
+}
+
+function secretsClient(): SecretsResourceClient {
+  const notImplemented = async (): Promise<never> => {
+    throw new Error('Not implemented in this component test.');
+  };
+
+  return {
+    list: async () => [],
+    listVersions: async () => [],
+    create: notImplemented,
+    createVersion: notImplemented,
   };
 }
 
@@ -49,6 +62,7 @@ function createClient(
       onboardRepository: async () => ({} as RepositoryProfile),
     },
     runtimeEnvironments: resourceClient<RuntimeEnvironmentProfile>(async () => []),
+    secrets: secretsClient(),
   };
 }
 

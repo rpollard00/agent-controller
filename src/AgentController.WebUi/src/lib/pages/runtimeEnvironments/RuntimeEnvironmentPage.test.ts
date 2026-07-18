@@ -79,6 +79,16 @@ function createApi(initialEnvironments: RuntimeEnvironmentProfile[] = [environme
       onboardRepository: async () => ({} as RepositoryProfile),
     },
     runtimeEnvironments,
+    secrets: {
+      list: vi.fn(async () => []),
+      listVersions: vi.fn(async () => []),
+      create: vi.fn(async (): Promise<never> => {
+        throw new Error('Not implemented in this component test.');
+      }),
+      createVersion: vi.fn(async (): Promise<never> => {
+        throw new Error('Not implemented in this component test.');
+      }),
+    },
   };
 
   return { client, environments: runtimeEnvironments };

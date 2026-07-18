@@ -13,6 +13,7 @@ const repository: RepositoryProfile = {
   remoteIdentity: null,
   runtimeEnvironmentKey: null,
   allowedPaths: ['src'],
+  project: null,
 };
 
 const connection: ConnectionProfile = {
@@ -146,7 +147,7 @@ describe('Web UI API client', () => {
   });
 
   it('connections client: onboards repository with project parameter', async () => {
-    const fetchMock = vi.fn(async () =>
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       Response.json(repository, { status: 201, headers: { Location: '/repositories/onboarded' } }),
     );
     const client = createWebUiApiClient({ fetch: fetchMock });

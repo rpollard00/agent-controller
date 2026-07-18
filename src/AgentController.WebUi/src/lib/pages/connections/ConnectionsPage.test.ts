@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../../../App.svelte';
-import { ApiError, type ResourceClient, type WebUiApiClient } from '../../api/client';
+import { ApiError, type ResourceClient, type SecretsResourceClient, type WebUiApiClient } from '../../api/client';
 import type {
   ConnectionConnectivityResult,
   ConnectionProfile,
@@ -10,7 +10,6 @@ import type {
   RepositoryProfile,
   RuntimeEnvironmentProfile,
   SecretInfo,
-  SecretsResourceClient,
   WorkSourceEnvironmentProfile,
 } from '../../api/types';
 
@@ -98,6 +97,7 @@ function createApi(
       remoteIdentity: 'repo-guid',
       runtimeEnvironmentKey: null,
       allowedPaths: [],
+      project: null,
     })),
   };
 
