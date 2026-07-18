@@ -58,7 +58,10 @@ function createApi(
     success: true,
     authMechanism: 'PersonalAccessToken',
     errors: [],
-    payload: { repositories: [] },
+    payload: {
+      scope: 'organization',
+      organizationUrl: 'https://dev.azure.com/example',
+    },
   };
 
   const connections = {
@@ -338,13 +341,16 @@ describe('connection screens', () => {
     expect(buttons[0]).toBeVisible();
   });
 
-  it('list view: Test connection shows success badge with repo count', async () => {
+  it('list view: Test connection shows success badge with organization scope', async () => {
     const api = createApi([connection], {
       success: true,
       authMechanism: 'PersonalAccessToken',
       httpStatus: 200,
       errors: [],
-      payload: { repositories: ['repo-a', 'repo-b'] },
+      payload: {
+        scope: 'organization',
+        organizationUrl: 'https://dev.azure.com/example',
+      },
     });
     render(App, { client: api.client });
 
@@ -362,7 +368,35 @@ describe('connection screens', () => {
     );
 
     await waitFor(() => expect(screen.getByText('Connected')).toBeVisible());
-    expect(screen.getByText('(2 repos)')).toBeVisible();
+    expect(screen.getByText('(organization)')).toBeVisible();
+    expect(screen.queryByText(/\d+ repos/)).not.toBeInTheDocument();
+  });
+
+  it('list view: Test connection shows plain Connected badge when no payload is returned', async () => {
+    const api = createApi([connection], {
+      success: true,
+      authMechanism: 'PersonalAccessToken',
+      httpStatus: 200,
+      errors: [],
+    });
+    render(App, { client: api.client });
+
+    await screen.findByRole('table');
+    const testButton = screen.getByRole('button', {
+      name: /Test connection for Primary Azure DevOps/i,
+    });
+    fireEvent.click(testButton);
+
+    await waitFor(() =>
+      expect(api.connections.verifyConnection).toHaveBeenCalledWith(
+        'ado-main',
+        expect.anything(),
+      ),
+    );
+
+    await waitFor(() => expect(screen.getByText('Connected')).toBeVisible());
+    expect(screen.queryByText('(organization)')).not.toBeInTheDocument();
+    expect(screen.queryByText(/\d+ repos/)).not.toBeInTheDocument();
   });
 
   it('list view: Test connection shows failure badge with error messages', async () => {
@@ -414,7 +448,10 @@ describe('connection screens', () => {
       authMechanism: 'PersonalAccessToken',
       httpStatus: 200,
       errors: [],
-      payload: { repositories: ['repo-a', 'repo-b'] },
+      payload: {
+        scope: 'organization',
+        organizationUrl: 'https://dev.azure.com/example',
+      },
     });
     render(App, { client: api.client });
 
@@ -430,7 +467,8 @@ describe('connection screens', () => {
     );
 
     await waitFor(() => expect(screen.getByText('Connected')).toBeVisible());
-    expect(screen.getByText('(2 repos)')).toBeVisible();
+    expect(screen.getByText('(organization)')).toBeVisible();
+    expect(screen.queryByText(/\d+ repos/)).not.toBeInTheDocument();
   });
 
   it('details view: Test connection transitions through loading to failure', async () => {
