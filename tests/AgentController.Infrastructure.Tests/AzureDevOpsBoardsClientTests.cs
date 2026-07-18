@@ -2150,6 +2150,95 @@ public class AzureDevOpsBoardsClientTests
     }
 
     // ──────────────────────────────────────────────
+    // VerifyConnectivityAsync
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task VerifyConnectivityAsync_EmptyProject_SkipsRepositoryEnumeration()
+    {
+        // Org-level check (empty project): the projects proof GET is the only
+        // request issued — repository enumeration must be skipped entirely.
+        var requestedUrls = new List<string>();
+
+        var handler = new CaptureHttpMessageHandler((req) =>
+        {
+            requestedUrls.Add(req.RequestUri?.AbsoluteUri ?? string.Empty);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """{"id":"proj-1","name":"TestProject"}""",
+                    Encoding.UTF8, "application/json"),
+            };
+        });
+
+        var client = CreateClientWithHandler(handler);
+        client.ConnectivityHttpClientFactory = () => new HttpClient(handler, disposeHandler: false);
+
+        var result = await client.VerifyConnectivityAsync(
+            OrgUrl, string.Empty, "test-pat", CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.Empty(result.Repositories);
+
+        // Exactly one HTTP call: the projects proof endpoint. No repos call.
+        var url = Assert.Single(requestedUrls);
+        Assert.Contains("_apis/projects/", url);
+        Assert.DoesNotContain(requestedUrls, u => u.Contains("_apis/git/repositories"));
+    }
+
+    [Fact]
+    public async Task VerifyConnectivityAsync_ProjectScoped_EnumeratesRepositories()
+    {
+        // Project-scoped check (non-empty project): existing behavior is preserved —
+        // the repos endpoint is called and the enumerated repositories are returned.
+        var requestedUrls = new List<string>();
+
+        var handler = new CaptureHttpMessageHandler((req) =>
+        {
+            var url = req.RequestUri?.AbsoluteUri ?? string.Empty;
+            requestedUrls.Add(url);
+
+            if (url.Contains("_apis/git/repositories"))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """
+                        {"value":[
+                            {"id":"repo-1","name":"FirstRepo","defaultBranch":"refs/heads/main","remoteUrl":"https://dev.azure.com/testorg/TestProject/_git/FirstRepo"},
+                            {"id":"repo-2","name":"SecondRepo","defaultBranch":"refs/heads/develop","remoteUrl":"https://dev.azure.com/testorg/TestProject/_git/SecondRepo"}
+                        ]}
+                        """,
+                        Encoding.UTF8, "application/json"),
+                };
+            }
+
+            // Projects proof endpoint
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """{"id":"proj-1","name":"TestProject"}""",
+                    Encoding.UTF8, "application/json"),
+            };
+        });
+
+        var client = CreateClientWithHandler(handler);
+        client.ConnectivityHttpClientFactory = () => new HttpClient(handler, disposeHandler: false);
+
+        var result = await client.VerifyConnectivityAsync(
+            OrgUrl, Project, "test-pat", CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.Equal(2, result.Repositories.Count);
+        Assert.Equal("FirstRepo", result.Repositories[0].Name);
+        Assert.Equal("SecondRepo", result.Repositories[1].Name);
+
+        Assert.Equal(2, requestedUrls.Count);
+        Assert.Contains(requestedUrls, u => u.Contains("_apis/projects/"));
+        Assert.Contains(requestedUrls, u => u.Contains($"{Project}/_apis/git/repositories"));
+    }
+
+    // ──────────────────────────────────────────────
     // Acceptance criteria parsing
     // ──────────────────────────────────────────────
 

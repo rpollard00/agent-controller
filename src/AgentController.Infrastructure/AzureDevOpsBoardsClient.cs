@@ -1191,6 +1191,13 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         return string.Empty;
     }
 
+    /// <summary>
+    /// Optional factory for the one-off <see cref="HttpClient"/> used by
+    /// <see cref="VerifyConnectivityAsync"/>. Exposed internally so tests can
+    /// intercept connectivity requests; production code leaves this unset.
+    /// </summary>
+    internal Func<HttpClient>? ConnectivityHttpClientFactory { get; set; }
+
     public async Task<AzureDevOpsConnectivityResult> VerifyConnectivityAsync(
         string organizationUrl,
         string project,
@@ -1201,7 +1208,7 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         // Build a dedicated HttpClient for this one-off connectivity check.
         // The injected _http is scoped to the configured org/PAT from options;
         // this method receives explicit credentials so it must construct its own.
-        using var http = new HttpClient();
+        using var http = ConnectivityHttpClientFactory?.Invoke() ?? new HttpClient();
         http.BaseAddress = new Uri(organizationUrl.TrimEnd('/') + "/");
 
         var authBytes = Encoding.ASCII.GetBytes($":{personalAccessToken}");
@@ -1234,8 +1241,13 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                 };
             }
 
-            // (2) Enumerate repositories after successful connectivity test
-            var repositories = await FetchRepositoriesAsync(http, project, cancellationToken);
+            // (2) Enumerate repositories after successful connectivity test.
+            // Org-level checks (null/whitespace project) skip enumeration: an
+            // org-relative /_apis/git/repositories call is not meaningful there
+            // and always yields zero repos.
+            var repositories = string.IsNullOrWhiteSpace(project)
+                ? Array.Empty<RepositoryInfo>()
+                : await FetchRepositoriesAsync(http, project, cancellationToken);
 
             return new AzureDevOpsConnectivityResult
             {

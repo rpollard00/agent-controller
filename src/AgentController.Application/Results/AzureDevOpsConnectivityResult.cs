@@ -17,8 +17,10 @@ public sealed record AzureDevOpsConnectivityResult
     public string? Error { get; init; }
 
     /// <summary>
-    /// Repositories enumerated from the project (populated only when <see cref="Success"/> is <c>true</c>).
-    /// May be empty if the project has no Git repositories.
+    /// Repositories enumerated from the project. Populated only for project-scoped checks
+    /// (non-empty project) when <see cref="Success"/> is <c>true</c>; org-level checks
+    /// (empty project) skip enumeration and always leave this empty.
+    /// May also be empty if the project has no Git repositories.
     /// </summary>
     public IReadOnlyList<RepositoryInfo> Repositories { get; init; } = Array.Empty<RepositoryInfo>();
 }

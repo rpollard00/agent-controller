@@ -63,7 +63,8 @@ public interface IAzureDevOpsBoardsClient
     /// <summary>
     /// Verify connectivity to an Azure DevOps organization/project using a PAT.
     /// Performs a lightweight GET on the project endpoint, and on success
-    /// enumerates Git repositories in the project.
+    /// enumerates Git repositories in the project. Org-level checks (empty project)
+    /// skip repository enumeration.
     /// Returns a result capturing success/failure, HTTP status, and any errors
     /// rather than throwing on failure.
     /// </summary>
