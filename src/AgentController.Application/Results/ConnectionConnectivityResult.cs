@@ -27,7 +27,8 @@ public sealed record ConnectionConnectivityResult
     public IReadOnlyList<string> Errors { get; init; } = NoErrors;
 
     /// <summary>
-    /// Provider-specific payload data (e.g. enumerated repositories for Azure DevOps).
+    /// Provider-specific payload data (e.g. organization scope and organization URL
+    /// for Azure DevOps).
     /// </summary>
     public object? Payload { get; init; }
 

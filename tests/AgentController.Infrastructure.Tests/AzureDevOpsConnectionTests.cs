@@ -88,8 +88,39 @@ public sealed class AzureDevOpsConnectionTests
         Assert.True(result.Success);
         Assert.Equal("PersonalAccessToken", result.AuthMechanism);
         Assert.NotNull(result.Payload);
-        Assert.IsType<Dictionary<string, object>>(result.Payload);
-        Assert.Contains("repositories", ((Dictionary<string, object>)result.Payload!).Keys);
+        var payload = Assert.IsType<Dictionary<string, object>>(result.Payload);
+        Assert.Equal("organization", payload["scope"]);
+        Assert.Equal(OrgUrl, payload["organizationUrl"]);
+        Assert.DoesNotContain("repositories", payload.Keys);
+    }
+
+    [Fact]
+    public async Task VerifyConnectivityAsync_Success_DoesNotSurfaceBoardsClientRepositories()
+    {
+        var mockClient = new MockAzureDevOpsBoardsClient
+        {
+            VerifySuccess = true,
+            Repositories = new[]
+            {
+                new RepositoryInfo
+                {
+                    Id = "repo-1",
+                    Name = "main-repo",
+                    DefaultBranch = "refs/heads/main",
+                    RemoteUrl = "https://dev.azure.com/testorg/Project/_git/main-repo",
+                },
+            },
+        };
+
+        var sut = CreateConnection(pat: TestPat, verifySuccess: true, mockBoardsClient: mockClient);
+        var profile = CreateProfile();
+
+        var result = await sut.VerifyConnectivityAsync(profile, CancellationToken.None);
+
+        Assert.True(result.Success);
+        var payload = Assert.IsType<Dictionary<string, object>>(result.Payload);
+        Assert.Equal("organization", payload["scope"]);
+        Assert.DoesNotContain("repositories", payload.Keys);
     }
 
     [Fact]

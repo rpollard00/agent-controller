@@ -115,10 +115,11 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
         Assert.Equal(200, result.GetProperty("httpStatus").GetInt32());
         Assert.Empty(result.GetProperty("errors").EnumerateArray());
 
-        // Assert: payload contains repository list (from mock client)
+        // Assert: payload carries the organization scope (from mock connection)
         var payload = result.GetProperty("payload");
-        Assert.True(payload.TryGetProperty("repositories", out var repos));
-        Assert.Equal(2, repos.GetArrayLength());
+        Assert.Equal("organization", payload.GetProperty("scope").GetString());
+        Assert.Equal("https://dev.azure.com/testorg", payload.GetProperty("organizationUrl").GetString());
+        Assert.False(payload.TryGetProperty("repositories", out _));
 
         // Assert: PAT value is NOT present anywhere in the response body
         Assert.DoesNotContain(TestPatValue, responseBody, StringComparison.Ordinal);
@@ -277,7 +278,7 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
 
     /// <summary>
     /// WebApplicationFactory that replaces IConnection for AzureDevOps
-    /// with a mock that returns a successful connectivity result with repos.
+    /// with a mock that returns a successful organization-scoped connectivity result.
     /// </summary>
     private sealed class VerifyConnectivityApiFactory(
         string databasePath,
@@ -377,23 +378,8 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
 
             var payload = new Dictionary<string, object>
             {
-                ["repositories"] = new List<Dictionary<string, object?>>
-                {
-                    new()
-                    {
-                        ["id"] = "mock-repo-1",
-                        ["name"] = "main-repo",
-                        ["defaultBranch"] = "refs/heads/main",
-                        ["remoteUrl"] = "https://dev.azure.com/testorg/TestProject/_git/main-repo",
-                    },
-                    new()
-                    {
-                        ["id"] = "mock-repo-2",
-                        ["name"] = "infra-repo",
-                        ["defaultBranch"] = "refs/heads/main",
-                        ["remoteUrl"] = "https://dev.azure.com/testorg/TestProject/_git/infra-repo",
-                    },
-                },
+                ["scope"] = "organization",
+                ["organizationUrl"] = adoSettings?.OrganizationUrl ?? string.Empty,
             };
 
             return Task.FromResult(

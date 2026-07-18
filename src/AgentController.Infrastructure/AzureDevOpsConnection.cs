@@ -12,7 +12,8 @@ namespace AgentController.Infrastructure;
 /// <summary>
 /// Azure DevOps implementation of <see cref="IConnection"/>.
 ///
-/// Reuses the proven verify path via <see cref="IAzureDevOpsBoardsClient.VerifyConnectivityAsync"/>,
+/// Reuses the proven verify path via <see cref="IAzureDevOpsBoardsClient.VerifyConnectivityAsync"/>
+/// (org-level; returns an organization-scoped payload, no repository enumeration),
 /// adds org-level project enumeration, and reuses the existing client repo listing.
 /// </summary>
 internal sealed partial class AzureDevOpsConnection(
@@ -109,24 +110,16 @@ internal sealed partial class AzureDevOpsConnection(
             cancellationToken
         );
 
-        // Map repositories into a serializable payload.
-        var repositories = connectivityResult.Repositories.Select(repo =>
-            new Dictionary<string, object?>
-            {
-                ["id"] = repo.Id,
-                ["name"] = repo.Name,
-                ["defaultBranch"] = repo.DefaultBranch,
-                ["remoteUrl"] = repo.RemoteUrl,
-            }
-        ).ToList();
+        // Org-level connection: the payload describes the organization scope,
+        // not repositories (repo enumeration is project-scoped and not performed here).
+        var payload = new Dictionary<string, object>
+        {
+            ["scope"] = "organization",
+            ["organizationUrl"] = organizationUrl,
+        };
 
         if (connectivityResult.Success)
         {
-            var payload = new Dictionary<string, object>
-            {
-                ["repositories"] = repositories,
-            };
-
             return ConnectionConnectivityResult.SuccessResult(
                 "PersonalAccessToken",
                 connectivityResult.Status is { } statusCode ? (int)statusCode : null,
@@ -147,7 +140,7 @@ internal sealed partial class AzureDevOpsConnection(
             httpStatus: connectivityResult.Status is { } failedStatusCode
                 ? (int)failedStatusCode
                 : null,
-            payload: new Dictionary<string, object> { ["repositories"] = repositories }
+            payload: payload
         );
     }
 
