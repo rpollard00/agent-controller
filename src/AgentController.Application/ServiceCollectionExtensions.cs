@@ -175,6 +175,10 @@ public static class ServiceCollectionExtensions
             ICommandHandler<CreateSecretVersionCommand, CreateSecretVersionResult>,
             CreateSecretVersionCommandHandler
         >();
+        services.AddScoped<
+            ICommandHandler<DeleteSecretCommand, DeleteSecretResult>,
+            DeleteSecretCommandHandler
+        >();
 
         // Secrets management query handlers
         services.AddScoped<
