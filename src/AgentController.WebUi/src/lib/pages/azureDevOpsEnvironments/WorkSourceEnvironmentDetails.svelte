@@ -62,13 +62,6 @@
     }
   }
 
-  function getRepoCount(result: ConnectionConnectivityResult | null): number | undefined {
-    if (!result?.payload) return undefined;
-    const repos = result.payload.repositories;
-    if (Array.isArray(repos)) return repos.length;
-    return undefined;
-  }
-
   onDestroy(() => {
     verifyController?.abort();
   });
@@ -169,8 +162,8 @@
         <div class="flex items-center gap-2">
           <span class="inline-flex items-center gap-1 rounded-full bg-emerald-950 px-2.5 py-1 text-xs font-semibold text-emerald-300">
             Connected
-            {#if getRepoCount(verifyResult) !== undefined}
-              <span class="text-emerald-400">({getRepoCount(verifyResult)} repos)</span>
+            {#if verifyResult.payload?.scope === 'organization'}
+              <span class="text-emerald-400">(organization)</span>
             {/if}
           </span>
         </div>

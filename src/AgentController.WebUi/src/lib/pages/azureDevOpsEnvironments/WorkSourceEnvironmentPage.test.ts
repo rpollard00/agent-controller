@@ -58,7 +58,10 @@ function createApi(
     success: true,
     authMechanism: 'PersonalAccessToken',
     errors: [],
-    payload: { repositories: [] },
+    payload: {
+      scope: 'organization',
+      organizationUrl: 'https://dev.azure.com/example',
+    },
   };
 
   const workSourceEnvironments = {
@@ -400,13 +403,16 @@ describe('work source environment screens', () => {
     expect(buttons[0]).not.toBeDisabled();
   });
 
-  it('list view: clicking Test connection shows success badge with repo count', async () => {
+  it('list view: clicking Test connection shows success badge with organization scope', async () => {
     const api = createApi([environment], {
       success: true,
       authMechanism: 'PersonalAccessToken',
       httpStatus: 200,
       errors: [],
-      payload: { repositories: ['repo-a', 'repo-b', 'repo-c'] },
+      payload: {
+        scope: 'organization',
+        organizationUrl: 'https://dev.azure.com/example',
+      },
     });
     render(App, { client: api.client });
 
@@ -424,12 +430,13 @@ describe('work source environment screens', () => {
       ),
     );
 
-    // Success badge should appear
+    // Success badge should appear with organization scope and no repo count
     await waitFor(() => expect(screen.getByText('Connected')).toBeVisible());
-    expect(screen.getByText('(3 repos)')).toBeVisible();
+    expect(screen.getByText('(organization)')).toBeVisible();
+    expect(screen.queryByText(/\(\d+ repos\)/)).not.toBeInTheDocument();
   });
 
-  it('list view: clicking Test connection shows success badge without repo count when payload is empty', async () => {
+  it('list view: clicking Test connection shows plain Connected badge when payload has no scope', async () => {
     const api = createApi([environment], {
       success: true,
       authMechanism: 'PersonalAccessToken',
@@ -451,8 +458,9 @@ describe('work source environment screens', () => {
       ),
     );
 
-    // Success badge should appear without repo count
+    // Success badge should appear without any scope or repo-count suffix
     await waitFor(() => expect(screen.getByText('Connected')).toBeVisible());
+    expect(screen.queryByText('(organization)')).not.toBeInTheDocument();
     expect(screen.queryByText(/\(\d+ repos\)/)).not.toBeInTheDocument();
   });
 
@@ -497,7 +505,10 @@ describe('work source environment screens', () => {
                 success: true,
                 authMechanism: 'PersonalAccessToken',
                 errors: [],
-                payload: { repositories: ['repo-x'] },
+                payload: {
+                  scope: 'organization',
+                  organizationUrl: 'https://dev.azure.com/example',
+                },
               }),
             0,
           ),
@@ -545,7 +556,10 @@ describe('work source environment screens', () => {
       authMechanism: 'PersonalAccessToken',
       httpStatus: 200,
       errors: [],
-      payload: { repositories: ['repo-a', 'repo-b'] },
+      payload: {
+        scope: 'organization',
+        organizationUrl: 'https://dev.azure.com/example',
+      },
     });
     render(App, { client: api.client });
 
@@ -561,9 +575,10 @@ describe('work source environment screens', () => {
       ),
     );
 
-    // Success result card
+    // Success result card with organization scope and no repo count
     await waitFor(() => expect(screen.getByText('Connected')).toBeVisible());
-    expect(screen.getByText('(2 repos)')).toBeVisible();
+    expect(screen.getByText('(organization)')).toBeVisible();
+    expect(screen.queryByText(/\(\d+ repos\)/)).not.toBeInTheDocument();
   });
 
   it('details view: Test connection transitions through loading to failure result', async () => {
@@ -605,7 +620,10 @@ describe('work source environment screens', () => {
                 success: true,
                 authMechanism: 'PersonalAccessToken',
                 errors: [],
-                payload: { repositories: ['only-repo'] },
+                payload: {
+                  scope: 'organization',
+                  organizationUrl: 'https://dev.azure.com/example',
+                },
               }),
             0,
           ),
@@ -625,8 +643,9 @@ describe('work source environment screens', () => {
       ),
     );
 
-    // After the delayed resolution, result card appears
+    // After the delayed resolution, result card appears with organization scope
     await waitFor(() => expect(screen.getByText('Connected')).toBeVisible());
-    expect(screen.getByText('(1 repos)')).toBeVisible();
+    expect(screen.getByText('(organization)')).toBeVisible();
+    expect(screen.queryByText(/\(\d+ repos\)/)).not.toBeInTheDocument();
   });
 });
