@@ -57,7 +57,15 @@ public sealed class WebUiSecretsEndpointTests : IAsyncLifetime
     {
         using var createResponse = await _client.PostAsJsonAsync(
             "/api/webui/secrets",
-            new { name = "delete-me", value = "value-that-must-never-leak" }
+            new
+            {
+                name = "delete-me",
+                payload = new
+                {
+                    type = "personal-access-token",
+                    value = "value-that-must-never-leak",
+                },
+            }
         );
         Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
 
@@ -93,7 +101,15 @@ public sealed class WebUiSecretsEndpointTests : IAsyncLifetime
         const string secretValue = "pat-value-that-must-never-leak";
         using (var createSecret = await _client.PostAsJsonAsync(
             "/api/webui/secrets",
-            new { name = "pat-secret", value = secretValue }
+            new
+            {
+                name = "pat-secret",
+                payload = new
+                {
+                    type = "personal-access-token",
+                    value = secretValue,
+                },
+            }
         ))
         {
             Assert.Equal(HttpStatusCode.Created, createSecret.StatusCode);
@@ -152,6 +168,110 @@ public sealed class WebUiSecretsEndpointTests : IAsyncLifetime
             secrets.EnumerateArray(),
             secret => secret.GetProperty("name").GetString() == "pat-secret"
         );
+    }
+
+    [Fact]
+    public async Task CreateSecretSsh_OmittedPassphrase_Returns400()
+    {
+        // POST an SSH-key secret without the passphrase property at all.
+        using var response = await _client.PostAsJsonAsync(
+            "/api/webui/secrets",
+            new
+            {
+                name = "ssh-omitted-passphrase",
+                payload = new
+                {
+                    type = "ssh-key",
+                    privateKey = "ssh-private-key-content",
+                    publicKey = "ssh-public-key-content",
+                    // passphrase is intentionally omitted — should be rejected
+                },
+            }
+        );
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateSecretSsh_ExplicitNullPassphrase_Succeeds()
+    {
+        // POST an SSH-key secret with passphrase explicitly set to null.
+        using var response = await _client.PostAsJsonAsync(
+            "/api/webui/secrets",
+            new
+            {
+                name = "ssh-explicit-null",
+                payload = new
+                {
+                    type = "ssh-key",
+                    privateKey = "ssh-private-key-content",
+                    publicKey = "ssh-public-key-content",
+                    passphrase = (string?)null,
+                },
+            }
+        );
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateSecretSsh_ExplicitPassphraseValue_Succeeds()
+    {
+        // POST an SSH-key secret with an explicit passphrase value.
+        using var response = await _client.PostAsJsonAsync(
+            "/api/webui/secrets",
+            new
+            {
+                name = "ssh-with-passphrase",
+                payload = new
+                {
+                    type = "ssh-key",
+                    privateKey = "ssh-private-key-content",
+                    publicKey = "ssh-public-key-content",
+                    passphrase = "my-secret-passphrase",
+                },
+            }
+        );
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateSecretVersionSsh_OmittedPassphrase_Returns400()
+    {
+        // First create an SSH-key secret with explicit null passphrase.
+        using var createResponse = await _client.PostAsJsonAsync(
+            "/api/webui/secrets",
+            new
+            {
+                name = "ssh-version-omitted-passphrase",
+                payload = new
+                {
+                    type = "ssh-key",
+                    privateKey = "ssh-private-key-content",
+                    publicKey = "ssh-public-key-content",
+                    passphrase = (string?)null,
+                },
+            }
+        );
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+
+        // Now try to create a new version without passphrase.
+        using var versionResponse = await _client.PostAsJsonAsync(
+            "/api/webui/secrets/ssh-version-omitted-passphrase/versions",
+            new
+            {
+                payload = new
+                {
+                    type = "ssh-key",
+                    privateKey = "ssh-private-key-v2",
+                    publicKey = "ssh-public-key-v2",
+                    // passphrase is intentionally omitted — should be rejected
+                },
+            }
+        );
+
+        Assert.Equal(HttpStatusCode.BadRequest, versionResponse.StatusCode);
     }
 
     private static async Task<JsonElement> ReadJsonAsync(HttpResponseMessage response) =>

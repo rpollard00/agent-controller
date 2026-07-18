@@ -80,23 +80,34 @@ export interface SecretInfo {
   latestVersion: number;
   createdAt: string;
   updatedAt: string;
+  /** Stable type discriminator: 'personal-access-token' | 'ssh-key' */
+  secretType: string;
 }
 
 /** Metadata for a single secret version (no plaintext value). */
 export interface SecretVersionInfo {
   version: number;
   createdAt: string;
+  /** Stable type discriminator: 'personal-access-token' | 'ssh-key' */
+  secretType: string;
+  /** SSH public key (safe for display), null for PAT secrets. */
+  publicKey: string | null;
 }
+
+/** Base payload for PAT/SSH-key secret creation. The `type` discriminator field selects the shape. */
+export type CreateSecretPayload =
+  | { type: 'personal-access-token'; value: string }
+  | { type: 'ssh-key'; privateKey: string; publicKey: string; passphrase: string | null };
 
 /** Request payload for creating a new secret. */
 export interface CreateSecretRequest {
   name: string;
-  value: string;
+  payload: CreateSecretPayload;
 }
 
 /** Request payload for creating a new version of an existing secret. */
 export interface CreateSecretVersionRequest {
-  value: string;
+  payload: CreateSecretPayload;
 }
 
 /** Response after successfully creating a secret. */

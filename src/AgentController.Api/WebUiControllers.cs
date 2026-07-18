@@ -1,8 +1,10 @@
+using System.Text.Json.Serialization;
 using AgentController.Application.Abstractions;
 using AgentController.Application.Commands;
 using AgentController.Application.Queries;
 using AgentController.Application.Results;
 using AgentController.Domain;
+using AgentController.Domain.Secrets;
 
 namespace AgentController.Api;
 
@@ -435,8 +437,9 @@ public static class WebUiControllers
                 CancellationToken cancellationToken
             ) =>
             {
+                var domainPayload = request.Payload.ToDomainPayload();
                 var result = await handler.HandleAsync(
-                    new CreateSecretCommand(request.Name, request.Value),
+                    new CreateSecretCommand(request.Name, domainPayload),
                     cancellationToken
                 );
                 return MapSecretResult(result);
@@ -453,8 +456,9 @@ public static class WebUiControllers
                 CancellationToken cancellationToken
             ) =>
             {
+                var domainPayload = request.Payload.ToDomainPayload();
                 var result = await handler.HandleAsync(
-                    new CreateSecretVersionCommand(name, request.Value),
+                    new CreateSecretVersionCommand(name, domainPayload),
                     cancellationToken
                 );
                 return MapSecretVersionResult(result);
@@ -520,7 +524,78 @@ public static class WebUiControllers
             ),
         };
 
-    // Request DTOs for secrets management
-    private sealed record CreateSecretRequest(string Name, string Value);
-    private sealed record CreateSecretVersionRequest(string Value);
+    // ── Request DTOs for secrets management ──
+
+    /// <summary>Request to create a new named secret with a typed payload.</summary>
+    private sealed record CreateSecretRequest(
+        /// <summary>The unique secret name.</summary>
+        string Name,
+
+        /// <summary>
+        /// The typed payload. Must include a <c>"type"</c> discriminator:
+        /// <c>"personal-access-token"</c> (with <c>"value"</c>) or <c>"ssh-key"</c>
+        /// (with <c>"privateKey"</c>, <c>"publicKey"</c>, and optional <c>"passphrase"</c>).
+        /// </summary>
+        CreateSecretPayload Payload
+    );
+
+    /// <summary>Request to create a new version of an existing secret.</summary>
+    private sealed record CreateSecretVersionRequest(
+        /// <summary>
+        /// The typed payload. Must include a <c>"type"</c> discriminator:
+        /// <c>"personal-access-token"</c> (with <c>"value"</c>) or <c>"ssh-key"</c>
+        /// (with <c>"privateKey"</c>, <c>"publicKey"</c>, and optional/explicit <c>"passphrase"</c>).
+        /// </summary>
+        CreateSecretPayload Payload
+    );
+}
+
+/// <summary>
+/// Base type for discriminated create-secret payloads sent from the Web UI.
+/// Each subtype maps to a <see cref="SecretPayload"/> domain type.
+/// </summary>
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
+[JsonDerivedType(typeof(CreateSecretPatPayload), typeDiscriminator: "personal-access-token")]
+[JsonDerivedType(typeof(CreateSecretSshPayload), typeDiscriminator: "ssh-key")]
+internal abstract record CreateSecretPayload
+{
+    /// <summary>Converts this request payload to a domain <see cref="SecretPayload"/>.</summary>
+    public abstract SecretPayload ToDomainPayload();
+}
+
+/// <summary>PAT payload for create-secret requests.</summary>
+internal sealed record CreateSecretPatPayload : CreateSecretPayload
+{
+    /// <summary>The plaintext token value.</summary>
+    public required string Value { get; init; }
+
+    /// <inheritdoc />
+    public override SecretPayload ToDomainPayload() =>
+        new PersonalAccessTokenPayload { Value = Value };
+}
+
+/// <summary>SSH-key payload for create-secret requests.</summary>
+internal sealed record CreateSecretSshPayload : CreateSecretPayload
+{
+    /// <summary>The SSH private key (PEM-encoded).</summary>
+    public required string PrivateKey { get; init; }
+
+    /// <summary>The SSH public key (safe for display in metadata).</summary>
+    public required string PublicKey { get; init; }
+
+    /// <summary>
+    /// Optional passphrase for the encrypted private key.
+    /// Must be explicitly supplied as a value or <c>null</c>.
+    /// </summary>
+    [JsonRequired]
+    public string? Passphrase { get; init; }
+
+    /// <inheritdoc />
+    public override SecretPayload ToDomainPayload() =>
+        new SshKeyPayload
+        {
+            PrivateKey = PrivateKey,
+            PublicKey = PublicKey,
+            Passphrase = Passphrase,
+        };
 }

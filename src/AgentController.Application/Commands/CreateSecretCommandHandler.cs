@@ -35,21 +35,40 @@ public sealed class CreateSecretCommandHandler(ISecretManager secretManager)
             );
         }
 
-        if (string.IsNullOrEmpty(command.Value))
+        var validationErrors = new Dictionary<string, string[]>();
+
+        if (command.Payload is PersonalAccessTokenPayload patPayload)
         {
-            return CreateSecretResult.ValidationFailed(
-                new Dictionary<string, string[]>
-                {
-                    ["value"] = ["Secret value is required."],
-                }
-            );
+            if (string.IsNullOrEmpty(patPayload.Value))
+            {
+                validationErrors["payload.value"] = ["PAT value is required."];
+            }
+        }
+        else if (command.Payload is SshKeyPayload sshPayload)
+        {
+            if (string.IsNullOrEmpty(sshPayload.PrivateKey))
+            {
+                validationErrors["payload.privateKey"] = ["SSH private key is required."];
+            }
+
+            if (string.IsNullOrEmpty(sshPayload.PublicKey))
+            {
+                validationErrors["payload.publicKey"] = ["SSH public key is required."];
+            }
+        }
+        else
+        {
+            validationErrors["payload.type"] = ["Unsupported secret payload type."];
         }
 
-        // For now, all secrets created through the command layer default to PAT type.
-        // SSH-key secrets will be supported once typed command payloads are introduced.
+        if (validationErrors.Count > 0)
+        {
+            return CreateSecretResult.ValidationFailed(validationErrors);
+        }
+
         var created = await _secretManager.CreateAsync(
             command.Name,
-            new PersonalAccessTokenPayload { Value = command.Value },
+            command.Payload,
             cancellationToken
         );
 
