@@ -50,6 +50,9 @@
   const selectedSecret = $derived(
     typedSecrets.find((secret) => secret.name === secretName),
   );
+  const incompatibleSelectedSecret = $derived(
+    secrets.find((secret) => secret.name === secretName && secret.secretType !== secretType),
+  );
   const sortedVersions = $derived(
     versions
       .filter((version) => version.secretType === secretType)
@@ -58,6 +61,12 @@
   const selectedVersionIsListed = $derived(
     secretVersion !== null &&
       sortedVersions.some((version) => version.version === secretVersion),
+  );
+  const inputDescribedBy = $derived(
+    [
+      error ? `${id}-error` : undefined,
+      incompatibleSelectedSecret ? `${id}-type-error` : undefined,
+    ].filter(Boolean).join(' ') || undefined,
   );
 
   $effect(() => {
@@ -152,6 +161,10 @@
     return type === 'ssh-key' ? 'SSH key' : 'PAT';
   }
 
+  function typeLabelWithArticle(type: SecretType): string {
+    return type === 'ssh-key' ? 'an SSH key' : 'a PAT';
+  }
+
   function isAbortError(requestError: unknown): boolean {
     return requestError instanceof DOMException && requestError.name === 'AbortError';
   }
@@ -194,7 +207,7 @@
       aria-haspopup="listbox"
       aria-expanded={dropdownOpen}
       aria-controls={listId}
-      aria-describedby={error ? `${id}-error` : undefined}
+      aria-describedby={inputDescribedBy}
       onmousedown={(event) => {
         event.preventDefault();
         openDropdown();
@@ -211,13 +224,18 @@
           </span>
         {:else if loading}
           <span class="block text-xs text-slate-500">Loading secret metadata…</span>
+        {:else if incompatibleSelectedSecret}
+          <span id={`${id}-type-error`} class="block text-xs text-rose-300">
+            Selected secret type is {typeLabel(incompatibleSelectedSecret.secretType)}; expected
+            {typeLabel(secretType)}.
+          </span>
         {:else}
           <span class="block text-xs text-amber-300">
             Not an available {typeLabel(secretType)} secret
           </span>
         {/if}
       {:else}
-        <span class="text-slate-600">Select a {typeLabel(secretType)} secret…</span>
+        <span class="text-slate-600">Select {typeLabelWithArticle(secretType)} secret…</span>
       {/if}
     </button>
 

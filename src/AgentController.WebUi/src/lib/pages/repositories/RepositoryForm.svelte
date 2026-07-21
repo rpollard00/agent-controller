@@ -10,8 +10,12 @@
   import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
   import Field from '../../components/ui/Field.svelte';
+  import SecretPicker from '../../components/ui/SecretPicker.svelte';
   import {
     createRepositoryFormValues,
+    inferCloneTransport,
+    requiresSshKey,
+    resolveRepositoryFormTransport,
     toRepositoryProfile,
     validateRepositoryForm,
     type RepositoryFormErrors,
@@ -43,6 +47,11 @@
   let clientErrors = $state<RepositoryFormErrors>({});
   let projects = $state<ConnectionProject[]>([]);
   let projectsLoading = $state(false);
+
+  const inferredTransport = $derived(inferCloneTransport(values.cloneUrl));
+  const effectiveTransport = $derived(resolveRepositoryFormTransport(values));
+  const sshKeyRequired = $derived(requiresSshKey(values));
+  const showSshKeyPicker = $derived(sshKeyRequired || Boolean(values.sshKeyName));
 
   const inputClasses =
     'min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 placeholder:text-slate-600 disabled:cursor-not-allowed disabled:bg-slate-900 disabled:text-slate-400';
@@ -105,6 +114,30 @@
   function connectionLabel(profile: { key: string; displayName: string; enabled: boolean }): string {
     return `${profile.displayName} — ${profile.key}${profile.enabled ? '' : ' (disabled)'}`;
   }
+
+  function transportLabel(transport: RepositoryProfile['transport']): string {
+    const labels: Record<RepositoryProfile['transport'], string> = {
+      unspecified: 'Not resolved',
+      ssh: 'SSH',
+      httpsPat: 'HTTPS + PAT',
+      local: 'Local',
+    };
+    return labels[transport];
+  }
+
+  function clearSshKeyReference(): void {
+    values.sshKeyName = '';
+    values.sshKeyVersion = null;
+    clearClientError('sshKeyReference');
+  }
+
+  $effect(() => {
+    const hasSshKey = Boolean(values.sshKeyName);
+    const keyIsRequired = sshKeyRequired;
+    if ((hasSshKey || !keyIsRequired) && clientErrors.sshKeyReference) {
+      clearClientError('sshKeyReference');
+    }
+  });
 
   $effect(() => {
     void loadProjects(values.repositoryHostConnectionKey);
@@ -215,6 +248,64 @@
       </select>
     </Field>
   </div>
+
+  <div
+    class="rounded-xl border border-slate-800 bg-slate-950/40 p-4"
+    aria-live="polite"
+  >
+    <p class="text-xs font-semibold tracking-wider text-slate-500 uppercase">Effective clone transport</p>
+    <p class="mt-1 text-base font-semibold text-white">{transportLabel(effectiveTransport)}</p>
+    {#if inferredTransport === 'unspecified'}
+      <p class="mt-1 text-sm text-slate-400">
+        Enter a supported clone URL or local path to resolve its transport.
+      </p>
+    {:else if values.transport === 'unspecified'}
+      <p class="mt-1 text-sm text-slate-400">
+        Automatic uses {transportLabel(inferredTransport)} based on the clone URL.
+      </p>
+    {:else if values.transport === inferredTransport}
+      <p class="mt-1 text-sm text-slate-400">
+        The configured transport matches the clone URL.
+      </p>
+    {:else}
+      <p class="mt-1 text-sm font-medium text-amber-300">
+        The clone URL resolves to {transportLabel(inferredTransport)}, which does not match the configured
+        {transportLabel(values.transport)} transport.
+      </p>
+    {/if}
+  </div>
+
+  {#if showSshKeyPicker}
+    <div class="space-y-2 rounded-xl border border-slate-800 p-4 sm:p-5">
+      <label class="block text-sm font-medium text-slate-200" for="repository-sshKeyReference-input">
+        SSH key secret
+        {#if sshKeyRequired}<span class="text-rose-300" aria-hidden="true"> *</span>{/if}
+        {#if sshKeyRequired}<span class="sr-only"> (required)</span>{/if}
+      </label>
+      <SecretPicker
+        id="repository-sshKeyReference"
+        client={client.secrets}
+        secretType="ssh-key"
+        bind:secretName={values.sshKeyName}
+        bind:secretVersion={values.sshKeyVersion}
+        disabled={submitting}
+        error={fieldError('sshKeyReference')}
+      />
+      <p class="text-sm text-slate-400">
+        Use an externally created private key. Choose Latest to follow rotations or pin a specific version.
+      </p>
+      {#if values.sshKeyName}
+        <button
+          type="button"
+          class="text-sm font-semibold text-cyan-300 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={submitting}
+          onclick={clearSshKeyReference}
+        >
+          Remove SSH key reference
+        </button>
+      {/if}
+    </div>
+  {/if}
 
   <Field
     id="repository-allowedPaths"

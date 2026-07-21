@@ -7,6 +7,8 @@ import type {
   ConnectionProject,
   RepositoryProfile,
   RuntimeEnvironmentProfile,
+  SecretInfo,
+  SecretVersionInfo,
   WorkSourceEnvironmentProfile,
 } from '../../api/types';
 
@@ -42,6 +44,38 @@ const connection: ConnectionProfile = {
 
 const projects: ConnectionProject[] = [
   { id: 'proj-1', name: 'Agent Controller' },
+];
+
+const secrets: SecretInfo[] = [
+  {
+    name: 'ado-pat',
+    secretType: 'personal-access-token',
+    latestVersion: 3,
+    createdAt: '2026-07-13T00:00:00Z',
+    updatedAt: '2026-07-15T00:00:00Z',
+  },
+  {
+    name: 'repository-deploy-key',
+    secretType: 'ssh-key',
+    latestVersion: 2,
+    createdAt: '2026-07-13T00:00:00Z',
+    updatedAt: '2026-07-15T00:00:00Z',
+  },
+];
+
+const sshKeyVersions: SecretVersionInfo[] = [
+  {
+    version: 1,
+    secretType: 'ssh-key',
+    publicKey: 'ssh-ed25519 AAAA version-1',
+    createdAt: '2026-07-13T00:00:00Z',
+  },
+  {
+    version: 2,
+    secretType: 'ssh-key',
+    publicKey: 'ssh-ed25519 AAAA version-2',
+    createdAt: '2026-07-15T00:00:00Z',
+  },
 ];
 
 const workSourceEnvironment: WorkSourceEnvironmentProfile = {
@@ -140,8 +174,9 @@ function createApi(initialRepositories: RepositoryProfile[] = [repository]): Moc
       },
       runtimeEnvironments: staticResource([runtimeEnvironment]),
       secrets: {
-        list: vi.fn(async () => []),
-        listVersions: vi.fn(async () => []),
+        list: vi.fn(async () => secrets),
+        listVersions: vi.fn(async (name: string) =>
+          name === 'repository-deploy-key' ? sshKeyVersions : []),
         create: vi.fn(async () => ({ name: 'test' })),
         createVersion: vi.fn(async () => ({ name: 'test', version: 1 })),
         delete: vi.fn(async () => undefined),
@@ -161,12 +196,14 @@ function staticResource<T>(profiles: T[]): ResourceClient<T> {
   };
 }
 
-async function completeRequiredCreateFields(): Promise<void> {
+async function completeRequiredCreateFields(
+  cloneUrl = 'https://example.test/new.repo.git',
+): Promise<void> {
   await fireEvent.input(await screen.findByLabelText(/Repository key/), {
     target: { value: 'new.repo' },
   });
   await fireEvent.input(screen.getByLabelText(/Clone URL or local path/), {
-    target: { value: 'https://example.test/new.repo.git' },
+    target: { value: cloneUrl },
   });
 }
 
@@ -181,9 +218,16 @@ describe('repository onboarding screens', () => {
     render(App, { client: api.client });
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Onboard repository' })).toBeVisible();
-    await completeRequiredCreateFields();
-    await fireEvent.change(screen.getByLabelText(/Clone transport/), {
-      target: { value: 'ssh' },
+    await completeRequiredCreateFields('git@example.test:owner/new.repo.git');
+    expect(screen.getByText('Automatic uses SSH based on the clone URL.')).toBeVisible();
+
+    await fireEvent.click(screen.getByRole('button', { name: /SSH key secret/ }));
+    expect(screen.queryByRole('option', { name: /ado-pat/ })).not.toBeInTheDocument();
+    await fireEvent.click(
+      screen.getByRole('option', { name: /repository-deploy-key/ }),
+    );
+    await fireEvent.change(await screen.findByLabelText('Secret version'), {
+      target: { value: '1' },
     });
     await fireEvent.input(screen.getByLabelText(/Allowed paths/), {
       target: { value: 'src\ntests/integration' },
@@ -205,9 +249,10 @@ describe('repository onboarding screens', () => {
     expect(api.repositories.create).toHaveBeenCalledWith(
       expect.objectContaining({
         key: 'new.repo',
-        cloneUrl: 'https://example.test/new.repo.git',
+        cloneUrl: 'git@example.test:owner/new.repo.git',
         defaultBranch: 'main',
-        transport: 'ssh',
+        transport: 'unspecified',
+        sshKeyReference: { name: 'repository-deploy-key', version: 1 },
         allowedPaths: ['src', 'tests/integration'],
         repositoryHostConnectionKey: 'ado-main',
         project: 'Agent Controller',
@@ -232,6 +277,61 @@ describe('repository onboarding screens', () => {
     expect(screen.getByText('A repository key is required.')).toBeVisible();
     expect(screen.getByText('A clone URL or local path is required.')).toBeVisible();
     expect(api.repositories.create).not.toHaveBeenCalled();
+  });
+
+  it('requires an SSH key when the clone URL resolves to SSH', async () => {
+    window.history.replaceState({}, '', '/repositories/new');
+    const api = createApi([]);
+    render(App, { client: api.client });
+
+    await completeRequiredCreateFields('ssh://git@example.test/owner/new.repo.git');
+    expect(screen.getByText('Automatic uses SSH based on the clone URL.')).toBeVisible();
+    expect(screen.getByLabelText(/SSH key secret/)).toBeVisible();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Onboard repository' }));
+
+    expect(await screen.findByText('Select an SSH key secret for SSH clone transport.')).toBeVisible();
+    expect(api.repositories.create).not.toHaveBeenCalled();
+  });
+
+  it('surfaces an incompatible secret type and the server validation error', async () => {
+    window.history.replaceState({}, '', '/repositories/ssh.repo/edit');
+    const incompatibleRepository: RepositoryProfile = {
+      ...repository,
+      key: 'ssh.repo',
+      cloneUrl: 'git@example.test:owner/ssh.repo.git',
+      transport: 'ssh',
+      sshKeyReference: { name: 'ado-pat', version: 3 },
+    };
+    const api = createApi([incompatibleRepository]);
+    api.repositories.update = vi.fn(async () => {
+      throw new ApiError({
+        title: 'Validation failed.',
+        status: 400,
+        errors: {
+          sshKeyReference: [
+            "Secret 'ado-pat' is a 'personal-access-token' secret. Repository SSH credentials must reference an SSH-key secret.",
+          ],
+        },
+      });
+    });
+    render(App, { client: api.client });
+
+    expect(
+      await screen.findByText('Selected secret type is PAT; expected SSH key.'),
+    ).toBeVisible();
+    expect(screen.getByLabelText(/SSH key secret/)).toHaveAttribute(
+      'aria-describedby',
+      'repository-sshKeyReference-type-error',
+    );
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    const errors = await screen.findAllByText(
+      /Repository SSH credentials must reference an SSH-key secret/,
+    );
+    expect(errors).toHaveLength(2);
+    for (const error of errors) expect(error).toBeVisible();
   });
 
   it('updates repository settings while preserving the immutable key', async () => {
