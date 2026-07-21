@@ -2,6 +2,7 @@ using System.Diagnostics;
 using AgentController.Application;
 using AgentController.Domain;
 using AgentController.Infrastructure.Options;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -22,13 +23,15 @@ namespace AgentController.Infrastructure;
 /// standard clone protocol over the local filesystem.
 ///
 /// Registered as a singleton so it is safe for consumption by singleton consumers
-/// such as <see cref="BackgroundService"/>. Uses <see cref="IOptionsMonitor{TOptions}"/>
+/// such as <see cref="BackgroundService"/>. HTTPS credentials are resolved per operation
+/// through a short-lived service scope. Uses <see cref="IOptionsMonitor{TOptions}"/>
 /// for live config reload support.
 /// </summary>
 public sealed partial class LocalGitSourceControlProvider : ISourceControlProvider
 {
     private readonly IOptionsMonitor<AgentControllerOptions> _controllerOptions;
     private readonly ILogger<LocalGitSourceControlProvider> _logger;
+    private readonly RepositoryCloneCredentialResolver? _credentialResolver;
 
     /// <summary>
     /// Maximum time a git clone operation is allowed to run before being terminated.
@@ -37,10 +40,25 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
 
     public LocalGitSourceControlProvider(
         IOptionsMonitor<AgentControllerOptions> controllerOptions,
-        ILogger<LocalGitSourceControlProvider> logger)
+        ILogger<LocalGitSourceControlProvider> logger,
+        IServiceScopeFactory? scopeFactory = null
+    )
+        : this(
+            controllerOptions,
+            logger,
+            scopeFactory is null ? null : new RepositoryCloneCredentialResolver(scopeFactory)
+        )
+    { }
+
+    internal LocalGitSourceControlProvider(
+        IOptionsMonitor<AgentControllerOptions> controllerOptions,
+        ILogger<LocalGitSourceControlProvider> logger,
+        RepositoryCloneCredentialResolver? credentialResolver
+    )
     {
         _controllerOptions = controllerOptions;
         _logger = logger;
+        _credentialResolver = credentialResolver;
     }
 
     /// <inheritdoc />
@@ -63,8 +81,14 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
                 "Ensure the environment provider created the workspace first.");
         }
 
-        var cloneUrl = NormalizeCloneUrl(spec.CloneUrl);
-        var transport = ResolveTransport(spec.Transport, cloneUrl);
+        var cloneUrl = RemoveCredentialsFromCloneUrl(NormalizeCloneUrl(spec.CloneUrl));
+        var resolution = spec.Profile is null
+            ? null
+            : RepositoryCloneTransportResolver.Resolve(
+                spec.Profile,
+                spec.RepositoryConnection
+            );
+        var transport = resolution?.Transport ?? ResolveTransport(spec.Transport, cloneUrl);
         var targetDir = Path.Combine(environment.RootPath, "repo");
 
         // Ensure the parent directory exists (environment provider should have created it,
@@ -82,6 +106,19 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
         // --branch checks out a specific branch after clone.
         var args = new List<string> { "clone", "--quiet" };
 
+        using var httpsCredentials =
+            transport == CloneTransport.HttpsPat
+                ? await CreateHttpsCredentialsAsync(spec, resolution, cancellationToken)
+                : null;
+
+        if (httpsCredentials is not null)
+        {
+            // Reset inherited credential helpers so the operation cannot persist the PAT.
+            // The ephemeral askpass helper is the sole credential source.
+            args.Add("-c");
+            args.Add("credential.helper=");
+        }
+
         if (!string.IsNullOrWhiteSpace(spec.DefaultBranch))
         {
             args.Add("--branch");
@@ -91,7 +128,11 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
         args.Add(cloneUrl);
         args.Add(targetDir);
 
-        var (exitCode, stdErr) = await RunGitAsync(args, cancellationToken);
+        var (exitCode, stdErr) = await RunGitAsync(
+            args,
+            httpsCredentials?.Environment,
+            cancellationToken
+        );
 
         if (exitCode != 0)
         {
@@ -149,7 +190,7 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
     {
         var cloneUrl = string.IsNullOrWhiteSpace(spec.CloneUrl)
             ? string.Empty
-            : NormalizeCloneUrl(spec.CloneUrl);
+            : RemoveCredentialsFromCloneUrl(NormalizeCloneUrl(spec.CloneUrl));
 
         var transport = ResolveTransport(spec.Transport, cloneUrl);
 
@@ -422,6 +463,56 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
         }
     }
 
+    private async Task<GitAskPassCredentials?> CreateHttpsCredentialsAsync(
+        RepositorySpec spec,
+        RepositoryCloneTransportResolution? resolution,
+        CancellationToken cancellationToken
+    )
+    {
+        // Direct RepositorySpec callers remain compatible with public, unauthenticated
+        // HTTPS repositories. Managed execution always supplies Profile + connection.
+        if (spec.Profile is null)
+        {
+            return null;
+        }
+
+        if (resolution is null || !resolution.IsReady)
+        {
+            var reasons = resolution is null
+                ? "clone transport credentials could not be resolved."
+                : string.Join(" ", resolution.BlockingIssues.Select(issue => issue.Message));
+            throw new InvalidOperationException(
+                $"Cannot clone repository '{spec.RepoKey}' over HTTPS: {reasons}"
+            );
+        }
+
+        if (
+            resolution.CredentialSource
+                != RepositoryCloneCredentialSource.ConnectionPersonalAccessToken
+            || resolution.CredentialReference is null
+        )
+        {
+            throw new InvalidOperationException(
+                $"Cannot clone repository '{spec.RepoKey}' over HTTPS: "
+                    + "the repository connection does not provide a PAT secret reference."
+            );
+        }
+
+        if (_credentialResolver is null)
+        {
+            throw new InvalidOperationException(
+                $"Cannot clone repository '{spec.RepoKey}' over HTTPS: "
+                    + "clone credential resolution is not configured."
+            );
+        }
+
+        var personalAccessToken = await _credentialResolver.ResolvePersonalAccessTokenAsync(
+            resolution.CredentialReference,
+            cancellationToken
+        );
+        return GitAskPassCredentials.Create(personalAccessToken);
+    }
+
     /// <summary>
     /// Normalize a clone URL for use with <c>git clone</c>.
     ///
@@ -474,6 +565,30 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
         RepositoryCloneTransportResolver.ResolveTransport(explicitTransport, cloneUrl);
 
     /// <summary>
+    /// Removes URL user-info before execution and logging. Managed HTTPS credentials
+    /// are supplied through askpass, so retaining embedded credentials would leak them
+    /// into logs and the cloned repository's persisted <c>origin</c> remote.
+    /// </summary>
+    internal static string RemoveCredentialsFromCloneUrl(string cloneUrl)
+    {
+        if (
+            !Uri.TryCreate(cloneUrl, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            || string.IsNullOrEmpty(uri.UserInfo)
+        )
+        {
+            return cloneUrl;
+        }
+
+        var sanitized = new UriBuilder(uri)
+        {
+            UserName = string.Empty,
+            Password = string.Empty,
+        };
+        return sanitized.Uri.AbsoluteUri;
+    }
+
+    /// <summary>
     /// Environment variables applied to every git subprocess to guarantee
     /// non-interactive execution. Prevents the worker from hanging on
     /// host-key or credential prompts.
@@ -499,7 +614,9 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
     /// </summary>
     private static async Task<(int ExitCode, string StdErr)> RunGitAsync(
         IReadOnlyList<string> arguments,
-        CancellationToken cancellationToken)
+        IReadOnlyDictionary<string, string?>? additionalEnvironment,
+        CancellationToken cancellationToken
+    )
     {
         using var process = new Process
         {
@@ -524,6 +641,14 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
         foreach (var (key, value) in GitNonInteractiveEnv)
         {
             process.StartInfo.EnvironmentVariables[key] = value;
+        }
+
+        if (additionalEnvironment is not null)
+        {
+            foreach (var (key, value) in additionalEnvironment)
+            {
+                process.StartInfo.EnvironmentVariables[key] = value;
+            }
         }
 
         foreach (var arg in arguments)

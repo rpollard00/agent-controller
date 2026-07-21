@@ -296,7 +296,7 @@ public sealed partial class PollingWorker : BackgroundService
         // misconfiguration surfaces early instead of as a silent hang.
         // The preflight checks: URL parseable, transport prerequisites,
         // and a non-interactive git ls-remote probe.
-        var preflightSpec = BuildPreflightSpec(resolvedProfiles.Repository);
+        var preflightSpec = BuildPreflightSpec(resolvedProfiles);
         var preflightResult = await sourceControlProvider.CheckClonePreflightAsync(
             preflightSpec,
             ct
@@ -472,6 +472,7 @@ public sealed partial class PollingWorker : BackgroundService
             run,
             candidate,
             resolvedProfiles.Repository,
+            resolvedProfiles.RepositoryConnection,
             envHandle,
             sourceControlProvider,
             runStore,
@@ -671,8 +672,9 @@ public sealed partial class PollingWorker : BackgroundService
         return null;
     }
 
-    private static RepositorySpec BuildPreflightSpec(RepositoryProfile repository)
+    private static RepositorySpec BuildPreflightSpec(ResolvedControllerProfiles profiles)
     {
+        var repository = profiles.Repository;
         return new RepositorySpec
         {
             RepoKey = repository.Key,
@@ -680,6 +682,7 @@ public sealed partial class PollingWorker : BackgroundService
             DefaultBranch = repository.DefaultBranch,
             Transport = repository.Transport,
             Profile = repository,
+            RepositoryConnection = profiles.RepositoryConnection,
         };
     }
 
@@ -787,6 +790,7 @@ public sealed partial class PollingWorker : BackgroundService
         AgentRunHandle run,
         WorkCandidate candidate,
         RepositoryProfile repository,
+        ConnectionProfile? repositoryConnection,
         EnvironmentHandle envHandle,
         ISourceControlProvider sourceControlProvider,
         IAgentRunStore runStore,
@@ -832,6 +836,7 @@ public sealed partial class PollingWorker : BackgroundService
                 DefaultBranch = effectiveBranch,
                 Transport = repository.Transport,
                 Profile = repository,
+                RepositoryConnection = repositoryConnection,
             };
 
             var checkout = await sourceControlProvider.CloneAsync(spec, envHandle, ct);
@@ -1955,6 +1960,7 @@ public sealed partial class PollingWorker : BackgroundService
             run,
             candidate,
             resolvedProfiles.Repository,
+            resolvedProfiles.RepositoryConnection,
             envHandle,
             sourceControlProvider,
             runStore,

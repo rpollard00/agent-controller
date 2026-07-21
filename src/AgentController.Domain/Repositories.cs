@@ -21,6 +21,13 @@ public sealed record RepositorySpec
 
     /// <summary>Optional resolved repository profile from configuration.</summary>
     public RepositoryProfile? Profile { get; init; }
+
+    /// <summary>
+    /// Optional resolved host connection associated with <see cref="Profile"/>.
+    /// Runtime clone providers use this profile to locate the connection's typed,
+    /// optionally version-pinned credential reference without querying persistence.
+    /// </summary>
+    public ConnectionProfile? RepositoryConnection { get; init; }
 }
 
 /// <summary>
