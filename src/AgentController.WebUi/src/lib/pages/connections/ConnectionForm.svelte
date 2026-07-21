@@ -34,7 +34,7 @@
 
   let values = $state(untrack(() => createConnectionFormValues(profile)));
   let clientErrors = $state<ConnectionFormErrors>({});
-  const secretsClient = client.secrets;
+  const secretsClient = $derived(client.secrets);
 
   const inputClasses =
     'min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 placeholder:text-slate-600 disabled:cursor-not-allowed disabled:bg-slate-900 disabled:text-slate-400';
@@ -231,6 +231,7 @@
           <SecretPicker
             id="conn-secretName"
             client={secretsClient}
+            secretType="personal-access-token"
             bind:secretName={values.secretName}
             bind:secretVersion={values.secretVersion}
             disabled={submitting}

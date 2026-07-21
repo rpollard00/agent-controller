@@ -10,6 +10,7 @@ import type {
   RepositoryProfile,
   RuntimeEnvironmentProfile,
   SecretInfo,
+  SecretVersionInfo,
   WorkSourceEnvironmentProfile,
 } from '../../api/types';
 
@@ -109,7 +110,17 @@ function createApi(
 
   const secretsClient: SecretsResourceClient = {
     list: vi.fn(async () => [...secrets]),
-    listVersions: vi.fn(async () => []),
+    listVersions: vi.fn(async (name: string): Promise<SecretVersionInfo[]> => {
+      const secret = secrets.find((candidate) => candidate.name === name);
+      if (!secret) return [];
+
+      return Array.from({ length: secret.latestVersion }, (_, index) => ({
+        version: index + 1,
+        createdAt: `2026-07-${String(16 + index).padStart(2, '0')}T00:00:00Z`,
+        secretType: secret.secretType,
+        publicKey: secret.secretType === 'ssh-key' ? 'ssh-ed25519 public-key-material' : null,
+      }));
+    }),
     create: vi.fn(async (req) => {
       const now = new Date().toISOString();
       secrets.push({
@@ -227,6 +238,57 @@ describe('connection screens', () => {
       await screen.findByText(/Connection .*Secondary ADO.* was created/),
     ).toBeVisible();
     expect(window.location.pathname).toBe('/connections/ado-secondary');
+  });
+
+  it('filters credential choices to PAT secrets and allows pinning a listed version', async () => {
+    window.history.replaceState({}, '', '/connections/new');
+    const api = createApi([], undefined, projects, repos, [
+      {
+        name: 'ADO_PAT',
+        latestVersion: 3,
+        createdAt: '2026-07-16T00:00:00Z',
+        updatedAt: '2026-07-18T00:00:00Z',
+        secretType: 'personal-access-token',
+      },
+      {
+        name: 'ADO_SSH_KEY',
+        latestVersion: 2,
+        createdAt: '2026-07-16T00:00:00Z',
+        updatedAt: '2026-07-17T00:00:00Z',
+        secretType: 'ssh-key',
+      },
+    ]);
+    render(App, { client: api.client });
+
+    await completeRequiredCreateFields();
+    await waitFor(() => expect(api.secrets.listVersions).toHaveBeenCalledWith(
+      'ADO_PAT',
+      expect.any(AbortSignal),
+    ));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'PAT secret (required)' }));
+    expect(screen.getByRole('option', { name: /ADO_PAT PAT · Latest v3/ })).toBeVisible();
+    expect(screen.queryByRole('option', { name: /ADO_SSH_KEY/ })).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('option', { name: /ADO_PAT PAT · Latest v3/ }));
+
+    const versionPicker = screen.getByLabelText('Secret version');
+    expect(versionPicker).toHaveValue('');
+    expect(within(versionPicker).getByRole('option', {
+      name: 'Latest (currently v3)',
+    })).toBeVisible();
+    expect(within(versionPicker).getByRole('option', {
+      name: 'v2',
+    })).toBeVisible();
+
+    await fireEvent.change(versionPicker, { target: { value: '2' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create connection' }));
+
+    await waitFor(() => expect(api.connections.create).toHaveBeenCalledOnce());
+    const created = api.connections.create.mock.calls[0][0] as ConnectionProfile;
+    expect(created.providerSettings?.personalAccessTokenReference).toEqual({
+      name: 'ADO_PAT',
+      version: 2,
+    });
   });
 
   it('validates required fields before submitting', async () => {
