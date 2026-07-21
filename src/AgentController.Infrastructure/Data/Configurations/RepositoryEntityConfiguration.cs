@@ -35,6 +35,10 @@ internal sealed class RepositoryEntityConfiguration : IEntityTypeConfiguration<R
 
         builder.Property(x => x.RuntimeEnvironmentKey).HasMaxLength(128);
 
+        builder.Property(x => x.SshKeySecretName).HasMaxLength(256);
+
+        builder.Property(x => x.SshKeySecretVersion);
+
         // JSON-like column: stored as TEXT
         builder.Property(x => x.AllowedPathsJson).HasColumnName("AllowedPathsJson");
 

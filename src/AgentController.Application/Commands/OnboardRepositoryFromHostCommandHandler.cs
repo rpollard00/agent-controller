@@ -1,6 +1,7 @@
 using AgentController.Application.Abstractions;
 using AgentController.Application.Results;
 using AgentController.Domain;
+using AgentController.Domain.Secrets;
 
 namespace AgentController.Application.Commands;
 
@@ -13,13 +14,15 @@ public sealed class OnboardRepositoryFromHostCommandHandler(
     IConnectionStore connectionStore,
     IConnectionResolver connectionResolver,
     IRepositoryStore repositoryStore,
-    IRuntimeEnvironmentStore runtimeEnvironmentStore
+    IRuntimeEnvironmentStore runtimeEnvironmentStore,
+    ISecretManager secretManager
 ) : ICommandHandler<OnboardRepositoryFromHostCommand, RepositoryOperationResult>
 {
     private readonly IConnectionStore _connectionStore = connectionStore;
     private readonly IConnectionResolver _connectionResolver = connectionResolver;
     private readonly IRepositoryStore _repositoryStore = repositoryStore;
     private readonly IRuntimeEnvironmentStore _runtimeEnvironmentStore = runtimeEnvironmentStore;
+    private readonly ISecretManager _secretManager = secretManager;
 
     public async Task<RepositoryOperationResult> HandleAsync(
         OnboardRepositoryFromHostCommand command,
@@ -82,6 +85,7 @@ public sealed class OnboardRepositoryFromHostCommandHandler(
             draftProfile,
             _runtimeEnvironmentStore,
             _connectionStore,
+            _secretManager,
             cancellationToken
         );
 

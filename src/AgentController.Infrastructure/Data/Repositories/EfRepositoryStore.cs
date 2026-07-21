@@ -1,6 +1,7 @@
 using System.Text.Json;
 using AgentController.Application;
 using AgentController.Domain;
+using AgentController.Domain.Secrets;
 using AgentController.Infrastructure.Data.Entities;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -148,6 +149,12 @@ internal sealed class EfRepositoryStore : IRepositoryStore
         entity.Project = profile.Project;
         entity.RemoteIdentity = profile.RemoteIdentity;
         entity.RuntimeEnvironmentKey = profile.RuntimeEnvironmentKey;
+        entity.SshKeySecretName = profile.SshKeyReference is { IsSpecified: true } reference
+            ? reference.Name
+            : null;
+        entity.SshKeySecretVersion = profile.SshKeyReference is { IsSpecified: true }
+            ? profile.SshKeyReference.Version
+            : null;
         entity.AllowedPathsJson = SerializeList(profile.AllowedPaths);
     }
 
@@ -165,6 +172,12 @@ internal sealed class EfRepositoryStore : IRepositoryStore
             Project = entity.Project,
             RemoteIdentity = entity.RemoteIdentity,
             RuntimeEnvironmentKey = entity.RuntimeEnvironmentKey,
+            SshKeyReference = string.IsNullOrWhiteSpace(entity.SshKeySecretName)
+                ? null
+                : SecretReference.ByName(entity.SshKeySecretName) with
+                {
+                    Version = entity.SshKeySecretVersion,
+                },
             AllowedPaths = DeserializeList(entity.AllowedPathsJson),
         };
     }

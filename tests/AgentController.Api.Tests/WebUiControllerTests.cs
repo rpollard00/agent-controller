@@ -133,6 +133,96 @@ public sealed class WebUiControllerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RepositoryEndpoints_RoundTripSshKeyReferenceAndRejectPatReference()
+    {
+        using (var createSshKey = await _client.PostAsJsonAsync(
+            "/api/webui/secrets",
+            new
+            {
+                name = "repository-deploy-key",
+                payload = new
+                {
+                    type = "ssh-key",
+                    privateKey = "private-key-material",
+                    publicKey = "public-key-material",
+                    passphrase = (string?)null,
+                },
+            }
+        ))
+        {
+            Assert.Equal(HttpStatusCode.Created, createSshKey.StatusCode);
+        }
+
+        var profile = new
+        {
+            key = "ssh.repo",
+            cloneUrl = "git@example.test:ssh.repo.git",
+            defaultBranch = "main",
+            transport = "ssh",
+            sshKeyReference = new { name = "repository-deploy-key", version = 1 },
+        };
+        using var createResponse = await _client.PostAsJsonAsync(
+            "/api/webui/repositories",
+            profile
+        );
+
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+        var created = await ReadJsonAsync(createResponse);
+        Assert.Equal(
+            "repository-deploy-key",
+            created.GetProperty("sshKeyReference").GetProperty("name").GetString()
+        );
+        Assert.Equal(
+            1,
+            created.GetProperty("sshKeyReference").GetProperty("version").GetInt32()
+        );
+
+        using var getResponse = await _client.GetAsync("/api/webui/repositories/ssh.repo");
+        Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
+        var persisted = await ReadJsonAsync(getResponse);
+        Assert.Equal(
+            "repository-deploy-key",
+            persisted.GetProperty("sshKeyReference").GetProperty("name").GetString()
+        );
+
+        using (var createPat = await _client.PostAsJsonAsync(
+            "/api/webui/secrets",
+            new
+            {
+                name = "connection-pat",
+                payload = new
+                {
+                    type = "personal-access-token",
+                    value = "write-only-value",
+                },
+            }
+        ))
+        {
+            Assert.Equal(HttpStatusCode.Created, createPat.StatusCode);
+        }
+
+        using var invalidResponse = await _client.PostAsJsonAsync(
+            "/api/webui/repositories",
+            new
+            {
+                key = "invalid-ssh.repo",
+                cloneUrl = "git@example.test:invalid-ssh.repo.git",
+                defaultBranch = "main",
+                transport = "ssh",
+                sshKeyReference = new { name = "connection-pat", version = 1 },
+            }
+        );
+        var problem = await AssertProblemAsync(
+            invalidResponse,
+            HttpStatusCode.BadRequest,
+            "Validation failed."
+        );
+        Assert.True(
+            problem.GetProperty("errors").TryGetProperty("sshKeyReference", out _)
+        );
+    }
+
+    [Fact]
     public async Task WorkSourceEnvironmentEndpoints_SupportEveryVerbAndRedactCredentials()
     {
         var profile = new

@@ -103,6 +103,7 @@ function createApi(
       repositoryHostConnectionKey: 'ado-main',
       remoteIdentity: 'repo-guid',
       runtimeEnvironmentKey: null,
+      sshKeyReference: null,
       allowedPaths: [],
       project: null,
     })),

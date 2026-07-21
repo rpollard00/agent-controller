@@ -53,6 +53,7 @@ export function toRepositoryProfile(
     project: nullableKey(values.project),
     remoteIdentity: original?.remoteIdentity ?? null,
     runtimeEnvironmentKey: nullableKey(values.runtimeEnvironmentKey),
+    sshKeyReference: original?.sshKeyReference ?? null,
     environmentProfile: original?.environmentProfile ?? '',
     runtimeProfile: original?.runtimeProfile ?? '',
   };

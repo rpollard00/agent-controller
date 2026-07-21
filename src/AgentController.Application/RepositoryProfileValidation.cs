@@ -1,4 +1,5 @@
 using AgentController.Domain;
+using AgentController.Domain.Secrets;
 
 namespace AgentController.Application;
 
@@ -16,6 +17,7 @@ internal static class RepositoryProfileValidation
         RepositoryProfile profile,
         IRuntimeEnvironmentStore runtimeEnvironmentStore,
         IConnectionStore? connectionStore,
+        ISecretManager secretManager,
         CancellationToken cancellationToken
     )
     {
@@ -39,6 +41,7 @@ internal static class RepositoryProfileValidation
         var project = NormalizeProject(profile.Project);
         var remoteIdentity = NormalizeRemoteIdentity(profile.RemoteIdentity);
         var runtimeEnvironmentKey = NormalizeOptionalKey(profile.RuntimeEnvironmentKey);
+        var sshKeyReference = NormalizeSecretReference(profile.SshKeyReference);
 
         // Legacy field: no existence check (deprecated, kept for migration backfill only)
         // ValidateOptionalKey(azureDevOpsEnvironmentKey, "azureDevOpsEnvironmentKey", errors);
@@ -47,6 +50,12 @@ internal static class RepositoryProfileValidation
         ValidateOptionalText(project, "project", MaximumProjectLength, errors);
         ValidateOptionalKey(remoteIdentity, "remoteIdentity", errors);
         ValidateOptionalKey(runtimeEnvironmentKey, "runtimeEnvironmentKey", errors);
+        await ValidateSshKeyReferenceAsync(
+            sshKeyReference,
+            secretManager,
+            errors,
+            cancellationToken
+        );
 
         // Validate that the unified connection exists when specified.
         if (
@@ -90,6 +99,7 @@ internal static class RepositoryProfileValidation
             Project = project,
             RemoteIdentity = remoteIdentity,
             RuntimeEnvironmentKey = runtimeEnvironmentKey,
+            SshKeyReference = sshKeyReference,
             AllowedPaths = allowedPaths,
         };
 
@@ -117,6 +127,74 @@ internal static class RepositoryProfileValidation
     {
         var normalized = (value ?? string.Empty).Trim();
         return normalized.Length == 0 ? null : normalized;
+    }
+
+    private static SecretReference? NormalizeSecretReference(SecretReference? reference)
+    {
+        if (reference is null)
+        {
+            return null;
+        }
+
+        var normalized = reference with { Name = (reference.Name ?? string.Empty).Trim() };
+        return !normalized.IsSpecified && normalized.Version is null ? null : normalized;
+    }
+
+    /// <summary>
+    /// Rejects references to existing secrets with an incompatible immutable type.
+    /// Missing secrets remain valid so a repository can be configured before its key
+    /// is provisioned; clone preflight is responsible for reporting missing credentials.
+    /// </summary>
+    private static async Task ValidateSshKeyReferenceAsync(
+        SecretReference? reference,
+        ISecretManager secretManager,
+        ValidationErrors errors,
+        CancellationToken cancellationToken
+    )
+    {
+        if (reference is null)
+        {
+            return;
+        }
+
+        const string field = "sshKeyReference";
+        if (!reference.IsSpecified)
+        {
+            errors.Add(field, "An SSH key secret name is required when a reference is provided.");
+            return;
+        }
+
+        if (reference.Name.Length > 256)
+        {
+            errors.Add(field, "The SSH key secret name must be 256 characters or fewer.");
+        }
+
+        if (reference.Version is <= 0)
+        {
+            errors.Add(field, "The SSH key secret version must be a positive number.");
+        }
+
+        if (errors.Contains(field))
+        {
+            return;
+        }
+
+        var secrets = await secretManager.ListAsync(cancellationToken);
+        var secret = secrets.FirstOrDefault(candidate =>
+            string.Equals(candidate.Name, reference.Name, StringComparison.Ordinal)
+        );
+
+        if (
+            secret is not null
+            && !string.Equals(secret.SecretType, SecretType.SshKey, StringComparison.Ordinal)
+        )
+        {
+            errors.Add(
+                field,
+                $"Secret '{reference.Name}' is a '{secret.SecretType}' secret. "
+                    + "Repository SSH credentials must reference an SSH-key secret."
+            );
+        }
     }
 
     private static void ValidateOptionalText(

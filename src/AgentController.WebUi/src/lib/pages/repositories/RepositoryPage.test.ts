@@ -20,6 +20,7 @@ const repository: RepositoryProfile = {
   repositoryHostConnectionKey: null,
   remoteIdentity: null,
   runtimeEnvironmentKey: 'runtime-main',
+  sshKeyReference: null,
   allowedPaths: ['src'],
   project: null,
 };

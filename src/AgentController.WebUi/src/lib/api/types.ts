@@ -1,5 +1,11 @@
 export type CloneTransport = 'unspecified' | 'ssh' | 'httpsPat' | 'local';
 
+/** Reference to a named, optionally pinned secret version. */
+export interface SecretReference {
+  name: string;
+  version: number | null;
+}
+
 export interface RepositoryProfile {
   key: string;
   cloneUrl: string;
@@ -10,6 +16,7 @@ export interface RepositoryProfile {
   repositoryHostConnectionKey: string | null;
   remoteIdentity: string | null;
   runtimeEnvironmentKey: string | null;
+  sshKeyReference: SecretReference | null;
   allowedPaths: string[];
   project: string | null;
 }
@@ -126,10 +133,7 @@ export interface CreatedSecretVersionResponse {
 export type ConnectionCapability = 'Repositories' | 'WorkTracking' | 'ExecutionHost';
 
 /** Reference to a named, versioned secret for a connection PAT. */
-export interface ConnectionSecretReference {
-  name: string;
-  version: number | null;
-}
+export type ConnectionSecretReference = SecretReference;
 
 /** Azure DevOps provider settings for a connection. */
 export interface AzureDevOpsConnectionSettings {

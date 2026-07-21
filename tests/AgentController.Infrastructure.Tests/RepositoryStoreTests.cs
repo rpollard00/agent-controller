@@ -1,4 +1,5 @@
 using AgentController.Domain;
+using AgentController.Domain.Secrets;
 using AgentController.Infrastructure.Data;
 using AgentController.Infrastructure.Data.Repositories;
 using Microsoft.Data.Sqlite;
@@ -69,6 +70,7 @@ public sealed class RepositoryStoreTests
             RuntimeProfile = "legacy-runtime-v2",
             RepositoryHostConnectionKey = "ado-staging",
             RuntimeEnvironmentKey = null,
+            SshKeyReference = SecretReference.ByName("staging-deploy-key"),
             AllowedPaths = ["src", "tests", "Directory.Build.props"],
         };
 
@@ -170,6 +172,7 @@ public sealed class RepositoryStoreTests
         Assert.NotNull(profile);
         Assert.Null(profile.RepositoryHostConnectionKey);
         Assert.Null(profile.RuntimeEnvironmentKey);
+        Assert.Null(profile.SshKeyReference);
         Assert.Equal(CloneTransport.Ssh, profile.Transport);
         Assert.Equal(["src", "tests"], profile.AllowedPaths);
         Assert.Contains(
@@ -191,6 +194,7 @@ public sealed class RepositoryStoreTests
             RuntimeProfile = "legacy-runtime",
             RepositoryHostConnectionKey = "ado-production",
             RuntimeEnvironmentKey = "runtime-local",
+            SshKeyReference = SecretReference.ByNameAndVersion("production-deploy-key", 2),
             AllowedPaths = ["src", "tests"],
         };
     }
@@ -205,6 +209,7 @@ public sealed class RepositoryStoreTests
         Assert.Equal(expected.RuntimeProfile, actual.RuntimeProfile);
         Assert.Equal(expected.RepositoryHostConnectionKey, actual.RepositoryHostConnectionKey);
         Assert.Equal(expected.RuntimeEnvironmentKey, actual.RuntimeEnvironmentKey);
+        Assert.Equal(expected.SshKeyReference, actual.SshKeyReference);
         Assert.Equal(expected.AllowedPaths, actual.AllowedPaths);
     }
 

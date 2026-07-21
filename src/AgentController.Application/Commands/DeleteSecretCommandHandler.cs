@@ -75,6 +75,11 @@ public sealed class DeleteSecretCommandHandler(
                     command.Name,
                     StringComparison.Ordinal
                 )
+                || string.Equals(
+                    profile.SshKeyReference?.Name,
+                    command.Name,
+                    StringComparison.Ordinal
+                )
             )
             .Select(profile => $"repository '{profile.Key}'");
 

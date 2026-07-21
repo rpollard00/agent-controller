@@ -1,5 +1,6 @@
 using AgentController.Application.Abstractions;
 using AgentController.Application.Results;
+using AgentController.Domain.Secrets;
 
 namespace AgentController.Application.Commands;
 
@@ -7,12 +8,14 @@ namespace AgentController.Application.Commands;
 public sealed class CreateRepositoryCommandHandler(
     IRepositoryStore repositoryStore,
     IRuntimeEnvironmentStore runtimeEnvironmentStore,
-    IConnectionStore? connectionStore
+    IConnectionStore? connectionStore,
+    ISecretManager secretManager
 ) : ICommandHandler<CreateRepositoryCommand, RepositoryOperationResult>
 {
     private readonly IRepositoryStore _repositoryStore = repositoryStore;
     private readonly IRuntimeEnvironmentStore _runtimeEnvironmentStore = runtimeEnvironmentStore;
     private readonly IConnectionStore? _connectionStore = connectionStore;
+    private readonly ISecretManager _secretManager = secretManager;
 
     public async Task<RepositoryOperationResult> HandleAsync(
         CreateRepositoryCommand command,
@@ -33,6 +36,7 @@ public sealed class CreateRepositoryCommandHandler(
             command.Profile,
             _runtimeEnvironmentStore,
             _connectionStore,
+            _secretManager,
             cancellationToken
         );
 

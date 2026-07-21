@@ -1,3 +1,5 @@
+using AgentController.Domain.Secrets;
+
 namespace AgentController.Domain;
 
 /// <summary>
@@ -101,9 +103,15 @@ public sealed record RepositoryProfile
     /// <summary>
     /// Optional named secret reference for the Personal Access Token used for
     /// HTTPS+PAT clone authentication. Resolved at materialization time via
-    /// <see cref="Secrets.ISecretStore"/> by name.
+    /// <see cref="ISecretStore"/> by name.
     /// </summary>
     public string? PersonalAccessTokenSecretName { get; init; }
+
+    /// <summary>
+    /// Optional reference to the SSH-key secret used by this repository.
+    /// A version may be pinned; when omitted, consumers resolve the latest version.
+    /// </summary>
+    public SecretReference? SshKeyReference { get; init; }
 
     /// <summary>
     /// Allowed paths within the repository that the agent may modify.

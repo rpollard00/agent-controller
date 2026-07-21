@@ -4,6 +4,7 @@ using AgentController.Application.Commands;
 using AgentController.Application.Queries;
 using AgentController.Application.Results;
 using AgentController.Domain;
+using AgentController.Domain.Secrets;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace AgentController.Application.Tests;
@@ -65,7 +66,8 @@ public sealed class RepositoryOnboardingHandlerTests
         var handler = new CreateRepositoryCommandHandler(
             repositories,
             runtimeEnvironments,
-            hostConnections
+            hostConnections,
+            new InMemorySecretStore()
         );
         var profile = new RepositoryProfile
         {
@@ -105,13 +107,15 @@ public sealed class RepositoryOnboardingHandlerTests
         var handler = new CreateRepositoryCommandHandler(
             repositories,
             new FakeRuntimeEnvironmentStore(),
-            new FakeConnectionStore()
+            new FakeConnectionStore(),
+            new InMemorySecretStore()
         );
         var profile = CreateProfile("invalid") with
         {
             CloneUrl = "ftp://example.test/repo.git",
             DefaultBranch = "bad branch..name",
             Transport = (CloneTransport)999,
+            SshKeyReference = new SecretReference { Name = "future-key", Version = 0 },
             AllowedPaths = ["../secrets", "/absolute/path", ""],
         };
 
@@ -124,6 +128,7 @@ public sealed class RepositoryOnboardingHandlerTests
         Assert.Contains("cloneUrl", result.ValidationErrors.Keys);
         Assert.Contains("defaultBranch", result.ValidationErrors.Keys);
         Assert.Contains("transport", result.ValidationErrors.Keys);
+        Assert.Contains("sshKeyReference", result.ValidationErrors.Keys);
         Assert.Contains("allowedPaths", result.ValidationErrors.Keys);
         Assert.Null(repositories.LastCreated);
     }
@@ -135,7 +140,8 @@ public sealed class RepositoryOnboardingHandlerTests
         var handler = new CreateRepositoryCommandHandler(
             repositories,
             new FakeRuntimeEnvironmentStore(),
-            new FakeConnectionStore()
+            new FakeConnectionStore(),
+            new InMemorySecretStore()
         );
         var profile = CreateProfile("referencing") with
         {
@@ -155,13 +161,108 @@ public sealed class RepositoryOnboardingHandlerTests
     }
 
     [Fact]
+    public async Task Create_PersistsNormalizedPinnedSshKeyReference()
+    {
+        var repositories = new FakeRepositoryStore();
+        var secrets = new InMemorySecretStore();
+        await secrets.CreateAsync(
+            "deploy-key",
+            new SshKeyPayload { PrivateKey = "private-v1", PublicKey = "public-v1" }
+        );
+        await secrets.CreateVersionAsync(
+            "deploy-key",
+            new SshKeyPayload { PrivateKey = "private-v2", PublicKey = "public-v2" }
+        );
+        var handler = new CreateRepositoryCommandHandler(
+            repositories,
+            new FakeRuntimeEnvironmentStore(),
+            new FakeConnectionStore(),
+            secrets
+        );
+        var profile = CreateProfile("secured") with
+        {
+            SshKeyReference = SecretReference.ByNameAndVersion(" deploy-key ", 2),
+        };
+
+        var result = await handler.HandleAsync(
+            new CreateRepositoryCommand(profile),
+            CancellationToken.None
+        );
+
+        Assert.Equal(RepositoryOperationStatus.Succeeded, result.Status);
+        var reference = Assert.IsType<SecretReference>(repositories.LastCreated?.SshKeyReference);
+        Assert.Equal("deploy-key", reference.Name);
+        Assert.Equal(2, reference.Version);
+    }
+
+    [Fact]
+    public async Task Create_RejectsNonSshSecretReference()
+    {
+        var repositories = new FakeRepositoryStore();
+        var secrets = new InMemorySecretStore();
+        await secrets.CreateAsync(
+            "connection-pat",
+            new PersonalAccessTokenPayload { Value = "write-only-value" }
+        );
+        var handler = new CreateRepositoryCommandHandler(
+            repositories,
+            new FakeRuntimeEnvironmentStore(),
+            new FakeConnectionStore(),
+            secrets
+        );
+        var profile = CreateProfile("wrong-secret-type") with
+        {
+            SshKeyReference = SecretReference.ByName("connection-pat"),
+        };
+
+        var result = await handler.HandleAsync(
+            new CreateRepositoryCommand(profile),
+            CancellationToken.None
+        );
+
+        Assert.Equal(RepositoryOperationStatus.ValidationFailed, result.Status);
+        Assert.Contains("sshKeyReference", result.ValidationErrors.Keys);
+        Assert.Contains(
+            "SSH-key secret",
+            result.ValidationErrors["sshKeyReference"].Single(),
+            StringComparison.Ordinal
+        );
+        Assert.Null(repositories.LastCreated);
+    }
+
+    [Fact]
+    public async Task Create_AllowsSshKeyReferenceBeforeSecretIsProvisioned()
+    {
+        var repositories = new FakeRepositoryStore();
+        var handler = new CreateRepositoryCommandHandler(
+            repositories,
+            new FakeRuntimeEnvironmentStore(),
+            new FakeConnectionStore(),
+            new InMemorySecretStore()
+        );
+        var profile = CreateProfile("deferred-key") with
+        {
+            SshKeyReference = SecretReference.ByNameAndVersion("future-deploy-key", 2),
+        };
+
+        var result = await handler.HandleAsync(
+            new CreateRepositoryCommand(profile),
+            CancellationToken.None
+        );
+
+        Assert.Equal(RepositoryOperationStatus.Succeeded, result.Status);
+        Assert.Equal(profile.SshKeyReference, repositories.LastCreated?.SshKeyReference);
+    }
+
+    [Fact]
     public async Task Create_ReturnsConflictForDuplicateNormalizedKey()
     {
         var repositories = new FakeRepositoryStore(CreateProfile("shared"));
         var handler = new CreateRepositoryCommandHandler(
             repositories,
             new FakeRuntimeEnvironmentStore(),
-            new FakeConnectionStore()
+            new FakeConnectionStore(),
+            new InMemorySecretStore()
         );
 
         var result = await handler.HandleAsync(
@@ -181,7 +282,8 @@ public sealed class RepositoryOnboardingHandlerTests
         var handler = new UpdateRepositoryCommandHandler(
             repositories,
             new FakeRuntimeEnvironmentStore(),
-            new FakeConnectionStore()
+            new FakeConnectionStore(),
+            new InMemorySecretStore()
         );
         var update = CreateProfile(" SERVICE ") with
         {
@@ -208,7 +310,8 @@ public sealed class RepositoryOnboardingHandlerTests
         var handler = new UpdateRepositoryCommandHandler(
             repositories,
             new FakeRuntimeEnvironmentStore(),
-            new FakeConnectionStore()
+            new FakeConnectionStore(),
+            new InMemorySecretStore()
         );
 
         var result = await handler.HandleAsync(
@@ -232,7 +335,8 @@ public sealed class RepositoryOnboardingHandlerTests
         var handler = new UpdateRepositoryCommandHandler(
             repositories,
             new FakeRuntimeEnvironmentStore(),
-            new FakeConnectionStore()
+            new FakeConnectionStore(),
+            new InMemorySecretStore()
         );
 
         var result = await handler.HandleAsync(

@@ -39,6 +39,12 @@ internal sealed class RepositoryEntity
     /// <summary>Optional key of the managed runtime environment profile.</summary>
     public string? RuntimeEnvironmentKey { get; set; }
 
+    /// <summary>Optional name of the SSH-key secret used by this repository.</summary>
+    public string? SshKeySecretName { get; set; }
+
+    /// <summary>Optional pinned version of the SSH-key secret.</summary>
+    public int? SshKeySecretVersion { get; set; }
+
     /// <summary>Allowed paths serialized as a JSON array.</summary>
     public string? AllowedPathsJson { get; set; }
 

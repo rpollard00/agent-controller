@@ -159,6 +159,36 @@ public sealed class SecretDeletionHandlerTests
         );
     }
 
+    [Fact]
+    public async Task Delete_ReturnsConflictWhileARepositoryReferencesSshKey()
+    {
+        var secrets = new InMemorySecretStore();
+        await secrets.CreateAsync(
+            "repository-key",
+            new SshKeyPayload { PrivateKey = "private-key", PublicKey = "public-key" }
+        );
+        var repositories = new FakeRepositoryStore(
+            new RepositoryProfile
+            {
+                Key = "service-a",
+                SshKeyReference = SecretReference.ByNameAndVersion("repository-key", 1),
+            }
+        );
+        var handler = CreateHandler(secrets, repositories: repositories);
+
+        var result = await handler.HandleAsync(
+            new DeleteSecretCommand("repository-key"),
+            CancellationToken.None
+        );
+
+        Assert.Equal(SecretOperationStatus.Conflict, result.Status);
+        Assert.Contains(
+            "repository 'service-a'",
+            Assert.IsType<string>(result.Detail),
+            StringComparison.Ordinal
+        );
+    }
+
     private static DeleteSecretCommandHandler CreateHandler(
         InMemorySecretStore secrets,
         FakeConnectionStore? connections = null,
