@@ -360,6 +360,32 @@ describe('connection screens', () => {
     ).toBeVisible();
   });
 
+  it('shows server credential type errors on the PAT picker', async () => {
+    window.history.replaceState({}, '', '/connections/new');
+    const api = createApi([]);
+    api.connections.create.mockRejectedValueOnce(
+      new ApiError({
+        title: 'Validation failed.',
+        status: 400,
+        errors: {
+          'providerSettings.personalAccessTokenReference': [
+            'Connection credentials must reference a personal access token secret.',
+          ],
+        },
+      }),
+    );
+    render(App, { client: api.client });
+
+    await completeRequiredCreateFields();
+    await fireEvent.click(screen.getByRole('button', { name: 'Create connection' }));
+
+    await waitFor(() => {
+      expect(document.getElementById('conn-secretName-error')).toHaveTextContent(
+        'Connection credentials must reference a personal access token secret.',
+      );
+    });
+  });
+
   it('renders the secret reference, never a returned secret value', async () => {
     window.history.replaceState({}, '', '/connections/ado-main');
     const api = createApi([connection]);

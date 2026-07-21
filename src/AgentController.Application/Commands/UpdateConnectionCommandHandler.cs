@@ -1,15 +1,18 @@
 using AgentController.Application.Abstractions;
 using AgentController.Application.Results;
 using AgentController.Domain;
+using AgentController.Domain.Secrets;
 
 namespace AgentController.Application.Commands;
 
 /// <summary>Validates, normalizes, and updates a managed connection profile.</summary>
 public sealed class UpdateConnectionCommandHandler(
-    IConnectionStore connectionStore
+    IConnectionStore connectionStore,
+    ISecretManager secretManager
 ) : ICommandHandler<UpdateConnectionCommand, ConnectionOperationResult>
 {
     private readonly IConnectionStore _connectionStore = connectionStore;
+    private readonly ISecretManager _secretManager = secretManager;
 
     public async Task<ConnectionOperationResult> HandleAsync(
         UpdateConnectionCommand command,
@@ -47,6 +50,16 @@ public sealed class UpdateConnectionCommandHandler(
         if (!validation.IsValid)
         {
             return ConnectionOperationResult.ValidationFailed(validation.Errors);
+        }
+
+        var credentialErrors = await ConnectionProfileValidation.ValidateCredentialTypeAsync(
+            validation.Profile,
+            _secretManager,
+            cancellationToken
+        );
+        if (credentialErrors.Count > 0)
+        {
+            return ConnectionOperationResult.ValidationFailed(credentialErrors);
         }
 
         // Preserve the original key and timestamps.

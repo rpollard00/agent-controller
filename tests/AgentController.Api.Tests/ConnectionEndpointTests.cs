@@ -177,6 +177,114 @@ public sealed class ConnectionEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ConnectionEndpoints_Create_RejectsSshKeyCredential()
+    {
+        await CreateSshKeySecretAsync("connection-ssh-key");
+
+        var profile = new
+        {
+            key = "ado.ssh-credential",
+            displayName = "Invalid credential type",
+            provider = "AzureDevOps",
+            capabilities = new[] { "Repositories" },
+            providerSettings = new
+            {
+                provider = "AzureDevOps",
+                organizationUrl = "https://dev.azure.com/testorg",
+                personalAccessTokenReference = new { name = "connection-ssh-key" },
+            },
+        };
+
+        using var response = await _client.PostAsJsonAsync(
+            "/api/webui/connections",
+            profile
+        );
+        var problem = await AssertProblemAsync(
+            response,
+            HttpStatusCode.BadRequest,
+            "Validation failed."
+        );
+        var errors = problem.GetProperty("errors");
+        var credentialErrors = errors.GetProperty(
+            "providerSettings.personalAccessTokenReference"
+        );
+        Assert.Contains(
+            credentialErrors.EnumerateArray(),
+            error => error.GetString()!.Contains("personal access token", StringComparison.Ordinal)
+        );
+    }
+
+    [Fact]
+    public async Task ConnectionEndpoints_Update_RejectsSshKeyCredential()
+    {
+        await CreatePatSecretAsync("connection-pat");
+        await CreateSshKeySecretAsync("replacement-ssh-key");
+
+        var profile = new
+        {
+            key = "ado.typed-update",
+            displayName = "Typed update",
+            provider = "AzureDevOps",
+            capabilities = new[] { "Repositories" },
+            providerSettings = new
+            {
+                provider = "AzureDevOps",
+                organizationUrl = "https://dev.azure.com/testorg",
+                personalAccessTokenReference = new { name = "connection-pat" },
+            },
+        };
+        using (var createResponse = await _client.PostAsJsonAsync(
+            "/api/webui/connections",
+            profile
+        ))
+        {
+            Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+        }
+
+        var update = new
+        {
+            profile.key,
+            profile.displayName,
+            profile.provider,
+            profile.capabilities,
+            providerSettings = new
+            {
+                provider = "AzureDevOps",
+                organizationUrl = "https://dev.azure.com/testorg",
+                personalAccessTokenReference = new { name = "replacement-ssh-key" },
+            },
+        };
+        using var updateResponse = await _client.PutAsJsonAsync(
+            "/api/webui/connections/ado.typed-update",
+            update
+        );
+        var problem = await AssertProblemAsync(
+            updateResponse,
+            HttpStatusCode.BadRequest,
+            "Validation failed."
+        );
+        Assert.True(
+            problem
+                .GetProperty("errors")
+                .TryGetProperty("providerSettings.personalAccessTokenReference", out _)
+        );
+
+        using var getResponse = await _client.GetAsync(
+            "/api/webui/connections/ado.typed-update"
+        );
+        Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
+        var unchanged = await ReadJsonAsync(getResponse);
+        Assert.Equal(
+            "connection-pat",
+            unchanged
+                .GetProperty("providerSettings")
+                .GetProperty("personalAccessTokenReference")
+                .GetProperty("name")
+                .GetString()
+        );
+    }
+
+    [Fact]
     public async Task ConnectionEndpoints_Verify_ReturnsConnectivityResult()
     {
         // Create a connection first
@@ -414,6 +522,42 @@ public sealed class ConnectionEndpointTests : IAsyncLifetime
 
         using var deleteResponse = await _client.DeleteAsync("/api/webui/connections/nonexistent");
         await AssertProblemAsync(deleteResponse, HttpStatusCode.NotFound, "Resource not found.");
+    }
+
+    private async Task CreatePatSecretAsync(string name)
+    {
+        using var response = await _client.PostAsJsonAsync(
+            "/api/webui/secrets",
+            new
+            {
+                name,
+                payload = new
+                {
+                    type = "personal-access-token",
+                    value = "test-pat-value",
+                },
+            }
+        );
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    private async Task CreateSshKeySecretAsync(string name)
+    {
+        using var response = await _client.PostAsJsonAsync(
+            "/api/webui/secrets",
+            new
+            {
+                name,
+                payload = new
+                {
+                    type = "ssh-key",
+                    privateKey = "test-private-key",
+                    publicKey = "test-public-key",
+                    passphrase = (string?)null,
+                },
+            }
+        );
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 
     private static async Task<JsonElement> ReadJsonAsync(HttpResponseMessage response) =>

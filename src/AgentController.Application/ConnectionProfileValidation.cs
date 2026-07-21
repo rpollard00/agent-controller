@@ -1,4 +1,5 @@
 using AgentController.Domain;
+using AgentController.Domain.Secrets;
 
 namespace AgentController.Application;
 
@@ -50,6 +51,54 @@ internal static class ConnectionProfileValidation
         };
 
         return new ConnectionProfileValidationResult(normalized, errors.ToDictionary());
+    }
+
+    /// <summary>
+    /// Ensures that a configured connection credential does not reference a secret
+    /// whose immutable type is incompatible with the connection provider.
+    /// Missing secrets remain valid references so profiles can be configured before
+    /// credentials are provisioned; connectivity verification reports that state.
+    /// </summary>
+    public static async Task<IReadOnlyDictionary<string, string[]>> ValidateCredentialTypeAsync(
+        ConnectionProfile profile,
+        ISecretManager secretManager,
+        CancellationToken cancellationToken
+    )
+    {
+        if (
+            profile.ProviderSettings is not AzureDevOpsConnectionSettings settings
+            || !settings.PersonalAccessTokenReference.IsSpecified
+        )
+        {
+            return new Dictionary<string, string[]>();
+        }
+
+        var reference = settings.PersonalAccessTokenReference;
+        var secrets = await secretManager.ListAsync(cancellationToken);
+        var secret = secrets.FirstOrDefault(candidate =>
+            string.Equals(candidate.Name, reference.Name, StringComparison.Ordinal)
+        );
+
+        if (
+            secret is null
+            || string.Equals(
+                secret.SecretType,
+                SecretType.PersonalAccessToken,
+                StringComparison.Ordinal
+            )
+        )
+        {
+            return new Dictionary<string, string[]>();
+        }
+
+        return new Dictionary<string, string[]>(StringComparer.Ordinal)
+        {
+            ["providerSettings.personalAccessTokenReference"] =
+            [
+                $"Secret '{reference.Name}' is a '{secret.SecretType}' secret. "
+                    + "Connection credentials must reference a personal access token secret."
+            ],
+        };
     }
 
     private static void ValidateProviderSettings(

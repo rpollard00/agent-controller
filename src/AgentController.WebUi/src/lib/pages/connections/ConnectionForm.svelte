@@ -39,8 +39,17 @@
   const inputClasses =
     'min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 placeholder:text-slate-600 disabled:cursor-not-allowed disabled:bg-slate-900 disabled:text-slate-400';
 
+  const serverFieldAliases: Readonly<Record<string, string>> = {
+    organizationUrl: 'providerSettings.organizationUrl',
+    secretName: 'providerSettings.personalAccessTokenReference',
+    secretVersion: 'providerSettings.personalAccessTokenReference.version',
+  };
+
   function fieldError(field: string): string | undefined {
-    return clientErrors[field]?.[0] ?? serverErrors[field]?.[0];
+    const aliasedServerField = serverFieldAliases[field];
+    return clientErrors[field]?.[0]
+      ?? serverErrors[field]?.[0]
+      ?? (aliasedServerField ? serverErrors[aliasedServerField]?.[0] : undefined);
   }
 
   function describedBy(id: string, field: string, hasHint = false): string | undefined {

@@ -1,15 +1,18 @@
 using AgentController.Application.Abstractions;
 using AgentController.Application.Results;
 using AgentController.Domain;
+using AgentController.Domain.Secrets;
 
 namespace AgentController.Application.Commands;
 
 /// <summary>Validates, normalizes, and creates a managed connection profile.</summary>
 public sealed class CreateConnectionCommandHandler(
-    IConnectionStore connectionStore
+    IConnectionStore connectionStore,
+    ISecretManager secretManager
 ) : ICommandHandler<CreateConnectionCommand, ConnectionOperationResult>
 {
     private readonly IConnectionStore _connectionStore = connectionStore;
+    private readonly ISecretManager _secretManager = secretManager;
 
     public async Task<ConnectionOperationResult> HandleAsync(
         CreateConnectionCommand command,
@@ -30,6 +33,16 @@ public sealed class CreateConnectionCommandHandler(
         if (!validation.IsValid)
         {
             return ConnectionOperationResult.ValidationFailed(validation.Errors);
+        }
+
+        var credentialErrors = await ConnectionProfileValidation.ValidateCredentialTypeAsync(
+            validation.Profile,
+            _secretManager,
+            cancellationToken
+        );
+        if (credentialErrors.Count > 0)
+        {
+            return ConnectionOperationResult.ValidationFailed(credentialErrors);
         }
 
         var now = DateTimeOffset.UtcNow;
