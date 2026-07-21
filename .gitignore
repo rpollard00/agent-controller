@@ -53,7 +53,7 @@ tmp/
 !.env.example
 *.env
 appsettings.*.local.json
-secrets/
+/secrets/
 
 # OS files
 .DS_Store

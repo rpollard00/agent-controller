@@ -98,6 +98,47 @@ describe('Web UI API client', () => {
     });
   });
 
+  it('uses encoded secrets endpoints and preserves typed secret payloads', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'DELETE') return new Response(null, { status: 204 });
+      if (init?.method === 'POST' && String(_input).endsWith('/versions')) {
+        return Response.json({ name: 'deploy/key', version: 2 });
+      }
+      if (init?.method === 'POST') {
+        return Response.json({ name: 'deploy/key' }, { status: 201 });
+      }
+      return Response.json([]);
+    });
+    const client = createWebUiApiClient({ fetch: fetchMock });
+    const sshPayload = {
+      type: 'ssh-key' as const,
+      privateKey: 'private-key-material',
+      publicKey: 'ssh-ed25519 public-key-material',
+      passphrase: null,
+    };
+
+    await client.secrets.list();
+    await client.secrets.listVersions('deploy/key');
+    await client.secrets.create({ name: 'deploy/key', payload: sshPayload });
+    await client.secrets.createVersion('deploy/key', { payload: sshPayload });
+    await client.secrets.delete('deploy/key');
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/webui/secrets');
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/webui/secrets/deploy%2Fkey/versions');
+    expect(fetchMock.mock.calls[2]).toEqual([
+      '/api/webui/secrets',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ name: 'deploy/key', payload: sshPayload }) }),
+    ]);
+    expect(fetchMock.mock.calls[3]).toEqual([
+      '/api/webui/secrets/deploy%2Fkey/versions',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ payload: sshPayload }) }),
+    ]);
+    expect(fetchMock.mock.calls[4]).toEqual([
+      '/api/webui/secrets/deploy%2Fkey',
+      expect.objectContaining({ method: 'DELETE' }),
+    ]);
+  });
+
   it('connections client: lists connections', async () => {
     const fetchMock = vi.fn(async () => Response.json([connection]));
     const client = createWebUiApiClient({ fetch: fetchMock });

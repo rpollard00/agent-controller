@@ -48,7 +48,13 @@ function createApi(
   verifyResult?: ConnectionConnectivityResult,
   initialProjects: ConnectionProject[] = projects,
   initialRepos: HostRepository[] = repos,
-  initialSecrets: SecretInfo[] = [{ name: 'ADO_PAT', latestVersion: 1, createdAt: '2026-07-16T00:00:00Z', updatedAt: '2026-07-16T00:00:00Z' }],
+  initialSecrets: SecretInfo[] = [{
+    name: 'ADO_PAT',
+    latestVersion: 1,
+    createdAt: '2026-07-16T00:00:00Z',
+    updatedAt: '2026-07-16T00:00:00Z',
+    secretType: 'personal-access-token',
+  }],
 ) {
   let profiles = [...initialConnections];
   let secrets = [...initialSecrets];
@@ -104,7 +110,17 @@ function createApi(
   const secretsClient: SecretsResourceClient = {
     list: vi.fn(async () => [...secrets]),
     listVersions: vi.fn(async () => []),
-    create: vi.fn(async (req) => { secrets.push({ name: req.name, latestVersion: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }); return { name: req.name }; }),
+    create: vi.fn(async (req) => {
+      const now = new Date().toISOString();
+      secrets.push({
+        name: req.name,
+        latestVersion: 1,
+        createdAt: now,
+        updatedAt: now,
+        secretType: req.payload.type,
+      });
+      return { name: req.name };
+    }),
     createVersion: vi.fn(async (name) => ({ name, version: 2 })),
     delete: vi.fn(async () => undefined),
   };

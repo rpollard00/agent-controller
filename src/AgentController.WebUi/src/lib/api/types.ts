@@ -74,22 +74,23 @@ export interface HostRepository {
   cloneTransportHint: CloneTransportHint;
 }
 
+/** Stable discriminator shared with the typed secrets API. */
+export type SecretType = 'personal-access-token' | 'ssh-key';
+
 /** Metadata for a named secret (no plaintext values). */
 export interface SecretInfo {
   name: string;
   latestVersion: number;
   createdAt: string;
   updatedAt: string;
-  /** Stable type discriminator: 'personal-access-token' | 'ssh-key' */
-  secretType: string;
+  secretType: SecretType;
 }
 
 /** Metadata for a single secret version (no plaintext value). */
 export interface SecretVersionInfo {
   version: number;
   createdAt: string;
-  /** Stable type discriminator: 'personal-access-token' | 'ssh-key' */
-  secretType: string;
+  secretType: SecretType;
   /** SSH public key (safe for display), null for PAT secrets. */
   publicKey: string | null;
 }
