@@ -8,6 +8,7 @@ import type {
   CreateSecretVersionRequest,
   HostRepository,
   ProblemDetails,
+  RepositoryCloneTransportResolution,
   RepositoryProfile,
   RuntimeEnvironmentProfile,
   SecretInfo,
@@ -24,6 +25,13 @@ export interface ResourceClient<T> {
   create(profile: T, signal?: AbortSignal): Promise<T>;
   update(key: string, profile: T, signal?: AbortSignal): Promise<T>;
   delete(key: string, signal?: AbortSignal): Promise<void>;
+}
+
+export interface RepositoryResourceClient extends ResourceClient<RepositoryProfile> {
+  getCloneTransport(
+    key: string,
+    signal?: AbortSignal,
+  ): Promise<RepositoryCloneTransportResolution>;
 }
 
 export interface WorkSourceEnvironmentResourceClient
@@ -54,7 +62,7 @@ export interface SecretsResourceClient {
 }
 
 export interface WebUiApiClient {
-  repositories: ResourceClient<RepositoryProfile>;
+  repositories: RepositoryResourceClient;
   workSourceEnvironments: WorkSourceEnvironmentResourceClient;
   connections: ConnectionResourceClient;
   runtimeEnvironments: ResourceClient<RuntimeEnvironmentProfile>;
@@ -157,7 +165,14 @@ export function createWebUiApiClient(options: ApiClientOptions = {}): WebUiApiCl
   }
 
   return {
-    repositories: resource<RepositoryProfile>('/repositories'),
+    repositories: {
+      ...resource<RepositoryProfile>('/repositories'),
+      getCloneTransport: (key, signal) =>
+        request<RepositoryCloneTransportResolution>(
+          `/repositories/${encodeURIComponent(key)}/clone-transport`,
+          { signal },
+        ),
+    },
     workSourceEnvironments: {
       ...resource<WorkSourceEnvironmentProfile>('/work-source-environments'),
       verifyConnection: (key, signal) =>

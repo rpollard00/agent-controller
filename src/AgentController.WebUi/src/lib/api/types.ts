@@ -21,6 +21,37 @@ export interface RepositoryProfile {
   project: string | null;
 }
 
+/** Source of the credential reference selected for a concrete clone transport. */
+export type RepositoryCloneCredentialSource =
+  | 'none'
+  | 'sshKey'
+  | 'connectionPersonalAccessToken';
+
+/** Stable code for a repository configuration problem that blocks cloning. */
+export type RepositoryCloneTransportIssueCode =
+  | 'unsupportedCloneUrl'
+  | 'configuredTransportMismatch'
+  | 'missingSshKeyReference'
+  | 'missingRepositoryHostConnection'
+  | 'repositoryHostConnectionNotFound'
+  | 'repositoryHostConnectionDisabled'
+  | 'missingPersonalAccessTokenReference';
+
+export interface RepositoryCloneTransportIssue {
+  code: RepositoryCloneTransportIssueCode;
+  field: string;
+  message: string;
+}
+
+/** Effective clone transport and credential metadata; never contains secret values. */
+export interface RepositoryCloneTransportResolution {
+  transport: CloneTransport;
+  credentialSource: RepositoryCloneCredentialSource;
+  credentialReference: SecretReference | null;
+  blockingIssues: RepositoryCloneTransportIssue[];
+  isReady: boolean;
+}
+
 export interface WorkSourceEnvironmentProfile {
   key: string;
   displayName: string;

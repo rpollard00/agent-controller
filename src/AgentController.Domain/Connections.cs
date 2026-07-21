@@ -33,12 +33,23 @@ public enum ConnectionCapability
 public abstract record ConnectionSettings;
 
 /// <summary>
+/// Implemented by connection settings that authenticate repository operations with a PAT.
+/// </summary>
+public interface IPersonalAccessTokenConnectionSettings
+{
+    /// <summary>Reference to the named, optionally version-pinned PAT secret.</summary>
+    SecretReference PersonalAccessTokenReference { get; }
+}
+
+/// <summary>
 /// Azure DevOps connection settings.
 /// 
 /// ADO connections are org-level — <c>Project</c> is NOT stored here;
 /// it belongs on the consumer profile (WorkSourceEnvironmentProfile, RepositoryProfile).
 /// </summary>
-public sealed record AzureDevOpsConnectionSettings : ConnectionSettings
+public sealed record AzureDevOpsConnectionSettings
+    : ConnectionSettings,
+        IPersonalAccessTokenConnectionSettings
 {
     /// <summary>Azure DevOps organization URL (e.g. <c>https://dev.azure.com/myorg</c>).</summary>
     public string OrganizationUrl { get; init; } = string.Empty;

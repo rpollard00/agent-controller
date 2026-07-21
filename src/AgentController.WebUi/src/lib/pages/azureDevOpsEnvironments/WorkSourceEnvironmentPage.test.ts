@@ -114,7 +114,12 @@ function createApi(
   };
 
   const client: WebUiApiClient = {
-    repositories: staticResource<RepositoryProfile>([]),
+    repositories: {
+      ...staticResource<RepositoryProfile>([]),
+      getCloneTransport: vi.fn(async () => {
+        throw new Error('Not implemented in this component test.');
+      }),
+    },
     workSourceEnvironments,
     connections: connectionsClient,
     runtimeEnvironments: staticResource<RuntimeEnvironmentProfile>([]),

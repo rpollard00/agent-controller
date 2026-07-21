@@ -97,6 +97,10 @@ public static class ServiceCollectionExtensions
             GetRepositoryByKeyQueryHandler
         >();
         services.AddScoped<
+            IQueryHandler<GetRepositoryCloneTransportQuery, RepositoryCloneTransportQueryResult>,
+            GetRepositoryCloneTransportQueryHandler
+        >();
+        services.AddScoped<
             IQueryHandler<
                 ListWorkSourceEnvironmentsQuery,
                 IReadOnlyList<WorkSourceEnvironmentProfile>

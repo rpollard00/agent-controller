@@ -107,6 +107,13 @@ function createApi(initialRepositories: RepositoryProfile[] = [repository]): Moc
     delete: vi.fn(async (key: string) => {
       profiles = profiles.filter((candidate) => candidate.key !== key);
     }),
+    getCloneTransport: vi.fn(async () => ({
+      transport: 'httpsPat' as const,
+      credentialSource: 'connectionPersonalAccessToken' as const,
+      credentialReference: { name: 'ado-pat', version: null },
+      blockingIssues: [],
+      isReady: true,
+    })),
   };
 
   return {

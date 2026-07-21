@@ -394,6 +394,10 @@ public sealed class RepositoryOnboardingHandlerTests
             IQueryHandler<GetRepositoryByKeyQuery, RepositoryOperationResult>,
             GetRepositoryByKeyQueryHandler
         >(services);
+        AssertRegistration<
+            IQueryHandler<GetRepositoryCloneTransportQuery, RepositoryCloneTransportQueryResult>,
+            GetRepositoryCloneTransportQueryHandler
+        >(services);
     }
 
     private static RepositoryProfile CreateProfile(string key) =>

@@ -470,30 +470,8 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
     /// If the spec provides an explicit transport, use it.
     /// Otherwise, infer from the clone URL pattern.
     /// </summary>
-    internal static CloneTransport ResolveTransport(CloneTransport explicitTransport, string cloneUrl)
-    {
-        // Explicit transport takes priority.
-        if (explicitTransport != CloneTransport.Unspecified)
-        {
-            return explicitTransport;
-        }
-
-        // Infer from URL pattern.
-        if (cloneUrl.StartsWith("git@", StringComparison.Ordinal) ||
-            cloneUrl.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase))
-        {
-            return CloneTransport.Ssh;
-        }
-
-        if (cloneUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
-            cloneUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
-        {
-            return CloneTransport.HttpsPat;
-        }
-
-        // file:// URLs and bare local paths are local transport.
-        return CloneTransport.Local;
-    }
+    internal static CloneTransport ResolveTransport(CloneTransport explicitTransport, string cloneUrl) =>
+        RepositoryCloneTransportResolver.ResolveTransport(explicitTransport, cloneUrl);
 
     /// <summary>
     /// Environment variables applied to every git subprocess to guarantee

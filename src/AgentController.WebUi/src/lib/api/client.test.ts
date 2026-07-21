@@ -63,6 +63,26 @@ describe('Web UI API client', () => {
     expect(fetchMock.mock.calls[0][1]?.method).toBe('DELETE');
   });
 
+  it('gets the resolved clone transport for an encoded repository key', async () => {
+    const resolution = {
+      transport: 'ssh',
+      credentialSource: 'sshKey',
+      credentialReference: { name: 'deploy-key', version: 2 },
+      blockingIssues: [],
+      isReady: true,
+    } as const;
+    const fetchMock = vi.fn(async () => Response.json(resolution));
+    const client = createWebUiApiClient({ fetch: fetchMock });
+
+    await expect(client.repositories.getCloneTransport('repo key/one')).resolves.toEqual(
+      resolution,
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/webui/repositories/repo%20key%2Fone/clone-transport',
+      expect.objectContaining({}),
+    );
+  });
+
   it('preserves RFC problem details and field-level validation errors', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       Response.json(

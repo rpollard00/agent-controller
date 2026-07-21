@@ -42,7 +42,12 @@ function createClient(
 ): WebUiApiClient {
   const workSourceEnvs = resourceClient<WorkSourceEnvironmentProfile>(async () => []);
   return {
-    repositories: resourceClient(repositoryList),
+    repositories: {
+      ...resourceClient(repositoryList),
+      getCloneTransport: async () => {
+        throw new Error('Not implemented in this component test.');
+      },
+    },
     workSourceEnvironments: {
       ...workSourceEnvs,
       verifyConnection: async () => ({

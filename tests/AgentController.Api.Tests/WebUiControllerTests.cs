@@ -93,6 +93,18 @@ public sealed class WebUiControllerTests : IAsyncLifetime
         var repository = await ReadJsonAsync(getResponse);
         Assert.Equal("web.repo", repository.GetProperty("key").GetString());
 
+        using var transportResponse = await _client.GetAsync(
+            "/api/webui/repositories/WEB.REPO/clone-transport"
+        );
+        Assert.Equal(HttpStatusCode.OK, transportResponse.StatusCode);
+        var transport = await ReadJsonAsync(transportResponse);
+        Assert.Equal("httpsPat", transport.GetProperty("transport").GetString());
+        Assert.False(transport.GetProperty("isReady").GetBoolean());
+        Assert.Equal(
+            "missingRepositoryHostConnection",
+            transport.GetProperty("blockingIssues")[0].GetProperty("code").GetString()
+        );
+
         var update = new
         {
             key = "web.repo",
@@ -130,6 +142,15 @@ public sealed class WebUiControllerTests : IAsyncLifetime
 
         using var missingResponse = await _client.GetAsync("/api/webui/repositories/web.repo");
         await AssertProblemAsync(missingResponse, HttpStatusCode.NotFound, "Resource not found.");
+
+        using var missingTransportResponse = await _client.GetAsync(
+            "/api/webui/repositories/web.repo/clone-transport"
+        );
+        await AssertProblemAsync(
+            missingTransportResponse,
+            HttpStatusCode.NotFound,
+            "Resource not found."
+        );
     }
 
     [Fact]
@@ -184,6 +205,24 @@ public sealed class WebUiControllerTests : IAsyncLifetime
             "repository-deploy-key",
             persisted.GetProperty("sshKeyReference").GetProperty("name").GetString()
         );
+
+        using var transportResponse = await _client.GetAsync(
+            "/api/webui/repositories/ssh.repo/clone-transport"
+        );
+        Assert.Equal(HttpStatusCode.OK, transportResponse.StatusCode);
+        var transport = await ReadJsonAsync(transportResponse);
+        Assert.Equal("ssh", transport.GetProperty("transport").GetString());
+        Assert.Equal("sshKey", transport.GetProperty("credentialSource").GetString());
+        Assert.Equal(
+            "repository-deploy-key",
+            transport.GetProperty("credentialReference").GetProperty("name").GetString()
+        );
+        Assert.Equal(
+            1,
+            transport.GetProperty("credentialReference").GetProperty("version").GetInt32()
+        );
+        Assert.True(transport.GetProperty("isReady").GetBoolean());
+        Assert.Empty(transport.GetProperty("blockingIssues").EnumerateArray());
 
         using (var createPat = await _client.PostAsJsonAsync(
             "/api/webui/secrets",

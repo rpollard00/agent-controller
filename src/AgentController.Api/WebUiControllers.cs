@@ -80,6 +80,25 @@ public static class WebUiControllers
             }
         );
 
+        group.MapGet(
+            "/{key}/clone-transport",
+            async (
+                string key,
+                IQueryHandler<
+                    GetRepositoryCloneTransportQuery,
+                    RepositoryCloneTransportQueryResult
+                > handler,
+                CancellationToken cancellationToken
+            ) =>
+            {
+                var result = await handler.ExecuteAsync(
+                    new GetRepositoryCloneTransportQuery(key),
+                    cancellationToken
+                );
+                return MapCloneTransportResult(result);
+            }
+        );
+
         group.MapPut(
             "/{key}",
             async (
@@ -337,6 +356,21 @@ public static class WebUiControllers
             RepositoryOperationStatus.Conflict => ConflictProblem(result.Detail),
             _ => throw new InvalidOperationException(
                 $"Unsupported repository operation status '{result.Status}'."
+            ),
+        };
+
+    private static IResult MapCloneTransportResult(
+        RepositoryCloneTransportQueryResult result
+    ) =>
+        result.Status switch
+        {
+            RepositoryOperationStatus.Succeeded => Results.Ok(result.Resolution),
+            RepositoryOperationStatus.ValidationFailed => ValidationProblem(
+                result.ValidationErrors
+            ),
+            RepositoryOperationStatus.NotFound => NotFoundProblem(result.Detail),
+            _ => throw new InvalidOperationException(
+                $"Unsupported clone transport query status '{result.Status}'."
             ),
         };
 
