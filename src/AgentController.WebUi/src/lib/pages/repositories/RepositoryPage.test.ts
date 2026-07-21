@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../../../App.svelte';
 import { ApiError, type ResourceClient, type WebUiApiClient } from '../../api/client';
 import type {
+  ClonePreflightResult,
   ConnectionProfile,
   ConnectionProject,
   RepositoryProfile,
@@ -117,6 +118,7 @@ interface MockApi {
     create: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
     delete: ReturnType<typeof vi.fn>;
+    checkClonePreflight: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -147,6 +149,15 @@ function createApi(initialRepositories: RepositoryProfile[] = [repository]): Moc
       credentialReference: { name: 'ado-pat', version: null },
       blockingIssues: [],
       isReady: true,
+    })),
+    checkClonePreflight: vi.fn(async (): Promise<ClonePreflightResult> => ({
+      success: true,
+      reason: '',
+      failureCode: null,
+      transport: 'httpsPat',
+      cloneUrl: 'https://example.test/web.repo.git',
+      credentialSource: 'connectionPersonalAccessToken',
+      credentialReference: { name: 'ado-pat', version: null },
     })),
   };
 
@@ -392,6 +403,35 @@ describe('repository onboarding screens', () => {
     expect(alert).toHaveTextContent('Correct the highlighted repository fields.');
     expect(alert).toHaveTextContent('cloneUrl: Clone URL is not valid for the selected transport.');
     expect(screen.getByText('Clone URL is not valid for the selected transport.')).toBeVisible();
+  });
+
+  it('runs clone preflight and surfaces actionable credential failures', async () => {
+    window.history.replaceState({}, '', '/repositories/web.repo');
+    const api = createApi();
+    api.repositories.checkClonePreflight.mockResolvedValue({
+      success: false,
+      reason: "PAT secret 'ado-pat' (version 3) was not found.",
+      failureCode: 'credentialNotFound',
+      transport: 'httpsPat',
+      cloneUrl: repository.cloneUrl,
+      credentialSource: 'connectionPersonalAccessToken',
+      credentialReference: { name: 'ado-pat', version: 3 },
+    });
+    render(App, { client: api.client });
+
+    await fireEvent.click(
+      await screen.findByRole('button', { name: 'Run clone preflight' }),
+    );
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Clone preflight failed');
+    expect(alert).toHaveTextContent("PAT secret 'ado-pat' (version 3) was not found.");
+    expect(screen.getByText('credentialNotFound')).toBeVisible();
+    expect(screen.getByText('PAT · ado-pat · version 3')).toBeVisible();
+    expect(api.repositories.checkClonePreflight).toHaveBeenCalledWith(
+      'web.repo',
+      expect.any(AbortSignal),
+    );
   });
 
   it('requires confirmation before deleting a repository', async () => {

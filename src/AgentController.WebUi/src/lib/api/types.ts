@@ -52,6 +52,30 @@ export interface RepositoryCloneTransportResolution {
   isReady: boolean;
 }
 
+/** Stable category for a clone preflight failure. */
+export type ClonePreflightFailureCode =
+  | 'invalidCloneUrl'
+  | 'transportConfigurationInvalid'
+  | 'credentialNotFound'
+  | 'credentialTypeMismatch'
+  | 'credentialInvalid'
+  | 'credentialUnavailable'
+  | 'toolUnavailable'
+  | 'remoteUnreachable'
+  | 'authenticationFailed'
+  | 'remoteRejected';
+
+/** Result of a credential-aware git ls-remote probe; never contains secret values. */
+export interface ClonePreflightResult {
+  success: boolean;
+  reason: string;
+  failureCode: ClonePreflightFailureCode | null;
+  transport: CloneTransport;
+  cloneUrl: string;
+  credentialSource: RepositoryCloneCredentialSource;
+  credentialReference: SecretReference | null;
+}
+
 export interface WorkSourceEnvironmentProfile {
   key: string;
   displayName: string;

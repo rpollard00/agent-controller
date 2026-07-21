@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using AgentController.Domain.Secrets;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -24,14 +25,16 @@ internal sealed class RepositoryCloneCredentialResolver(IServiceScopeFactory sco
 
         if (payload is not PersonalAccessTokenPayload pat)
         {
-            throw new InvalidOperationException(
+            throw new RepositoryCloneCredentialException(
+                RepositoryCloneCredentialFailure.TypeMismatch,
                 $"Secret '{reference.Name}' is not a personal-access-token secret."
             );
         }
 
         if (string.IsNullOrWhiteSpace(pat.Value))
         {
-            throw new InvalidOperationException(
+            throw new RepositoryCloneCredentialException(
+                RepositoryCloneCredentialFailure.InvalidPayload,
                 $"PAT secret '{reference.Name}' contains an empty token."
             );
         }
@@ -51,15 +54,25 @@ internal sealed class RepositoryCloneCredentialResolver(IServiceScopeFactory sco
 
         if (payload is not SshKeyPayload sshKey)
         {
-            throw new InvalidOperationException(
+            throw new RepositoryCloneCredentialException(
+                RepositoryCloneCredentialFailure.TypeMismatch,
                 $"Secret '{reference.Name}' is not an SSH-key secret."
             );
         }
 
         if (string.IsNullOrWhiteSpace(sshKey.PrivateKey))
         {
-            throw new InvalidOperationException(
+            throw new RepositoryCloneCredentialException(
+                RepositoryCloneCredentialFailure.InvalidPayload,
                 $"SSH-key secret '{reference.Name}' contains an empty private key."
+            );
+        }
+
+        if (string.IsNullOrWhiteSpace(sshKey.PublicKey))
+        {
+            throw new RepositoryCloneCredentialException(
+                RepositoryCloneCredentialFailure.InvalidPayload,
+                $"SSH-key secret '{reference.Name}' contains an empty public key."
             );
         }
 
@@ -77,7 +90,8 @@ internal sealed class RepositoryCloneCredentialResolver(IServiceScopeFactory sco
 
         if (!reference.IsSpecified)
         {
-            throw new InvalidOperationException(
+            throw new RepositoryCloneCredentialException(
+                RepositoryCloneCredentialFailure.NotFound,
                 $"{transport} clone credentials do not specify a {credentialType} secret."
             );
         }
@@ -86,21 +100,36 @@ internal sealed class RepositoryCloneCredentialResolver(IServiceScopeFactory sco
         var secretStore = scope.ServiceProvider.GetService<ISecretStore>();
         if (secretStore is null)
         {
-            throw new InvalidOperationException(
+            throw new RepositoryCloneCredentialException(
+                RepositoryCloneCredentialFailure.StoreUnavailable,
                 $"{transport} clone credentials cannot be resolved because no secret store is configured."
             );
         }
 
-        var payload = await secretStore.ResolveAsync(
-            reference.Name,
-            reference.Version,
-            cancellationToken
-        );
+        SecretPayload? payload;
+        try
+        {
+            payload = await secretStore.ResolveAsync(
+                reference.Name,
+                reference.Version,
+                cancellationToken
+            );
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or CryptographicException)
+        {
+            throw new RepositoryCloneCredentialException(
+                RepositoryCloneCredentialFailure.StoreUnavailable,
+                $"{credentialType} secret '{reference.Name}' could not be decrypted or resolved."
+            );
+        }
 
         if (payload is null)
         {
-            var version = reference.Version is null ? "latest version" : $"version {reference.Version}";
-            throw new InvalidOperationException(
+            var version = reference.Version is null
+                ? "latest version"
+                : $"version {reference.Version}";
+            throw new RepositoryCloneCredentialException(
+                RepositoryCloneCredentialFailure.NotFound,
                 $"{credentialType} secret '{reference.Name}' ({version}) was not found."
             );
         }

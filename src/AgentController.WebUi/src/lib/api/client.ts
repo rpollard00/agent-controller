@@ -1,4 +1,5 @@
 import type {
+  ClonePreflightResult,
   ConnectionConnectivityResult,
   ConnectionProfile,
   ConnectionProject,
@@ -32,6 +33,7 @@ export interface RepositoryResourceClient extends ResourceClient<RepositoryProfi
     key: string,
     signal?: AbortSignal,
   ): Promise<RepositoryCloneTransportResolution>;
+  checkClonePreflight(key: string, signal?: AbortSignal): Promise<ClonePreflightResult>;
 }
 
 export interface WorkSourceEnvironmentResourceClient
@@ -171,6 +173,11 @@ export function createWebUiApiClient(options: ApiClientOptions = {}): WebUiApiCl
         request<RepositoryCloneTransportResolution>(
           `/repositories/${encodeURIComponent(key)}/clone-transport`,
           { signal },
+        ),
+      checkClonePreflight: (key, signal) =>
+        request<ClonePreflightResult>(
+          `/repositories/${encodeURIComponent(key)}/clone-preflight`,
+          { method: 'POST', signal },
         ),
     },
     workSourceEnvironments: {

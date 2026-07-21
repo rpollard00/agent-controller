@@ -47,6 +47,9 @@ function createClient(
       getCloneTransport: async () => {
         throw new Error('Not implemented in this component test.');
       },
+      checkClonePreflight: async () => {
+        throw new Error('Not implemented in this component test.');
+      },
     },
     workSourceEnvironments: {
       ...workSourceEnvs,

@@ -477,6 +477,7 @@ public sealed partial class PollingWorker : BackgroundService
             sourceControlProvider,
             runStore,
             lifecycle,
+            preflightResult,
             reworkContext,
             ct
         );
@@ -795,6 +796,7 @@ public sealed partial class PollingWorker : BackgroundService
         ISourceControlProvider sourceControlProvider,
         IAgentRunStore runStore,
         IRunLifecycleService lifecycle,
+        ClonePreflightResult? validatedPreflight,
         ReworkContext? reworkContext,
         CancellationToken ct
     )
@@ -807,6 +809,28 @@ public sealed partial class PollingWorker : BackgroundService
 
             // Override default branch when rework context specifies the prior PR branch.
             var effectiveBranch = reworkContext?.BranchName ?? defaultBranch;
+            var spec = new RepositorySpec
+            {
+                RepoKey = repoKey,
+                CloneUrl = cloneUrl,
+                DefaultBranch = effectiveBranch,
+                Transport = repository.Transport,
+                Profile = repository,
+                RepositoryConnection = repositoryConnection,
+            };
+
+            // Newly discovered work is preflighted before its claim. Retry runs enter this
+            // method already claimed, so run the same guard here before their clone.
+            var preflight =
+                validatedPreflight
+                ?? await sourceControlProvider.CheckClonePreflightAsync(spec, ct);
+            if (!preflight.Success)
+            {
+                throw new InvalidOperationException(
+                    $"[clone_preflight_failed] Clone preflight failed "
+                        + $"({preflight.FailureCode}): {preflight.Reason}"
+                );
+            }
 
             // Guard: if we are overriding the branch for rework, verify it exists on origin.
             // Fail loud with [rework_branch_missing] — no silent fallback to main.
@@ -828,16 +852,6 @@ public sealed partial class PollingWorker : BackgroundService
 
                 Log.ReworkBranchVerified(_logger, run.RunId, reworkContext.BranchName);
             }
-
-            var spec = new RepositorySpec
-            {
-                RepoKey = repoKey,
-                CloneUrl = cloneUrl,
-                DefaultBranch = effectiveBranch,
-                Transport = repository.Transport,
-                Profile = repository,
-                RepositoryConnection = repositoryConnection,
-            };
 
             var checkout = await sourceControlProvider.CloneAsync(spec, envHandle, ct);
 
@@ -1965,6 +1979,7 @@ public sealed partial class PollingWorker : BackgroundService
             sourceControlProvider,
             runStore,
             lifecycle,
+            null,
             null,
             ct
         );

@@ -51,15 +51,60 @@ public sealed class SshCloneCredentialsTests
             provider.GetRequiredService<IServiceScopeFactory>()
         );
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            resolver.ResolveSshKeyAsync(
-                SecretReference.ByName("clone-key"),
-                CancellationToken.None
-            )
+        var exception = await Assert.ThrowsAnyAsync<InvalidOperationException>(() =>
+            resolver.ResolveSshKeyAsync(SecretReference.ByName("clone-key"), CancellationToken.None)
         );
 
         Assert.Contains("not an SSH-key", exception.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(personalAccessToken, exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Preflight_RejectsNonSshCredentialBeforeRemoteProbe()
+    {
+        const string personalAccessToken = "wrong-type-pat-must-not-leak";
+        var store = new RecordingSecretStore(
+            new PersonalAccessTokenPayload { Value = personalAccessToken }
+        );
+        var services = new ServiceCollection();
+        services.AddSingleton<ISecretStore>(store);
+        await using var serviceProvider = services.BuildServiceProvider();
+        var logger = new RecordingLogger<LocalGitSourceControlProvider>();
+        var provider = new LocalGitSourceControlProvider(
+            new FixedOptionsMonitor<AgentControllerOptions>(new AgentControllerOptions()),
+            logger,
+            new RepositoryCloneCredentialResolver(
+                serviceProvider.GetRequiredService<IServiceScopeFactory>()
+            )
+        );
+        var reference = SecretReference.ByNameAndVersion("deploy-key", 2);
+        var repository = new RepositoryProfile
+        {
+            Key = "ssh-repo",
+            CloneUrl = "git@example.test:owner/repo.git",
+            SshKeyReference = reference,
+        };
+
+        var result = await provider.CheckClonePreflightAsync(
+            new RepositorySpec
+            {
+                RepoKey = repository.Key,
+                CloneUrl = repository.CloneUrl,
+                Profile = repository,
+            },
+            CancellationToken.None
+        );
+
+        Assert.False(result.Success);
+        Assert.Equal(ClonePreflightFailureCode.CredentialTypeMismatch, result.FailureCode);
+        Assert.Equal(RepositoryCloneCredentialSource.SshKey, result.CredentialSource);
+        Assert.Equal(reference, result.CredentialReference);
+        Assert.DoesNotContain(personalAccessToken, result.Reason, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            personalAccessToken,
+            string.Join(Environment.NewLine, logger.Messages),
+            StringComparison.Ordinal
+        );
     }
 
     [Fact]
@@ -68,14 +113,16 @@ public sealed class SshCloneCredentialsTests
         const string privateKey = "private-key-must-not-appear-in-command";
         string directoryPath;
 
-        using (var credentials = await GitSshCredentials.CreateAsync(
-            new SshKeyPayload
-            {
-                PrivateKey = privateKey,
-                PublicKey = "ssh-ed25519 public-key-value",
-            },
-            CancellationToken.None
-        ))
+        using (
+            var credentials = await GitSshCredentials.CreateAsync(
+                new SshKeyPayload
+                {
+                    PrivateKey = privateKey,
+                    PublicKey = "ssh-ed25519 public-key-value",
+                },
+                CancellationToken.None
+            )
+        )
         {
             var keyPath = Assert.IsType<string>(
                 credentials.Environment[GitSshCredentials.KeyFileEnvironmentVariable]
@@ -152,15 +199,17 @@ public sealed class SshCloneCredentialsTests
             var publicKey = await File.ReadAllTextAsync($"{fixtureKeyPath}.pub");
             string materialDirectory;
 
-            using (var credentials = await GitSshCredentials.CreateAsync(
-                new SshKeyPayload
-                {
-                    PrivateKey = privateKey,
-                    PublicKey = publicKey,
-                    Passphrase = passphrase,
-                },
-                CancellationToken.None
-            ))
+            using (
+                var credentials = await GitSshCredentials.CreateAsync(
+                    new SshKeyPayload
+                    {
+                        PrivateKey = privateKey,
+                        PublicKey = publicKey,
+                        Passphrase = passphrase,
+                    },
+                    CancellationToken.None
+                )
+            )
             {
                 var materializedKeyPath = Assert.IsType<string>(
                     credentials.Environment[GitSshCredentials.KeyFileEnvironmentVariable]
@@ -234,11 +283,7 @@ public sealed class SshCloneCredentialsTests
                 CloneUrl = repository.CloneUrl,
                 Profile = repository,
             };
-            var environment = new EnvironmentHandle
-            {
-                RootPath = tempRoot,
-                Status = "created",
-            };
+            var environment = new EnvironmentHandle { RootPath = tempRoot, Status = "created" };
 
             var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 provider.CloneAsync(spec, environment, CancellationToken.None)
@@ -291,7 +336,9 @@ public sealed class SshCloneCredentialsTests
 
         if (process.ExitCode != 0)
         {
-            throw new InvalidOperationException($"{fileName} failed with exit code {process.ExitCode}.");
+            throw new InvalidOperationException(
+                $"{fileName} failed with exit code {process.ExitCode}."
+            );
         }
     }
 

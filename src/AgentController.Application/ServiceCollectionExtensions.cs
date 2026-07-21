@@ -101,6 +101,10 @@ public static class ServiceCollectionExtensions
             GetRepositoryCloneTransportQueryHandler
         >();
         services.AddScoped<
+            IQueryHandler<RunRepositoryClonePreflightQuery, RepositoryClonePreflightQueryResult>,
+            RunRepositoryClonePreflightQueryHandler
+        >();
+        services.AddScoped<
             IQueryHandler<
                 ListWorkSourceEnvironmentsQuery,
                 IReadOnlyList<WorkSourceEnvironmentProfile>
@@ -108,10 +112,7 @@ public static class ServiceCollectionExtensions
             ListWorkSourceEnvironmentsQueryHandler
         >();
         services.AddScoped<
-            IQueryHandler<
-                GetWorkSourceEnvironmentByKeyQuery,
-                WorkSourceEnvironmentOperationResult
-            >,
+            IQueryHandler<GetWorkSourceEnvironmentByKeyQuery, WorkSourceEnvironmentOperationResult>,
             GetWorkSourceEnvironmentByKeyQueryHandler
         >();
         services.AddScoped<
@@ -123,10 +124,7 @@ public static class ServiceCollectionExtensions
             GetRuntimeEnvironmentByKeyQueryHandler
         >();
         services.AddScoped<
-            IQueryHandler<
-                VerifyRepositoryHostConnectivityQuery,
-                ConnectionConnectivityResult
-            >,
+            IQueryHandler<VerifyRepositoryHostConnectivityQuery, ConnectionConnectivityResult>,
             VerifyRepositoryHostConnectivityQueryHandler
         >();
         services.AddScoped<
@@ -166,7 +164,10 @@ public static class ServiceCollectionExtensions
             VerifyConnectionQueryHandler
         >();
         services.AddScoped<
-            IQueryHandler<ListConnectionProjectsQuery, IReadOnlyList<Abstractions.ConnectionProject>>,
+            IQueryHandler<
+                ListConnectionProjectsQuery,
+                IReadOnlyList<Abstractions.ConnectionProject>
+            >,
             ListConnectionProjectsQueryHandler
         >();
 
@@ -190,7 +191,10 @@ public static class ServiceCollectionExtensions
             ListSecretsQueryHandler
         >();
         services.AddScoped<
-            IQueryHandler<ListSecretVersionsQuery, IReadOnlyList<Domain.Secrets.SecretVersionInfo>?>,
+            IQueryHandler<
+                ListSecretVersionsQuery,
+                IReadOnlyList<Domain.Secrets.SecretVersionInfo>?
+            >,
             ListSecretVersionsQueryHandler
         >();
 
@@ -207,19 +211,16 @@ public static class ServiceCollectionExtensions
     /// Individual providers register their connections via
     /// <see cref="AddConnection{TConnection}(IServiceCollection, string[])"/>.
     /// </summary>
-    public static IServiceCollection AddConnectionResolver(
-        this IServiceCollection services
-    )
+    public static IServiceCollection AddConnectionResolver(this IServiceCollection services)
     {
         // Defer Build() into the singleton factory lambda so the registry snapshot is
         // captured at first resolution time — after all providers (including AzureDevOps)
         // have been registered. AddConnectionResolver() can be called before or after
         // AddConnection<T>() calls and the lookup order is independent of registration order.
-        services.AddSingleton<IConnectionResolver>(sp =>
-            new ConnectionResolver(
-                sp.GetRequiredService<IServiceScopeFactory>(),
-                ConnectionRegistry.Build()
-            ));
+        services.AddSingleton<IConnectionResolver>(sp => new ConnectionResolver(
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            ConnectionRegistry.Build()
+        ));
         return services;
     }
 
@@ -235,7 +236,8 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddConnection<TConnection>(
         this IServiceCollection services,
         params string[] providerKeys
-    ) where TConnection : class, IConnection
+    )
+        where TConnection : class, IConnection
     {
         // Register the connection implementation as a scoped service so it can be resolved
         // by the resolver at runtime through the scoped service provider.

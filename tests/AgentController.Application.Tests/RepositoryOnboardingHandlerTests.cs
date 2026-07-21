@@ -398,6 +398,10 @@ public sealed class RepositoryOnboardingHandlerTests
             IQueryHandler<GetRepositoryCloneTransportQuery, RepositoryCloneTransportQueryResult>,
             GetRepositoryCloneTransportQueryHandler
         >(services);
+        AssertRegistration<
+            IQueryHandler<RunRepositoryClonePreflightQuery, RepositoryClonePreflightQueryResult>,
+            RunRepositoryClonePreflightQueryHandler
+        >(services);
     }
 
     private static RepositoryProfile CreateProfile(string key) =>
@@ -561,8 +565,7 @@ public sealed class RepositoryOnboardingHandlerTests
             throw new NotSupportedException();
     }
 
-    private sealed class FakeConnectionStore(params string[] keys)
-        : IConnectionStore
+    private sealed class FakeConnectionStore(params string[] keys) : IConnectionStore
     {
         private readonly HashSet<string> _keys = new(keys, StringComparer.OrdinalIgnoreCase);
 

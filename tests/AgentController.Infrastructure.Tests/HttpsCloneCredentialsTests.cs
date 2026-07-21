@@ -38,11 +38,7 @@ public sealed class HttpsCloneCredentialsTests
     {
         const string privateKey = "private-key-must-not-leak";
         var store = new RecordingSecretStore(
-            new SshKeyPayload
-            {
-                PrivateKey = privateKey,
-                PublicKey = "ssh-ed25519 public",
-            }
+            new SshKeyPayload { PrivateKey = privateKey, PublicKey = "ssh-ed25519 public" }
         );
         var services = new ServiceCollection();
         services.AddSingleton<ISecretStore>(store);
@@ -51,7 +47,7 @@ public sealed class HttpsCloneCredentialsTests
             provider.GetRequiredService<IServiceScopeFactory>()
         );
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var exception = await Assert.ThrowsAnyAsync<InvalidOperationException>(() =>
             resolver.ResolvePersonalAccessTokenAsync(
                 SecretReference.ByName("clone-key"),
                 CancellationToken.None
@@ -140,10 +136,7 @@ public sealed class HttpsCloneCredentialsTests
                 Key = "primary-host",
                 ProviderSettings = new AzureDevOpsConnectionSettings
                 {
-                    PersonalAccessTokenReference = SecretReference.ByNameAndVersion(
-                        "clone-pat",
-                        4
-                    ),
+                    PersonalAccessTokenReference = SecretReference.ByNameAndVersion("clone-pat", 4),
                 },
             };
             var spec = new RepositorySpec
@@ -153,11 +146,7 @@ public sealed class HttpsCloneCredentialsTests
                 Profile = repository,
                 RepositoryConnection = connection,
             };
-            var environment = new EnvironmentHandle
-            {
-                RootPath = tempRoot,
-                Status = "created",
-            };
+            var environment = new EnvironmentHandle { RootPath = tempRoot, Status = "created" };
 
             var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 provider.CloneAsync(spec, environment, CancellationToken.None)
@@ -186,6 +175,113 @@ public sealed class HttpsCloneCredentialsTests
     }
 
     [Fact]
+    public async Task Preflight_MissingPinnedPat_ReturnsActionableCredentialFailure()
+    {
+        var store = new RecordingSecretStore(null);
+        var services = new ServiceCollection();
+        services.AddSingleton<ISecretStore>(store);
+        await using var serviceProvider = services.BuildServiceProvider();
+        var provider = new LocalGitSourceControlProvider(
+            new FixedOptionsMonitor<AgentControllerOptions>(new AgentControllerOptions()),
+            new RecordingLogger<LocalGitSourceControlProvider>(),
+            new RepositoryCloneCredentialResolver(
+                serviceProvider.GetRequiredService<IServiceScopeFactory>()
+            )
+        );
+        var reference = SecretReference.ByNameAndVersion("expired-clone-pat", 7);
+        var repository = new RepositoryProfile
+        {
+            Key = "private-repo",
+            CloneUrl = "https://example.test/owner/repo.git",
+            RepositoryHostConnectionKey = "primary-host",
+        };
+        var connection = new ConnectionProfile
+        {
+            Key = "primary-host",
+            ProviderSettings = new AzureDevOpsConnectionSettings
+            {
+                PersonalAccessTokenReference = reference,
+            },
+        };
+
+        var result = await provider.CheckClonePreflightAsync(
+            new RepositorySpec
+            {
+                RepoKey = repository.Key,
+                CloneUrl = repository.CloneUrl,
+                Profile = repository,
+                RepositoryConnection = connection,
+            },
+            CancellationToken.None
+        );
+
+        Assert.False(result.Success);
+        Assert.Equal(ClonePreflightFailureCode.CredentialNotFound, result.FailureCode);
+        Assert.Equal(reference, result.CredentialReference);
+        Assert.Contains("version 7", result.Reason, StringComparison.Ordinal);
+        Assert.Equal("expired-clone-pat", store.ResolvedName);
+        Assert.Equal(7, store.ResolvedVersion);
+    }
+
+    [Fact]
+    public async Task Preflight_ResolvesPatBeforeCredentialedRemoteProbe()
+    {
+        const string personalAccessToken = "preflight-pat-must-not-leak";
+        var store = new RecordingSecretStore(
+            new PersonalAccessTokenPayload { Value = personalAccessToken }
+        );
+        var services = new ServiceCollection();
+        services.AddSingleton<ISecretStore>(store);
+        await using var serviceProvider = services.BuildServiceProvider();
+        var logger = new RecordingLogger<LocalGitSourceControlProvider>();
+        var provider = new LocalGitSourceControlProvider(
+            new FixedOptionsMonitor<AgentControllerOptions>(new AgentControllerOptions()),
+            logger,
+            new RepositoryCloneCredentialResolver(
+                serviceProvider.GetRequiredService<IServiceScopeFactory>()
+            )
+        );
+        var reference = SecretReference.ByNameAndVersion("clone-pat", 3);
+        var repository = new RepositoryProfile
+        {
+            Key = "private-repo",
+            CloneUrl = "https://127.0.0.1:1/owner/repo.git",
+            RepositoryHostConnectionKey = "primary-host",
+        };
+        var connection = new ConnectionProfile
+        {
+            Key = "primary-host",
+            ProviderSettings = new AzureDevOpsConnectionSettings
+            {
+                PersonalAccessTokenReference = reference,
+            },
+        };
+
+        var result = await provider.CheckClonePreflightAsync(
+            new RepositorySpec
+            {
+                RepoKey = repository.Key,
+                CloneUrl = repository.CloneUrl,
+                Profile = repository,
+                RepositoryConnection = connection,
+            },
+            CancellationToken.None
+        );
+
+        Assert.False(result.Success);
+        Assert.Equal(ClonePreflightFailureCode.RemoteUnreachable, result.FailureCode);
+        Assert.Equal(reference, result.CredentialReference);
+        Assert.Equal("clone-pat", store.ResolvedName);
+        Assert.Equal(3, store.ResolvedVersion);
+        Assert.DoesNotContain(personalAccessToken, result.Reason, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            personalAccessToken,
+            string.Join(Environment.NewLine, logger.Messages),
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact]
     public void RemoveCredentialsFromCloneUrl_StripsUserInfo()
     {
         var result = LocalGitSourceControlProvider.RemoveCredentialsFromCloneUrl(
@@ -197,7 +293,7 @@ public sealed class HttpsCloneCredentialsTests
         Assert.DoesNotContain("secret", result, StringComparison.Ordinal);
     }
 
-    private sealed class RecordingSecretStore(SecretPayload payload) : ISecretStore
+    private sealed class RecordingSecretStore(SecretPayload? payload) : ISecretStore
     {
         public string? ResolvedName { get; private set; }
 

@@ -105,6 +105,24 @@ public sealed class WebUiControllerTests : IAsyncLifetime
             transport.GetProperty("blockingIssues")[0].GetProperty("code").GetString()
         );
 
+        using var preflightResponse = await _client.PostAsync(
+            "/api/webui/repositories/WEB.REPO/clone-preflight",
+            content: null
+        );
+        Assert.Equal(HttpStatusCode.OK, preflightResponse.StatusCode);
+        var preflight = await ReadJsonAsync(preflightResponse);
+        Assert.False(preflight.GetProperty("success").GetBoolean());
+        Assert.Equal("httpsPat", preflight.GetProperty("transport").GetString());
+        Assert.Equal(
+            "transportConfigurationInvalid",
+            preflight.GetProperty("failureCode").GetString()
+        );
+        Assert.Contains(
+            "repository host connection",
+            preflight.GetProperty("reason").GetString(),
+            StringComparison.OrdinalIgnoreCase
+        );
+
         var update = new
         {
             key = "web.repo",
@@ -151,25 +169,37 @@ public sealed class WebUiControllerTests : IAsyncLifetime
             HttpStatusCode.NotFound,
             "Resource not found."
         );
+
+        using var missingPreflightResponse = await _client.PostAsync(
+            "/api/webui/repositories/web.repo/clone-preflight",
+            content: null
+        );
+        await AssertProblemAsync(
+            missingPreflightResponse,
+            HttpStatusCode.NotFound,
+            "Resource not found."
+        );
     }
 
     [Fact]
     public async Task RepositoryEndpoints_RoundTripSshKeyReferenceAndRejectPatReference()
     {
-        using (var createSshKey = await _client.PostAsJsonAsync(
-            "/api/webui/secrets",
-            new
-            {
-                name = "repository-deploy-key",
-                payload = new
+        using (
+            var createSshKey = await _client.PostAsJsonAsync(
+                "/api/webui/secrets",
+                new
                 {
-                    type = "ssh-key",
-                    privateKey = "private-key-material",
-                    publicKey = "public-key-material",
-                    passphrase = (string?)null,
-                },
-            }
-        ))
+                    name = "repository-deploy-key",
+                    payload = new
+                    {
+                        type = "ssh-key",
+                        privateKey = "private-key-material",
+                        publicKey = "public-key-material",
+                        passphrase = (string?)null,
+                    },
+                }
+            )
+        )
         {
             Assert.Equal(HttpStatusCode.Created, createSshKey.StatusCode);
         }
@@ -193,10 +223,7 @@ public sealed class WebUiControllerTests : IAsyncLifetime
             "repository-deploy-key",
             created.GetProperty("sshKeyReference").GetProperty("name").GetString()
         );
-        Assert.Equal(
-            1,
-            created.GetProperty("sshKeyReference").GetProperty("version").GetInt32()
-        );
+        Assert.Equal(1, created.GetProperty("sshKeyReference").GetProperty("version").GetInt32());
 
         using var getResponse = await _client.GetAsync("/api/webui/repositories/ssh.repo");
         Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
@@ -224,18 +251,16 @@ public sealed class WebUiControllerTests : IAsyncLifetime
         Assert.True(transport.GetProperty("isReady").GetBoolean());
         Assert.Empty(transport.GetProperty("blockingIssues").EnumerateArray());
 
-        using (var createPat = await _client.PostAsJsonAsync(
-            "/api/webui/secrets",
-            new
-            {
-                name = "connection-pat",
-                payload = new
+        using (
+            var createPat = await _client.PostAsJsonAsync(
+                "/api/webui/secrets",
+                new
                 {
-                    type = "personal-access-token",
-                    value = "write-only-value",
-                },
-            }
-        ))
+                    name = "connection-pat",
+                    payload = new { type = "personal-access-token", value = "write-only-value" },
+                }
+            )
+        )
         {
             Assert.Equal(HttpStatusCode.Created, createPat.StatusCode);
         }
@@ -256,9 +281,7 @@ public sealed class WebUiControllerTests : IAsyncLifetime
             HttpStatusCode.BadRequest,
             "Validation failed."
         );
-        Assert.True(
-            problem.GetProperty("errors").TryGetProperty("sshKeyReference", out _)
-        );
+        Assert.True(problem.GetProperty("errors").TryGetProperty("sshKeyReference", out _));
     }
 
     [Fact]
@@ -292,11 +315,7 @@ public sealed class WebUiControllerTests : IAsyncLifetime
             "/api/webui/work-source-environments",
             profile
         );
-        await AssertProblemAsync(
-            duplicateResponse,
-            HttpStatusCode.Conflict,
-            "Resource conflict."
-        );
+        await AssertProblemAsync(duplicateResponse, HttpStatusCode.Conflict, "Resource conflict.");
 
         using var listResponse = await _client.GetAsync("/api/webui/work-source-environments");
         Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
@@ -352,11 +371,7 @@ public sealed class WebUiControllerTests : IAsyncLifetime
         using var missingResponse = await _client.GetAsync(
             "/api/webui/work-source-environments/ado.main"
         );
-        await AssertProblemAsync(
-            missingResponse,
-            HttpStatusCode.NotFound,
-            "Resource not found."
-        );
+        await AssertProblemAsync(missingResponse, HttpStatusCode.NotFound, "Resource not found.");
     }
 
     [Fact]
@@ -486,8 +501,8 @@ public sealed class WebUiControllerTests : IAsyncLifetime
             Assert.False(updateJson.RootElement.GetProperty("enabled").GetBoolean());
             Assert.Equal(
                 "updated-new-work",
-                updateJson.RootElement
-                    .GetProperty("runtimeSettings")
+                updateJson
+                    .RootElement.GetProperty("runtimeSettings")
                     .GetProperty("loadouts")
                     .GetProperty("newWork")
                     .GetString()

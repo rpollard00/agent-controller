@@ -119,6 +119,9 @@ function createApi(
       getCloneTransport: vi.fn(async () => {
         throw new Error('Not implemented in this component test.');
       }),
+      checkClonePreflight: vi.fn(async () => {
+        throw new Error('Not implemented in this component test.');
+      }),
     },
     workSourceEnvironments,
     connections: connectionsClient,

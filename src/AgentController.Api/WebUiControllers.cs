@@ -99,6 +99,25 @@ public static class WebUiControllers
             }
         );
 
+        group.MapPost(
+            "/{key}/clone-preflight",
+            async (
+                string key,
+                IQueryHandler<
+                    RunRepositoryClonePreflightQuery,
+                    RepositoryClonePreflightQueryResult
+                > handler,
+                CancellationToken cancellationToken
+            ) =>
+            {
+                var result = await handler.ExecuteAsync(
+                    new RunRepositoryClonePreflightQuery(key),
+                    cancellationToken
+                );
+                return MapClonePreflightResult(result);
+            }
+        );
+
         group.MapPut(
             "/{key}",
             async (
@@ -235,7 +254,6 @@ public static class WebUiControllers
                 return MapResult(result, _ => Results.NoContent());
             }
         );
-
     }
 
     private static void MapRuntimeEnvironmentControllers(RouteGroupBuilder group)
@@ -359,9 +377,7 @@ public static class WebUiControllers
             ),
         };
 
-    private static IResult MapCloneTransportResult(
-        RepositoryCloneTransportQueryResult result
-    ) =>
+    private static IResult MapCloneTransportResult(RepositoryCloneTransportQueryResult result) =>
         result.Status switch
         {
             RepositoryOperationStatus.Succeeded => Results.Ok(result.Resolution),
@@ -371,6 +387,19 @@ public static class WebUiControllers
             RepositoryOperationStatus.NotFound => NotFoundProblem(result.Detail),
             _ => throw new InvalidOperationException(
                 $"Unsupported clone transport query status '{result.Status}'."
+            ),
+        };
+
+    private static IResult MapClonePreflightResult(RepositoryClonePreflightQueryResult result) =>
+        result.Status switch
+        {
+            RepositoryOperationStatus.Succeeded => Results.Ok(result.Preflight),
+            RepositoryOperationStatus.ValidationFailed => ValidationProblem(
+                result.ValidationErrors
+            ),
+            RepositoryOperationStatus.NotFound => NotFoundProblem(result.Detail),
+            _ => throw new InvalidOperationException(
+                $"Unsupported clone preflight query status '{result.Status}'."
             ),
         };
 
@@ -439,10 +468,7 @@ public static class WebUiControllers
             async (
                 IQueryHandler<ListSecretsQuery, IReadOnlyList<Domain.Secrets.SecretInfo>> handler,
                 CancellationToken cancellationToken
-            ) =>
-                Results.Ok(
-                    await handler.ExecuteAsync(new ListSecretsQuery(), cancellationToken)
-                )
+            ) => Results.Ok(await handler.ExecuteAsync(new ListSecretsQuery(), cancellationToken))
         );
 
         // GET /api/webui/secrets/{name}/versions — list versions of a secret (metadata only)
@@ -450,7 +476,10 @@ public static class WebUiControllers
             "/{name}/versions",
             async (
                 string name,
-                IQueryHandler<ListSecretVersionsQuery, IReadOnlyList<Domain.Secrets.SecretVersionInfo>?> handler,
+                IQueryHandler<
+                    ListSecretVersionsQuery,
+                    IReadOnlyList<Domain.Secrets.SecretVersionInfo>?
+                > handler,
                 CancellationToken cancellationToken
             ) =>
             {
@@ -564,7 +593,6 @@ public static class WebUiControllers
     private sealed record CreateSecretRequest(
         /// <summary>The unique secret name.</summary>
         string Name,
-
         /// <summary>
         /// The typed payload. Must include a <c>"type"</c> discriminator:
         /// <c>"personal-access-token"</c> (with <c>"value"</c>) or <c>"ssh-key"</c>

@@ -2,6 +2,7 @@
   import { onDestroy } from 'svelte';
   import { getErrorMessage, getFieldErrors, type WebUiApiClient } from '../../api/client';
   import type {
+    ClonePreflightResult,
     ConnectionProfile,
     RepositoryProfile,
     RuntimeEnvironmentProfile,
@@ -42,6 +43,10 @@
   let deleting = $state(false);
   let loadController: AbortController | undefined;
   let mutationController: AbortController | undefined;
+  let preflightController: AbortController | undefined;
+  let preflightStatus = $state<'idle' | 'checking' | 'complete' | 'error'>('idle');
+  let preflight = $state<ClonePreflightResult>();
+  let preflightError = $state<string>();
   let successNotice = $state<{ path: string; title: string; message: string }>();
 
   const route = $derived(parseRepositoryRoute(pathname));
@@ -65,6 +70,7 @@
   onDestroy(() => {
     loadController?.abort();
     mutationController?.abort();
+    preflightController?.abort();
   });
 
   function startLoad(currentRoute: RepositoryRoute): void {
@@ -78,6 +84,10 @@
     requestError = undefined;
     mutationError = undefined;
     repository = undefined;
+    preflightController?.abort();
+    preflightStatus = 'idle';
+    preflight = undefined;
+    preflightError = undefined;
 
     try {
       if (currentRoute.view === 'list') {
@@ -150,6 +160,29 @@
       mutationError = error;
     } finally {
       if (mutationController === controller) submitting = false;
+    }
+  }
+
+  async function runClonePreflight(): Promise<void> {
+    if (route?.view !== 'detail' || !repository) return;
+
+    preflightController?.abort();
+    const controller = new AbortController();
+    preflightController = controller;
+    preflightStatus = 'checking';
+    preflight = undefined;
+    preflightError = undefined;
+
+    try {
+      preflight = await client.repositories.checkClonePreflight(
+        repository.key,
+        controller.signal,
+      );
+      preflightStatus = 'complete';
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      preflightError = getErrorMessage(error);
+      preflightStatus = 'error';
     }
   }
 
@@ -356,7 +389,14 @@
       {/key}
     </Card>
   {:else if route?.view === 'detail' && repository}
-    <RepositoryDetails {repository} ondelete={askToDelete} />
+    <RepositoryDetails
+      {repository}
+      {preflightStatus}
+      {preflight}
+      {preflightError}
+      onpreflight={() => void runClonePreflight()}
+      ondelete={askToDelete}
+    />
   {/if}
 </div>
 

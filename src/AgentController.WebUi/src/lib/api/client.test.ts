@@ -83,6 +83,28 @@ describe('Web UI API client', () => {
     );
   });
 
+  it('posts a credential-aware clone preflight for an encoded repository key', async () => {
+    const result = {
+      success: false,
+      reason: "PAT secret 'clone-pat' (version 2) was not found.",
+      failureCode: 'credentialNotFound',
+      transport: 'httpsPat',
+      cloneUrl: 'https://example.test/repo.git',
+      credentialSource: 'connectionPersonalAccessToken',
+      credentialReference: { name: 'clone-pat', version: 2 },
+    } as const;
+    const fetchMock = vi.fn(async () => Response.json(result));
+    const client = createWebUiApiClient({ fetch: fetchMock });
+
+    await expect(client.repositories.checkClonePreflight('repo key/one')).resolves.toEqual(
+      result,
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/webui/repositories/repo%20key%2Fone/clone-preflight',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
   it('preserves RFC problem details and field-level validation errors', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       Response.json(

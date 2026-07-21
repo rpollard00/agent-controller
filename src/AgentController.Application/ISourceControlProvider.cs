@@ -34,14 +34,13 @@ public interface ISourceControlProvider
     /// Verifies:
     /// <list type="bullet">
     ///   <item>The configured clone URL is parseable.</item>
-    ///   <item>The selected transport has its prerequisites
-    ///   (SSH key/known_hosts or PAT).</item>
-    ///   <item>A non-interactive <c>git ls-remote</c> succeeds.</item>
+    ///   <item>The inferred transport has a present, correctly typed secret version.</item>
+    ///   <item>A non-interactive, credentialed <c>git ls-remote</c> succeeds.</item>
     /// </list>
     ///
-    /// On failure the returned <see cref="ClonePreflightResult"/> contains
-    /// a concrete reason so misconfiguration surfaces early instead of
-    /// as a silent hang.
+    /// The probe uses the same ephemeral PAT/SSH setup as cloning. On failure the
+    /// returned <see cref="ClonePreflightResult"/> contains a stable category and
+    /// safe credential-reference metadata, never plaintext secret values.
     /// </summary>
     Task<ClonePreflightResult> CheckClonePreflightAsync(
         RepositorySpec spec,
