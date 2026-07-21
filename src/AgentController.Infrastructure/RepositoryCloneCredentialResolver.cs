@@ -20,37 +20,7 @@ internal sealed class RepositoryCloneCredentialResolver(IServiceScopeFactory sco
         CancellationToken cancellationToken
     )
     {
-        ArgumentNullException.ThrowIfNull(reference);
-
-        if (!reference.IsSpecified)
-        {
-            throw new InvalidOperationException(
-                "HTTPS clone credentials do not specify a PAT secret."
-            );
-        }
-
-        await using var scope = _scopeFactory.CreateAsyncScope();
-        var secretStore = scope.ServiceProvider.GetService<ISecretStore>();
-        if (secretStore is null)
-        {
-            throw new InvalidOperationException(
-                "HTTPS clone credentials cannot be resolved because no secret store is configured."
-            );
-        }
-
-        var payload = await secretStore.ResolveAsync(
-            reference.Name,
-            reference.Version,
-            cancellationToken
-        );
-
-        if (payload is null)
-        {
-            var version = reference.Version is null ? "latest version" : $"version {reference.Version}";
-            throw new InvalidOperationException(
-                $"PAT secret '{reference.Name}' ({version}) was not found."
-            );
-        }
+        var payload = await ResolveAsync(reference, "HTTPS", "PAT", cancellationToken);
 
         if (payload is not PersonalAccessTokenPayload pat)
         {
@@ -67,5 +37,74 @@ internal sealed class RepositoryCloneCredentialResolver(IServiceScopeFactory sco
         }
 
         return pat.Value;
+    }
+
+    /// <summary>
+    /// Resolves an optionally version-pinned secret reference and requires an SSH-key payload.
+    /// </summary>
+    public async Task<SshKeyPayload> ResolveSshKeyAsync(
+        SecretReference reference,
+        CancellationToken cancellationToken
+    )
+    {
+        var payload = await ResolveAsync(reference, "SSH", "SSH-key", cancellationToken);
+
+        if (payload is not SshKeyPayload sshKey)
+        {
+            throw new InvalidOperationException(
+                $"Secret '{reference.Name}' is not an SSH-key secret."
+            );
+        }
+
+        if (string.IsNullOrWhiteSpace(sshKey.PrivateKey))
+        {
+            throw new InvalidOperationException(
+                $"SSH-key secret '{reference.Name}' contains an empty private key."
+            );
+        }
+
+        return sshKey;
+    }
+
+    private async Task<SecretPayload> ResolveAsync(
+        SecretReference reference,
+        string transport,
+        string credentialType,
+        CancellationToken cancellationToken
+    )
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+
+        if (!reference.IsSpecified)
+        {
+            throw new InvalidOperationException(
+                $"{transport} clone credentials do not specify a {credentialType} secret."
+            );
+        }
+
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var secretStore = scope.ServiceProvider.GetService<ISecretStore>();
+        if (secretStore is null)
+        {
+            throw new InvalidOperationException(
+                $"{transport} clone credentials cannot be resolved because no secret store is configured."
+            );
+        }
+
+        var payload = await secretStore.ResolveAsync(
+            reference.Name,
+            reference.Version,
+            cancellationToken
+        );
+
+        if (payload is null)
+        {
+            var version = reference.Version is null ? "latest version" : $"version {reference.Version}";
+            throw new InvalidOperationException(
+                $"{credentialType} secret '{reference.Name}' ({version}) was not found."
+            );
+        }
+
+        return payload;
     }
 }

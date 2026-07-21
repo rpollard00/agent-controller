@@ -23,8 +23,8 @@ namespace AgentController.Infrastructure;
 /// standard clone protocol over the local filesystem.
 ///
 /// Registered as a singleton so it is safe for consumption by singleton consumers
-/// such as <see cref="BackgroundService"/>. HTTPS credentials are resolved per operation
-/// through a short-lived service scope. Uses <see cref="IOptionsMonitor{TOptions}"/>
+/// such as <see cref="BackgroundService"/>. HTTPS and SSH credentials are resolved per
+/// operation through a short-lived service scope. Uses <see cref="IOptionsMonitor{TOptions}"/>
 /// for live config reload support.
 /// </summary>
 public sealed partial class LocalGitSourceControlProvider : ISourceControlProvider
@@ -110,6 +110,10 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
             transport == CloneTransport.HttpsPat
                 ? await CreateHttpsCredentialsAsync(spec, resolution, cancellationToken)
                 : null;
+        using var sshCredentials =
+            transport == CloneTransport.Ssh
+                ? await CreateSshCredentialsAsync(spec, resolution, cancellationToken)
+                : null;
 
         if (httpsCredentials is not null)
         {
@@ -130,7 +134,7 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
 
         var (exitCode, stdErr) = await RunGitAsync(
             args,
-            httpsCredentials?.Environment,
+            httpsCredentials?.Environment ?? sshCredentials?.Environment,
             cancellationToken
         );
 
@@ -463,6 +467,55 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
         }
     }
 
+    private async Task<GitSshCredentials?> CreateSshCredentialsAsync(
+        RepositorySpec spec,
+        RepositoryCloneTransportResolution? resolution,
+        CancellationToken cancellationToken
+    )
+    {
+        // Direct RepositorySpec callers retain support for ambient SSH configuration.
+        // Managed execution always supplies a profile with its stored key reference.
+        if (spec.Profile is null)
+        {
+            return null;
+        }
+
+        if (resolution is null || !resolution.IsReady)
+        {
+            var reasons = resolution is null
+                ? "clone transport credentials could not be resolved."
+                : string.Join(" ", resolution.BlockingIssues.Select(issue => issue.Message));
+            throw new InvalidOperationException(
+                $"Cannot clone repository '{spec.RepoKey}' over SSH: {reasons}"
+            );
+        }
+
+        if (
+            resolution.CredentialSource != RepositoryCloneCredentialSource.SshKey
+            || resolution.CredentialReference is null
+        )
+        {
+            throw new InvalidOperationException(
+                $"Cannot clone repository '{spec.RepoKey}' over SSH: "
+                    + "the repository does not provide an SSH-key secret reference."
+            );
+        }
+
+        if (_credentialResolver is null)
+        {
+            throw new InvalidOperationException(
+                $"Cannot clone repository '{spec.RepoKey}' over SSH: "
+                    + "clone credential resolution is not configured."
+            );
+        }
+
+        var sshKey = await _credentialResolver.ResolveSshKeyAsync(
+            resolution.CredentialReference,
+            cancellationToken
+        );
+        return await GitSshCredentials.CreateAsync(sshKey, cancellationToken);
+    }
+
     private async Task<GitAskPassCredentials?> CreateHttpsCredentialsAsync(
         RepositorySpec spec,
         RepositoryCloneTransportResolution? resolution,
@@ -673,10 +726,15 @@ public sealed partial class LocalGitSourceControlProvider : ISourceControlProvid
 
             return (process.ExitCode, stdErr ?? string.Empty);
         }
-        catch (OperationCanceledException) when (cts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
-            // Clone timed out — kill the process.
             try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
+
+            if (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+
             throw new InvalidOperationException(
                 $"git clone timed out after {CloneTimeout.TotalMinutes:F0} minutes.");
         }
