@@ -242,13 +242,7 @@ public class OptionsSmokeTests
     [Fact]
     public void RepositoryProfileOptions_BindsFromConfiguration()
     {
-        var config = BuildConfiguration(
-            new Dictionary<string, string?>
-            {
-                ["repositories:example-service:allowedPaths:0"] = "src/",
-                ["repositories:example-service:allowedPaths:1"] = "tests/",
-            }
-        );
+        var config = BuildConfiguration();
 
         var services = new ServiceCollection();
         services
@@ -266,8 +260,6 @@ public class OptionsSmokeTests
         var profile = options["example-service"];
         Assert.Equal("https://example.com/repo.git", profile.CloneUrl);
         Assert.Equal("main", profile.DefaultBranch);
-        Assert.Equal(2, profile.AllowedPaths.Count);
-        Assert.Contains("src/", profile.AllowedPaths);
     }
 
     [Fact]

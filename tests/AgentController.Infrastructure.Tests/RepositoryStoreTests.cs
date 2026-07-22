@@ -71,7 +71,6 @@ public sealed class RepositoryStoreTests
             RepositoryHostConnectionKey = "ado-staging",
             RuntimeEnvironmentKey = null,
             SshKeyReference = SecretReference.ByName("staging-deploy-key"),
-            AllowedPaths = ["src", "tests", "Directory.Build.props"],
         };
 
         Assert.True(await fixture.Store.CreateAsync(original, CancellationToken.None));
@@ -122,7 +121,6 @@ public sealed class RepositoryStoreTests
             DefaultBranch = "release",
             RepositoryHostConnectionKey = null,
             RuntimeEnvironmentKey = "runtime-production",
-            AllowedPaths = [],
         };
 
         await fixture.Store.UpsertAsync(original, CancellationToken.None);
@@ -147,17 +145,16 @@ public sealed class RepositoryStoreTests
             insert.CommandText = """
                 INSERT INTO Repositories
                     (Key, CloneUrl, DefaultBranch, EnvironmentProfile, RuntimeProfile,
-                     AllowedPathsJson, CreatedAt, UpdatedAt, Transport)
+                     CreatedAt, UpdatedAt, Transport)
                 VALUES
                     ($key, $cloneUrl, $defaultBranch, $environmentProfile, $runtimeProfile,
-                     $allowedPaths, $createdAt, $updatedAt, $transport)
+                     $createdAt, $updatedAt, $transport)
                 """;
             insert.Parameters.AddWithValue("$key", "legacy");
             insert.Parameters.AddWithValue("$cloneUrl", "git@example.test:legacy.git");
             insert.Parameters.AddWithValue("$defaultBranch", "main");
             insert.Parameters.AddWithValue("$environmentProfile", "legacy-environment");
             insert.Parameters.AddWithValue("$runtimeProfile", "legacy-runtime");
-            insert.Parameters.AddWithValue("$allowedPaths", "[\"src\",\"tests\"]");
             insert.Parameters.AddWithValue("$createdAt", "2026-07-01 12:00:00+00:00");
             insert.Parameters.AddWithValue("$updatedAt", "2026-07-01 12:00:00+00:00");
             insert.Parameters.AddWithValue("$transport", (int)CloneTransport.Ssh);
@@ -174,7 +171,6 @@ public sealed class RepositoryStoreTests
         Assert.Null(profile.RuntimeEnvironmentKey);
         Assert.Null(profile.SshKeyReference);
         Assert.Equal(CloneTransport.Ssh, profile.Transport);
-        Assert.Equal(["src", "tests"], profile.AllowedPaths);
         Assert.Contains(
             await dbContext.Database.GetAppliedMigrationsAsync(),
             migration =>
@@ -195,7 +191,6 @@ public sealed class RepositoryStoreTests
             RepositoryHostConnectionKey = "ado-production",
             RuntimeEnvironmentKey = "runtime-local",
             SshKeyReference = SecretReference.ByNameAndVersion("production-deploy-key", 2),
-            AllowedPaths = ["src", "tests"],
         };
     }
 
@@ -210,7 +205,6 @@ public sealed class RepositoryStoreTests
         Assert.Equal(expected.RepositoryHostConnectionKey, actual.RepositoryHostConnectionKey);
         Assert.Equal(expected.RuntimeEnvironmentKey, actual.RuntimeEnvironmentKey);
         Assert.Equal(expected.SshKeyReference, actual.SshKeyReference);
-        Assert.Equal(expected.AllowedPaths, actual.AllowedPaths);
     }
 
     private static async Task<string> ReadColumnAsync(

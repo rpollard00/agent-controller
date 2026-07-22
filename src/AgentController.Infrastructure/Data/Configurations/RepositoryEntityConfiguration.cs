@@ -39,9 +39,6 @@ internal sealed class RepositoryEntityConfiguration : IEntityTypeConfiguration<R
 
         builder.Property(x => x.SshKeySecretVersion);
 
-        // JSON-like column: stored as TEXT
-        builder.Property(x => x.AllowedPathsJson).HasColumnName("AllowedPathsJson");
-
         // Timestamps
         builder.Property(x => x.CreatedAt).IsRequired();
 

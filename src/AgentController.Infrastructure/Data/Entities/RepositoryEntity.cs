@@ -5,7 +5,6 @@ namespace AgentController.Infrastructure.Data.Entities;
 /// <summary>
 /// EF Core entity for the Repositories table.
 /// Maps to the prototype data model defined in the architecture (§7.5).
-/// AllowedPaths is stored as a JSON string column.
 /// </summary>
 internal sealed class RepositoryEntity
 {
@@ -44,9 +43,6 @@ internal sealed class RepositoryEntity
 
     /// <summary>Optional pinned version of the SSH-key secret.</summary>
     public int? SshKeySecretVersion { get; set; }
-
-    /// <summary>Allowed paths serialized as a JSON array.</summary>
-    public string? AllowedPathsJson { get; set; }
 
     /// <summary>When the record was first persisted.</summary>
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;

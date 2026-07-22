@@ -38,9 +38,5 @@ public sealed class RepositoryProfileOptions
     /// </summary>
     public string RuntimeProfile { get; init; } = string.Empty;
 
-    /// <summary>
-    /// Allowed paths within the repository that the agent may modify.
-    /// An empty list means no path restrictions.
-    /// </summary>
-    public IReadOnlyList<string> AllowedPaths { get; init; } = [];
+
 }
