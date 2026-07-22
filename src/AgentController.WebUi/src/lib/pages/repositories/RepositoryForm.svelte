@@ -72,7 +72,7 @@
   );
 
   const inputClasses =
-    'min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 placeholder:text-slate-600 disabled:cursor-not-allowed disabled:bg-slate-900 disabled:text-slate-400';
+    'min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 placeholder:text-slate-600 disabled:cursor-not-allowed disabled:bg-slate-900 disabled:text-slate-400 readonly:cursor-default readonly:bg-slate-900/80 readonly:text-slate-300';
 
   function fieldError(field: string): string | undefined {
     return clientErrors[field]?.[0] ?? serverErrors[field]?.[0];
@@ -205,14 +205,16 @@
     }
   });
 
-  // Prefill fields when a repository is selected from the host
+  // Prefill fields when a repository is selected from the host or transport changes.
+  // In host-driven mode, the clone URL is derived from the selected transport:
+  // HTTPS uses remoteUrl; SSH uses sshUrl (with a fallback to remoteUrl).
   $effect(() => {
     const selectedId = values.selectedRepositoryId;
-    if (!selectedId) return;
+    if (!selectedId || !hostDriven) return;
     const repo = repositories.find((r) => r.id === selectedId);
     if (!repo) return;
     values.key = repo.name;
-    values.cloneUrl = repo.remoteUrl;
+    values.cloneUrl = values.transport === 'ssh' ? (repo.sshUrl ?? repo.remoteUrl) : repo.remoteUrl;
     values.defaultBranch = repo.defaultBranch || 'main';
   });
 
@@ -389,7 +391,7 @@
       id="repository-cloneUrl"
       label="Clone URL or local path"
       hint={hostDriven
-        ? 'Prefilled from the selected repository. The hosting provider URL is used by default.'
+        ? 'Derived from the selected repository and transport. HTTPS uses the remote URL; SSH uses the SSH URL.'
         : 'Enter an HTTPS, SSH, or file URL, or an absolute local repository path.'}
       error={fieldError('cloneUrl')}
       required
@@ -399,6 +401,7 @@
         name="cloneUrl"
         class={inputClasses}
         bind:value={values.cloneUrl}
+        readonly={hostDriven}
         disabled={submitting}
         required
         spellcheck="false"
