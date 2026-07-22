@@ -5,7 +5,6 @@ export interface RepositoryFormValues {
   cloneUrl: string;
   transport: CloneTransport;
   defaultBranch: string;
-  allowedPaths: string;
   repositoryHostConnectionKey: string;
   project: string;
   runtimeEnvironmentKey: string;
@@ -21,7 +20,6 @@ export function createRepositoryFormValues(profile?: RepositoryProfile): Reposit
     cloneUrl: profile?.cloneUrl ?? '',
     transport: profile?.transport ?? 'unspecified',
     defaultBranch: profile?.defaultBranch ?? 'main',
-    allowedPaths: profile?.allowedPaths.join('\n') ?? '',
     repositoryHostConnectionKey: profile?.repositoryHostConnectionKey ?? '',
     project: profile?.project ?? '',
     runtimeEnvironmentKey: profile?.runtimeEnvironmentKey ?? '',
@@ -94,10 +92,6 @@ export function toRepositoryProfile(
     cloneUrl: values.cloneUrl.trim(),
     transport: values.transport,
     defaultBranch: values.defaultBranch.trim(),
-    allowedPaths: values.allowedPaths
-      .split(/\r?\n/)
-      .map((path) => path.trim())
-      .filter((path) => path.length > 0),
     repositoryHostConnectionKey: nullableKey(values.repositoryHostConnectionKey),
     project: nullableKey(values.project),
     remoteIdentity: original?.remoteIdentity ?? null,

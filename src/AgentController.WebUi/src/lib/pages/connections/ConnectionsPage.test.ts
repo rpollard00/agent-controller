@@ -104,7 +104,6 @@ function createApi(
       remoteIdentity: 'repo-guid',
       runtimeEnvironmentKey: null,
       sshKeyReference: null,
-      allowedPaths: [],
       project: null,
     })),
   };

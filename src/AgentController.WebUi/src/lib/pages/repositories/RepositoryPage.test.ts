@@ -24,7 +24,6 @@ const repository: RepositoryProfile = {
   remoteIdentity: null,
   runtimeEnvironmentKey: 'runtime-main',
   sshKeyReference: null,
-  allowedPaths: ['src'],
   project: null,
 };
 
@@ -240,9 +239,6 @@ describe('repository onboarding screens', () => {
     await fireEvent.change(await screen.findByLabelText('Secret version'), {
       target: { value: '1' },
     });
-    await fireEvent.input(screen.getByLabelText(/Allowed paths/), {
-      target: { value: 'src\ntests/integration' },
-    });
     await fireEvent.change(screen.getByLabelText('Repository host connection'), {
       target: { value: 'ado-main' },
     });
@@ -264,7 +260,6 @@ describe('repository onboarding screens', () => {
         defaultBranch: 'main',
         transport: 'unspecified',
         sshKeyReference: { name: 'repository-deploy-key', version: 1 },
-        allowedPaths: ['src', 'tests/integration'],
         repositoryHostConnectionKey: 'ado-main',
         project: 'Agent Controller',
         runtimeEnvironmentKey: 'runtime-main',
@@ -357,9 +352,6 @@ describe('repository onboarding screens', () => {
     await fireEvent.input(screen.getByLabelText(/Default branch/), {
       target: { value: 'develop' },
     });
-    await fireEvent.input(screen.getByLabelText(/Allowed paths/), {
-      target: { value: 'src/web' },
-    });
     await fireEvent.change(screen.getByLabelText('Runtime environment'), {
       target: { value: '' },
     });
@@ -371,7 +363,6 @@ describe('repository onboarding screens', () => {
       expect.objectContaining({
         key: 'web.repo',
         defaultBranch: 'develop',
-        allowedPaths: ['src/web'],
         runtimeEnvironmentKey: null,
         environmentProfile: 'legacy-environment',
         runtimeProfile: 'legacy-runtime',

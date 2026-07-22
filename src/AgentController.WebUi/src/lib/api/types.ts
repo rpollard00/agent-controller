@@ -17,7 +17,6 @@ export interface RepositoryProfile {
   remoteIdentity: string | null;
   runtimeEnvironmentKey: string | null;
   sshKeyReference: SecretReference | null;
-  allowedPaths: string[];
   project: string | null;
 }
 

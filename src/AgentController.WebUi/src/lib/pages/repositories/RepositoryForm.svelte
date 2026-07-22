@@ -307,25 +307,6 @@
     </div>
   {/if}
 
-  <Field
-    id="repository-allowedPaths"
-    label="Allowed paths"
-    hint="Enter one repository-relative path per line. Leave empty to allow all paths."
-    error={fieldError('allowedPaths')}
-  >
-    <textarea
-      id="repository-allowedPaths"
-      name="allowedPaths"
-      class={`${inputClasses} min-h-28 resize-y`}
-      bind:value={values.allowedPaths}
-      disabled={submitting}
-      spellcheck="false"
-      placeholder={'src/\ntests/'}
-      aria-invalid={fieldError('allowedPaths') ? 'true' : undefined}
-      aria-describedby={describedBy('allowedPaths', true)}
-    ></textarea>
-  </Field>
-
   <fieldset class="space-y-5 rounded-xl border border-slate-800 p-4 sm:p-5">
     <legend class="px-2 text-sm font-semibold text-white">Managed environment associations</legend>
     <p class="text-sm leading-6 text-slate-400">

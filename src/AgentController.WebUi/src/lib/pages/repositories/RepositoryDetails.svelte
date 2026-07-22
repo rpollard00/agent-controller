@@ -75,12 +75,6 @@
       <dd class="mt-1 text-slate-100">{transportLabel(repository.transport)}</dd>
     </div>
     <div>
-      <dt class="text-sm font-medium text-slate-400">Allowed paths</dt>
-      <dd class="mt-1 text-slate-100">
-        {repository.allowedPaths.length > 0 ? repository.allowedPaths.join(', ') : 'All paths'}
-      </dd>
-    </div>
-    <div>
       <dt class="text-sm font-medium text-slate-400">Repository host connection</dt>
       <dd class="mt-1 text-slate-100">{repository.repositoryHostConnectionKey ?? 'None'}</dd>
     </div>
