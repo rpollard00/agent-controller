@@ -46,6 +46,7 @@ export interface ConnectionResourceClient
   verifyConnection(key: string, signal?: AbortSignal): Promise<ConnectionConnectivityResult>;
   listProjects(key: string, signal?: AbortSignal): Promise<ConnectionProject[]>;
   listRepositories(key: string, project: string, signal?: AbortSignal): Promise<HostRepository[]>;
+  listBranches(key: string, project: string, repositoryId: string, signal?: AbortSignal): Promise<string[]>;
   onboardRepository(
     key: string,
     project: string,
@@ -203,6 +204,11 @@ export function createWebUiApiClient(options: ApiClientOptions = {}): WebUiApiCl
       listRepositories: (key, project, signal) =>
         request<HostRepository[]>(
           `/connections/${encodeURIComponent(key)}/repositories?project=${encodeURIComponent(project)}`,
+          { signal },
+        ),
+      listBranches: (key, project, repositoryId, signal) =>
+        request<string[]>(
+          `/connections/${encodeURIComponent(key)}/repositories/${encodeURIComponent(repositoryId)}/branches?project=${encodeURIComponent(project)}`,
           { signal },
         ),
       onboardRepository: (key, project, repositoryId, repositoryKey, signal) =>

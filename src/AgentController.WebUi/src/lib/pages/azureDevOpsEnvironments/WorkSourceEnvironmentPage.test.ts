@@ -110,6 +110,7 @@ function createApi(
     ),
     listProjects: vi.fn(async () => [...initialProjects]),
     listRepositories: vi.fn(async () => []),
+    listBranches: vi.fn(async () => []),
     onboardRepository: vi.fn(async () => ({} as RepositoryProfile)),
   };
 

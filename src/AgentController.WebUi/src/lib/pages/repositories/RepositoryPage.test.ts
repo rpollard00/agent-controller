@@ -180,6 +180,7 @@ function createApi(initialRepositories: RepositoryProfile[] = [repository]): Moc
         }),
         listProjects: async () => projects,
         listRepositories: async () => [],
+        listBranches: async () => [],
         onboardRepository: async () => repository,
       },
       runtimeEnvironments: staticResource([runtimeEnvironment]),

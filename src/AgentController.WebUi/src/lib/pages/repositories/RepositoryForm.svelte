@@ -53,22 +53,27 @@
   let repositories = $state<HostRepository[]>([]);
   let repositoriesLoading = $state(false);
   let repositoriesLoadError = $state<string>();
+  let branches = $state<string[]>([]);
+  let branchesLoading = $state(false);
+  let branchesLoadError = $state<string>();
 
   const hostDriven = $derived(isHostDriven(values));
   const inferredTransport = $derived(inferCloneTransport(values.cloneUrl));
   const effectiveTransport = $derived(resolveRepositoryFormTransport(values));
   const sshKeyRequired = $derived(requiresSshKey(values));
   const showSshKeyPicker = $derived(sshKeyRequired || Boolean(values.sshKeyName));
-  const hasEnumerationError = $derived(Boolean(projectsLoadError || repositoriesLoadError));
+  const hasEnumerationError = $derived(Boolean(projectsLoadError || repositoriesLoadError || branchesLoadError));
   const enumerationErrorTitle = $derived(
-    repositoriesLoadError
-      ? 'Could not load repositories'
-      : projectsLoadError
-        ? 'Could not load projects'
-        : '',
+    branchesLoadError
+      ? 'Could not load branches'
+      : repositoriesLoadError
+        ? 'Could not load repositories'
+        : projectsLoadError
+          ? 'Could not load projects'
+          : '',
   );
   const enumerationErrorMessage = $derived(
-    repositoriesLoadError || projectsLoadError || '',
+    branchesLoadError || repositoriesLoadError || projectsLoadError || '',
   );
 
   const inputClasses =
@@ -153,6 +158,30 @@
     }
   }
 
+  async function loadBranches(connectionKey: string, project: string, repositoryId: string): Promise<void> {
+    branchesLoading = true;
+    branchesLoadError = undefined;
+    try {
+      const result = await client.connections.listBranches(connectionKey, project, repositoryId);
+      // Guard against stale responses when host, project, or repository changed during the request
+      if (connectionKey === values.repositoryHostConnectionKey && project === values.project && repositoryId === values.selectedRepositoryId) {
+        branches = result;
+        if (branches.length === 0) {
+          branchesLoadError = 'No branches found for this repository.';
+        }
+      }
+    } catch {
+      if (connectionKey === values.repositoryHostConnectionKey && project === values.project && repositoryId === values.selectedRepositoryId) {
+        branches = [];
+        branchesLoadError = 'Could not load branches. The repository may no longer exist or the connection may have insufficient permissions.';
+      }
+    } finally {
+      if (connectionKey === values.repositoryHostConnectionKey && project === values.project && repositoryId === values.selectedRepositoryId) {
+        branchesLoading = false;
+      }
+    }
+  }
+
   function environmentLabel(profile: { key: string; displayName: string; enabled: boolean }): string {
     return `${profile.displayName} — ${profile.key}${profile.enabled ? '' : ' (disabled)'}`;
   }
@@ -216,6 +245,16 @@
     values.key = repo.name;
     values.cloneUrl = values.transport === 'ssh' ? (repo.sshUrl ?? repo.remoteUrl) : repo.remoteUrl;
     values.defaultBranch = repo.defaultBranch || 'main';
+  });
+
+  // Load branches when a repository is selected (only in host-driven mode)
+  $effect(() => {
+    if (hostDriven && values.selectedRepositoryId && values.project) {
+      void loadBranches(values.repositoryHostConnectionKey, values.project, values.selectedRepositoryId);
+    } else {
+      branches = [];
+      branchesLoadError = undefined;
+    }
   });
 
   // Clear SSH key error when requirements are satisfied
@@ -366,23 +405,48 @@
       id="repository-defaultBranch"
       label="Default branch"
       hint={hostDriven
-        ? 'Prefilled from the selected repository. Change if needed.'
+        ? values.selectedRepositoryId
+          ? 'Enumerated from the host repository. Select the branch for new work.'
+          : 'Select a repository above to enumerate branches.'
         : 'The branch checked out when work starts.'}
       error={fieldError('defaultBranch')}
       required
     >
-      <input
-        id="repository-defaultBranch"
-        name="defaultBranch"
-        class={inputClasses}
-        bind:value={values.defaultBranch}
-        disabled={submitting}
-        required
-        autocomplete="off"
-        aria-invalid={fieldError('defaultBranch') ? 'true' : undefined}
-        aria-describedby={describedBy('defaultBranch', true)}
-        oninput={() => clearClientError('defaultBranch')}
-      />
+      {#if hostDriven && values.selectedRepositoryId && !branchesLoadError}
+        <select
+          id="repository-defaultBranch"
+          name="defaultBranch"
+          class={inputClasses}
+          bind:value={values.defaultBranch}
+          disabled={submitting || branchesLoading}
+          required
+          aria-invalid={fieldError('defaultBranch') ? 'true' : undefined}
+          aria-describedby={describedBy('defaultBranch', true)}
+        >
+          <option value="">
+            {branchesLoading ? 'Loading branches…' : branches.length === 0 && branchesLoadError ? 'Error loading branches' : branches.length === 0 ? 'No branches found' : 'Select a branch…'}
+          </option>
+          {#if values.defaultBranch && branches.length > 0 && !branches.includes(values.defaultBranch)}
+            <option value={values.defaultBranch}>{values.defaultBranch} (unavailable)</option>
+          {/if}
+          {#each branches as branch (branch)}
+            <option value={branch}>{branch}</option>
+          {/each}
+        </select>
+      {:else}
+        <input
+          id="repository-defaultBranch"
+          name="defaultBranch"
+          class={inputClasses}
+          bind:value={values.defaultBranch}
+          disabled={submitting}
+          required
+          autocomplete="off"
+          aria-invalid={fieldError('defaultBranch') ? 'true' : undefined}
+          aria-describedby={describedBy('defaultBranch', true)}
+          oninput={() => clearClientError('defaultBranch')}
+        />
+      {/if}
     </Field>
   </div>
 

@@ -66,6 +66,7 @@ function createApi(initialSecrets: SecretInfo[] = [secret]) {
       verifyConnection: vi.fn(async () => ({ success: true, errors: [] })),
       listProjects: vi.fn(async () => []),
       listRepositories: vi.fn(async () => []),
+      listBranches: vi.fn(async () => []),
       onboardRepository: vi.fn(async () => ({})),
     },
     repositories: staticResource([]),

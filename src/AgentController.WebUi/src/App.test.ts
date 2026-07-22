@@ -68,6 +68,7 @@ function createClient(
       }),
       listProjects: async () => [],
       listRepositories: async () => [],
+      listBranches: async () => [],
       onboardRepository: async () => ({} as RepositoryProfile),
     },
     runtimeEnvironments: resourceClient<RuntimeEnvironmentProfile>(async () => []),

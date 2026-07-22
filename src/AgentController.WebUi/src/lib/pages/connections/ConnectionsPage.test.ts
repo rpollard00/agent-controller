@@ -94,6 +94,7 @@ function createApi(
     ),
     listProjects: vi.fn(async (): Promise<ConnectionProject[]> => initialProjects),
     listRepositories: vi.fn(async (): Promise<HostRepository[]> => initialRepos),
+    listBranches: vi.fn(async (): Promise<string[]> => []),
     onboardRepository: vi.fn(async (_key: string, _project: string, _repoId: string): Promise<RepositoryProfile> => ({
       key: 'onboarded-repo',
       cloneUrl: 'https://dev.azure.com/example/project/_git/repo',
