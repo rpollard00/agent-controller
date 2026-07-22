@@ -45,7 +45,6 @@ internal sealed class ConfiguredProfileSource : IConfiguredProfileSource
             Transport = configured.Value.Transport,
             EnvironmentProfile = configured.Value.EnvironmentProfile,
             RuntimeProfile = configured.Value.RuntimeProfile,
-            AllowedPaths = configured.Value.AllowedPaths,
         };
     }
 

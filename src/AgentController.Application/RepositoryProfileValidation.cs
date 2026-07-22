@@ -10,7 +10,6 @@ internal static class RepositoryProfileValidation
     private const int MaximumAssociationKeyLength = 128;
     private const int MaximumCloneUrlLength = 2048;
     private const int MaximumBranchLength = 256;
-    private const int MaximumAllowedPathLength = 2048;
     private const int MaximumProjectLength = 256;
 
     public static async Task<RepositoryProfileValidationResult> ValidateAndNormalizeAsync(
@@ -36,7 +35,6 @@ internal static class RepositoryProfileValidation
             errors.Add("transport", "The clone transport is not supported.");
         }
 
-        var allowedPaths = NormalizeAllowedPaths(profile.AllowedPaths, errors);
         var repositoryHostConnectionKey = NormalizeOptionalKey(profile.RepositoryHostConnectionKey);
         var project = NormalizeProject(profile.Project);
         var remoteIdentity = NormalizeRemoteIdentity(profile.RemoteIdentity);
@@ -100,7 +98,6 @@ internal static class RepositoryProfileValidation
             RemoteIdentity = remoteIdentity,
             RuntimeEnvironmentKey = runtimeEnvironmentKey,
             SshKeyReference = sshKeyReference,
-            AllowedPaths = allowedPaths,
         };
 
         return new RepositoryProfileValidationResult(normalized, errors.ToDictionary());
@@ -428,87 +425,7 @@ internal static class RepositoryProfileValidation
         }
     }
 
-    private static List<string> NormalizeAllowedPaths(
-        IReadOnlyList<string>? paths,
-        ValidationErrors errors
-    )
-    {
-        if (paths is null || paths.Count == 0)
-        {
-            return [];
-        }
 
-        var normalizedPaths = new List<string>(paths.Count);
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-
-        foreach (var originalPath in paths)
-        {
-            var normalized = NormalizeAllowedPath(originalPath, errors);
-            if (normalized is not null && seen.Add(normalized))
-            {
-                normalizedPaths.Add(normalized);
-            }
-        }
-
-        return normalizedPaths;
-    }
-
-    private static string? NormalizeAllowedPath(string? value, ValidationErrors errors)
-    {
-        var path = value?.Trim().Replace('\\', '/') ?? string.Empty;
-        if (path.Length == 0)
-        {
-            errors.Add("allowedPaths", "Allowed paths cannot be empty.");
-            return null;
-        }
-
-        if (path.Length > MaximumAllowedPathLength)
-        {
-            errors.Add(
-                "allowedPaths",
-                $"Allowed paths must be {MaximumAllowedPathLength} characters or fewer."
-            );
-            return null;
-        }
-
-        if (
-            path.StartsWith('/')
-            || path.StartsWith('~')
-            || (path.Length >= 2 && char.IsAsciiLetter(path[0]) && path[1] == ':')
-        )
-        {
-            errors.Add("allowedPaths", $"Allowed path '{value}' must be repository-relative.");
-            return null;
-        }
-
-        var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Any(part => part == ".."))
-        {
-            errors.Add(
-                "allowedPaths",
-                $"Allowed path '{value}' cannot traverse outside the repository."
-            );
-            return null;
-        }
-
-        if (parts.Any(part => part.Any(char.IsControl) || part.Contains(':')))
-        {
-            errors.Add("allowedPaths", $"Allowed path '{value}' contains invalid characters.");
-            return null;
-        }
-
-        var normalizedParts = parts.Where(part => part != ".").ToArray();
-        if (normalizedParts.Length == 0)
-        {
-            errors.Add(
-                "allowedPaths",
-                "Allowed paths must identify a path below the repository root."
-            );
-            return null;
-        }
-
-        return string.Join('/', normalizedParts);
-    }
 
     private enum CloneLocationKind
     {

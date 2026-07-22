@@ -205,13 +205,11 @@ public class DomainSmokeTests
                 Transport = CloneTransport.HttpsPat,
                 EnvironmentProfile = "local-default",
                 RuntimeProfile = "pi-materia-default",
-                AllowedPaths = new List<string> { "src/", "tests/" },
             },
         };
 
         Assert.Equal("example-service", spec.RepoKey);
         Assert.NotNull(spec.Profile);
-        Assert.Equal(2, spec.Profile.AllowedPaths.Count);
     }
 
     [Fact]
@@ -231,21 +229,6 @@ public class DomainSmokeTests
         Assert.Equal("main", checkout.Branch);
         Assert.NotNull(checkout.CommitSha);
         Assert.True(checkout.ClonedAt >= beforeClone);
-    }
-
-    [Fact]
-    public void RepositoryProfile_AllowedPathsCanBeEmpty()
-    {
-        var profile = new RepositoryProfile
-        {
-            Key = "no-restrictions",
-            CloneUrl = "https://example.com/repo.git",
-            Transport = CloneTransport.HttpsPat,
-            EnvironmentProfile = "local",
-            RuntimeProfile = "pi",
-        };
-
-        Assert.Empty(profile.AllowedPaths);
     }
 
     [Fact]

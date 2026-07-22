@@ -155,7 +155,6 @@ internal sealed class EfRepositoryStore : IRepositoryStore
         entity.SshKeySecretVersion = profile.SshKeyReference is { IsSpecified: true }
             ? profile.SshKeyReference.Version
             : null;
-        entity.AllowedPathsJson = SerializeList(profile.AllowedPaths);
     }
 
     private static RepositoryProfile MapToProfile(RepositoryEntity entity)
@@ -178,42 +177,7 @@ internal sealed class EfRepositoryStore : IRepositoryStore
                 {
                     Version = entity.SshKeySecretVersion,
                 },
-            AllowedPaths = DeserializeList(entity.AllowedPathsJson),
         };
-    }
-
-    private static string? SerializeList(IReadOnlyList<string>? list)
-    {
-        if (list is not { Count: > 0 })
-        {
-            return null;
-        }
-
-        try
-        {
-            return JsonSerializer.Serialize(list, JsonOptions);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static List<string> DeserializeList(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            return [];
-        }
-
-        try
-        {
-            return JsonSerializer.Deserialize<List<string>>(json, JsonOptions) ?? [];
-        }
-        catch
-        {
-            return [];
-        }
     }
 
     private static bool IsUniqueConstraintViolation(DbUpdateException exception)

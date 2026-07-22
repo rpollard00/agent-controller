@@ -179,8 +179,7 @@ public class ManagedOnboardingProfileTests
               "defaultBranch": "main",
               "transport": "httpsPat",
               "environmentProfile": "legacy-environment",
-              "runtimeProfile": "legacy-runtime",
-              "allowedPaths": ["src/", "tests/"]
+              "runtimeProfile": "legacy-runtime"
             }
             """;
 

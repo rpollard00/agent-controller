@@ -120,11 +120,7 @@ public sealed record RepositoryProfile
     /// </summary>
     public SecretReference? SshKeyReference { get; init; }
 
-    /// <summary>
-    /// Allowed paths within the repository that the agent may modify.
-    /// An empty list means no path restrictions.
-    /// </summary>
-    public IReadOnlyList<string> AllowedPaths { get; init; } = [];
+
 }
 
 /// <summary>
