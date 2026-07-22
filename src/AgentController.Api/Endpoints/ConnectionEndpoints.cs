@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentController.Application;
 using AgentController.Application.Abstractions;
 using AgentController.Application.Commands;
 using AgentController.Application.Queries;
@@ -277,6 +278,37 @@ public static class ConnectionEndpoints
                 );
                 var result = await handler.HandleAsync(command, cancellationToken);
                 return MapOnboardResult(result);
+            }
+        );
+
+        // GET /api/webui/connections/{key}/repositories/{repositoryId}/branches?project=
+        group.MapGet(
+            "/{key}/repositories/{repositoryId}/branches",
+            async (
+                string key,
+                string repositoryId,
+                string? project,
+                IConnectionStore connectionStore,
+                IQueryHandler<ListHostRepositoryBranchesQuery, IReadOnlyList<string>> handler,
+                CancellationToken cancellationToken
+            ) =>
+            {
+                if (string.IsNullOrWhiteSpace(project))
+                {
+                    return Results.BadRequest("Project parameter is required.");
+                }
+
+                var profile = await connectionStore.GetByKeyAsync(key, cancellationToken);
+                if (profile is null)
+                {
+                    return NotFoundProblem($"Connection '{key}' not found.");
+                }
+
+                var branches = await handler.ExecuteAsync(
+                    new ListHostRepositoryBranchesQuery(key, project!, repositoryId),
+                    cancellationToken
+                );
+                return Results.Ok(branches);
             }
         );
 

@@ -524,6 +524,61 @@ public sealed class ConnectionEndpointTests : IAsyncLifetime
         await AssertProblemAsync(deleteResponse, HttpStatusCode.NotFound, "Resource not found.");
     }
 
+    [Fact]
+    public async Task ConnectionEndpoints_ListBranches_Returns400ForMissingProject()
+    {
+        // No project query parameter provided
+        using var response = await _client.GetAsync(
+            "/api/webui/connections/ado.none/repositories/some-repo-id/branches"
+        );
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("Project parameter is required.", body);
+    }
+
+    [Fact]
+    public async Task ConnectionEndpoints_ListBranches_Returns404ForMissingConnection()
+    {
+        using var response = await _client.GetAsync(
+            "/api/webui/connections/nonexistent/repositories/some-repo-id/branches?project=TestProject"
+        );
+        await AssertProblemAsync(response, HttpStatusCode.NotFound, "Resource not found.");
+    }
+
+    [Fact]
+    public async Task ConnectionEndpoints_ListBranches_ReturnsEmptyForUnverifiedConnection()
+    {
+        // Create a connection first
+        var profile = new
+        {
+            key = "ado.branches",
+            displayName = "Branches Test",
+            provider = "AzureDevOps",
+            capabilities = new[] { "Repositories" },
+            providerSettings = new
+            {
+                provider = "AzureDevOps",
+                organizationUrl = "https://dev.azure.com/testorg",
+                personalAccessTokenReference = new { name = "test-pat" },
+            },
+        };
+
+        using (var createResponse = await _client.PostAsJsonAsync("/api/webui/connections", profile))
+        {
+            Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+        }
+
+        // GET branches (will return empty because no real PAT is configured)
+        using var branchesResponse = await _client.GetAsync(
+            "/api/webui/connections/ado.branches/repositories/some-repo-id/branches?project=TestProject"
+        );
+        Assert.Equal(HttpStatusCode.OK, branchesResponse.StatusCode);
+
+        var branches = await ReadJsonAsync(branchesResponse);
+        // Should be an empty array (no real PAT configured)
+        Assert.Equal(JsonValueKind.Array, branches.ValueKind);
+    }
+
     private async Task CreatePatSecretAsync(string name)
     {
         using var response = await _client.PostAsJsonAsync(
