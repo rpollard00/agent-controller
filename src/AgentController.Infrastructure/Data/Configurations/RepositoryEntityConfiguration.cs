@@ -39,6 +39,8 @@ internal sealed class RepositoryEntityConfiguration : IEntityTypeConfiguration<R
 
         builder.Property(x => x.SshKeySecretVersion);
 
+        builder.Property(x => x.SshKeyInheritEnvironment).IsRequired();
+
         // Timestamps
         builder.Property(x => x.CreatedAt).IsRequired();
 

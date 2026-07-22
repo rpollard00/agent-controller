@@ -22,6 +22,26 @@ public sealed class RepositoryCloneTransportResolverTests
         Assert.Equal("sshKeyReference", issue.Field);
     }
 
+    [Theory]
+    [InlineData("git@example.test:owner/repo.git")]
+    [InlineData("ssh://git@example.test/owner/repo.git")]
+    public void Resolve_SshUrlWithInheritEnvironment_ReturnsReadyWithoutKey(string cloneUrl)
+    {
+        var resolution = RepositoryCloneTransportResolver.Resolve(
+            new RepositoryProfile
+            {
+                CloneUrl = cloneUrl,
+                SshKeyInheritEnvironment = true,
+            }
+        );
+
+        Assert.Equal(CloneTransport.Ssh, resolution.Transport);
+        Assert.Equal(RepositoryCloneCredentialSource.None, resolution.CredentialSource);
+        Assert.Null(resolution.CredentialReference);
+        Assert.True(resolution.IsReady);
+        Assert.Empty(resolution.BlockingIssues);
+    }
+
     [Fact]
     public void Resolve_SshUrlWithPinnedKey_ReturnsReadyCredentialReference()
     {

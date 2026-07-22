@@ -44,6 +44,12 @@ internal sealed class RepositoryEntity
     /// <summary>Optional pinned version of the SSH-key secret.</summary>
     public int? SshKeySecretVersion { get; set; }
 
+    /// <summary>
+    /// When <c>true</c>, the SSH key is provided by the runner environment
+    /// rather than by a managed secret reference.
+    /// </summary>
+    public bool SshKeyInheritEnvironment { get; set; }
+
     /// <summary>When the record was first persisted.</summary>
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 

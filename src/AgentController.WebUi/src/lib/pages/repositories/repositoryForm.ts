@@ -28,7 +28,7 @@ export function createRepositoryFormValues(profile?: RepositoryProfile): Reposit
     runtimeEnvironmentKey: profile?.runtimeEnvironmentKey ?? '',
     sshKeyName: profile?.sshKeyReference?.name ?? '',
     sshKeyVersion: profile?.sshKeyReference?.version ?? null,
-    sshKeyInheritEnvironment: false,
+    sshKeyInheritEnvironment: profile?.sshKeyInheritEnvironment ?? false,
   };
 }
 
@@ -106,6 +106,7 @@ export function toRepositoryProfile(
     remoteIdentity: original?.remoteIdentity ?? null,
     runtimeEnvironmentKey: nullableKey(values.runtimeEnvironmentKey),
     sshKeyReference: toSecretReference(values.sshKeyName, values.sshKeyVersion),
+    sshKeyInheritEnvironment: values.sshKeyInheritEnvironment,
     environmentProfile: original?.environmentProfile ?? '',
     runtimeProfile: original?.runtimeProfile ?? '',
   };

@@ -17,6 +17,7 @@ export interface RepositoryProfile {
   remoteIdentity: string | null;
   runtimeEnvironmentKey: string | null;
   sshKeyReference: SecretReference | null;
+  sshKeyInheritEnvironment: boolean;
   project: string | null;
 }
 

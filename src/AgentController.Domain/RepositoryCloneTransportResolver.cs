@@ -215,6 +215,19 @@ public static class RepositoryCloneTransportResolver
         List<RepositoryCloneTransportIssue> issues
     )
     {
+        // When the profile opts into environment-inherited SSH, no managed key
+        // reference is required — the runner's ssh-agent or default key files
+        // provide authentication out of band.
+        if (repository.SshKeyInheritEnvironment)
+        {
+            return CreateResolution(
+                CloneTransport.Ssh,
+                RepositoryCloneCredentialSource.None,
+                null,
+                issues
+            );
+        }
+
         var reference = repository.SshKeyReference;
         if (reference is null || !reference.IsSpecified)
         {

@@ -155,6 +155,7 @@ internal sealed class EfRepositoryStore : IRepositoryStore
         entity.SshKeySecretVersion = profile.SshKeyReference is { IsSpecified: true }
             ? profile.SshKeyReference.Version
             : null;
+        entity.SshKeyInheritEnvironment = profile.SshKeyInheritEnvironment;
     }
 
     private static RepositoryProfile MapToProfile(RepositoryEntity entity)
@@ -177,6 +178,7 @@ internal sealed class EfRepositoryStore : IRepositoryStore
                 {
                     Version = entity.SshKeySecretVersion,
                 },
+            SshKeyInheritEnvironment = entity.SshKeyInheritEnvironment,
         };
     }
 

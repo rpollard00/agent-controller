@@ -120,7 +120,12 @@ public sealed record RepositoryProfile
     /// </summary>
     public SecretReference? SshKeyReference { get; init; }
 
-
+    /// <summary>
+    /// When <c>true</c>, the SSH key is provided by the runner environment
+    /// (e.g. ssh-agent or default key locations) rather than by a managed
+    /// secret reference. Ignored unless <see cref="Transport"/> is SSH.
+    /// </summary>
+    public bool SshKeyInheritEnvironment { get; init; }
 }
 
 /// <summary>
