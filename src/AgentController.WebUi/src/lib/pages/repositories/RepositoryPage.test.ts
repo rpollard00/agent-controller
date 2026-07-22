@@ -209,7 +209,7 @@ function staticResource<T>(profiles: T[]): ResourceClient<T> {
 async function completeRequiredCreateFields(
   cloneUrl = 'https://example.test/new.repo.git',
 ): Promise<void> {
-  await fireEvent.input(await screen.findByLabelText(/Repository key/), {
+  await fireEvent.input(await screen.findByLabelText(/Repository Name/), {
     target: { value: 'new.repo' },
   });
   await fireEvent.input(screen.getByLabelText(/Clone URL or local path/), {
@@ -239,7 +239,7 @@ describe('repository onboarding screens', () => {
     await fireEvent.change(await screen.findByLabelText('Secret version'), {
       target: { value: '1' },
     });
-    await fireEvent.change(screen.getByLabelText('Repository host connection'), {
+    await fireEvent.change(screen.getByLabelText('Repository Host'), {
       target: { value: 'ado-main' },
     });
     // Wait for projects to load then select one
@@ -280,7 +280,7 @@ describe('repository onboarding screens', () => {
     );
 
     expect(await screen.findByText('Complete the required fields')).toBeVisible();
-    expect(screen.getByText('A repository key is required.')).toBeVisible();
+    expect(screen.getByText('A Repository Name is required.')).toBeVisible();
     expect(screen.getByText('A clone URL or local path is required.')).toBeVisible();
     expect(api.repositories.create).not.toHaveBeenCalled();
   });
@@ -345,7 +345,7 @@ describe('repository onboarding screens', () => {
     const api = createApi();
     render(App, { client: api.client });
 
-    const keyInput = await screen.findByLabelText(/Repository key/);
+    const keyInput = await screen.findByLabelText(/Repository Name/);
     expect(keyInput).toHaveAttribute('readonly');
     expect(screen.getByText(/Keys are immutable/)).toBeVisible();
 

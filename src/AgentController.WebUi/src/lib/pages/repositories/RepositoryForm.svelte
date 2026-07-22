@@ -156,7 +156,7 @@
   <div class="grid gap-6 lg:grid-cols-2">
     <Field
       id="repository-key"
-      label="Repository key"
+      label="Repository Name"
       hint={mode === 'edit'
         ? 'Keys are immutable. Create a new repository profile to use a different key.'
         : 'Use a stable key. It cannot be changed after the repository is created.'}
@@ -309,15 +309,10 @@
 
   <fieldset class="space-y-5 rounded-xl border border-slate-800 p-4 sm:p-5">
     <legend class="px-2 text-sm font-semibold text-white">Managed environment associations</legend>
-    <p class="text-sm leading-6 text-slate-400">
-      Associations are optional. They determine which board configuration, repository host, and runtime are used for
-      this repository.
-    </p>
-
     <div class="grid gap-6 lg:grid-cols-2">
       <Field
         id="repository-repositoryHostConnectionKey"
-        label="Repository host connection"
+        label="Repository Host"
         hint="Choose the repository host this repository is sourced from. Decoupled from work source."
         error={fieldError('repositoryHostConnectionKey')}
       >

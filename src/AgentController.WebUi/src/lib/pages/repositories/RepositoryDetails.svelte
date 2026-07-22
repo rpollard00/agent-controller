@@ -59,7 +59,7 @@
 
   <dl class="grid gap-x-8 gap-y-6 sm:grid-cols-2">
     <div>
-      <dt class="text-sm font-medium text-slate-400">Repository key</dt>
+      <dt class="text-sm font-medium text-slate-400">Repository Name</dt>
       <dd class="mt-1 break-all text-slate-100">{repository.key}</dd>
     </div>
     <div>
@@ -75,7 +75,7 @@
       <dd class="mt-1 text-slate-100">{transportLabel(repository.transport)}</dd>
     </div>
     <div>
-      <dt class="text-sm font-medium text-slate-400">Repository host connection</dt>
+      <dt class="text-sm font-medium text-slate-400">Repository Host</dt>
       <dd class="mt-1 text-slate-100">{repository.repositoryHostConnectionKey ?? 'None'}</dd>
     </div>
     <div>

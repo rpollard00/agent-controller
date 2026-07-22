@@ -362,7 +362,7 @@
   {:else if route?.view === 'edit' && repository}
     <Card
       title="Repository configuration"
-      description="The repository key is fixed after onboarding."
+      description="The Repository Name is fixed after onboarding."
     >
       {#if mutationError}
         <div class="mb-6">

@@ -31,7 +31,7 @@ export function createRepositoryFormValues(profile?: RepositoryProfile): Reposit
 export function validateRepositoryForm(values: RepositoryFormValues): RepositoryFormErrors {
   const errors: RepositoryFormErrors = {};
 
-  addRequiredError(errors, 'key', values.key, 'A repository key is required.');
+  addRequiredError(errors, 'key', values.key, 'A Repository Name is required.');
   addRequiredError(errors, 'cloneUrl', values.cloneUrl, 'A clone URL or local path is required.');
   addRequiredError(errors, 'defaultBranch', values.defaultBranch, 'A default branch is required.');
 
