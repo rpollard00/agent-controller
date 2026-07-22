@@ -257,10 +257,19 @@
     }
   });
 
+  // Clear SSH key reference when inherit from environment is checked
+  $effect(() => {
+    if (values.sshKeyInheritEnvironment && values.sshKeyName) {
+      values.sshKeyName = '';
+      values.sshKeyVersion = null;
+      clearClientError('sshKeyReference');
+    }
+  });
+
   // Clear SSH key error when requirements are satisfied
   $effect(() => {
     const hasSshKey = Boolean(values.sshKeyName);
-    const keyIsRequired = sshKeyRequired;
+    const keyIsRequired = sshKeyRequired && !values.sshKeyInheritEnvironment;
     if ((hasSshKey || !keyIsRequired) && clientErrors.sshKeyReference) {
       clearClientError('sshKeyReference');
     }
@@ -531,33 +540,61 @@
   </div>
 
   {#if showSshKeyPicker}
-    <div class="space-y-2 rounded-xl border border-slate-800 p-4 sm:p-5">
-      <label class="block text-sm font-medium text-slate-200" for="repository-sshKeyReference-input">
-        SSH key secret
-        {#if sshKeyRequired}<span class="text-rose-300" aria-hidden="true"> *</span>{/if}
-        {#if sshKeyRequired}<span class="sr-only"> (required)</span>{/if}
-      </label>
-      <SecretPicker
-        id="repository-sshKeyReference"
-        client={client.secrets}
-        secretType="ssh-key"
-        bind:secretName={values.sshKeyName}
-        bind:secretVersion={values.sshKeyVersion}
-        disabled={submitting}
-        error={fieldError('sshKeyReference')}
-      />
-      <p class="text-sm text-slate-400">
-        Use an externally created private key. Choose Latest to follow rotations or pin a specific version.
-      </p>
-      {#if values.sshKeyName}
-        <button
-          type="button"
-          class="text-sm font-semibold text-cyan-300 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+    <div class="space-y-4 rounded-xl border border-slate-800 p-4 sm:p-5">
+      <h3 class="text-sm font-semibold text-white">SSH authentication</h3>
+
+      <!-- Inherit from environment checkbox -->
+      <label class="flex cursor-pointer items-start gap-3">
+        <input
+          type="checkbox"
+          class="mt-0.5 h-4 w-4 rounded border-slate-700 bg-slate-950 text-cyan-400 focus:ring-cyan-400"
+          bind:checked={values.sshKeyInheritEnvironment}
           disabled={submitting}
-          onclick={clearSshKeyReference}
-        >
-          Remove SSH key reference
-        </button>
+        />
+        <div>
+          <span class="text-sm font-medium text-slate-200">Inherit from environment</span>
+          <p class="text-xs text-slate-400">
+            Use the SSH key configured in the runner environment (e.g. ssh-agent or default key paths). No key reference is saved with this profile.
+          </p>
+        </div>
+      </label>
+
+      {#if values.sshKeyInheritEnvironment}
+        <Alert
+          variant="warning"
+          title="Environment SSH key required"
+          message="No SSH key reference is stored with this profile. The SSH key must be set up in the runner environment (ssh-agent, ~/.ssh/id_ed25519, or similar) for cloning to work. If no key is available, clone will fail."
+        />
+      {:else}
+        <div class="space-y-2">
+          <label class="block text-sm font-medium text-slate-200" for="repository-sshKeyReference-input">
+            SSH key secret
+            {#if sshKeyRequired}<span class="text-rose-300" aria-hidden="true"> *</span>{/if}
+            {#if sshKeyRequired}<span class="sr-only"> (required)</span>{/if}
+          </label>
+          <SecretPicker
+            id="repository-sshKeyReference"
+            client={client.secrets}
+            secretType="ssh-key"
+            bind:secretName={values.sshKeyName}
+            bind:secretVersion={values.sshKeyVersion}
+            disabled={submitting}
+            error={fieldError('sshKeyReference')}
+          />
+          <p class="text-sm text-slate-400">
+            Use an externally created private key. Choose Latest to follow rotations or pin a specific version.
+          </p>
+          {#if values.sshKeyName}
+            <button
+              type="button"
+              class="text-sm font-semibold text-cyan-300 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={submitting}
+              onclick={clearSshKeyReference}
+            >
+              Remove SSH key reference
+            </button>
+          {/if}
+        </div>
       {/if}
     </div>
   {/if}

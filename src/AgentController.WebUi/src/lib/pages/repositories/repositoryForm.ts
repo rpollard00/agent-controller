@@ -11,6 +11,7 @@ export interface RepositoryFormValues {
   runtimeEnvironmentKey: string;
   sshKeyName: string;
   sshKeyVersion: number | null;
+  sshKeyInheritEnvironment: boolean;
 }
 
 export type RepositoryFormErrors = Record<string, string[]>;
@@ -27,6 +28,7 @@ export function createRepositoryFormValues(profile?: RepositoryProfile): Reposit
     runtimeEnvironmentKey: profile?.runtimeEnvironmentKey ?? '',
     sshKeyName: profile?.sshKeyReference?.name ?? '',
     sshKeyVersion: profile?.sshKeyReference?.version ?? null,
+    sshKeyInheritEnvironment: false,
   };
 }
 
@@ -37,7 +39,7 @@ export function validateRepositoryForm(values: RepositoryFormValues): Repository
   addRequiredError(errors, 'cloneUrl', values.cloneUrl, 'A clone URL or local path is required.');
   addRequiredError(errors, 'defaultBranch', values.defaultBranch, 'A default branch is required.');
 
-  if (requiresSshKey(values) && !values.sshKeyName.trim()) {
+  if (!values.sshKeyInheritEnvironment && requiresSshKey(values) && !values.sshKeyName.trim()) {
     errors.sshKeyReference = ['Select an SSH key secret for SSH clone transport.'];
   }
 
