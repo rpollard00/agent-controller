@@ -530,6 +530,12 @@ public class AzureDevOpsBoardStateStartupValidatorTests
                     new Dictionary<string, IReadOnlyList<string>>();
             return Task.FromResult(grouped);
         }
+
+        public Task<IReadOnlyList<string>> ListBranchesAsync(
+            string project,
+            string repositoryId,
+            CancellationToken cancellationToken
+        ) => throw new NotImplementedException();
     }
 
     /// <summary>

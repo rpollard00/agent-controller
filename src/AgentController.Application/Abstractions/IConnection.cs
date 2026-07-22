@@ -83,4 +83,29 @@ public interface IConnection
         string project,
         CancellationToken cancellationToken
     );
+
+    /// <summary>
+    /// Enumerate branches available within a specific repository.
+    /// </summary>
+    /// <param name="profile">
+    /// The connection profile to enumerate branches from.
+    /// </param>
+    /// <param name="project">
+    /// Provider-specific project identifier to scope the enumeration.
+    /// </param>
+    /// <param name="repositoryId">
+    /// Provider-specific repository identifier for which to list branches.
+    /// </param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>
+    /// A list of bare branch names (e.g. "main", "develop") with provider-specific
+    /// prefix (e.g. "refs/heads/") stripped.
+    /// Implementations must return an empty list rather than throwing on enumeration failures.
+    /// </returns>
+    Task<IReadOnlyList<string>> ListBranchesAsync(
+        ConnectionProfile profile,
+        string project,
+        string repositoryId,
+        CancellationToken cancellationToken
+    );
 }

@@ -117,6 +117,18 @@ public interface IAzureDevOpsBoardsClient
     /// A dictionary mapping work item type name → sorted list of bare state names.
     /// Returns an empty dictionary on failure rather than throwing.
     /// </returns>
+    /// <summary>
+    /// Enumerate branches (Git refs) for a repository.
+    /// Calls GET {project}/_apis/git/repositories/{repositoryId}/refs?filter=heads/&amp;api-version=7.1
+    /// and returns bare branch names with the "refs/heads/" prefix stripped.
+    /// Returns an empty list on failure rather than throwing.
+    /// </summary>
+    Task<IReadOnlyList<string>> ListBranchesAsync(
+        string project,
+        string repositoryId,
+        CancellationToken cancellationToken
+    );
+
     Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> GetValidStatesAsync(
         string project,
         CancellationToken cancellationToken

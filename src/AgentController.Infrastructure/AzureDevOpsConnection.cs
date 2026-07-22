@@ -334,6 +334,76 @@ internal sealed partial class AzureDevOpsConnection(
         }
     }
 
+    public async Task<IReadOnlyList<string>> ListBranchesAsync(
+        ConnectionProfile profile,
+        string project,
+        string repositoryId,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            var settings = profile.ProviderSettings as AzureDevOpsConnectionSettings;
+            if (settings is null || string.IsNullOrWhiteSpace(settings.OrganizationUrl))
+            {
+                return Array.Empty<string>();
+            }
+
+            if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(repositoryId))
+            {
+                return Array.Empty<string>();
+            }
+
+            var patReference = settings.PersonalAccessTokenReference;
+            if (!patReference.IsSpecified)
+            {
+                return Array.Empty<string>();
+            }
+
+            // Resolve PAT.
+            string? resolvedPat;
+            try
+            {
+                resolvedPat = await patResolver.ResolveFromSecretReferenceAsync(
+                    patReference,
+                    cancellationToken
+                );
+            }
+            catch
+            {
+                return Array.Empty<string>();
+            }
+
+            if (string.IsNullOrWhiteSpace(resolvedPat))
+            {
+                return Array.Empty<string>();
+            }
+
+            // Build client via factory and list branches.
+            var boardsClient = clientFactory.Create(
+                settings.OrganizationUrl,
+                project,
+                resolvedPat
+            );
+            using var disposableClient = boardsClient as IDisposable;
+
+            return await boardsClient.ListBranchesAsync(
+                project,
+                repositoryId,
+                cancellationToken
+            );
+        }
+        catch (OperationCanceledException)
+        {
+            return Array.Empty<string>();
+        }
+        catch (Exception ex)
+        {
+            Log.BranchesListException(logger, project, repositoryId, ex);
+            return Array.Empty<string>();
+        }
+    }
+
     /// <summary>
     /// Strip the "refs/heads/" prefix from a branch name if present.
     /// E.g. "refs/heads/main" → "main".
@@ -376,6 +446,14 @@ internal sealed partial class AzureDevOpsConnection(
         )]
         public static partial void RepositoriesListException(
             ILogger logger, string project, Exception ex
+        );
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Failed to list branches for repository '{RepositoryId}' in project '{Project}'."
+        )]
+        public static partial void BranchesListException(
+            ILogger logger, string project, string repositoryId, Exception ex
         );
     }
 }

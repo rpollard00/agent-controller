@@ -27,6 +27,9 @@ internal sealed class ConnectionResolver(
     private readonly ProviderKeyedResolver<IConnection, IReadOnlyList<HostRepository>>
         _repositoriesResolver = new(scopeFactory, connectionTypes);
 
+    private readonly ProviderKeyedResolver<IConnection, IReadOnlyList<string>>
+        _branchesResolver = new(scopeFactory, connectionTypes);
+
     public Task<ConnectionConnectivityResult> VerifyConnectivityAsync(
         ConnectionProfile profile,
         CancellationToken cancellationToken
@@ -67,6 +70,21 @@ internal sealed class ConnectionResolver(
             profile.Provider,
             Array.Empty<HostRepository>(),
             (connection, ct) => connection.ListRepositoriesAsync(profile, project, ct),
+            cancellationToken
+        );
+    }
+
+    public Task<IReadOnlyList<string>> ListBranchesAsync(
+        ConnectionProfile profile,
+        string project,
+        string repositoryId,
+        CancellationToken cancellationToken
+    )
+    {
+        return _branchesResolver.ResolveAndExecuteAsync(
+            profile.Provider,
+            Array.Empty<string>(),
+            (connection, ct) => connection.ListBranchesAsync(profile, project, repositoryId, ct),
             cancellationToken
         );
     }

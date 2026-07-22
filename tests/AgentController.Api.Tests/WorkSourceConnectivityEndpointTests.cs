@@ -401,5 +401,12 @@ public sealed class WorkSourceConnectivityEndpointTests : IAsyncLifetime
             string project,
             CancellationToken ct
         ) => Task.FromResult<IReadOnlyList<HostRepository>>(Array.Empty<HostRepository>());
+
+        public Task<IReadOnlyList<string>> ListBranchesAsync(
+            ConnectionProfile profile,
+            string project,
+            string repositoryId,
+            CancellationToken ct
+        ) => Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
     }
 }

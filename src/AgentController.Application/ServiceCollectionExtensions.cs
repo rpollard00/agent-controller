@@ -170,6 +170,13 @@ public static class ServiceCollectionExtensions
             >,
             ListConnectionProjectsQueryHandler
         >();
+        services.AddScoped<
+            IQueryHandler<
+                ListHostRepositoryBranchesQuery,
+                IReadOnlyList<string>
+            >,
+            ListHostRepositoryBranchesQueryHandler
+        >();
 
         // Secrets management command handlers
         services.AddScoped<

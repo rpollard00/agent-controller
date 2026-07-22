@@ -900,6 +900,11 @@ public class AzureDevOpsBoardsWorkSourceTests
         ) => Task.FromResult<IReadOnlyDictionary<string, IReadOnlyList<string>>>(
             new Dictionary<string, IReadOnlyList<string>>());
 
+        public Task<IReadOnlyList<string>> ListBranchesAsync(
+            string project,
+            string repositoryId,
+            CancellationToken ct
+        ) => Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
     }
 
     /// <summary>

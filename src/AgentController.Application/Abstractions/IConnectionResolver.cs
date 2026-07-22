@@ -53,4 +53,22 @@ public interface IConnectionResolver
         string project,
         CancellationToken cancellationToken
     );
+
+    /// <summary>
+    /// List branches within a repository using the connection registered for <paramref name="profile"/>.Provider.
+    /// </summary>
+    /// <param name="profile">The connection profile.</param>
+    /// <param name="project">Provider-specific project identifier.</param>
+    /// <param name="repositoryId">Provider-specific repository identifier.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>
+    /// A list of bare branch names. When the provider string has no
+    /// registered connection, returns an empty list with a logged warning rather than throwing.
+    /// </returns>
+    Task<IReadOnlyList<string>> ListBranchesAsync(
+        ConnectionProfile profile,
+        string project,
+        string repositoryId,
+        CancellationToken cancellationToken
+    );
 }

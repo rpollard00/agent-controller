@@ -117,5 +117,14 @@ public sealed class ConnectionResolverRegistrationOrderTests
         {
             return Task.FromResult<IReadOnlyList<HostRepository>>(Array.Empty<HostRepository>());
         }
+
+        public Task<IReadOnlyList<string>> ListBranchesAsync(
+            ConnectionProfile profile,
+            string project,
+            string repositoryId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
+        }
     }
 }

@@ -935,6 +935,99 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         return repositories;
     }
 
+    public async Task<IReadOnlyList<string>> ListBranchesAsync(
+        string project,
+        string repositoryId,
+        CancellationToken cancellationToken
+    )
+    {
+        if (string.IsNullOrWhiteSpace(project))
+        {
+            return Array.Empty<string>();
+        }
+
+        if (string.IsNullOrWhiteSpace(repositoryId))
+        {
+            return Array.Empty<string>();
+        }
+
+        try
+        {
+            var response = await _http.GetAsync(
+                $"{Uri.EscapeDataString(project)}/_apis/git/repositories/{Uri.EscapeDataString(repositoryId)}/refs?filter=heads/&api-version=7.1",
+                cancellationToken
+            );
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Log.BranchesListFailed(
+                    _logger,
+                    project,
+                    repositoryId,
+                    (int)response.StatusCode,
+                    response.ReasonPhrase ?? "(no reason phrase)"
+                );
+                return Array.Empty<string>();
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            using var doc = JsonDocument.Parse(json);
+
+            var branches = new List<string>();
+
+            if (
+                doc.RootElement.TryGetProperty("value", out var valueArray)
+                && valueArray.ValueKind == JsonValueKind.Array
+            )
+            {
+                foreach (var refItem in valueArray.EnumerateArray())
+                {
+                    if (
+                        refItem.TryGetProperty("name", out var nameEl)
+                        && nameEl.ValueKind == JsonValueKind.String
+                    )
+                    {
+                        var name = nameEl.GetString();
+                        if (!string.IsNullOrWhiteSpace(name))
+                        {
+                            // Strip "refs/heads/" prefix
+                            const string prefix = "refs/heads/";
+                            if (name.StartsWith(prefix, StringComparison.Ordinal))
+                            {
+                                branches.Add(name[prefix.Length..]);
+                            }
+                            else
+                            {
+                                branches.Add(name);
+                            }
+                        }
+                    }
+                }
+            }
+
+            return branches;
+        }
+        catch (OperationCanceledException)
+        {
+            return Array.Empty<string>();
+        }
+        catch (HttpRequestException ex)
+        {
+            Log.BranchesListException(_logger, project, repositoryId, ex);
+            return Array.Empty<string>();
+        }
+        catch (JsonException ex)
+        {
+            Log.BranchesListException(_logger, project, repositoryId, ex);
+            return Array.Empty<string>();
+        }
+        catch (Exception ex)
+        {
+            Log.BranchesListException(_logger, project, repositoryId, ex);
+            return Array.Empty<string>();
+        }
+    }
+
     public async Task ReleaseClaimWorkItemAsync(
         ReleaseClaimRequest request,
         CancellationToken cancellationToken
@@ -1770,6 +1863,30 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             string workItemId,
             int statusCode,
             string error
+        );
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Failed to list branches for repository '{RepositoryId}' in project '{Project}': "
+                + "HTTP {StatusCode} {ReasonPhrase}."
+        )]
+        public static partial void BranchesListFailed(
+            ILogger logger,
+            string project,
+            string repositoryId,
+            int statusCode,
+            string reasonPhrase
+        );
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Failed to list branches for repository '{RepositoryId}' in project '{Project}'."
+        )]
+        public static partial void BranchesListException(
+            ILogger logger,
+            string project,
+            string repositoryId,
+            Exception ex
         );
     }
 }
