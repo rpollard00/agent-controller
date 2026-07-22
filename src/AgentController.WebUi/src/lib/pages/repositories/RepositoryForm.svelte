@@ -3,6 +3,7 @@
   import type {
     ConnectionProfile,
     ConnectionProject,
+    HostRepository,
     RepositoryProfile,
     RuntimeEnvironmentProfile,
   } from '../../api/types';
@@ -14,6 +15,7 @@
   import {
     createRepositoryFormValues,
     inferCloneTransport,
+    isHostDriven,
     requiresSshKey,
     resolveRepositoryFormTransport,
     toRepositoryProfile,
@@ -47,11 +49,27 @@
   let clientErrors = $state<RepositoryFormErrors>({});
   let projects = $state<ConnectionProject[]>([]);
   let projectsLoading = $state(false);
+  let projectsLoadError = $state<string>();
+  let repositories = $state<HostRepository[]>([]);
+  let repositoriesLoading = $state(false);
+  let repositoriesLoadError = $state<string>();
 
+  const hostDriven = $derived(isHostDriven(values));
   const inferredTransport = $derived(inferCloneTransport(values.cloneUrl));
   const effectiveTransport = $derived(resolveRepositoryFormTransport(values));
   const sshKeyRequired = $derived(requiresSshKey(values));
   const showSshKeyPicker = $derived(sshKeyRequired || Boolean(values.sshKeyName));
+  const hasEnumerationError = $derived(Boolean(projectsLoadError || repositoriesLoadError));
+  const enumerationErrorTitle = $derived(
+    repositoriesLoadError
+      ? 'Could not load repositories'
+      : projectsLoadError
+        ? 'Could not load projects'
+        : '',
+  );
+  const enumerationErrorMessage = $derived(
+    repositoriesLoadError || projectsLoadError || '',
+  );
 
   const inputClasses =
     'min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 placeholder:text-slate-600 disabled:cursor-not-allowed disabled:bg-slate-900 disabled:text-slate-400';
@@ -86,16 +104,52 @@
     if (!connectionKey) {
       projects = [];
       values.project = '';
+      values.selectedRepositoryId = '';
+      repositories = [];
       projectsLoading = false;
+      projectsLoadError = undefined;
       return;
     }
     projectsLoading = true;
+    projectsLoadError = undefined;
+    values.project = '';
+    values.selectedRepositoryId = '';
+    repositories = [];
     try {
       projects = await client.connections.listProjects(connectionKey);
+      if (projects.length === 0) {
+        projectsLoadError = 'No projects found for this connection. Verify the connection is configured correctly.';
+      }
     } catch {
       projects = [];
+      projectsLoadError = 'Could not load projects. Check the connection configuration and permissions, then try again.';
     } finally {
       projectsLoading = false;
+    }
+  }
+
+  async function loadRepositories(connectionKey: string, project: string): Promise<void> {
+    repositoriesLoading = true;
+    repositoriesLoadError = undefined;
+    values.selectedRepositoryId = '';
+    try {
+      const result = await client.connections.listRepositories(connectionKey, project);
+      // Guard against stale responses when host or project changed during the request
+      if (connectionKey === values.repositoryHostConnectionKey && project === values.project) {
+        repositories = result;
+        if (repositories.length === 0) {
+          repositoriesLoadError = 'No repositories found in this project. It may be empty or the connection may not have access.';
+        }
+      }
+    } catch {
+      if (connectionKey === values.repositoryHostConnectionKey && project === values.project) {
+        repositories = [];
+        repositoriesLoadError = 'Could not load repositories. The project may no longer exist or the connection may have insufficient permissions.';
+      }
+    } finally {
+      if (connectionKey === values.repositoryHostConnectionKey && project === values.project) {
+        repositoriesLoading = false;
+      }
     }
   }
 
@@ -115,6 +169,10 @@
     return `${profile.displayName} — ${profile.key}${profile.enabled ? '' : ' (disabled)'}`;
   }
 
+  function repositoryLabel(repo: HostRepository): string {
+    return `${repo.name}${repo.defaultBranch ? ` (default: ${repo.defaultBranch})` : ''}`;
+  }
+
   function transportLabel(transport: RepositoryProfile['transport']): string {
     const labels: Record<RepositoryProfile['transport'], string> = {
       unspecified: 'Not resolved',
@@ -131,16 +189,40 @@
     clearClientError('sshKeyReference');
   }
 
+  // Load projects when the host connection changes
+  $effect(() => {
+    void loadProjects(values.repositoryHostConnectionKey);
+  });
+
+  // Load repositories when a project is selected (only in host-driven mode)
+  $effect(() => {
+    if (hostDriven && values.project) {
+      void loadRepositories(values.repositoryHostConnectionKey, values.project);
+    } else {
+      repositories = [];
+      values.selectedRepositoryId = '';
+      repositoriesLoadError = undefined;
+    }
+  });
+
+  // Prefill fields when a repository is selected from the host
+  $effect(() => {
+    const selectedId = values.selectedRepositoryId;
+    if (!selectedId) return;
+    const repo = repositories.find((r) => r.id === selectedId);
+    if (!repo) return;
+    values.key = repo.name;
+    values.cloneUrl = repo.remoteUrl;
+    values.defaultBranch = repo.defaultBranch || 'main';
+  });
+
+  // Clear SSH key error when requirements are satisfied
   $effect(() => {
     const hasSshKey = Boolean(values.sshKeyName);
     const keyIsRequired = sshKeyRequired;
     if ((hasSshKey || !keyIsRequired) && clientErrors.sshKeyReference) {
       clearClientError('sshKeyReference');
     }
-  });
-
-  $effect(() => {
-    void loadProjects(values.repositoryHostConnectionKey);
   });
 </script>
 
@@ -153,6 +235,106 @@
     />
   {/if}
 
+  {#if hasEnumerationError}
+    <Alert
+      variant="warning"
+      title={enumerationErrorTitle}
+      message={enumerationErrorMessage}
+    />
+  {/if}
+
+  <!-- Repository Host → Project → Repository selection -->
+  <section class="space-y-6 rounded-xl border border-slate-800 p-4 sm:p-5">
+    <h2 class="text-sm font-semibold text-white">Repository source</h2>
+
+    <Field
+      id="repository-repositoryHostConnectionKey"
+      label="Repository Host"
+      hint="Choose the host connection to browse projects and repositories."
+      error={fieldError('repositoryHostConnectionKey')}
+    >
+      <select
+        id="repository-repositoryHostConnectionKey"
+        name="repositoryHostConnectionKey"
+        class={inputClasses}
+        bind:value={values.repositoryHostConnectionKey}
+        disabled={submitting}
+        aria-invalid={fieldError('repositoryHostConnectionKey') ? 'true' : undefined}
+        aria-describedby={describedBy('repositoryHostConnectionKey', true)}
+      >
+        <option value="">None — manual entry</option>
+        {#if values.repositoryHostConnectionKey && !hasConnection(values.repositoryHostConnectionKey)}
+          <option value={values.repositoryHostConnectionKey}>
+            {values.repositoryHostConnectionKey} (unavailable)
+          </option>
+        {/if}
+        {#each connections as conn (conn.key)}
+          <option value={conn.key}>{connectionLabel(conn)}</option>
+        {/each}
+      </select>
+    </Field>
+
+    {#if hostDriven}
+      <Field
+        id="repository-project"
+        label="Project"
+        hint="The Azure DevOps project that contains the repository."
+        error={fieldError('project')}
+      >
+        <select
+          id="repository-project"
+          name="project"
+          class={inputClasses}
+          bind:value={values.project}
+          disabled={submitting || projectsLoading || Boolean(projectsLoadError)}
+          aria-invalid={fieldError('project') ? 'true' : undefined}
+          aria-describedby={describedBy('project', true)}
+        >
+          <option value="">
+            {projectsLoading ? 'Loading projects…' : projectsLoadError ? 'Error loading projects' : 'Select a project…'}
+          </option>
+          {#if values.project && !projects.some((p) => p.name === values.project)}
+            <option value={values.project}>{values.project} (unavailable)</option>
+          {/if}
+          {#each projects as project (project.id)}
+            <option value={project.name}>{project.name}</option>
+          {/each}
+        </select>
+      </Field>
+
+      {#if values.project && !projectsLoadError}
+        <Field
+          id="repository-repository"
+          label="Repository"
+          hint="Select a repository from the project. Its name, URL, and default branch are filled in automatically."
+          error={fieldError('repository')}
+        >
+          <select
+            id="repository-repository"
+            name="repository"
+            class={inputClasses}
+            bind:value={values.selectedRepositoryId}
+            disabled={submitting || repositoriesLoading || Boolean(repositoriesLoadError)}
+            aria-describedby={describedBy('repository', true)}
+          >
+            <option value="">
+              {repositoriesLoading ? 'Loading repositories…' : repositoriesLoadError ? 'Error loading repositories' : 'Select a repository…'}
+            </option>
+            {#if values.selectedRepositoryId && !repositories.some((r) => r.id === values.selectedRepositoryId)}
+              <option value={values.selectedRepositoryId}>
+                {(repositories.find((r) => r.id === values.selectedRepositoryId)?.name ?? values.selectedRepositoryId)} (unavailable)
+              </option>
+            {/if}
+            {#each repositories as repo (repo.id)}
+              <option value={repo.id}>{repositoryLabel(repo)}</option>
+            {/each}
+          </select>
+        </Field>
+      {/if}
+    {/if}
+  </section>
+
+  <!-- Repository configuration -->
   <div class="grid gap-6 lg:grid-cols-2">
     <Field
       id="repository-key"
@@ -181,7 +363,9 @@
     <Field
       id="repository-defaultBranch"
       label="Default branch"
-      hint="The branch checked out when work starts."
+      hint={hostDriven
+        ? 'Prefilled from the selected repository. Change if needed.'
+        : 'The branch checked out when work starts.'}
       error={fieldError('defaultBranch')}
       required
     >
@@ -204,7 +388,9 @@
     <Field
       id="repository-cloneUrl"
       label="Clone URL or local path"
-      hint="Enter an HTTPS, SSH, or file URL, or an absolute local repository path."
+      hint={hostDriven
+        ? 'Prefilled from the selected repository. The hosting provider URL is used by default.'
+        : 'Enter an HTTPS, SSH, or file URL, or an absolute local repository path.'}
       error={fieldError('cloneUrl')}
       required
     >
@@ -217,7 +403,9 @@
         required
         spellcheck="false"
         autocomplete="off"
-        placeholder="https://dev.azure.com/example/project/_git/repository"
+        placeholder={hostDriven
+          ? 'https://dev.azure.com/example/project/_git/repository'
+          : 'https://dev.azure.com/example/project/_git/repository'}
         aria-invalid={fieldError('cloneUrl') ? 'true' : undefined}
         aria-describedby={describedBy('cloneUrl', true)}
         oninput={() => clearClientError('cloneUrl')}
@@ -309,61 +497,6 @@
 
   <fieldset class="space-y-5 rounded-xl border border-slate-800 p-4 sm:p-5">
     <legend class="px-2 text-sm font-semibold text-white">Managed environment associations</legend>
-    <div class="grid gap-6 lg:grid-cols-2">
-      <Field
-        id="repository-repositoryHostConnectionKey"
-        label="Repository Host"
-        hint="Choose the repository host this repository is sourced from. Decoupled from work source."
-        error={fieldError('repositoryHostConnectionKey')}
-      >
-        <select
-          id="repository-repositoryHostConnectionKey"
-          name="repositoryHostConnectionKey"
-          class={inputClasses}
-          bind:value={values.repositoryHostConnectionKey}
-          disabled={submitting}
-          aria-invalid={fieldError('repositoryHostConnectionKey') ? 'true' : undefined}
-          aria-describedby={describedBy('repositoryHostConnectionKey', true)}
-        >
-          <option value="">No managed repository host connection</option>
-          {#if values.repositoryHostConnectionKey && !hasConnection(values.repositoryHostConnectionKey)}
-            <option value={values.repositoryHostConnectionKey}>
-              {values.repositoryHostConnectionKey} (unavailable)
-            </option>
-          {/if}
-          {#each connections as conn (conn.key)}
-            <option value={conn.key}>{connectionLabel(conn)}</option>
-          {/each}
-        </select>
-      </Field>
-
-      <Field
-        id="repository-project"
-        label="Project"
-        hint="The project within the selected connection that contains this repository."
-        error={fieldError('project')}
-      >
-        <select
-          id="repository-project"
-          name="project"
-          class={inputClasses}
-          bind:value={values.project}
-          disabled={submitting || projectsLoading}
-          aria-invalid={fieldError('project') ? 'true' : undefined}
-          aria-describedby={describedBy('project', true)}
-        >
-          <option value="">
-            {projectsLoading ? 'Loading projects…' : 'Select a project…'}
-          </option>
-          {#if values.project && !projects.some((p) => p.name === values.project)}
-            <option value={values.project}>{values.project} (unavailable)</option>
-          {/if}
-          {#each projects as project (project.id)}
-            <option value={project.name}>{project.name}</option>
-          {/each}
-        </select>
-      </Field>
-    </div>
 
     <Field
       id="repository-runtimeEnvironmentKey"

@@ -7,6 +7,7 @@ export interface RepositoryFormValues {
   defaultBranch: string;
   repositoryHostConnectionKey: string;
   project: string;
+  selectedRepositoryId: string;
   runtimeEnvironmentKey: string;
   sshKeyName: string;
   sshKeyVersion: number | null;
@@ -22,6 +23,7 @@ export function createRepositoryFormValues(profile?: RepositoryProfile): Reposit
     defaultBranch: profile?.defaultBranch ?? 'main',
     repositoryHostConnectionKey: profile?.repositoryHostConnectionKey ?? '',
     project: profile?.project ?? '',
+    selectedRepositoryId: '',
     runtimeEnvironmentKey: profile?.runtimeEnvironmentKey ?? '',
     sshKeyName: profile?.sshKeyReference?.name ?? '',
     sshKeyVersion: profile?.sshKeyReference?.version ?? null,
@@ -40,6 +42,11 @@ export function validateRepositoryForm(values: RepositoryFormValues): Repository
   }
 
   return errors;
+}
+
+/** Whether the form is in host-driven mode (a repository host connection is selected). */
+export function isHostDriven(values: Pick<RepositoryFormValues, 'repositoryHostConnectionKey'>): boolean {
+  return Boolean(values.repositoryHostConnectionKey);
 }
 
 /**
