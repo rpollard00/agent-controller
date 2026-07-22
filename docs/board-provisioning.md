@@ -70,7 +70,7 @@ The `repo:{key}` tag associates a work item with a specific repository profile. 
    |----------|----------|
    | No `repo:` tag present | Item is **skipped silently** — treated as not-eligible. No comment is posted. |
    | `repo:` tag present but key does not match any profile | Item is **skipped** and a **clarifying comment** is posted on the ADO work item: `"Skipped: no repository profile matches the \`repo:xxx\` tag. Configure a matching repository profile or correct the tag."` This makes typos visible on the board. |
-   | `repo:` tag matches a profile | Item proceeds through the lifecycle. The matched profile provides `cloneUrl`, `defaultBranch`, `allowedPaths`, etc. |
+   | `repo:` tag matches a profile | Item proceeds through the lifecycle. The matched profile provides `cloneUrl`, `defaultBranch`, etc. |
 
 ### 3.2 Repository Profile Configuration
 
@@ -81,8 +81,7 @@ Repository profiles are defined in the `repositories` configuration section:
   "repositories": {
     "example-service": {
       "cloneUrl": "https://dev.azure.com/org/project/_git/example-service",
-      "defaultBranch": "main",
-      "allowedPaths": ["src/", "tests/"]
+      "defaultBranch": "main"
     }
   }
 }

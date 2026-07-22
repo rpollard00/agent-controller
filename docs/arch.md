@@ -27,7 +27,7 @@ The MVP should evolve the same design into a durable internal service using stro
 - SQLite persistence via EF Core with full entity configurations
 - Migration runner console app (AgentController.Migrations) — sole owner of schema evolution
 - JSON configuration loading with options classes and validation-on-start
-- Repository profile config (`repositories:{key}:cloneUrl`, `defaultBranch`, `environmentProfile`, `runtimeProfile`, `allowedPaths`)
+- Repository profile config (`cloneUrl`, `defaultBranch`, `environmentProfile`, `runtimeProfile`)
 
 ### Phase 1: Local Lifecycle ✓
 
@@ -212,11 +212,7 @@ Example:
       "cloneUrl": "https://dev.azure.com/org/project/_git/example-service",
       "defaultBranch": "main",
       "environmentProfile": "local-default",
-      "runtimeProfile": "pi-materia-default",
-      "allowedPaths": [
-        "src/",
-        "tests/"
-      ]
+      "runtimeProfile": "pi-materia-default"
     }
   }
 }
@@ -695,7 +691,6 @@ CloneUrl
 DefaultBranch
 EnvironmentProfile
 RuntimeProfile
-AllowedPathsJson
 CreatedAt
 UpdatedAt
 ```
@@ -1229,11 +1224,10 @@ The MVP should add:
 3. Configurable secret allowlists.
 4. Docker isolation.
 5. No automatic PR merge.
-6. Per-repository allowed path policy.
-7. Global kill switch.
-8. Per-repository concurrency limits.
-9. Audit log of lifecycle events and operator actions.
-10. Configurable retention and cleanup TTLs.
+6. Global kill switch.
+7. Per-repository concurrency limits.
+8. Audit log of lifecycle events and operator actions.
+9. Configurable retention and cleanup TTLs.
 
 ## 11.5 MVP Observability
 
@@ -1324,11 +1318,7 @@ Actions: cancel, retry, cleanup, mark needs-human
       "cloneUrl": "https://dev.azure.com/example-org/ExampleProject/_git/example-service",
       "defaultBranch": "main",
       "environmentProfile": "local-default",
-      "runtimeProfile": "pi-materia-default",
-      "allowedPaths": [
-        "src/",
-        "tests/"
-      ]
+      "runtimeProfile": "pi-materia-default"
     }
   }
 }
@@ -2334,11 +2324,7 @@ event-ingestion tests (not runtime tests).
    shows no activity after a timeout? (Currently: stale-run detection marks runs
    as `needs_human`. Auto-restart is a future concern.)
 
-3. **allowedPaths enforcement.** What happens if pi modifies files outside
-   `allowedPaths`? (The controller does not enforce this — it's advisory.
-   A future policy engine can inspect diffs post-run.)
-
-4. **Concurrency of runs.** `PiMateriaRuntime` is a singleton but each
+3. **Concurrency of runs.** `PiMateriaRuntime` is a singleton but each
    `StartAsync` call creates an independent PTY session tracked in the
    session registry. The `PollingWorker` already enforces `MaxConcurrentRuns`.
    No additional concurrency control is needed in the runtime.

@@ -369,7 +369,6 @@ The `repositories` section in `appsettings.json` (or an environment-specific ove
 | `defaultBranch` | string | No | Branch to check out. Defaults to `"main"`. |
 | `environmentProfile` | string | No | Environment profile name for runs targeting this repo. |
 | `runtimeProfile` | string | No | Runtime profile name for runs targeting this repo. |
-| `allowedPaths` | string[] | No | Paths the agent may modify. Empty array means no restrictions. |
 
 ### 8.2 SSH Transport Example (live-ado)
 
