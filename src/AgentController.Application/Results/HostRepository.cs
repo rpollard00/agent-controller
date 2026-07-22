@@ -39,6 +39,11 @@ public sealed record HostRepository(
     string RemoteUrl,
 
     /// <summary>
+    /// SSH URL for cloning, or <c>null</c> if the host does not expose one.
+    /// </summary>
+    string? SshUrl,
+
+    /// <summary>
     /// Hint for which clone transport the host prefers.
     /// </summary>
     CloneTransportHint CloneTransportHint

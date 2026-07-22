@@ -910,6 +910,15 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                     remoteUrl = wuEl.GetString();
                 }
 
+                string? sshUrl = null;
+                if (
+                    repo.TryGetProperty("sshUrl", out var suEl)
+                    && suEl.ValueKind == JsonValueKind.String
+                )
+                {
+                    sshUrl = suEl.GetString();
+                }
+
                 repositories.Add(
                     new RepositoryInfo
                     {
@@ -917,6 +926,7 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                         Name = name,
                         DefaultBranch = defaultBranch,
                         RemoteUrl = remoteUrl,
+                        SshUrl = sshUrl,
                     }
                 );
             }

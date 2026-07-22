@@ -40,6 +40,7 @@ const repos: HostRepository[] = [
     name: 'web-app',
     defaultBranch: 'main',
     remoteUrl: 'https://dev.azure.com/example/project/_git/web-app',
+    sshUrl: 'git@ssh.dev.azure.com:v3/example/project/web-app',
     cloneTransportHint: 'httpsPat',
   },
 ];

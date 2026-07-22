@@ -132,6 +132,7 @@ export interface HostRepository {
   name: string;
   defaultBranch: string;
   remoteUrl: string;
+  sshUrl: string | null;
   cloneTransportHint: CloneTransportHint;
 }
 
