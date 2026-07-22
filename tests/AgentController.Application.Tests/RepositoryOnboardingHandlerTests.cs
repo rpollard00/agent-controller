@@ -79,7 +79,6 @@ public sealed class RepositoryOnboardingHandlerTests
             RuntimeProfile = " legacy-runtime ",
             RepositoryHostConnectionKey = " HOST-PRIMARY ",
             RuntimeEnvironmentKey = " RUNTIME-LOCAL ",
-            AllowedPaths = [" ./src//Features/ ", "src\\Features", " tests/ "],
         };
 
         var result = await handler.HandleAsync(
@@ -97,7 +96,6 @@ public sealed class RepositoryOnboardingHandlerTests
         Assert.Equal("legacy-runtime", persisted.RuntimeProfile);
         Assert.Equal("host-primary", persisted.RepositoryHostConnectionKey);
         Assert.Equal("runtime-local", persisted.RuntimeEnvironmentKey);
-        Assert.Equal(["src/Features", "tests"], persisted.AllowedPaths);
     }
 
     [Fact]
@@ -116,7 +114,7 @@ public sealed class RepositoryOnboardingHandlerTests
             DefaultBranch = "bad branch..name",
             Transport = (CloneTransport)999,
             SshKeyReference = new SecretReference { Name = "future-key", Version = 0 },
-            AllowedPaths = ["../secrets", "/absolute/path", ""],
+
         };
 
         var result = await handler.HandleAsync(
@@ -129,7 +127,6 @@ public sealed class RepositoryOnboardingHandlerTests
         Assert.Contains("defaultBranch", result.ValidationErrors.Keys);
         Assert.Contains("transport", result.ValidationErrors.Keys);
         Assert.Contains("sshKeyReference", result.ValidationErrors.Keys);
-        Assert.Contains("allowedPaths", result.ValidationErrors.Keys);
         Assert.Null(repositories.LastCreated);
     }
 
@@ -288,7 +285,7 @@ public sealed class RepositoryOnboardingHandlerTests
         var update = CreateProfile(" SERVICE ") with
         {
             DefaultBranch = " release/v2 ",
-            AllowedPaths = ["src\\Api\\", "./tests//Unit"],
+
         };
 
         var result = await handler.HandleAsync(
@@ -300,7 +297,6 @@ public sealed class RepositoryOnboardingHandlerTests
         var persisted = Assert.IsType<RepositoryProfile>(repositories.LastUpdated);
         Assert.Equal("service", persisted.Key);
         Assert.Equal("release/v2", persisted.DefaultBranch);
-        Assert.Equal(["src/Api", "tests/Unit"], persisted.AllowedPaths);
     }
 
     [Fact]
@@ -411,7 +407,6 @@ public sealed class RepositoryOnboardingHandlerTests
             CloneUrl = "git@example.test:repository.git",
             DefaultBranch = "main",
             Transport = CloneTransport.Ssh,
-            AllowedPaths = ["src", "tests"],
         };
 
     private static void AssertRegistration<TService, TImplementation>(IServiceCollection services)

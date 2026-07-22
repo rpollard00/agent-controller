@@ -230,6 +230,19 @@ describe('Web UI API client', () => {
     );
   });
 
+  it('connections client: lists branches with project and repositoryId parameters', async () => {
+    const branches = ['main', 'develop', 'feature/new-work'];
+    const fetchMock = vi.fn(async () => Response.json(branches));
+    const client = createWebUiApiClient({ fetch: fetchMock });
+
+    const result = await client.connections.listBranches('ado-main', 'Agent Controller', 'repo-1');
+    expect(result).toEqual(branches);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/webui/connections/ado-main/repositories/repo-1/branches?project=Agent%20Controller',
+      expect.objectContaining({}),
+    );
+  });
+
   it('connections client: onboards repository with project parameter', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       Response.json(repository, { status: 201, headers: { Location: '/repositories/onboarded' } }),

@@ -58,7 +58,6 @@ public sealed class WebUiControllerTests : IAsyncLifetime
             cloneUrl = " https://example.test/org/repo.git ",
             defaultBranch = " main ",
             transport = "httpsPat",
-            allowedPaths = new[] { " src/AgentController.Api ", "tests" },
         };
 
         using var createResponse = await _client.PostAsJsonAsync(
@@ -72,7 +71,6 @@ public sealed class WebUiControllerTests : IAsyncLifetime
         );
         var created = await ReadJsonAsync(createResponse);
         Assert.Equal("web.repo", created.GetProperty("key").GetString());
-        Assert.Equal("src/AgentController.Api", created.GetProperty("allowedPaths")[0].GetString());
 
         using var duplicateResponse = await _client.PostAsJsonAsync(
             "/api/webui/repositories",
@@ -129,7 +127,6 @@ public sealed class WebUiControllerTests : IAsyncLifetime
             cloneUrl = "https://example.test/org/repo.git",
             defaultBranch = "develop",
             transport = "httpsPat",
-            allowedPaths = new[] { "src" },
         };
         using var updateResponse = await _client.PutAsJsonAsync(
             "/api/webui/repositories/web.repo",

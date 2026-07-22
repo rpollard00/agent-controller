@@ -6,6 +6,7 @@ import type {
   ClonePreflightResult,
   ConnectionProfile,
   ConnectionProject,
+  HostRepository,
   RepositoryProfile,
   RuntimeEnvironmentProfile,
   SecretInfo,
@@ -444,5 +445,377 @@ describe('repository onboarding screens', () => {
     ));
     expect(await screen.findByRole('heading', { name: 'No repositories yet' })).toBeVisible();
     expect(screen.getByText('Repository “web.repo” was deleted.')).toBeVisible();
+  });
+
+  // ── Reworked repository flow: host-driven enumeration mode ────────────
+
+  it('host-driven create mode: selects host then project then repository and prefills fields', async () => {
+    window.history.replaceState({}, '', '/repositories/new');
+    const hostRepos: HostRepository[] = [
+      {
+        id: 'repo-42',
+        name: 'my-app',
+        defaultBranch: 'develop',
+        remoteUrl: 'https://dev.azure.com/example/project/_git/my-app',
+        sshUrl: 'git@ssh.dev.azure.com:v3/example/project/my-app',
+        cloneTransportHint: 'httpsPat',
+      },
+    ];
+    const api = createApi([]);
+    api.client.connections.listProjects = vi.fn(async () => [
+      { id: 'proj-1', name: 'Agent Controller' },
+    ]);
+    api.client.connections.listRepositories = vi.fn(async () => hostRepos);
+    api.client.connections.listBranches = vi.fn(async () => ['main', 'develop']);
+    render(App, { client: api.client });
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Onboard repository' })).toBeVisible();
+
+    // Select a repository host connection
+    const hostSelect = await screen.findByLabelText('Repository Host');
+    await fireEvent.change(hostSelect, {
+      target: { value: 'ado-main' },
+    });
+
+    // Wait for projects to load and select one
+    await waitFor(() => expect(screen.getByLabelText(/^Project$/)).not.toBeDisabled());
+    await fireEvent.change(screen.getByLabelText(/^Project$/), {
+      target: { value: 'Agent Controller' },
+    });
+
+    // Wait for repositories to load and select one
+    await waitFor(() => expect(screen.getByLabelText(/^Repository$/)).not.toBeDisabled());
+    await fireEvent.change(screen.getByLabelText(/^Repository$/), {
+      target: { value: 'repo-42' },
+    });
+
+    // Verify repository name is prefilled from selection
+    const nameInput = await screen.findByLabelText(/Repository Name/);
+    expect(nameInput).toHaveValue('my-app');
+
+    // Verify clone URL is derived from transport (default HTTPS)
+    const cloneUrlInput = screen.getByLabelText(/Clone URL or local path/);
+    expect(cloneUrlInput).toHaveValue('https://dev.azure.com/example/project/_git/my-app');
+    expect(cloneUrlInput).toHaveAttribute('readonly');
+
+    // Verify default branch is prefilled
+    expect(screen.getByLabelText(/Default branch/)).toHaveValue('develop');
+
+    // Switch transport to SSH and verify clone URL switches to sshUrl
+    await fireEvent.change(screen.getByLabelText(/Clone transport/), {
+      target: { value: 'ssh' },
+    });
+    expect(screen.getByLabelText(/Clone URL or local path/)).toHaveValue(
+      'git@ssh.dev.azure.com:v3/example/project/my-app',
+    );
+  });
+
+  it('host-driven create mode: sshUrl null fallback to remoteUrl', async () => {
+    window.history.replaceState({}, '', '/repositories/new');
+    const hostRepos: HostRepository[] = [
+      {
+        id: 'repo-7',
+        name: 'web-app',
+        defaultBranch: 'main',
+        remoteUrl: 'https://dev.azure.com/example/project/_git/web-app',
+        sshUrl: null,
+        cloneTransportHint: 'unspecified',
+      },
+    ];
+    const api = createApi([]);
+    api.client.connections.listProjects = vi.fn(async () => [
+      { id: 'proj-1', name: 'Agent Controller' },
+    ]);
+    api.client.connections.listRepositories = vi.fn(async () => hostRepos);
+    api.client.connections.listBranches = vi.fn(async () => []);
+    render(App, { client: api.client });
+
+    await screen.findByRole('heading', { level: 1, name: 'Onboard repository' });
+
+    // Select host and project
+    const hostSelect = await screen.findByLabelText('Repository Host');
+    await fireEvent.change(hostSelect, {
+      target: { value: 'ado-main' },
+    });
+    await waitFor(() => expect(screen.getByLabelText(/^Project$/)).not.toBeDisabled());
+    await fireEvent.change(screen.getByLabelText(/^Project$/), {
+      target: { value: 'Agent Controller' },
+    });
+    await waitFor(() => expect(screen.getByLabelText(/^Repository$/)).not.toBeDisabled());
+    await fireEvent.change(screen.getByLabelText(/^Repository$/), {
+      target: { value: 'repo-7' },
+    });
+
+    // Switch to SSH – clone URL should fall back to remoteUrl since sshUrl is null
+    await fireEvent.change(screen.getByLabelText(/Clone transport/), {
+      target: { value: 'ssh' },
+    });
+    expect(screen.getByLabelText(/Clone URL or local path/)).toHaveValue(
+      'https://dev.azure.com/example/project/_git/web-app',
+    );
+  });
+
+  it('host-driven create mode: branch selector populated from enumerated branches', async () => {
+    window.history.replaceState({}, '', '/repositories/new');
+    const hostRepos: HostRepository[] = [
+      {
+        id: 'repo-99',
+        name: 'feature-app',
+        defaultBranch: 'develop',
+        remoteUrl: 'https://dev.azure.com/example/project/_git/feature-app',
+        sshUrl: null,
+        cloneTransportHint: 'httpsPat',
+      },
+    ];
+    const api = createApi([]);
+    api.client.connections.listProjects = vi.fn(async () => [
+      { id: 'proj-1', name: 'Agent Controller' },
+    ]);
+    api.client.connections.listRepositories = vi.fn(async () => hostRepos);
+    api.client.connections.listBranches = vi.fn(async () => ['main', 'develop', 'feature/new-work']);
+    render(App, { client: api.client });
+
+    await screen.findByRole('heading', { level: 1, name: 'Onboard repository' });
+
+    // Select host, project, and repository
+    const hostSelect = await screen.findByLabelText('Repository Host');
+    await fireEvent.change(hostSelect, {
+      target: { value: 'ado-main' },
+    });
+    await waitFor(() => expect(screen.getByLabelText(/^Project$/)).not.toBeDisabled());
+    await fireEvent.change(screen.getByLabelText(/^Project$/), {
+      target: { value: 'Agent Controller' },
+    });
+    await waitFor(() => expect(screen.getByLabelText(/^Repository$/)).not.toBeDisabled());
+    await fireEvent.change(screen.getByLabelText(/^Repository$/), {
+      target: { value: 'repo-99' },
+    });
+
+    // Default branch should be the repo defaultBranch
+    await waitFor(() => expect(screen.getByLabelText(/Default branch/)).toHaveValue('develop'));
+
+    // The branch widget should be a <select> in host-driven mode
+    const branchSelect = screen.getByLabelText(/Default branch/);
+    expect(branchSelect.tagName).toBe('SELECT');
+
+    // Can change to a different enumerated branch
+    await fireEvent.change(branchSelect, { target: { value: 'feature/new-work' } });
+    expect(branchSelect).toHaveValue('feature/new-work');
+  });
+
+  it('manual None-host mode: freeform clone URL and branch input', async () => {
+    window.history.replaceState({}, '', '/repositories/new');
+    const api = createApi([]);
+    render(App, { client: api.client });
+
+    await screen.findByRole('heading', { level: 1, name: 'Onboard repository' });
+
+    // Default is None — manual entry
+    const hostSelect = await screen.findByLabelText('Repository Host');
+    expect(hostSelect).toHaveValue('');
+    expect(screen.queryByLabelText(/^Project$/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Repository$/)).not.toBeInTheDocument();
+
+    // Clone URL input is writable (not readonly)
+    const cloneUrlInput = screen.getByLabelText(/Clone URL or local path/);
+    expect(cloneUrlInput).not.toHaveAttribute('readonly');
+
+    // Branch is a free-text input (not a select)
+    const branchInput = screen.getByLabelText(/Default branch/);
+    expect(branchInput.tagName).toBe('INPUT');
+
+    // Fill in fields manually and submit
+    await fireEvent.input(await screen.findByLabelText(/Repository Name/), {
+      target: { value: 'manual.repo' },
+    });
+    await fireEvent.input(cloneUrlInput, {
+      target: { value: 'https://example.test/manual.git' },
+    });
+    await fireEvent.input(branchInput, {
+      target: { value: 'main' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Onboard repository' }));
+
+    await waitFor(() => expect(api.repositories.create).toHaveBeenCalledOnce());
+    expect(api.repositories.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: 'manual.repo',
+        cloneUrl: 'https://example.test/manual.git',
+        defaultBranch: 'main',
+        repositoryHostConnectionKey: null,
+        project: null,
+      }),
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('environment-inherit SSH override hides key picker and clears key reference', async () => {
+    window.history.replaceState({}, '', '/repositories/new');
+    const api = createApi([]);
+    render(App, { client: api.client });
+
+    await screen.findByRole('heading', { level: 1, name: 'Onboard repository' });
+
+    // Enter an SSH clone URL to trigger SSH key section
+    await fireEvent.input(await screen.findByLabelText(/Repository Name/), {
+      target: { value: 'ssh-inherit.repo' },
+    });
+    await fireEvent.input(screen.getByLabelText(/Clone URL or local path/), {
+      target: { value: 'ssh://git@example.test/ssh-inherit.repo.git' },
+    });
+
+    // SSH section should show with key picker and inherit checkbox
+    expect(screen.getByText('SSH authentication')).toBeVisible();
+    expect(screen.getByLabelText(/SSH key secret/)).toBeVisible();
+    const inheritCheckbox = screen.getByLabelText(/Inherit from environment/);
+    expect(inheritCheckbox).toBeVisible();
+    expect(inheritCheckbox).not.toBeChecked();
+
+    // Check the inherit checkbox
+    await fireEvent.click(inheritCheckbox);
+
+    // Key picker should be replaced by warning
+    expect(screen.queryByLabelText(/SSH key secret/)).not.toBeInTheDocument();
+    expect(screen.getByText('Environment SSH key required')).toBeVisible();
+    expect(screen.getByText(/must be set up in the runner environment/)).toBeVisible();
+
+    // Submit should succeed without requiring an SSH key
+    await fireEvent.change(screen.getByLabelText(/Default branch/), {
+      target: { value: 'main' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Onboard repository' }));
+
+    await waitFor(() => expect(api.repositories.create).toHaveBeenCalledOnce());
+    expect(api.repositories.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: 'ssh-inherit.repo',
+        sshKeyReference: null,
+        sshKeyInheritEnvironment: true,
+      }),
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('edit mode: shows (unavailable) option when host connection no longer exists', async () => {
+    const orphanedRepository: RepositoryProfile = {
+      ...repository,
+      key: 'orphan.repo',
+      repositoryHostConnectionKey: 'deleted-host',
+      project: 'Deleted Project',
+      cloneUrl: 'https://dev.azure.com/old/project/_git/orphan',
+    };
+    window.history.replaceState({}, '', '/repositories/orphan.repo/edit');
+    const api = createApi([orphanedRepository]);
+    render(App, { client: api.client });
+
+    await screen.findByRole('heading', { level: 1, name: 'Edit orphan.repo' });
+
+    // The unavailable host should be listed
+    const hostSelect = await screen.findByLabelText('Repository Host');
+    expect(hostSelect).toHaveValue('deleted-host');
+    expect(screen.getByRole('option', { name: 'deleted-host (unavailable)' })).toBeVisible();
+
+    // Repository Name is readonly in edit mode
+    expect(screen.getByLabelText(/Repository Name/)).toHaveAttribute('readonly');
+  });
+
+  it('enumeration failure shows top-of-form warning alert', async () => {
+    window.history.replaceState({}, '', '/repositories/new');
+    const api = createApi([]);
+    api.client.connections.listProjects = vi.fn(async () => {
+      throw new Error('Network failure');
+    });
+    render(App, { client: api.client });
+
+    await screen.findByRole('heading', { level: 1, name: 'Onboard repository' });
+
+    // Select host
+    const hostSelect = await screen.findByLabelText('Repository Host');
+    await fireEvent.change(hostSelect, {
+      target: { value: 'ado-main' },
+    });
+
+    // Wait for the error alert to appear
+    await waitFor(() => {
+      expect(screen.getByText('Could not load projects')).toBeVisible();
+    });
+    expect(
+      screen.getByText(/Check the connection configuration and permissions/),
+    ).toBeVisible();
+  });
+
+  it('host-driven edit mode preserves persisted values on initial load', async () => {
+    const hostDrivenRepository: RepositoryProfile = {
+      key: 'existing.repo',
+      cloneUrl: 'https://dev.azure.com/company/project/_git/existing',
+      defaultBranch: 'custom-branch',
+      transport: 'httpsPat',
+      environmentProfile: 'prod-environment',
+      runtimeProfile: 'prod-runtime',
+      repositoryHostConnectionKey: 'ado-main',
+      remoteIdentity: 'repo-guid',
+      runtimeEnvironmentKey: 'runtime-main',
+      sshKeyReference: null,
+      sshKeyInheritEnvironment: false,
+      project: 'Agent Controller',
+    };
+    const hostRepos: HostRepository[] = [
+      {
+        id: 'existing-id',
+        name: 'existing',
+        defaultBranch: 'main',
+        remoteUrl: 'https://dev.azure.com/company/project/_git/existing',
+        sshUrl: 'git@ssh.dev.azure.com:v3/company/project/existing',
+        cloneTransportHint: 'httpsPat',
+      },
+    ];
+    const api = createApi([hostDrivenRepository]);
+    api.client.connections.listProjects = vi.fn(async () => [
+      { id: 'proj-1', name: 'Agent Controller' },
+    ]);
+    api.client.connections.listRepositories = vi.fn(async () => hostRepos);
+    api.client.connections.listBranches = vi.fn(async () => ['main', 'develop', 'custom-branch']);
+    window.history.replaceState({}, '', '/repositories/existing.repo/edit');
+    render(App, { client: api.client });
+
+    // Check that the page renders the edit form
+    const heading = await screen.findByRole('heading', { level: 1 });
+    expect(heading.textContent).toMatch(/Edit/i);
+    // Verify the form rendered by checking the form element
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Save changes' })).toBeVisible();
+    });
+
+    // Host should be pre-selected
+    const hostSelect = await screen.findByLabelText('Repository Host');
+    expect(hostSelect).toHaveValue('ado-main');
+
+    // Wait for enumeration to complete
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Default branch/)).toHaveValue('custom-branch');
+    });
+
+    // Repository Name is readonly in edit mode
+    const nameInput = screen.getByLabelText(/Repository Name/);
+    expect(nameInput).toHaveAttribute('readonly');
+    expect(nameInput).toHaveValue('existing.repo');
+
+    // Persisted clone URL preserved (not overwritten by enumeration default)
+    expect(screen.getByLabelText(/Clone URL or local path/)).toHaveValue(
+      'https://dev.azure.com/company/project/_git/existing',
+    );
+
+    // Persisted default branch preserved (not overwritten by repo defaultBranch)
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Default branch/)).toHaveValue('custom-branch');
+    });
+
+    // User can still change branch
+    const branchSelect = await screen.findByLabelText(/Default branch/);
+    await fireEvent.change(branchSelect, { target: { value: 'develop' } });
+    expect(branchSelect).toHaveValue('develop');
+
+    // Verify the Save button is visible (form rendered in edit mode)
+    expect(await screen.findByRole('button', { name: 'Save changes' })).toBeVisible();
   });
 });
