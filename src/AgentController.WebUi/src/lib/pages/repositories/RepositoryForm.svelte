@@ -57,6 +57,20 @@
   let branchesLoading = $state(false);
   let branchesLoadError = $state<string>();
 
+  // Tracks the last host key used for loading projects. When the user switches hosts,
+  // project/repository selections are reset. On initial mount in edit mode the existing
+  // profile values are preserved since the host hasn't changed.
+  let lastLoadedHostKey = $state(profile?.repositoryHostConnectionKey ?? '');
+
+  // Whether this is the first repository load in edit mode. After the first load
+  // (and auto-match attempt), subsequent loads triggered by project or host changes
+  // reset the selection as normal.
+  // Non-reactive one-shot flag so that the first $effect flush after the
+  // auto-match in loadRepositories sees it true and preserves persisted
+  // cloneUrl/defaultBranch. Subsequent runs (manual repo pick, transport
+  // change) overwrite as normal.
+  let initialEditReposLoad = mode === 'edit';
+
   const hostDriven = $derived(isHostDriven(values));
   const inferredTransport = $derived(inferCloneTransport(values.cloneUrl));
   const effectiveTransport = $derived(resolveRepositoryFormTransport(values));
@@ -115,10 +129,18 @@
       projectsLoadError = undefined;
       return;
     }
+
+    // Clear project/repo selections only when the host key actually changes.
+    // On initial edit-mode mount the profile's host key is already set, so
+    // the existing project and repository values are preserved for enumeration.
+    if (connectionKey !== lastLoadedHostKey) {
+      values.project = '';
+      values.selectedRepositoryId = '';
+    }
+    lastLoadedHostKey = connectionKey;
+
     projectsLoading = true;
     projectsLoadError = undefined;
-    values.project = '';
-    values.selectedRepositoryId = '';
     repositories = [];
     try {
       projects = await client.connections.listProjects(connectionKey);
@@ -136,7 +158,15 @@
   async function loadRepositories(connectionKey: string, project: string): Promise<void> {
     repositoriesLoading = true;
     repositoriesLoadError = undefined;
-    values.selectedRepositoryId = '';
+
+    // On initial edit-mode mount the profile's values should be preserved so
+    // the repository can be auto-matched after enumeration. Subsequent loads
+    // (triggered by project/host changes) reset the selection as expected.
+    const isInitialEditLoad = mode === 'edit' && initialEditReposLoad;
+    if (!isInitialEditLoad) {
+      values.selectedRepositoryId = '';
+    }
+
     try {
       const result = await client.connections.listRepositories(connectionKey, project);
       // Guard against stale responses when host or project changed during the request
@@ -144,6 +174,19 @@
         repositories = result;
         if (repositories.length === 0) {
           repositoriesLoadError = 'No repositories found in this project. It may be empty or the connection may not have access.';
+        } else if (isInitialEditLoad && !values.selectedRepositoryId && profile?.project && values.project === profile.project) {
+          // Auto-match the existing profile to a repository by URL or name.
+          // This pre-selects the repository when editing a host-connected profile
+          // so the enumeration state matches the persisted configuration.
+          // Only runs when the profile originally had a project and the current
+          // selection matches it, avoiding spurious matches on user-triggered
+          // project changes from profiles without a saved project.
+          const match = repositories.find(
+            (r) => r.remoteUrl === values.cloneUrl || (r.sshUrl !== null && r.sshUrl === values.cloneUrl) || r.name === values.key
+          );
+          if (match) {
+            values.selectedRepositoryId = match.id;
+          }
         }
       }
     } catch {
@@ -154,6 +197,10 @@
     } finally {
       if (connectionKey === values.repositoryHostConnectionKey && project === values.project) {
         repositoriesLoading = false;
+        // Flag is cleared inside the prefill $effect, not here, to work
+      // around Svelte 5 effect timing: the prefill effect flushes at the
+      // next yield point, by which time a synchronous clear would already
+      // be lost.
       }
     }
   }
@@ -237,14 +284,28 @@
   // Prefill fields when a repository is selected from the host or transport changes.
   // In host-driven mode, the clone URL is derived from the selected transport:
   // HTTPS uses remoteUrl; SSH uses sshUrl (with a fallback to remoteUrl).
+  // In edit mode the Repository Name is immutable (backend-enforced), so it is
+  // never overwritten from the host repository descriptor.
   $effect(() => {
     const selectedId = values.selectedRepositoryId;
     if (!selectedId || !hostDriven) return;
     const repo = repositories.find((r) => r.id === selectedId);
     if (!repo) return;
-    values.key = repo.name;
-    values.cloneUrl = values.transport === 'ssh' ? (repo.sshUrl ?? repo.remoteUrl) : repo.remoteUrl;
-    values.defaultBranch = repo.defaultBranch || 'main';
+    if (mode !== 'edit') {
+      values.key = repo.name;
+    }
+    // In edit mode, preserve the profile's persisted cloneUrl and defaultBranch
+    // on the initial load. The auto-match in loadRepositories only pre-selects
+    // the repository; it should not overwrite stored values. This is a one-shot
+    // guard: the first prefill run after mount (which sees the flag true) skips
+    // the overwrite and clears the flag. Subsequent runs (manual repo pick,
+    // transport change) re-derive as normal.
+    if (mode === 'edit' && initialEditReposLoad) {
+      initialEditReposLoad = false;
+    } else {
+      values.cloneUrl = values.transport === 'ssh' ? (repo.sshUrl ?? repo.remoteUrl) : repo.remoteUrl;
+      values.defaultBranch = repo.defaultBranch || 'main';
+    }
   });
 
   // Load branches when a repository is selected (only in host-driven mode)
@@ -374,6 +435,8 @@
               <option value={values.selectedRepositoryId}>
                 {(repositories.find((r) => r.id === values.selectedRepositoryId)?.name ?? values.selectedRepositoryId)} (unavailable)
               </option>
+            {:else if mode === 'edit' && hostDriven && values.project && !values.selectedRepositoryId && repositories.length > 0 && !repositoriesLoading}
+              <option value="">{values.key} (unavailable)</option>
             {/if}
             {#each repositories as repo (repo.id)}
               <option value={repo.id}>{repositoryLabel(repo)}</option>

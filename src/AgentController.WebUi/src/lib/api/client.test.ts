@@ -13,6 +13,7 @@ const repository: RepositoryProfile = {
   remoteIdentity: null,
   runtimeEnvironmentKey: null,
   sshKeyReference: null,
+  sshKeyInheritEnvironment: false,
   project: null,
 };
 

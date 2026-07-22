@@ -261,7 +261,7 @@
       return 'Connect a source repository and choose the managed environments it will use.';
     }
     if (currentRoute.view === 'edit') {
-      return 'Update clone settings, path restrictions, and managed environment associations.';
+      return 'Update clone settings, branch, and managed environment associations.';
     }
     return 'Review the source and environment configuration used for this repository.';
   }
