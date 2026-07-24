@@ -26,9 +26,6 @@ public sealed class ManagedProfileResolverTests
         var result = await resolver.ResolveForRepositoryAsync(" ORDERS ", CancellationToken.None);
 
         Assert.NotNull(result);
-        Assert.True(result.RepositoryIsManaged);
-        Assert.True(result.RuntimeEnvironmentIsManaged);
-        Assert.True(result.WorkSourceEnvironmentIsManaged);
         Assert.Equal("https://managed.example/orders.git", result.Repository.CloneUrl);
         Assert.Equal("managed-runtime", result.RuntimeEnvironment.Key);
         Assert.Equal("managed-ado", result.WorkSourceEnvironment?.Key);
@@ -102,8 +99,6 @@ public sealed class ManagedProfileResolverTests
         );
 
         Assert.NotNull(result);
-        Assert.True(result.RepositoryIsManaged);
-        Assert.True(result.RuntimeEnvironmentIsManaged);
         Assert.Equal("/managed/root", result.RuntimeEnvironment.EnvironmentSettings.WorkspaceRoot);
     }
 
@@ -126,7 +121,6 @@ public sealed class ManagedProfileResolverTests
             ["alpha", "zeta"],
             environments.Select(environment => environment.Profile.Key)
         );
-        Assert.All(environments, environment => Assert.True(environment.IsManaged));
     }
 
     [Fact]

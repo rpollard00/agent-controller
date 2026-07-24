@@ -70,9 +70,6 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
             WorkSourceEnvironment = resolvedWorkSource?.Profile,
             WorkSourceConnection = resolvedWorkSource?.Connection,
             RepositoryConnection = resolvedRepoConnection,
-            RepositoryIsManaged = true,
-            RuntimeEnvironmentIsManaged = true,
-            WorkSourceEnvironmentIsManaged = resolvedWorkSource is not null,
         };
     }
 
@@ -102,7 +99,7 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
         }
 
         var connection = await ResolveWorkSourceConnectionAsync(profile, cancellationToken);
-        return new ResolvedWorkSourceEnvironment(profile, connection, IsManaged: true);
+        return new ResolvedWorkSourceEnvironment(profile, connection);
     }
 
     private async Task<ConnectionProfile?> ResolveWorkSourceConnectionAsync(
@@ -145,8 +142,7 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
             .Where(profile => profile.Enabled)
             .Select(async profile => new ResolvedWorkSourceEnvironment(
                 profile,
-                await ResolveWorkSourceConnectionAsync(profile, cancellationToken),
-                IsManaged: true
+                await ResolveWorkSourceConnectionAsync(profile, cancellationToken)
             ))
             .ToList();
 

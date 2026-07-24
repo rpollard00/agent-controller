@@ -37,9 +37,8 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
         var environments = resolver is null
             ? Array.Empty<ResolvedWorkSourceEnvironment>()
             : await resolver.ListWorkSourceEnvironmentsAsync(cancellationToken);
-        var managedEnvironments = environments.Where(environment => environment.IsManaged).ToList();
 
-        if (managedEnvironments.Count == 0)
+        if (environments.Count == 0)
         {
             return [];
         }
@@ -47,7 +46,7 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
         var factory = scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClientFactory>();
         var candidates = new List<WorkCandidate>();
 
-        foreach (var environment in managedEnvironments)
+        foreach (var environment in environments)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var profile = environment.Profile;

@@ -832,7 +832,7 @@ public class AzureDevOpsBoardsWorkSourceTests
             return Task.FromResult(
                 profile is null
                     ? null
-                    : new ResolvedWorkSourceEnvironment(profile, Connection: null, IsManaged: true)
+                    : new ResolvedWorkSourceEnvironment(profile, Connection: null)
             );
         }
 
@@ -842,7 +842,7 @@ public class AzureDevOpsBoardsWorkSourceTests
         {
             return Task.FromResult<IReadOnlyList<ResolvedWorkSourceEnvironment>>(
                 profiles
-                    .Select(profile => new ResolvedWorkSourceEnvironment(profile, Connection: null, IsManaged: true))
+                    .Select(profile => new ResolvedWorkSourceEnvironment(profile, Connection: null))
                     .ToList()
             );
         }

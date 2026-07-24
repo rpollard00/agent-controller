@@ -22,19 +22,12 @@ public sealed record ResolvedControllerProfiles
     /// when the repository references a managed connection.
     /// </summary>
     public ConnectionProfile? RepositoryConnection { get; init; }
-
-    public bool RepositoryIsManaged { get; init; }
-
-    public bool RuntimeEnvironmentIsManaged { get; init; }
-
-    public bool WorkSourceEnvironmentIsManaged { get; init; }
 }
 
-/// <summary>A work source environment profile together with its managed/configured origin.</summary>
+/// <summary>A managed work source environment profile and its resolved connection.</summary>
 public sealed record ResolvedWorkSourceEnvironment(
     WorkSourceEnvironmentProfile Profile,
-    ConnectionProfile? Connection,
-    bool IsManaged
+    ConnectionProfile? Connection
 );
 
 

@@ -71,11 +71,11 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
         }
 
         var environments = await resolver.ListWorkSourceEnvironmentsAsync(cancellationToken);
-        var managedEnvironments = environments
-            .Where(env => env.IsManaged && env.Connection is not null)
+        var connectedEnvironments = environments
+            .Where(env => env.Connection is not null)
             .ToList();
 
-        if (managedEnvironments.Count == 0)
+        if (connectedEnvironments.Count == 0)
         {
             SkipValidationNoManagedEnvironments(_logger);
             return;
@@ -83,7 +83,7 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
 
         var allFailures = new List<string>();
 
-        foreach (var env in managedEnvironments)
+        foreach (var env in connectedEnvironments)
         {
             var profile = env.Profile;
             var connection = env.Connection!;
@@ -150,7 +150,7 @@ internal sealed partial class AzureDevOpsBoardStateStartupValidator : IHostedSer
                 string.Join("\n", allFailures.Select((f, i) => $"  {i + 1}. {f}")));
         }
 
-        ValidationPassedManaged(_logger, managedEnvironments.Count);
+        ValidationPassedManaged(_logger, connectedEnvironments.Count);
     }
 
     /// <summary>

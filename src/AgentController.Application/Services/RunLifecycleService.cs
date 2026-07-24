@@ -1022,7 +1022,7 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             environmentKey,
             ct
         );
-        return environment?.IsManaged == true
+        return environment is not null
             ? new WorkSourceStates(
                 environment.Profile.ActiveState,
                 environment.Profile.CompletedState

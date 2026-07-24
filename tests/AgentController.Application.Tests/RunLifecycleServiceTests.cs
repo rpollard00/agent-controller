@@ -2256,8 +2256,7 @@ public class RunLifecycleServiceTests
                 ActiveState = activeState,
                 CompletedState = completedState,
             },
-            Connection: null,
-            IsManaged: true);
+            Connection: null);
 
         public Task<ResolvedControllerProfiles?> ResolveForRepositoryAsync(
             string repositoryKey,

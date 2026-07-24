@@ -904,8 +904,7 @@ public class BoardStateAndEscalationTests
                 ActiveState = "Active",
                 CompletedState = "Resolved",
             },
-            Connection: null,
-            IsManaged: true);
+            Connection: null);
 
         public Task<ResolvedControllerProfiles?> ResolveForRepositoryAsync(
             string repositoryKey,

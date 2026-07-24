@@ -373,8 +373,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
             ActiveState = workSource.Value.ActiveState,
             CompletedState = workSource.Value.CompletedState,
         };
-        var mockEnvironment = new ResolvedWorkSourceEnvironment(
-            mockProfile, mockConnection, IsManaged: true);
+        var mockEnvironment = new ResolvedWorkSourceEnvironment(mockProfile, mockConnection);
         var mockResolver = new SingleProfileResolver(mockEnvironment);
 
         // Mock client factory that returns our mock client.
