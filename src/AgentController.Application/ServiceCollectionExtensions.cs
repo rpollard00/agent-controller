@@ -85,6 +85,10 @@ public static class ServiceCollectionExtensions
         >();
         services.AddScoped<IQueryHandler<ListRunsQuery, RunListResult>, ListRunsQueryHandler>();
         services.AddScoped<
+            IQueryHandler<ListRunCardsQuery, IReadOnlyList<RunCardItem>>,
+            ListRunCardsQueryHandler
+        >();
+        services.AddScoped<
             IQueryHandler<GetRunByIdQuery, RunDetailResult?>,
             GetRunByIdQueryHandler
         >();

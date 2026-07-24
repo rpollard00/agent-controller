@@ -1,0 +1,55 @@
+namespace AgentController.Application.Results;
+
+/// <summary>
+/// Aggregate dashboard projection for either an agent run or a rework-feedback soak row.
+/// </summary>
+public sealed record RunCardItem
+{
+    /// <summary>Run identifier, or rework-feedback row identifier for a soak card.</summary>
+    public string Id { get; init; } = string.Empty;
+
+    /// <summary>Card discriminator: <c>run</c> or <c>rework-soak</c>.</summary>
+    public string Kind { get; init; } = string.Empty;
+
+    /// <summary>Current run state or synthesized soak state.</summary>
+    public string Status { get; init; } = string.Empty;
+
+    /// <summary>Dashboard category: executing, pending, attention, or completed.</summary>
+    public string Category { get; init; } = string.Empty;
+
+    /// <summary>Associated work item title, when available.</summary>
+    public string? WorkItemTitle { get; init; }
+
+    /// <summary>External work item URL, when available.</summary>
+    public string? WorkItemUrl { get; init; }
+
+    /// <summary>Work source that supplied the associated work item.</summary>
+    public string? WorkItemSource { get; init; }
+
+    /// <summary>Managed repository key associated with the work item.</summary>
+    public string? RepoKey { get; init; }
+
+    /// <summary>Browser-friendly repository URL, when one can be resolved.</summary>
+    public string? RepositoryUrl { get; init; }
+
+    /// <summary>Agent runtime type used by the run.</summary>
+    public string? RuntimeType { get; init; }
+
+    /// <summary>One-based attempt number for the associated run.</summary>
+    public int RunAttempt { get; init; } = 1;
+
+    /// <summary>Type of the latest lifecycle event or synthesized soak event.</summary>
+    public string? LastEventType { get; init; }
+
+    /// <summary>Message from the latest lifecycle event or synthesized soak event.</summary>
+    public string? LastEventMessage { get; init; }
+
+    /// <summary>Occurrence time of the latest lifecycle event or qualifying comment.</summary>
+    public DateTimeOffset? LastEventAt { get; init; }
+
+    /// <summary>When the underlying run or soak row was created.</summary>
+    public DateTimeOffset CreatedAt { get; init; }
+
+    /// <summary>When the underlying run or soak row was last updated.</summary>
+    public DateTimeOffset UpdatedAt { get; init; }
+}
