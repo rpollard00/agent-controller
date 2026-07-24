@@ -18,6 +18,7 @@ public static class WebUiControllers
     private const string WorkSourceEnvironmentsPath = "/api/webui/work-source-environments";
     private const string RuntimeEnvironmentsPath = "/api/webui/runtime-environments";
     private const string SecretsPath = "/api/webui/secrets";
+    private const string RunsPath = "/api/webui/runs";
 
     public static IEndpointRouteBuilder MapWebUiControllers(this IEndpointRouteBuilder app)
     {
@@ -25,7 +26,19 @@ public static class WebUiControllers
         MapWorkSourceEnvironmentControllers(app.MapGroup(WorkSourceEnvironmentsPath));
         MapRuntimeEnvironmentControllers(app.MapGroup(RuntimeEnvironmentsPath));
         MapSecretsControllers(app.MapGroup(SecretsPath));
+        MapRunsController(app.MapGroup(RunsPath));
         return app;
+    }
+
+    private static void MapRunsController(RouteGroupBuilder group)
+    {
+        group.MapGet(
+            "",
+            async (
+                IQueryHandler<ListRunCardsQuery, IReadOnlyList<RunCardItem>> handler,
+                CancellationToken cancellationToken
+            ) => Results.Ok(await handler.ExecuteAsync(new ListRunCardsQuery(), cancellationToken))
+        );
     }
 
     private static void MapRepositoryControllers(RouteGroupBuilder group)
