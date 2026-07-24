@@ -13,7 +13,7 @@ namespace AgentController.Infrastructure.Tests;
 /// <summary>
 /// Tests for <see cref="AzureDevOpsBoardStateStartupValidator"/>.
 /// Verifies that the validator skips validation for non-ADO providers,
-/// respects the skip environment variable, handles missing config gracefully,
+/// respects the skip environment variable, ignores appsettings-only profiles,
 /// and correctly rejects invalid ActiveState/CompletedState
 /// and duplicate ActiveState/CompletedState values.
 /// </summary>
@@ -51,21 +51,13 @@ public class AzureDevOpsBoardStateStartupValidatorTests
     }
 
     [Fact]
-    public async Task StartAsync_MissingConnectionKey_SkipsValidation()
+    public async Task StartAsync_NoManagedEnvironments_SkipsAppsettingsValidation()
     {
         var validator = CreateValidator(
-            workSource: CreateWorkSourceOptions(connectionKey: null),
-            boards: CreateBoardsOptions(pat: "test-pat"));
-
-        await validator.StartAsync(CancellationToken.None);
-    }
-
-    [Fact]
-    public async Task StartAsync_MissingProject_SkipsValidation()
-    {
-        var validator = CreateValidator(
-            workSource: CreateWorkSourceOptions(connectionKey: null, project: null),
-            boards: CreateBoardsOptions(pat: "test-pat"));
+            workSource: CreateWorkSourceOptions(
+                connectionKey: "configured-connection",
+                project: "ConfiguredProject",
+                activeState: "InvalidConfiguredState"));
 
         await validator.StartAsync(CancellationToken.None);
     }
@@ -94,16 +86,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
             ValidStates = ["New", "Approved", "InProgress", "Resolved", "Closed"],
         };
 
-        var validator = CreateValidatorWithMockClient(
-            mockClient,
-            workSource: CreateWorkSourceOptions(
-                connectionKey: "https://dev.azure.com/testorg",
-                project: "TestProject",
-                activeState: "Active", // Not in valid states, but we'll test below
-                completedState: "Resolved"));
-
-        // ActiveState "Active" is NOT in the mock valid states, so this should fail.
-        // Let's use "Resolved" for ActiveState to test the success path.
+        // Use states supplied by the managed profile to test the success path.
         var validatorSuccess = CreateValidatorWithMockClient(
             mockClient,
             workSource: CreateWorkSourceOptions(
@@ -337,31 +320,16 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         });
     }
 
-    private static IOptions<AzureDevOpsBoardsOptions> CreateBoardsOptions(string? pat = null)
-    {
-        return global::Microsoft.Extensions.Options.Options.Create(new AzureDevOpsBoardsOptions
-        {
-            PersonalAccessToken = pat ?? string.Empty,
-        });
-    }
-
     /// <summary>
-    /// Create a validator for skip-path tests.
-    /// Uses a scope factory with IManagedProfileResolver returning empty results,
-    /// so the validator falls through to the appsettings fallback path.
+    /// Create a validator for skip-path tests with no managed work source environments.
     /// </summary>
     private static AzureDevOpsBoardStateStartupValidator CreateValidator(
-        IOptions<WorkSourceOptions>? workSource = null,
-        IOptions<AzureDevOpsBoardsOptions>? boards = null)
+        IOptions<WorkSourceOptions>? workSource = null)
     {
         var workSourceOptions = workSource ?? CreateWorkSourceOptions();
-        var boardsOptions = boards ?? CreateBoardsOptions();
 
         var services = new ServiceCollection();
         services.AddSingleton(workSourceOptions);
-        services.AddSingleton(boardsOptions);
-        // Register a resolver that returns no managed profiles so the validator
-        // falls through to the appsettings fallback path (which checks ConnectionKey).
         services.AddSingleton<IManagedProfileResolver>(new EmptyManagedProfileResolver());
 
         var provider = services.BuildServiceProvider();
@@ -369,7 +337,6 @@ public class AzureDevOpsBoardStateStartupValidatorTests
 
         return new AzureDevOpsBoardStateStartupValidator(
             workSourceOptions,
-            boardsOptions,
             scopeFactory,
             NullLogger<AzureDevOpsBoardStateStartupValidator>.Instance);
     }
@@ -380,11 +347,8 @@ public class AzureDevOpsBoardStateStartupValidatorTests
     /// </summary>
     private static AzureDevOpsBoardStateStartupValidator CreateValidatorWithMockClient(
         IAzureDevOpsBoardsClient mockClient,
-        IOptions<WorkSourceOptions> workSource,
-        IOptions<AzureDevOpsBoardsOptions>? boards = null)
+        IOptions<WorkSourceOptions> workSource)
     {
-        var boardsOptions = boards ?? CreateBoardsOptions(pat: "test-pat");
-
         // Build a mock managed profile resolver that returns a ResolvedWorkSourceEnvironment
         // so the validator uses the managed profiles path (which uses IAzureDevOpsBoardsClientFactory).
         var mockConnection = new ConnectionProfile
@@ -420,14 +384,12 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         services.AddSingleton<IManagedProfileResolver>(mockResolver);
         services.AddSingleton<IAzureDevOpsBoardsClientFactory>(mockFactory);
         services.AddSingleton(workSource);
-        services.AddSingleton(boardsOptions);
 
         var provider = services.BuildServiceProvider();
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
 
         return new AzureDevOpsBoardStateStartupValidator(
             workSource,
-            boardsOptions,
             scopeFactory,
             NullLogger<AzureDevOpsBoardStateStartupValidator>.Instance);
     }
@@ -463,8 +425,7 @@ public class AzureDevOpsBoardStateStartupValidatorTests
     // ── Test infrastructure ────────────────────────────────────────
 
     /// <summary>
-    /// Empty managed profile resolver that returns no profiles,
-    /// causing the validator to fall through to the appsettings fallback path.
+    /// Empty managed profile resolver that returns no profiles.
     /// </summary>
     private sealed class EmptyManagedProfileResolver : IManagedProfileResolver
     {

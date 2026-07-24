@@ -470,10 +470,10 @@ public static class AgentControllerServiceCollectionExtensions
         // per operation.
         services.AddSingleton<IWorkSource, AzureDevOpsBoardsWorkSource>();
 
-        // Register startup validator for configured ADO board states.
-        // Validates ActiveState, CompletedState, and EligibleStates against
-        // the actual valid System.State values for the configured project/WIT.
-        // Throws during startup if any configured state is invalid.
+        // Register startup validator for managed ADO work source environments.
+        // Validates ActiveState and CompletedState against the actual valid
+        // System.State values for each managed environment's project/WIT.
+        // Throws during startup if any managed state is invalid.
         services.AddHostedService<AzureDevOpsBoardStateStartupValidator>();
 
         // Shared ADO client factory — used by both work-source (Boards) and repo-host (Repos) paths.

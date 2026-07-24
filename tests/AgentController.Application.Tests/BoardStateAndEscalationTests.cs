@@ -3,7 +3,6 @@ using AgentController.Application.Abstractions;
 using AgentController.Application.Services;
 using AgentController.Domain;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace AgentController.Application.Tests;
 
@@ -33,16 +32,7 @@ public class BoardStateAndEscalationTests
         _eventStore = new InMemoryLifecycleEventStore();
         _workItemStore = new InMemoryWorkItemStore();
 
-        var workSourceOptions = new TestOptionsMonitor<WorkSourceOptionsView>(new WorkSourceOptionsView
-        {
-            ActiveState = "Active",
-            CompletedState = "Resolved",
-        });
-
-        _service = new RunLifecycleService(
-            NullLogger<RunLifecycleService>.Instance,
-            _runStore, _eventStore, _workItemStore,
-            new StubWorkSource(), workSourceOptions);
+        _service = CreateService(new StubWorkSource());
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -55,15 +45,7 @@ public class BoardStateAndEscalationTests
     {
         // Arrange: create a service with a tracking StubWorkSource
         var stubWorkSource = new StubWorkSource();
-        var service = new RunLifecycleService(
-            NullLogger<RunLifecycleService>.Instance,
-            _runStore, _eventStore, _workItemStore,
-            stubWorkSource,
-            new TestOptionsMonitor<WorkSourceOptionsView>(new WorkSourceOptionsView
-            {
-                ActiveState = "Active",
-                CompletedState = "Resolved",
-            }));
+        var service = CreateService(stubWorkSource);
 
         var candidate = CreateAzureCandidate("wi_accepted_proj", "200");
         await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
@@ -111,15 +93,7 @@ public class BoardStateAndEscalationTests
         // Verify that claiming an Azure-sourced work item does NOT change the board state.
         // Only tags (agent-active) are projected at Claim time.
         var stubWorkSource = new StubWorkSource();
-        var service = new RunLifecycleService(
-            NullLogger<RunLifecycleService>.Instance,
-            _runStore, _eventStore, _workItemStore,
-            stubWorkSource,
-            new TestOptionsMonitor<WorkSourceOptionsView>(new WorkSourceOptionsView
-            {
-                ActiveState = "Active",
-                CompletedState = "Resolved",
-            }));
+        var service = CreateService(stubWorkSource);
 
         var candidate = CreateAzureCandidate("wi_claimed_no_state", "210");
         await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
@@ -147,15 +121,7 @@ public class BoardStateAndEscalationTests
     public async Task Completion_ProjectsResolvedState()
     {
         var stubWorkSource = new StubWorkSource();
-        var service = new RunLifecycleService(
-            NullLogger<RunLifecycleService>.Instance,
-            _runStore, _eventStore, _workItemStore,
-            stubWorkSource,
-            new TestOptionsMonitor<WorkSourceOptionsView>(new WorkSourceOptionsView
-            {
-                ActiveState = "Active",
-                CompletedState = "Resolved",
-            }));
+        var service = CreateService(stubWorkSource);
 
         var candidate = CreateAzureCandidate("wi_completion", "201");
         await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
@@ -201,15 +167,7 @@ public class BoardStateAndEscalationTests
     public async Task Completion_BranchPushed_AlsoProjectsResolved()
     {
         var stubWorkSource = new StubWorkSource();
-        var service = new RunLifecycleService(
-            NullLogger<RunLifecycleService>.Instance,
-            _runStore, _eventStore, _workItemStore,
-            stubWorkSource,
-            new TestOptionsMonitor<WorkSourceOptionsView>(new WorkSourceOptionsView
-            {
-                ActiveState = "Active",
-                CompletedState = "Resolved",
-            }));
+        var service = CreateService(stubWorkSource);
 
         var candidate = CreateAzureCandidate("wi_branchpush", "202");
         await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
@@ -303,15 +261,7 @@ public class BoardStateAndEscalationTests
     public async Task PreAcceptFailure_ExhaustedRetries_EscalatesToNeedsHuman()
     {
         var stubWorkSource = new StubWorkSource();
-        var service = new RunLifecycleService(
-            NullLogger<RunLifecycleService>.Instance,
-            _runStore, _eventStore, _workItemStore,
-            stubWorkSource,
-            new TestOptionsMonitor<WorkSourceOptionsView>(new WorkSourceOptionsView
-            {
-                ActiveState = "Active",
-                CompletedState = "Resolved",
-            }));
+        var service = CreateService(stubWorkSource);
 
         // Use an Azure-sourced candidate so projection to external work source is triggered
         var candidate = CreateAzureCandidate("wi_exhaust", "400");
@@ -413,15 +363,7 @@ public class BoardStateAndEscalationTests
     {
         // Arrange: use a StubWorkSource that throws on UpdateStatusAsync
         var failingWorkSource = new FailingWorkSource();
-        var service = new RunLifecycleService(
-            NullLogger<RunLifecycleService>.Instance,
-            _runStore, _eventStore, _workItemStore,
-            failingWorkSource,
-            new TestOptionsMonitor<WorkSourceOptionsView>(new WorkSourceOptionsView
-            {
-                ActiveState = "Active",
-                CompletedState = "Resolved",
-            }));
+        var service = CreateService(failingWorkSource);
 
         var candidate = CreateAzureCandidate("wi_proj_fail", "300");
         await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
@@ -457,15 +399,7 @@ public class BoardStateAndEscalationTests
     {
         // Arrange
         var failingWorkSource = new FailingWorkSource();
-        var service = new RunLifecycleService(
-            NullLogger<RunLifecycleService>.Instance,
-            _runStore, _eventStore, _workItemStore,
-            failingWorkSource,
-            new TestOptionsMonitor<WorkSourceOptionsView>(new WorkSourceOptionsView
-            {
-                ActiveState = "Active",
-                CompletedState = "Resolved",
-            }));
+        var service = CreateService(failingWorkSource);
 
         var candidate = CreateAzureCandidate("wi_proj_fail2", "301");
         await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
@@ -533,6 +467,17 @@ public class BoardStateAndEscalationTests
     // Helpers
     // ═══════════════════════════════════════════════════════════════
 
+    private RunLifecycleService CreateService(IWorkSource workSource)
+    {
+        return new RunLifecycleService(
+            NullLogger<RunLifecycleService>.Instance,
+            _runStore,
+            _eventStore,
+            _workItemStore,
+            workSource,
+            new TestManagedProfileResolver());
+    }
+
     private static WorkCandidate CreateAzureCandidate(string id, string externalId)
     {
         return new WorkCandidate
@@ -545,7 +490,11 @@ public class BoardStateAndEscalationTests
             RepoKey = "test-repo",
             Tags = new[] { "agent-ready" },
             ExternalUrl = $"https://dev.azure.com/org/project/_workitems/edit/{externalId}",
-            SourceMetadata = new Dictionary<string, string> { ["revision"] = "1" },
+            SourceMetadata = new Dictionary<string, string>
+            {
+                ["revision"] = "1",
+                ["workSourceEnvironmentKey"] = "test-environment",
+            },
         };
     }
 
@@ -946,27 +895,29 @@ public class BoardStateAndEscalationTests
         }
     }
 
-    /// <summary>
-    /// Minimal IOptionsMonitor for unit tests.
-    /// </summary>
-    private sealed class TestOptionsMonitor<TOptions> : IOptionsMonitor<TOptions>
-        where TOptions : class
+    private sealed class TestManagedProfileResolver : IManagedProfileResolver
     {
-        private readonly TOptions _value;
+        private static readonly ResolvedWorkSourceEnvironment Environment = new(
+            new WorkSourceEnvironmentProfile
+            {
+                Key = "test-environment",
+                ActiveState = "Active",
+                CompletedState = "Resolved",
+            },
+            Connection: null,
+            IsManaged: true);
 
-        public TestOptionsMonitor(TOptions value)
-        {
-            _value = value ?? throw new ArgumentNullException(nameof(value));
-        }
+        public Task<ResolvedControllerProfiles?> ResolveForRepositoryAsync(
+            string repositoryKey,
+            CancellationToken ct) => Task.FromResult<ResolvedControllerProfiles?>(null);
 
-        public TOptions CurrentValue => _value;
-        public TOptions Get(string? name) => _value;
-        public IDisposable OnChange(Action<TOptions, string?> listener) => Disposable.Instance;
+        public Task<ResolvedWorkSourceEnvironment?> ResolveWorkSourceEnvironmentAsync(
+            string? key,
+            CancellationToken ct) => Task.FromResult<ResolvedWorkSourceEnvironment?>(
+                key == Environment.Profile.Key ? Environment : null);
 
-        private sealed class Disposable : IDisposable
-        {
-            public static readonly Disposable Instance = new();
-            public void Dispose() { }
-        }
+        public Task<IReadOnlyList<ResolvedWorkSourceEnvironment>> ListWorkSourceEnvironmentsAsync(
+            CancellationToken ct) => Task.FromResult<IReadOnlyList<ResolvedWorkSourceEnvironment>>(
+                [Environment]);
     }
 }

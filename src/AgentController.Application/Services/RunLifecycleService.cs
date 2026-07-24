@@ -1,7 +1,6 @@
 using AgentController.Application.Abstractions;
 using AgentController.Domain;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace AgentController.Application.Services;
 
@@ -23,7 +22,6 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
     private readonly ILifecycleEventStore _eventStore;
     private readonly IWorkItemStore _workItemStore;
     private readonly IWorkSource _workSource;
-    private readonly IOptionsMonitor<WorkSourceOptionsView> _workSourceOptions;
     private readonly IManagedProfileResolver? _profileResolver;
 
     /// <summary>
@@ -72,7 +70,6 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         ILifecycleEventStore eventStore,
         IWorkItemStore workItemStore,
         IWorkSource workSource,
-        IOptionsMonitor<WorkSourceOptionsView> workSourceOptions,
         IManagedProfileResolver? profileResolver = null
     )
     {
@@ -81,7 +78,6 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         _eventStore = eventStore;
         _workItemStore = workItemStore;
         _workSource = workSource;
-        _workSourceOptions = workSourceOptions;
         _profileResolver = profileResolver;
     }
 
@@ -573,8 +569,7 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         if (workItem is null)
             return;
 
-        // Managed board-state settings follow the environment that produced the
-        // work item. Appsettings remain the fallback for legacy or missing keys.
+        // Board-state settings follow the managed environment that produced the work item.
         var states = await ResolveWorkSourceStatesAsync(workItem, ct);
         var status = targetState switch
         {
@@ -720,8 +715,7 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
     /// external projection.
     ///
     /// Uses the selected managed environment's <c>ActiveState</c> and
-    /// <c>CompletedState</c>, with appsettings as the legacy fallback.
-    /// This makes the projection idempotent: re-projecting the same state
+    /// <c>CompletedState</c>. This makes the projection idempotent: re-projecting the same state
     /// is a no-op at the ADO API level (PATCH with the same value is harmless).
     /// </summary>
     private static (ExternalWorkStatus? Status, string? Comment) BuildExternalProjection(
@@ -1018,13 +1012,10 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         CancellationToken ct
     )
     {
-        var configured = _workSourceOptions.CurrentValue;
-        var fallback = new WorkSourceStates(configured.ActiveState, configured.CompletedState);
         var environmentKey = GetWorkSourceEnvironmentKey(workItem.SourceMetadata);
-
         if (_profileResolver is null || string.IsNullOrWhiteSpace(environmentKey))
         {
-            return fallback;
+            return WorkSourceStates.Empty;
         }
 
         var environment = await _profileResolver.ResolveWorkSourceEnvironmentAsync(
@@ -1036,7 +1027,7 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
                 environment.Profile.ActiveState,
                 environment.Profile.CompletedState
             )
-            : fallback;
+            : WorkSourceStates.Empty;
     }
 
     private static string? GetWorkSourceEnvironmentKey(
@@ -1046,7 +1037,10 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         return metadata?.TryGetValue("workSourceEnvironmentKey", out var key) == true ? key : null;
     }
 
-    private sealed record WorkSourceStates(string? ActiveState, string? CompletedState);
+    private sealed record WorkSourceStates(string? ActiveState, string? CompletedState)
+    {
+        public static WorkSourceStates Empty { get; } = new(null, null);
+    }
 
     private static RunLifecycleState ResolveCompletionState(string? outcome)
     {

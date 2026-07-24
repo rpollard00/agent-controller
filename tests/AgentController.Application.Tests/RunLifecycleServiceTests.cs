@@ -3,7 +3,6 @@ using AgentController.Application.Abstractions;
 using AgentController.Application.Services;
 using AgentController.Domain;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace AgentController.Application.Tests;
 
@@ -37,22 +36,18 @@ public class RunLifecycleServiceTests
     private readonly InMemoryLifecycleEventStore _eventStore;
     private readonly InMemoryWorkItemStore _workItemStore;
     private readonly RunLifecycleService _service;
-    private readonly IOptionsMonitor<WorkSourceOptionsView> _workSourceOptions;
+    private readonly IManagedProfileResolver _profileResolver;
 
     public RunLifecycleServiceTests()
     {
         _runStore = new InMemoryAgentRunStore();
         _eventStore = new InMemoryLifecycleEventStore();
         _workItemStore = new InMemoryWorkItemStore();
-        _workSourceOptions = new TestOptionsMonitor<WorkSourceOptionsView>(new WorkSourceOptionsView
-        {
-            ActiveState = "Active",
-            CompletedState = "Resolved",
-        });
+        _profileResolver = new TestManagedProfileResolver("Active", "Resolved");
         _service = new RunLifecycleService(
             NullLogger<RunLifecycleService>.Instance,
             _runStore, _eventStore, _workItemStore,
-            new StubWorkSource(), _workSourceOptions);
+            new StubWorkSource(), _profileResolver);
     }
 
     // ── CreateRunForWorkItemAsync ──────────────────────────────────
@@ -214,7 +209,7 @@ public class RunLifecycleServiceTests
         // comment projection to the work source via IWorkSource.AddCommentAsync.
         var stubWorkSource = new StubWorkSource();
         var serviceWithStub = new RunLifecycleService(
-            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _profileResolver);
 
         // Upsert an Azure candidate with SourceMetadata (revision)
         var candidate = new WorkCandidate
@@ -1201,7 +1196,7 @@ public class RunLifecycleServiceTests
         // to the external work source.
         var stubWorkSource = new StubWorkSource();
         var service = new RunLifecycleService(
-            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _profileResolver);
 
         var candidate = new WorkCandidate
         {
@@ -1213,7 +1208,11 @@ public class RunLifecycleServiceTests
             RepoKey = "test-repo",
             Tags = new[] { "agent-ready" },
             ExternalUrl = "https://dev.azure.com/org/project/_workitems/edit/100",
-            SourceMetadata = new Dictionary<string, string> { ["revision"] = "1" },
+            SourceMetadata = new Dictionary<string, string>
+            {
+                ["revision"] = "1",
+                ["workSourceEnvironmentKey"] = "test-environment",
+            },
         };
         await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
 
@@ -1233,7 +1232,7 @@ public class RunLifecycleServiceTests
     {
         var stubWorkSource = new StubWorkSource();
         var service = new RunLifecycleService(
-            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _profileResolver);
 
         var candidate = new WorkCandidate
         {
@@ -1245,7 +1244,11 @@ public class RunLifecycleServiceTests
             RepoKey = "test-repo",
             Tags = new[] { "agent-ready" },
             ExternalUrl = "https://dev.azure.com/org/project/_workitems/edit/101",
-            SourceMetadata = new Dictionary<string, string> { ["revision"] = "1" },
+            SourceMetadata = new Dictionary<string, string>
+            {
+                ["revision"] = "1",
+                ["workSourceEnvironmentKey"] = "test-environment",
+            },
         };
         await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
 
@@ -1268,7 +1271,7 @@ public class RunLifecycleServiceTests
     {
         var stubWorkSource = new StubWorkSource();
         var service = new RunLifecycleService(
-            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _profileResolver);
 
         var candidate = new WorkCandidate
         {
@@ -1280,7 +1283,11 @@ public class RunLifecycleServiceTests
             RepoKey = "test-repo",
             Tags = new[] { "agent-ready" },
             ExternalUrl = "https://dev.azure.com/org/project/_workitems/edit/102",
-            SourceMetadata = new Dictionary<string, string> { ["revision"] = "1" },
+            SourceMetadata = new Dictionary<string, string>
+            {
+                ["revision"] = "1",
+                ["workSourceEnvironmentKey"] = "test-environment",
+            },
         };
         await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
 
@@ -1312,7 +1319,7 @@ public class RunLifecycleServiceTests
         // keeping the item visible on the active board.
         var stubWorkSource = new StubWorkSource();
         var service = new RunLifecycleService(
-            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _profileResolver);
 
         var candidate = new WorkCandidate
         {
@@ -1324,7 +1331,11 @@ public class RunLifecycleServiceTests
             RepoKey = "test-repo",
             Tags = new[] { "agent-ready" },
             ExternalUrl = "https://dev.azure.com/org/project/_workitems/edit/103",
-            SourceMetadata = new Dictionary<string, string> { ["revision"] = "1" },
+            SourceMetadata = new Dictionary<string, string>
+            {
+                ["revision"] = "1",
+                ["workSourceEnvironmentKey"] = "test-environment",
+            },
         };
         await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
 
@@ -1369,7 +1380,7 @@ public class RunLifecycleServiceTests
     {
         var stubWorkSource = new StubWorkSource();
         var service = new RunLifecycleService(
-            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _profileResolver);
 
         var candidate = new WorkCandidate
         {
@@ -1381,7 +1392,11 @@ public class RunLifecycleServiceTests
             RepoKey = "test-repo",
             Tags = new[] { "agent-ready" },
             ExternalUrl = "https://dev.azure.com/org/project/_workitems/edit/104",
-            SourceMetadata = new Dictionary<string, string> { ["revision"] = "1" },
+            SourceMetadata = new Dictionary<string, string>
+            {
+                ["revision"] = "1",
+                ["workSourceEnvironmentKey"] = "test-environment",
+            },
         };
         await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
 
@@ -1415,7 +1430,7 @@ public class RunLifecycleServiceTests
         // The ADO client handles PATCH with same value as idempotent.
         var stubWorkSource = new StubWorkSource();
         var service = new RunLifecycleService(
-            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _profileResolver);
 
         var candidate = new WorkCandidate
         {
@@ -1427,7 +1442,11 @@ public class RunLifecycleServiceTests
             RepoKey = "test-repo",
             Tags = new[] { "agent-ready" },
             ExternalUrl = "https://dev.azure.com/org/project/_workitems/edit/105",
-            SourceMetadata = new Dictionary<string, string> { ["revision"] = "1" },
+            SourceMetadata = new Dictionary<string, string>
+            {
+                ["revision"] = "1",
+                ["workSourceEnvironmentKey"] = "test-environment",
+            },
         };
         await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
 
@@ -1452,15 +1471,13 @@ public class RunLifecycleServiceTests
     public async Task Projection_NoActiveState_SkipsStateChange()
     {
         // When ActiveState is not configured, no board state change should occur.
-        var noActiveOptions = new TestOptionsMonitor<WorkSourceOptionsView>(new WorkSourceOptionsView
-        {
-            // ActiveState intentionally null
-            CompletedState = "Resolved",
-        });
+        var profileResolver = new TestManagedProfileResolver(
+            activeState: null,
+            completedState: "Resolved");
 
         var stubWorkSource = new StubWorkSource();
         var service = new RunLifecycleService(
-            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, noActiveOptions);
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, profileResolver);
 
         var candidate = new WorkCandidate
         {
@@ -1472,7 +1489,11 @@ public class RunLifecycleServiceTests
             RepoKey = "test-repo",
             Tags = new[] { "agent-ready" },
             ExternalUrl = "https://dev.azure.com/org/project/_workitems/edit/106",
-            SourceMetadata = new Dictionary<string, string> { ["revision"] = "1" },
+            SourceMetadata = new Dictionary<string, string>
+            {
+                ["revision"] = "1",
+                ["workSourceEnvironmentKey"] = "test-environment",
+            },
         };
         await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
 
@@ -1486,6 +1507,52 @@ public class RunLifecycleServiceTests
         Assert.Contains("agent-active", statusUpdates[0].Status.Tags!);
     }
 
+    [Fact]
+    public async Task Projection_UnresolvedManagedEnvironment_SkipsStateChange()
+    {
+        var stubWorkSource = new StubWorkSource();
+        var service = new RunLifecycleService(
+            NullLogger<RunLifecycleService>.Instance,
+            _runStore,
+            _eventStore,
+            _workItemStore,
+            stubWorkSource);
+
+        var candidate = new WorkCandidate
+        {
+            Id = "wi_proj_unresolved_environment",
+            ExternalId = "107",
+            Source = "AzureDevOpsBoards",
+            Title = "Unresolved environment test",
+            Status = "New",
+            RepoKey = "test-repo",
+            Tags = ["agent-ready"],
+            ExternalUrl = "https://dev.azure.com/org/project/_workitems/edit/107",
+            SourceMetadata = new Dictionary<string, string>
+            {
+                ["revision"] = "1",
+                ["workSourceEnvironmentKey"] = "missing-environment",
+            },
+        };
+        await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
+
+        var run = await service.CreateRunForWorkItemAsync(
+            candidate.Id,
+            "worker-1",
+            CancellationToken.None);
+        await AdvanceToAsync(
+            service,
+            run.RunId,
+            RunLifecycleState.AgentRunning,
+            CancellationToken.None);
+
+        Assert.DoesNotContain(
+            stubWorkSource.StatusUpdates,
+            update => update.Status.Status is not null);
+        var workItem = await _workItemStore.GetByIdAsync(candidate.Id, CancellationToken.None);
+        Assert.Equal("New", workItem!.Status);
+    }
+
     // ── Run-level retry tests ──────────────────────────────────────
 
     [Fact]
@@ -1493,7 +1560,7 @@ public class RunLifecycleServiceTests
     {
         var stubWorkSource = new StubWorkSource();
         var service = new RunLifecycleService(
-            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _profileResolver);
 
         // Create a work item and run
         var wi = await _workItemStore.CreateAsync(
@@ -1539,7 +1606,7 @@ public class RunLifecycleServiceTests
     {
         var stubWorkSource = new StubWorkSource();
         var service = new RunLifecycleService(
-            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _profileResolver);
 
         var wi = await _workItemStore.CreateAsync(
             new CreateWorkItemRequest { RepoKey = "repo", Title = "Non-Retry Test" }, CancellationToken.None);
@@ -1562,7 +1629,7 @@ public class RunLifecycleServiceTests
     {
         var stubWorkSource = new StubWorkSource();
         var service = new RunLifecycleService(
-            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _profileResolver);
 
         var wi = await _workItemStore.CreateAsync(
             new CreateWorkItemRequest { RepoKey = "repo", Title = "Exhaust Test" }, CancellationToken.None);
@@ -1596,7 +1663,7 @@ public class RunLifecycleServiceTests
     {
         var stubWorkSource = new StubWorkSource();
         var service = new RunLifecycleService(
-            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _profileResolver);
 
         var wi = await _workItemStore.CreateAsync(
             new CreateWorkItemRequest { RepoKey = "repo", Title = "Process Exit Test" }, CancellationToken.None);
@@ -1698,7 +1765,7 @@ public class RunLifecycleServiceTests
     {
         var stubWorkSource = new StubWorkSource();
         var service = new RunLifecycleService(
-            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _workSourceOptions);
+            NullLogger<RunLifecycleService>.Instance, _runStore, _eventStore, _workItemStore, stubWorkSource, _profileResolver);
 
         var wi = await _workItemStore.CreateAsync(
             new CreateWorkItemRequest { RepoKey = "repo", Title = "Chain Test" }, CancellationToken.None);
@@ -2178,39 +2245,31 @@ public class RunLifecycleServiceTests
         }
     }
 
-    /// <summary>
-    /// Minimal <see cref="IOptionsMonitor{TOptions}"/> implementation for unit tests.
-    /// Returns a fixed value and does not support change notifications.
-    /// </summary>
-    private sealed class TestOptionsMonitor<TOptions> : IOptionsMonitor<TOptions>
-        where TOptions : class
+    private sealed class TestManagedProfileResolver(
+        string? activeState,
+        string? completedState) : IManagedProfileResolver
     {
-        private readonly TOptions _value;
-
-        public TestOptionsMonitor(TOptions value)
-        {
-            _value = value ?? throw new ArgumentNullException(nameof(value));
-        }
-
-        public TOptions CurrentValue => _value;
-
-        public TOptions Get(string? name) => _value;
-
-        public IDisposable OnChange(Action<TOptions, string?> listener) =>
-            Disposable.Create(() => { });
-
-        private sealed class Disposable : IDisposable
-        {
-            private static readonly IDisposable Instance = new NoopDisposable();
-
-            public static IDisposable Create(Action? action = null) => Instance;
-
-            public void Dispose() { }
-
-            private sealed class NoopDisposable : IDisposable
+        private readonly ResolvedWorkSourceEnvironment _environment = new(
+            new WorkSourceEnvironmentProfile
             {
-                public void Dispose() { }
-            }
-        }
+                Key = "test-environment",
+                ActiveState = activeState,
+                CompletedState = completedState,
+            },
+            Connection: null,
+            IsManaged: true);
+
+        public Task<ResolvedControllerProfiles?> ResolveForRepositoryAsync(
+            string repositoryKey,
+            CancellationToken ct) => Task.FromResult<ResolvedControllerProfiles?>(null);
+
+        public Task<ResolvedWorkSourceEnvironment?> ResolveWorkSourceEnvironmentAsync(
+            string? key,
+            CancellationToken ct) => Task.FromResult<ResolvedWorkSourceEnvironment?>(
+                string.IsNullOrWhiteSpace(key) ? null : _environment);
+
+        public Task<IReadOnlyList<ResolvedWorkSourceEnvironment>> ListWorkSourceEnvironmentsAsync(
+            CancellationToken ct) => Task.FromResult<IReadOnlyList<ResolvedWorkSourceEnvironment>>(
+                [_environment]);
     }
 }
