@@ -578,11 +578,10 @@ public class InfrastructureSmokeTests
     }
 
     [Fact]
-    public void AzureDevOpsBoardsWorkSource_DiRegistration_WithValidationEnabled_ThrowsOnMissingConfig()
+    public void AzureDevOpsBoardsWorkSource_DiRegistration_DoesNotRegisterConfiguredClient()
     {
-        // Test that eager validation catches missing configuration.
-        // Validation runs when IAzureDevOpsBoardsClient is first resolved
-        // (scoped), not at IWorkSource singleton registration time.
+        // Managed work-source environments create clients through
+        // IAzureDevOpsBoardsClientFactory; there is no appsettings-backed client.
         var configValues = new Dictionary<string, string?>
         {
             ["workSource:provider"] = "AzureDevOpsBoards",
@@ -601,10 +600,7 @@ public class InfrastructureSmokeTests
 
         var provider = services.BuildServiceProvider();
 
-        // The singleton IWorkSource resolves fine (it's lazy).
-        // Validation fires when the scoped IAzureDevOpsBoardsClient is resolved.
         using var scope = provider.CreateScope();
-        Assert.Throws<InvalidOperationException>(() =>
-            scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClient>());
+        Assert.Null(scope.ServiceProvider.GetService<IAzureDevOpsBoardsClient>());
     }
 }

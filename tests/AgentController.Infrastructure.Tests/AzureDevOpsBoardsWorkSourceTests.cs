@@ -9,7 +9,6 @@ using AgentController.Infrastructure;
 using AgentController.Infrastructure.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 
 namespace AgentController.Infrastructure.Tests;
 
@@ -56,7 +55,6 @@ public class AzureDevOpsBoardsWorkSourceTests
             ],
         };
         var services = new ServiceCollection();
-        services.AddSingleton<IAzureDevOpsBoardsClient>(new MockAzureDevOpsBoardsClient());
         services.AddSingleton<IManagedProfileResolver>(
             new StubManagedProfileResolver([alphaProfile, zetaProfile])
         );
@@ -71,10 +69,7 @@ public class AzureDevOpsBoardsWorkSourceTests
         );
         var provider = services.BuildServiceProvider();
         var workSource = new AzureDevOpsBoardsWorkSource(
-            new DelegatingScopeFactory(provider),
-            new FakeOptionsMonitor<WorkSourceOptions>(
-                new WorkSourceOptions { Project = "ConfiguredProject" }
-            )
+            new DelegatingScopeFactory(provider)
         );
 
         var candidates = await workSource.FindEligibleAsync(
@@ -93,6 +88,88 @@ public class AzureDevOpsBoardsWorkSourceTests
         Assert.Equal(["agent-ready"], zetaClient.QueryCalls[0].Tags);
         Assert.Equal("alpha", candidates[0].SourceMetadata?["workSourceEnvironmentKey"]);
         Assert.Equal("zeta", candidates[1].SourceMetadata?["workSourceEnvironmentKey"]);
+    }
+
+    [Fact]
+    public async Task FindEligibleAsync_NoManagedEnvironments_ReturnsEmpty()
+    {
+        var workSource = CreateWorkSourceWithoutManagedEnvironments();
+
+        var candidates = await workSource.FindEligibleAsync(
+            new WorkQuery { MaxResults = 5 },
+            CancellationToken.None
+        );
+
+        Assert.Empty(candidates);
+    }
+
+    [Fact]
+    public async Task TryClaimAsync_NoManagedEnvironment_ReturnsFailure()
+    {
+        var workSource = CreateWorkSourceWithoutManagedEnvironments();
+
+        var result = await workSource.TryClaimAsync(
+            new WorkCandidate
+            {
+                Id = "wi-1",
+                ExternalId = "1",
+                Source = "AzureDevOpsBoards",
+            },
+            new ClaimRequest { WorkerId = "worker-1" },
+            CancellationToken.None
+        );
+
+        Assert.False(result.Success);
+        Assert.NotNull(result.FailureReason);
+        Assert.Contains("managed", result.FailureReason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ReleaseClaimAsync_NoManagedEnvironment_Throws()
+    {
+        var workSource = CreateWorkSourceWithoutManagedEnvironments();
+        var request = new ReleaseClaimRequest
+        {
+            WorkRef = new ExternalWorkRef
+            {
+                Source = "AzureDevOpsBoards",
+                ExternalId = "1",
+            },
+            WorkerId = "worker-1",
+        };
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            workSource.ReleaseClaimAsync(request, CancellationToken.None)
+        );
+
+        Assert.Contains("managed", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ReactivateForReworkAsync_NoManagedEnvironment_ReturnsFailure()
+    {
+        var workSource = CreateWorkSourceWithoutManagedEnvironments();
+        var request = new ReworkReactivateRequest
+        {
+            WorkItemId = "wi-1",
+            WorkRef = new ExternalWorkRef
+            {
+                Source = "AzureDevOpsBoards",
+                ExternalId = "1",
+            },
+            CycleNumber = 1,
+            ThreadCount = 1,
+            PullRequestUrl = "https://example.com/pr/1",
+        };
+
+        var result = await workSource.ReactivateForReworkAsync(
+            request,
+            CancellationToken.None
+        );
+
+        Assert.False(result.Success);
+        Assert.NotNull(result.FailureReason);
+        Assert.Contains("managed", result.FailureReason, StringComparison.OrdinalIgnoreCase);
     }
 
     // ──────────────────────────────────────────────
@@ -137,7 +214,7 @@ public class AzureDevOpsBoardsWorkSourceTests
         Assert.Single(mockClient.UpdateWorkItemStatusCalls);
         var call = mockClient.UpdateWorkItemStatusCalls[0];
 
-        // Assert: status is set to the configured active state
+        // Assert: status is set to the managed profile's active state
         Assert.Equal(ActiveState, call.Status.Status);
 
         // Assert: RemovedTags contains active, failed, needs-human lifecycle tags and agent-worker:*
@@ -210,7 +287,8 @@ public class AzureDevOpsBoardsWorkSourceTests
             UpdateWorkItemStatusAsyncReturns = true,
         };
 
-        var workSource = CreateWorkSource(mockClient, activeState: "Ready");
+        var environment = ManagedEnvironment("managed", Project, activeState: "Ready");
+        var workSource = CreateWorkSource(mockClient, environment);
 
         var request = new ReworkReactivateRequest
         {
@@ -224,7 +302,7 @@ public class AzureDevOpsBoardsWorkSourceTests
         // Act
         var result = await workSource.ReactivateForReworkAsync(request, CancellationToken.None);
 
-        // Assert: uses the configured active state
+        // Assert: uses the managed profile's active state
         Assert.True(result.Success);
         Assert.Single(mockClient.UpdateWorkItemStatusCalls);
         Assert.Equal("Ready", mockClient.UpdateWorkItemStatusCalls[0].Status.Status);
@@ -233,17 +311,10 @@ public class AzureDevOpsBoardsWorkSourceTests
     [Fact]
     public async Task ReactivateForReworkAsync_NoActiveState_ReturnsFailure()
     {
-        // Arrange: no active state configured (ActiveState is the target for reactivation)
+        // Arrange: the managed profile has no active state configured.
         var mockClient = new MockAzureDevOpsBoardsClient();
-        var options = new WorkSourceOptions
-        {
-            Project = Project,
-            ConnectionKey = "azuredevops-testorg",
-            ActiveState = null, // No active state configured
-        };
-        var optionsMonitor = new FakeOptionsMonitor<WorkSourceOptions>(options);
-        var scopeFactory = CreateScopeFactory(mockClient);
-        var workSource = new AzureDevOpsBoardsWorkSource(scopeFactory, optionsMonitor);
+        var environment = ManagedEnvironment("managed", Project, activeState: null);
+        var workSource = CreateWorkSource(mockClient, environment);
 
         var request = new ReworkReactivateRequest
         {
@@ -265,31 +336,6 @@ public class AzureDevOpsBoardsWorkSourceTests
             result.FailureReason,
             StringComparison.OrdinalIgnoreCase
         );
-    }
-
-    [Fact]
-    public async Task ReactivateForReworkAsync_NoProjectConfigured_ReturnsFailure()
-    {
-        // Arrange: no project configured
-        var mockClient = new MockAzureDevOpsBoardsClient();
-        var workSource = CreateWorkSource(mockClient, project: null);
-
-        var request = new ReworkReactivateRequest
-        {
-            WorkItemId = "wi_1",
-            WorkRef = new ExternalWorkRef { Source = "AzureDevOpsBoards", ExternalId = "1" },
-            CycleNumber = 1,
-            ThreadCount = 1,
-            PullRequestUrl = "https://example.com/pr/1",
-        };
-
-        // Act
-        var result = await workSource.ReactivateForReworkAsync(request, CancellationToken.None);
-
-        // Assert: fails with project-not-configured reason
-        Assert.False(result.Success);
-        Assert.NotNull(result.FailureReason);
-        Assert.Contains("project", result.FailureReason, StringComparison.OrdinalIgnoreCase);
     }
 
     // ──────────────────────────────────────────────
@@ -652,26 +698,40 @@ public class AzureDevOpsBoardsWorkSourceTests
     /// </summary>
     private static AzureDevOpsBoardsWorkSource CreateWorkSource(
         IAzureDevOpsBoardsClient mockClient,
-        string? project = Project,
-        string? activeState = null
+        WorkSourceEnvironmentProfile? environment = null
     )
     {
-        var options = new WorkSourceOptions
-        {
-            Project = project,
-            ConnectionKey = "azuredevops-testorg",
-            ActiveState = activeState ?? ActiveState,
-        };
+        environment ??= ManagedEnvironment("managed", Project);
+        var services = new ServiceCollection();
+        services.AddSingleton<IManagedProfileResolver>(
+            new StubManagedProfileResolver([environment])
+        );
+        services.AddSingleton<IAzureDevOpsBoardsClientFactory>(
+            new StubClientFactory(
+                new Dictionary<string, IAzureDevOpsBoardsClient>
+                {
+                    [environment.Key] = mockClient,
+                }
+            )
+        );
+        var provider = services.BuildServiceProvider();
 
-        var optionsMonitor = new FakeOptionsMonitor<WorkSourceOptions>(options);
-        var scopeFactory = CreateScopeFactory(mockClient);
+        return new AzureDevOpsBoardsWorkSource(new DelegatingScopeFactory(provider));
+    }
 
-        return new AzureDevOpsBoardsWorkSource(scopeFactory, optionsMonitor);
+    private static AzureDevOpsBoardsWorkSource CreateWorkSourceWithoutManagedEnvironments()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IManagedProfileResolver>(new StubManagedProfileResolver([]));
+        var provider = services.BuildServiceProvider();
+
+        return new AzureDevOpsBoardsWorkSource(new DelegatingScopeFactory(provider));
     }
 
     private static WorkSourceEnvironmentProfile ManagedEnvironment(
         string key,
-        string project
+        string project,
+        string? activeState = ActiveState
     )
     {
         return new WorkSourceEnvironmentProfile
@@ -683,16 +743,8 @@ public class AzureDevOpsBoardsWorkSourceTests
             TagPrefix = "agent",
             ConnectionKey = $"azuredevops-{key}",
             Project = project,
+            ActiveState = activeState,
         };
-    }
-
-    private static DelegatingScopeFactory CreateScopeFactory(IAzureDevOpsBoardsClient mockClient)
-    {
-        var services = new ServiceCollection();
-        services.AddSingleton(mockClient);
-        var provider = services.BuildServiceProvider();
-
-        return new DelegatingScopeFactory(provider);
     }
 
     /// <summary>
@@ -740,34 +792,6 @@ public class AzureDevOpsBoardsWorkSourceTests
         }
     }
 
-    /// <summary>
-    /// Minimal <see cref="IOptionsMonitor{T}"/> that returns a fixed value.
-    /// </summary>
-    private sealed class FakeOptionsMonitor<T> : IOptionsMonitor<T>
-    {
-        private readonly T _value;
-
-        public FakeOptionsMonitor(T value)
-        {
-            _value = value;
-        }
-
-        public T CurrentValue => _value;
-
-        public T Get(string? name) => _value;
-
-        public IDisposable OnChange(Action<T, string?> listener) => EmptyDisposable.Instance;
-    }
-
-    private sealed class EmptyDisposable : IDisposable
-    {
-        public static readonly EmptyDisposable Instance = new();
-
-        private EmptyDisposable() { }
-
-        public void Dispose() { }
-    }
-
     private sealed class DelegatingScope : IServiceScope
     {
         private readonly IServiceProvider _provider;
@@ -796,7 +820,15 @@ public class AzureDevOpsBoardsWorkSourceTests
             CancellationToken cancellationToken
         )
         {
-            var profile = profiles.SingleOrDefault(candidate => candidate.Key == key);
+            WorkSourceEnvironmentProfile? profile;
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                profile = profiles.Count > 0 ? profiles[0] : null;
+            }
+            else
+            {
+                profile = profiles.SingleOrDefault(candidate => candidate.Key == key);
+            }
             return Task.FromResult(
                 profile is null
                     ? null
@@ -839,7 +871,10 @@ public class AzureDevOpsBoardsWorkSourceTests
         public List<(
             ExternalWorkRef WorkRef,
             ExternalWorkStatus Status
-        )> UpdateWorkItemStatusCalls { get; } = new();
+        )>
+        UpdateWorkItemStatusCalls
+        { get; } = new();
+
         public List<string> AddCommentCalls { get; } = new();
 
         public Task<IReadOnlyList<WorkCandidate>> QueryWorkItemsAsync(

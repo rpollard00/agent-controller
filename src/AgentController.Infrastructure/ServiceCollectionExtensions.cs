@@ -438,21 +438,12 @@ public static class AgentControllerServiceCollectionExtensions
 
     /// <summary>
     /// Registers the Azure DevOps Boards implementation as a singleton
-    /// <see cref="IWorkSource"/> backed by <see cref="IAzureDevOpsBoardsClient"/>.
+    /// <see cref="IWorkSource"/> backed by managed work-source environment profiles.
     ///
-    /// This method:
-    /// <list type="number">
-    ///   <item>
-    ///     Registers <see cref="AzureDevOpsBoardsClient"/> as a scoped
-    ///     <see cref="IAzureDevOpsBoardsClient"/> with a managed <see cref="HttpClient"/>.
-    ///   </item>
-    ///   <item>
-    ///     Registers <see cref="AzureDevOpsBoardsWorkSource"/> as a singleton
-    ///     <see cref="IWorkSource"/>. It uses <see cref="IServiceScopeFactory"/>
-    ///     internally to resolve scoped services per operation, making it safe
-    ///     for consumption by singleton consumers such as <see cref="BackgroundService"/>.
-    ///   </item>
-    /// </list>
+    /// The <see cref="AzureDevOpsBoardsWorkSource"/> uses <see cref="IServiceScopeFactory"/>
+    /// internally to resolve the scoped <see cref="IAzureDevOpsBoardsClientFactory"/> per
+    /// operation, making it safe for consumption by singleton consumers such as
+    /// <see cref="BackgroundService"/>.
     ///
     /// Requires <see cref="AddAgentControllerOptions"/> to be called first
     /// (for <see cref="WorkSourceOptions"/> and <see cref="AzureDevOpsBoardsOptions"/>).
@@ -474,46 +465,6 @@ public static class AgentControllerServiceCollectionExtensions
         bool validateConnection = true
     )
     {
-        // Register the Azure DevOps Boards HTTP client as scoped.
-        // Each operation (poll cycle, request) gets a fresh client.
-        // OrganizationUrl is derived from the resolved ConnectionProfile;
-        // PAT is resolved from the connection's secret via ISecretStore.
-        services.AddScoped<IAzureDevOpsBoardsClient>(sp =>
-        {
-            var boardsOptions = sp.GetRequiredService<IOptions<AzureDevOpsBoardsOptions>>().Value;
-            var workSourceOptions = sp.GetRequiredService<IOptions<WorkSourceOptions>>().Value;
-            var connectionStore = sp.GetRequiredService<IConnectionStore>();
-
-            // Resolve the connection to derive OrganizationUrl and PAT secret name.
-            var connection = connectionStore
-                .GetByKeyAsync(workSourceOptions.ConnectionKey ?? string.Empty, CancellationToken.None)
-                .GetAwaiter()
-                .GetResult();
-
-            if (connection is null || connection.ProviderSettings is not AzureDevOpsConnectionSettings adoSettings)
-            {
-                throw new InvalidOperationException(
-                    $"Cannot create Azure DevOps Boards client: connection '{workSourceOptions.ConnectionKey}' " +
-                    "not found or does not have AzureDevOps settings.");
-            }
-
-            // Derive BaseUrl from the connection's OrganizationUrl; Project from WorkSourceOptions.
-            boardsOptions.BaseUrl = adoSettings.OrganizationUrl;
-            boardsOptions.Project = workSourceOptions.Project;
-
-            // Resolve PAT from the connection's secret reference via ISecretStore.
-            var secretStore = sp.GetRequiredService<ISecretStore>();
-            var patPayload = secretStore
-                .ResolveAsync(adoSettings.PersonalAccessTokenReference.Name, cancellationToken: CancellationToken.None)
-                .GetAwaiter()
-                .GetResult();
-            var resolvedPat = patPayload is PersonalAccessTokenPayload pat ? pat.Value : null;
-
-            var http = new HttpClient();
-            var logger = sp.GetRequiredService<ILogger<AzureDevOpsBoardsClient>>();
-            return new AzureDevOpsBoardsClient(http, boardsOptions, logger, resolvedPat);
-        });
-
         // Register the work source implementation as singleton.
         // It uses IServiceScopeFactory to resolve scoped profile/client services
         // per operation.

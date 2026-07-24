@@ -2,7 +2,6 @@ using AgentController.Application;
 using AgentController.Domain;
 using AgentController.Infrastructure.Options;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
 
 namespace AgentController.Infrastructure;
 
@@ -13,22 +12,19 @@ namespace AgentController.Infrastructure;
 ///
 /// Registered as a singleton via
 /// <see cref="AgentControllerServiceCollectionExtensions.AddAgentControllerAzureDevOpsBoardsWorkSource"/>.
-/// Because the underlying <see cref="IAzureDevOpsBoardsClient"/> is scoped,
-/// each method creates its own <see cref="IServiceScope"/> to resolve a fresh
-/// client instance per operation.
+/// Because the managed client factory is scoped, each method creates its own
+/// <see cref="IServiceScope"/> to resolve a fresh client instance per operation.
 /// </summary>
 internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
 {
-    private readonly IServiceScopeFactory _scopeFactory;
-    private readonly IOptionsMonitor<WorkSourceOptions> _options;
+    private const string ManagedEnvironmentResolutionFailure =
+        "No enabled managed Azure DevOps work source environment could be resolved.";
 
-    public AzureDevOpsBoardsWorkSource(
-        IServiceScopeFactory scopeFactory,
-        IOptionsMonitor<WorkSourceOptions> options
-    )
+    private readonly IServiceScopeFactory _scopeFactory;
+
+    public AzureDevOpsBoardsWorkSource(IServiceScopeFactory scopeFactory)
     {
         _scopeFactory = scopeFactory;
-        _options = options;
     }
 
     public async Task<IReadOnlyList<WorkCandidate>> FindEligibleAsync(
@@ -45,11 +41,7 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
 
         if (managedEnvironments.Count == 0)
         {
-            var options = _options.CurrentValue;
-            var parameters = BuildQueryParameters(query, options);
-            var configuredClient =
-                scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClient>();
-            return await configuredClient.QueryWorkItemsAsync(parameters, cancellationToken);
+            return [];
         }
 
         var factory = scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClientFactory>();
@@ -102,29 +94,16 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
             environmentKey,
             cancellationToken
         );
-        using var disposableClient = selection.OwnsClient ? selection.Client as IDisposable : null;
-
-        if (!selection.IsManaged)
+        if (selection is null)
         {
-            var options = _options.CurrentValue;
-            if (string.IsNullOrWhiteSpace(options.ConnectionKey))
+            return new ClaimResult
             {
-                return new ClaimResult
-                {
-                    Success = false,
-                    FailureReason = "Azure DevOps connection key is not configured in workSource:connectionKey.",
-                };
-            }
-
-            if (string.IsNullOrWhiteSpace(options.Project))
-            {
-                return new ClaimResult
-                {
-                    Success = false,
-                    FailureReason = "Azure DevOps project is not configured in workSource:project.",
-                };
-            }
+                Success = false,
+                FailureReason = ManagedEnvironmentResolutionFailure,
+            };
         }
+
+        using var disposableClient = selection.Client as IDisposable;
 
         var revision =
             candidate.SourceMetadata?.TryGetValue("revision", out var rev) == true ? rev : null;
@@ -148,12 +127,12 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
     )
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var selection = await ResolveClientAsync(
+        var selection = await ResolveRequiredClientAsync(
             scope.ServiceProvider,
             workRef.EnvironmentKey,
             cancellationToken
         );
-        using var disposableClient = selection.OwnsClient ? selection.Client as IDisposable : null;
+        using var disposableClient = selection.Client as IDisposable;
 
         await selection.Client.UpdateWorkItemStatusAsync(workRef, status, cancellationToken);
     }
@@ -165,12 +144,12 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
     )
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var selection = await ResolveClientAsync(
+        var selection = await ResolveRequiredClientAsync(
             scope.ServiceProvider,
             workRef.EnvironmentKey,
             cancellationToken
         );
-        using var disposableClient = selection.OwnsClient ? selection.Client as IDisposable : null;
+        using var disposableClient = selection.Client as IDisposable;
 
         await selection.Client.AddCommentAsync(workRef, comment, cancellationToken);
     }
@@ -182,12 +161,12 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
     )
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var selection = await ResolveClientAsync(
+        var selection = await ResolveRequiredClientAsync(
             scope.ServiceProvider,
             workRef.EnvironmentKey,
             cancellationToken
         );
-        using var disposableClient = selection.OwnsClient ? selection.Client as IDisposable : null;
+        using var disposableClient = selection.Client as IDisposable;
 
         return await selection.Client.GetCommentsAsync(workRef, maxComments, cancellationToken);
     }
@@ -198,12 +177,12 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
     )
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
-        var selection = await ResolveClientAsync(
+        var selection = await ResolveRequiredClientAsync(
             scope.ServiceProvider,
             request.WorkRef.EnvironmentKey,
             cancellationToken
         );
-        using var disposableClient = selection.OwnsClient ? selection.Client as IDisposable : null;
+        using var disposableClient = selection.Client as IDisposable;
 
         await selection.Client.ReleaseClaimWorkItemAsync(request, cancellationToken);
     }
@@ -219,22 +198,18 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
             request.WorkRef.EnvironmentKey,
             cancellationToken
         );
-        using var disposableClient = selection.OwnsClient ? selection.Client as IDisposable : null;
-
-        var options = _options.CurrentValue;
-        if (!selection.IsManaged && string.IsNullOrWhiteSpace(options.Project))
+        if (selection is null)
         {
             return new ReworkReactivateResult
             {
                 Success = false,
-                FailureReason = "Azure DevOps project is not configured in workSource:project.",
+                FailureReason = ManagedEnvironmentResolutionFailure,
             };
         }
 
-        // Determine target state from the selected managed profile or appsettings.
-        var targetState =
-            selection.Environment?.Profile.ActiveState
-            ?? options.ActiveState;
+        using var disposableClient = selection.Client as IDisposable;
+
+        var targetState = selection.Environment.Profile.ActiveState;
         if (string.IsNullOrWhiteSpace(targetState))
         {
             return new ReworkReactivateResult
@@ -253,13 +228,10 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
         //     On failure (412 or non-success) the PATCH returns false and we surface
         //     [rework_tag_strip_failed] so the cycle is NOT marked reactivated.
         // Use prefix-aware tag helpers so managed profiles with custom TagPrefix
-        // still get correct lifecycle tag names. Managed profiles use their own
-        // TagPrefix; unmanaged (configured) environments use the appsettings TagPrefix.
-        var tagPrefix = selection.IsManaged
-            ? (string.IsNullOrWhiteSpace(selection.Environment!.Profile.TagPrefix)
-                ? WorkSourceOptions.DefaultTagPrefix
-                : selection.Environment.Profile.TagPrefix)
-            : options.TagPrefix;
+        // get the correct lifecycle tag names.
+        var tagPrefix = string.IsNullOrWhiteSpace(selection.Environment.Profile.TagPrefix)
+            ? WorkSourceOptions.DefaultTagPrefix
+            : selection.Environment.Profile.TagPrefix;
 
         var mergedOk = await selection.Client.UpdateWorkItemStatusAsync(
             workRef,
@@ -301,25 +273,6 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
 
     private static BoardsQueryParameters BuildQueryParameters(
         WorkQuery query,
-        WorkSourceOptions options
-    )
-    {
-        return new BoardsQueryParameters
-        {
-            Project = query.Project ?? options.Project ?? string.Empty,
-            ExcludedStates = query.States is { Count: > 0 }
-                ? null
-                : BoardTerminalStates.Values,
-            Tags = query.Tags is { Count: > 0 } ? query.Tags : null,
-            ExcludedTags = query.ExcludedTags is { Count: > 0 }
-                ? query.ExcludedTags
-                : null,
-            MaxResults = query.MaxResults,
-        };
-    }
-
-    private static BoardsQueryParameters BuildQueryParameters(
-        WorkQuery query,
         WorkSourceEnvironmentProfile profile
     )
     {
@@ -340,38 +293,40 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
         };
     }
 
-    private static async Task<ClientSelection> ResolveClientAsync(
+    private static async Task<ClientSelection?> ResolveClientAsync(
         IServiceProvider services,
         string? environmentKey,
         CancellationToken cancellationToken
     )
     {
-        if (!string.IsNullOrWhiteSpace(environmentKey))
-        {
-            var resolver = services.GetService<IManagedProfileResolver>();
-            var environment = resolver is null
-                ? null
-                : await resolver.ResolveWorkSourceEnvironmentAsync(
-                    environmentKey,
-                    cancellationToken
-                );
+        var resolver = services.GetService<IManagedProfileResolver>();
+        var environment = resolver is null
+            ? null
+            : await resolver.ResolveWorkSourceEnvironmentAsync(
+                environmentKey,
+                cancellationToken
+            );
 
-            if (environment?.IsManaged == true)
-            {
-                var factory = services.GetRequiredService<IAzureDevOpsBoardsClientFactory>();
-                return new ClientSelection(
-                    await factory.CreateAsync(environment, cancellationToken),
-                    environment,
-                    OwnsClient: true
-                );
-            }
+        if (environment is null)
+        {
+            return null;
         }
 
+        var factory = services.GetRequiredService<IAzureDevOpsBoardsClientFactory>();
         return new ClientSelection(
-            services.GetRequiredService<IAzureDevOpsBoardsClient>(),
-            Environment: null,
-            OwnsClient: false
+            await factory.CreateAsync(environment, cancellationToken),
+            environment
         );
+    }
+
+    private static async Task<ClientSelection> ResolveRequiredClientAsync(
+        IServiceProvider services,
+        string? environmentKey,
+        CancellationToken cancellationToken
+    )
+    {
+        return await ResolveClientAsync(services, environmentKey, cancellationToken)
+            ?? throw new InvalidOperationException(ManagedEnvironmentResolutionFailure);
     }
 
     private static Dictionary<string, string> AddEnvironmentKey(
@@ -391,15 +346,8 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
         return metadata?.TryGetValue("workSourceEnvironmentKey", out var key) == true ? key : null;
     }
 
-    private static IReadOnlyList<string>? NullIfEmpty(IReadOnlyList<string>? values) =>
-        values is { Count: > 0 } ? values : null;
-
     private sealed record ClientSelection(
         IAzureDevOpsBoardsClient Client,
-        ResolvedWorkSourceEnvironment? Environment,
-        bool OwnsClient
-    )
-    {
-        public bool IsManaged => Environment?.IsManaged == true;
-    }
+        ResolvedWorkSourceEnvironment Environment
+    );
 }

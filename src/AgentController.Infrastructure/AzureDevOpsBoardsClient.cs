@@ -15,8 +15,8 @@ namespace AgentController.Infrastructure;
 /// for Azure DevOps Boards REST APIs.
 ///
 /// Authentication uses a Personal Access Token (PAT) resolved from
-/// <see cref="AzureDevOpsBoardsOptions"/>. The client is registered as a transient
-/// or scoped service via <c>AddAgentControllerAzureDevOpsBoardsWorkSource</c>.
+/// <see cref="AzureDevOpsBoardsOptions"/>. Managed work-source consumers create
+/// clients through <see cref="IAzureDevOpsBoardsClientFactory"/>.
 ///
 /// API version used: 7.1 (Azure DevOps Services).
 /// </summary>
