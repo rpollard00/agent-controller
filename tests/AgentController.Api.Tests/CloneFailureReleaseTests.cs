@@ -517,6 +517,47 @@ public class CloneFailureReleaseTests : IAsyncLifetime
         {
             var db = scope.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
             db.Database.EnsureCreatedAsync().Wait();
+
+            var runtimeStore = scope.ServiceProvider.GetRequiredService<IRuntimeEnvironmentStore>();
+            var repositoryStore = scope.ServiceProvider.GetRequiredService<IRepositoryStore>();
+            Assert.True(
+                runtimeStore
+                    .CreateAsync(
+                        new RuntimeEnvironmentProfile
+                        {
+                            Key = "managed-local",
+                            DisplayName = "Managed local runtime",
+                            Enabled = true,
+                            EnvironmentProvider = "LocalWorkspace",
+                            EnvironmentSettings = new EnvironmentProviderSettings
+                            {
+                                WorkspaceRoot = config["agentController:runRoot"],
+                            },
+                            RuntimeProvider = "MockPiMateria",
+                        },
+                        CancellationToken.None
+                    )
+                    .GetAwaiter()
+                    .GetResult()
+            );
+            Assert.True(
+                repositoryStore
+                    .CreateAsync(
+                        new RepositoryProfile
+                        {
+                            Key = "test-repo",
+                            CloneUrl = config["repositories:test-repo:cloneUrl"] ?? string.Empty,
+                            DefaultBranch = "main",
+                            Transport = Enum.Parse<CloneTransport>(
+                                config["repositories:test-repo:transport"] ?? "HttpsPat"
+                            ),
+                            RuntimeEnvironmentKey = "managed-local",
+                        },
+                        CancellationToken.None
+                    )
+                    .GetAwaiter()
+                    .GetResult()
+            );
         }
 #pragma warning restore xUnit1031
 

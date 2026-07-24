@@ -7,7 +7,7 @@ namespace AgentController.Application.Tests;
 public sealed class ManagedProfileResolverTests
 {
     [Fact]
-    public async Task ResolveForRepositoryAsync_PrefersManagedRepositoryAndEnabledAssociations()
+    public async Task ResolveForRepositoryAsync_ReturnsManagedRepositoryAndEnabledAssociations()
     {
         var managedRepository = Repository(
             "orders",
@@ -17,16 +17,10 @@ public sealed class ManagedProfileResolverTests
         );
         var managedRuntime = Runtime("managed-runtime", enabled: true, "/managed/workspaces");
         var managedAzureDevOps = AzureDevOps("managed-ado", enabled: true, "ManagedProject");
-        var fallback = new StubConfiguredProfileSource(
-            Repository("orders", "https://configured.example/orders.git"),
-            Runtime("configured-runtime", enabled: true, "/configured/workspaces"),
-            AzureDevOps("configured-ado", enabled: true, "ConfiguredProject")
-        );
         var resolver = CreateResolver(
             [managedRepository],
             [managedAzureDevOps],
-            [managedRuntime],
-            fallback
+            [managedRuntime]
         );
 
         var result = await resolver.ResolveForRepositoryAsync(" ORDERS ", CancellationToken.None);
@@ -41,38 +35,54 @@ public sealed class ManagedProfileResolverTests
     }
 
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    public async Task ResolveForRepositoryAsync_DisabledOrMissingAssociationsUseConfiguredFallback(
-        bool runtimeExists,
-        bool azureDevOpsExists
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ResolveForRepositoryAsync_MissingOrDisabledManagedRuntimeReturnsNull(
+        bool runtimeExists
     )
     {
         var repository = Repository(
             "orders",
             "https://managed.example/orders.git",
-            hostConnectionKey: "managed-ado",
             runtimeKey: "managed-runtime"
         );
-        var configuredRuntime = Runtime("legacy-runtime", enabled: true, "/legacy/workspaces");
-        var configuredAzureDevOps = AzureDevOps("appsettings", enabled: true, "LegacyProject");
         var resolver = CreateResolver(
             [repository],
-            azureDevOpsExists
-                ? [AzureDevOps("managed-ado", enabled: false, "DisabledProject")]
-                : [],
-            runtimeExists ? [Runtime("managed-runtime", enabled: false, "/disabled")] : [],
-            new StubConfiguredProfileSource(null, configuredRuntime, configuredAzureDevOps)
+            [],
+            runtimeExists ? [Runtime("managed-runtime", enabled: false, "/disabled")] : []
         );
 
         var result = await resolver.ResolveForRepositoryAsync("orders", CancellationToken.None);
 
-        Assert.NotNull(result);
-        Assert.False(result.RuntimeEnvironmentIsManaged);
-        Assert.False(result.WorkSourceEnvironmentIsManaged);
-        Assert.Same(configuredRuntime, result.RuntimeEnvironment);
-        Assert.Same(configuredAzureDevOps, result.WorkSourceEnvironment);
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task ResolveForRepositoryAsync_NoManagedRepositoryReturnsNull()
+    {
+        var resolver = CreateResolver(
+            [],
+            [],
+            [Runtime("managed-runtime", enabled: true, "/managed")]
+        );
+
+        var result = await resolver.ResolveForRepositoryAsync("orders", CancellationToken.None);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task ResolveForRepositoryAsync_RepositoryWithoutRuntimeReferenceReturnsNull()
+    {
+        var resolver = CreateResolver(
+            [Repository("orders", "https://managed.example/orders.git")],
+            [],
+            [Runtime("managed-runtime", enabled: true, "/managed")]
+        );
+
+        var result = await resolver.ResolveForRepositoryAsync("orders", CancellationToken.None);
+
+        Assert.Null(result);
     }
 
     [Fact]
@@ -84,16 +94,7 @@ public sealed class ManagedProfileResolverTests
             runtimeKey: "local-pi"
         );
         var managedRuntime = Runtime("local-pi", enabled: true, "/managed/root");
-        var resolver = CreateResolver(
-            [managedRepository],
-            [],
-            [managedRuntime],
-            new StubConfiguredProfileSource(
-                repository: null,
-                runtime: Runtime("fallback", enabled: true, workspaceRoot: null),
-                workSourceEnvironment: null
-            )
-        );
+        var resolver = CreateResolver([managedRepository], [], [managedRuntime]);
 
         var result = await resolver.ResolveForRepositoryAsync(
             "new-repository",
@@ -116,12 +117,7 @@ public sealed class ManagedProfileResolverTests
                 AzureDevOps("disabled", enabled: false, "Disabled"),
                 AzureDevOps("zeta", enabled: true, "Zeta"),
             ],
-            [],
-            new StubConfiguredProfileSource(
-                null,
-                Runtime("fallback", enabled: true, workspaceRoot: null),
-                AzureDevOps("appsettings", enabled: true, "Configured")
-            )
+            []
         );
 
         var environments = await resolver.ListWorkSourceEnvironmentsAsync(CancellationToken.None);
@@ -134,40 +130,47 @@ public sealed class ManagedProfileResolverTests
     }
 
     [Fact]
-    public async Task ListWorkSourceEnvironmentsAsync_NoEnabledManagedProfilesUsesAppsettings()
+    public async Task ListWorkSourceEnvironmentsAsync_NoEnabledManagedProfilesReturnsEmpty()
     {
-        var configured = AzureDevOps("appsettings", enabled: true, "Configured");
         var resolver = CreateResolver(
             [],
             [AzureDevOps("disabled", enabled: false, "Disabled")],
-            [],
-            new StubConfiguredProfileSource(
-                null,
-                Runtime("fallback", enabled: true, workspaceRoot: null),
-                configured
-            )
+            []
         );
 
         var environments = await resolver.ListWorkSourceEnvironmentsAsync(CancellationToken.None);
 
-        var environment = Assert.Single(environments);
-        Assert.False(environment.IsManaged);
-        Assert.Same(configured, environment.Profile);
+        Assert.Empty(environments);
+    }
+
+    [Fact]
+    public async Task ResolveWorkSourceEnvironmentAsync_NoEnabledManagedProfileReturnsNull()
+    {
+        var resolver = CreateResolver(
+            [],
+            [AzureDevOps("disabled", enabled: false, "Disabled")],
+            []
+        );
+
+        var environment = await resolver.ResolveWorkSourceEnvironmentAsync(
+            null,
+            CancellationToken.None
+        );
+
+        Assert.Null(environment);
     }
 
     private static ManagedProfileResolver CreateResolver(
         IReadOnlyList<RepositoryProfile> repositories,
         IReadOnlyList<WorkSourceEnvironmentProfile> workSourceEnvironments,
-        IReadOnlyList<RuntimeEnvironmentProfile> runtimes,
-        IConfiguredProfileSource configuredProfiles
+        IReadOnlyList<RuntimeEnvironmentProfile> runtimes
     )
     {
         return new ManagedProfileResolver(
             new RepositoryStore(repositories),
             new WorkSourceStore(workSourceEnvironments),
             new RuntimeStore(runtimes),
-            new ConnectionStore(),
-            configuredProfiles
+            new ConnectionStore()
         );
     }
 
@@ -221,24 +224,6 @@ public sealed class ManagedProfileResolverTests
             ConnectionKey = "azuredevops-example",
             Project = project,
         };
-    }
-
-    private sealed class StubConfiguredProfileSource(
-        RepositoryProfile? repository,
-        RuntimeEnvironmentProfile runtime,
-        WorkSourceEnvironmentProfile? workSourceEnvironment
-    ) : IConfiguredProfileSource
-    {
-        public RepositoryProfile? GetRepository(string key) =>
-            repository?.Key.Equals(key, StringComparison.OrdinalIgnoreCase) == true
-                ? repository
-                : null;
-
-        public RuntimeEnvironmentProfile GetRuntimeEnvironment(
-            RepositoryProfile repositoryProfile
-        ) => runtime;
-
-        public WorkSourceEnvironmentProfile? GetWorkSourceEnvironment() => workSourceEnvironment;
     }
 
     private sealed class RepositoryStore(IReadOnlyList<RepositoryProfile> profiles)

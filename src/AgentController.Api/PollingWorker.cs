@@ -269,9 +269,9 @@ public sealed partial class PollingWorker : BackgroundService
         }
 
         // ── Validate repo:{key} tag against repository profiles ────
-        // Resolve the repo key from the work item tags against configured
-        // repository profiles. If no profile matches, skip the item and
-        // post a clarifying comment so typos are visible on the board.
+        // Resolve the repo key from the work item tags against managed repository and runtime
+        // profiles. If the profiles cannot be resolved, skip the item and post a clarifying
+        // comment so typos or incomplete profile configuration are visible on the board.
         // A missing repo: tag is treated as not-eligible (skip silently).
         var resolvedProfiles = await ResolveProfilesAsync(
             candidate,
@@ -632,8 +632,7 @@ public sealed partial class PollingWorker : BackgroundService
     }
 
     /// <summary>
-    /// Resolves a candidate's repository and associated environments before claiming it.
-    /// Managed profiles are considered alongside appsettings fallback profiles.
+    /// Resolves a candidate's managed repository and associated environments before claiming it.
     /// </summary>
     private async Task<ResolvedControllerProfiles?> ResolveProfilesAsync(
         WorkCandidate candidate,
@@ -652,7 +651,7 @@ public sealed partial class PollingWorker : BackgroundService
                     workSource,
                     candidate,
                     "Skipped: work item has no `repo:` tag. Add a tag like `repo:example-service` "
-                        + "to associate this item with a configured repository profile.",
+                        + "to associate this item with a managed repository profile.",
                     ct
                 );
             }
@@ -672,8 +671,8 @@ public sealed partial class PollingWorker : BackgroundService
             await PostRepoKeyCommentAsync(
                 workSource,
                 candidate,
-                $"Skipped: no repository profile matches the `repo:{repoKey}` tag. "
-                    + "Check for typos or add a matching managed or appsettings profile.",
+                $"Skipped: no enabled managed repository and runtime environment resolve for the "
+                    + $"`repo:{repoKey}` tag. Check for typos or configure matching managed profiles.",
                 ct
             );
         }
@@ -2223,7 +2222,7 @@ public sealed partial class PollingWorker : BackgroundService
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "Skipping candidate {CandidateId}: no repository profile matches `repo:{RepoKey}`."
+            Message = "Skipping candidate {CandidateId}: no enabled managed repository and runtime environment resolve for `repo:{RepoKey}`."
         )]
         public static partial void CandidateSkippedNoProfile(
             ILogger logger,

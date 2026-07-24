@@ -176,6 +176,7 @@ public class ReworkConsumptionTests : IAsyncLifetime
         {
             var db = scope.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
             await db.Database.EnsureCreatedAsync();
+            await SeedManagedProfilesAsync(scope.ServiceProvider);
         }
 
         // ── 4. Trigger LocalFileWorkSource initialization and seed a Pending ReworkCycle ──
@@ -441,6 +442,7 @@ public class ReworkConsumptionTests : IAsyncLifetime
         {
             var db = scope.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
             await db.Database.EnsureCreatedAsync();
+            await SeedManagedProfilesAsync(scope.ServiceProvider);
         }
 
         // Do NOT seed any ReworkCycle
@@ -564,6 +566,7 @@ public class ReworkConsumptionTests : IAsyncLifetime
         {
             var db = scope.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
             await db.Database.EnsureCreatedAsync();
+            await SeedManagedProfilesAsync(scope.ServiceProvider);
         }
 
         // Seed a Pending ReworkCycle (trigger work source init first)
@@ -653,6 +656,43 @@ public class ReworkConsumptionTests : IAsyncLifetime
     }
 
     // ── Helpers ─────────────────────────────────────────────────────
+
+    private async Task SeedManagedProfilesAsync(IServiceProvider services)
+    {
+        var runtimeStore = services.GetRequiredService<IRuntimeEnvironmentStore>();
+        var repositoryStore = services.GetRequiredService<IRepositoryStore>();
+
+        Assert.True(
+            await runtimeStore.CreateAsync(
+                new RuntimeEnvironmentProfile
+                {
+                    Key = "managed-local",
+                    DisplayName = "Managed local runtime",
+                    Enabled = true,
+                    EnvironmentProvider = "LocalWorkspace",
+                    EnvironmentSettings = new EnvironmentProviderSettings
+                    {
+                        WorkspaceRoot = _tempRunRoot,
+                    },
+                    RuntimeProvider = "MockPiMateria",
+                },
+                CancellationToken.None
+            )
+        );
+        Assert.True(
+            await repositoryStore.CreateAsync(
+                new RepositoryProfile
+                {
+                    Key = "test-repo",
+                    CloneUrl = _tempRepoPath,
+                    DefaultBranch = "main",
+                    Transport = CloneTransport.Local,
+                    RuntimeEnvironmentKey = "managed-local",
+                },
+                CancellationToken.None
+            )
+        );
+    }
 
     private static async Task RunGitAsync(string workingDir, string[] args, TimeSpan timeout)
     {
