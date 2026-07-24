@@ -139,6 +139,32 @@ export interface HostRepository {
   cloneTransportHint: CloneTransportHint;
 }
 
+/** Card source represented on the aggregate runs dashboard. */
+export type RunCardKind = 'run' | 'rework-soak';
+
+/** Server-computed state category used to display and filter run cards. */
+export type RunCardCategory = 'executing' | 'pending' | 'attention' | 'completed';
+
+/** Aggregate dashboard projection for an agent run or rework-feedback soak. */
+export interface RunCardItem {
+  id: string;
+  kind: RunCardKind;
+  status: string;
+  category: RunCardCategory;
+  workItemTitle: string | null;
+  workItemUrl: string | null;
+  workItemSource: string | null;
+  repoKey: string | null;
+  repositoryUrl: string | null;
+  runtimeType: string | null;
+  runAttempt: number;
+  lastEventType: string | null;
+  lastEventMessage: string | null;
+  lastEventAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** Stable discriminator shared with the typed secrets API. */
 export type SecretType = 'personal-access-token' | 'ssh-key';
 

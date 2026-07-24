@@ -71,6 +71,7 @@ function createApi(initialSecrets: SecretInfo[] = [secret]) {
     },
     repositories: staticResource([]),
     runtimeEnvironments: staticResource([]),
+    runs: { list: vi.fn(async () => []) },
     workSourceEnvironments: {
       ...staticResource([]),
       verifyConnection: vi.fn(async () => ({ success: true, errors: [] })),

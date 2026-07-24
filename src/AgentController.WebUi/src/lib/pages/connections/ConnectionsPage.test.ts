@@ -161,6 +161,7 @@ function createApi(
     },
     connections,
     runtimeEnvironments: staticResource<RuntimeEnvironmentProfile>([]),
+    runs: { list: vi.fn(async () => []) },
     secrets: secretsClient,
   };
 

@@ -187,6 +187,7 @@ function createApi(initialRepositories: RepositoryProfile[] = [repository]): Moc
         onboardRepository: async () => repository,
       },
       runtimeEnvironments: staticResource([runtimeEnvironment]),
+      runs: { list: vi.fn(async () => []) },
       secrets: {
         list: vi.fn(async () => secrets),
         listVersions: vi.fn(async (name: string) =>

@@ -88,6 +88,7 @@ function createApi(initialEnvironments: RuntimeEnvironmentProfile[] = [environme
       onboardRepository: async () => ({} as RepositoryProfile),
     },
     runtimeEnvironments,
+    runs: { list: vi.fn(async () => []) },
     secrets: {
       list: vi.fn(async () => []),
       listVersions: vi.fn(async () => []),

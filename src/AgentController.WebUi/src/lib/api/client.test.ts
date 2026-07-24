@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ApiError, createWebUiApiClient, getFieldErrors } from './client';
-import type { ConnectionProfile, ConnectionProject, RepositoryProfile } from './types';
+import type {
+  ConnectionProfile,
+  ConnectionProject,
+  RepositoryProfile,
+  RunCardItem,
+} from './types';
 
 const repository: RepositoryProfile = {
   key: 'web.repo',
@@ -34,6 +39,25 @@ const connection: ConnectionProfile = {
 };
 
 const connectionProject: ConnectionProject = { id: 'proj-1', name: 'Agent Controller' };
+
+const runCard: RunCardItem = {
+  id: 'run-1',
+  kind: 'run',
+  status: 'AgentRunning',
+  category: 'executing',
+  workItemTitle: 'Add runs dashboard',
+  workItemUrl: 'https://work.example.test/items/42',
+  workItemSource: 'AzureDevOpsBoards',
+  repoKey: 'agent-controller',
+  repositoryUrl: 'https://git.example.test/agent-controller',
+  runtimeType: 'PiMateria',
+  runAttempt: 2,
+  lastEventType: 'runtime.progress',
+  lastEventMessage: 'Implementing API client',
+  lastEventAt: '2026-07-24T01:00:00Z',
+  createdAt: '2026-07-24T00:00:00Z',
+  updatedAt: '2026-07-24T01:00:00Z',
+};
 
 describe('Web UI API client', () => {
   it('uses same-origin API paths and sends typed JSON requests', async () => {
@@ -140,6 +164,18 @@ describe('Web UI API client', () => {
       status: 0,
       problem: { title: 'Unable to reach Agent Controller.' },
     });
+  });
+
+  it('lists run cards from the runs endpoint and passes through the response', async () => {
+    const fetchMock = vi.fn(async () => Response.json([runCard]));
+    const client = createWebUiApiClient({ fetch: fetchMock });
+    const controller = new AbortController();
+
+    await expect(client.runs.list(controller.signal)).resolves.toEqual([runCard]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/webui/runs',
+      expect.objectContaining({ signal: controller.signal }),
+    );
   });
 
   it('uses encoded secrets endpoints and preserves typed secret payloads', async () => {

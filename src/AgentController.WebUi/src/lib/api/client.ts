@@ -11,6 +11,7 @@ import type {
   ProblemDetails,
   RepositoryCloneTransportResolution,
   RepositoryProfile,
+  RunCardItem,
   RuntimeEnvironmentProfile,
   SecretInfo,
   SecretVersionInfo,
@@ -56,6 +57,10 @@ export interface ConnectionResourceClient
   ): Promise<RepositoryProfile>;
 }
 
+export interface RunsResourceClient {
+  list(signal?: AbortSignal): Promise<RunCardItem[]>;
+}
+
 export interface SecretsResourceClient {
   list(signal?: AbortSignal): Promise<SecretInfo[]>;
   listVersions(name: string, signal?: AbortSignal): Promise<SecretVersionInfo[]>;
@@ -69,6 +74,7 @@ export interface WebUiApiClient {
   workSourceEnvironments: WorkSourceEnvironmentResourceClient;
   connections: ConnectionResourceClient;
   runtimeEnvironments: ResourceClient<RuntimeEnvironmentProfile>;
+  runs: RunsResourceClient;
   secrets: SecretsResourceClient;
 }
 
@@ -227,6 +233,9 @@ export function createWebUiApiClient(options: ApiClientOptions = {}): WebUiApiCl
         ),
     },
     runtimeEnvironments: resource<RuntimeEnvironmentProfile>('/runtime-environments'),
+    runs: {
+      list: (signal) => request<RunCardItem[]>('/runs', { signal }),
+    },
     secrets: {
       list: (signal) => request<SecretInfo[]>('/secrets', { signal }),
       listVersions: (name, signal) =>

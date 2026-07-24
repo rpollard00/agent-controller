@@ -72,6 +72,7 @@ function createClient(
       onboardRepository: async () => ({} as RepositoryProfile),
     },
     runtimeEnvironments: resourceClient<RuntimeEnvironmentProfile>(async () => []),
+    runs: { list: async () => [] },
     secrets: secretsClient(),
   };
 }

@@ -127,6 +127,7 @@ function createApi(
     workSourceEnvironments,
     connections: connectionsClient,
     runtimeEnvironments: staticResource<RuntimeEnvironmentProfile>([]),
+    runs: { list: vi.fn(async () => []) },
     secrets: {
       list: vi.fn(async () => []),
       listVersions: vi.fn(async () => []),
