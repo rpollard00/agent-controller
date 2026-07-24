@@ -1,4 +1,11 @@
-export type RouteId = 'overview' | 'repositories' | 'work-source-environments' | 'connections' | 'runtime-environments' | 'secrets';
+export type RouteId =
+  | 'overview'
+  | 'runs'
+  | 'repositories'
+  | 'work-source-environments'
+  | 'connections'
+  | 'runtime-environments'
+  | 'secrets';
 
 export interface AppRoute {
   id: RouteId;
@@ -17,6 +24,14 @@ export const routes: readonly AppRoute[] = [
     shortLabel: 'Overview',
     title: 'Agent Controller',
     description: 'Onboard repositories and manage the environments used to run your agents.',
+  },
+  {
+    id: 'runs',
+    path: '/runs',
+    label: 'Runs',
+    shortLabel: 'Runs',
+    title: 'Runs',
+    description: 'Monitor executing, pending, and completed controller work.',
   },
   {
     id: 'repositories',

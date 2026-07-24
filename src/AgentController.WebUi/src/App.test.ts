@@ -96,6 +96,9 @@ describe('App shell', () => {
       'page',
     );
     expect(
+      within(primaryNavigation).getByRole('link', { name: 'Runs' }),
+    ).toBeInTheDocument();
+    expect(
       within(primaryNavigation).getByRole('link', { name: 'Work source environments' }),
     ).toBeInTheDocument();
     expect(
@@ -125,6 +128,22 @@ describe('App shell', () => {
     expect(
       within(primaryNavigation).getByRole('link', { name: 'Repositories' }),
     ).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('navigates to the runs dashboard and updates the document title', async () => {
+    render(App, { client: createClient() });
+
+    const primaryNavigation = screen.getByRole('navigation', { name: 'Primary navigation' });
+    await fireEvent.click(within(primaryNavigation).getByRole('link', { name: 'Runs' }));
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Runs' })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'No runs yet' })).toBeVisible();
+    expect(window.location.pathname).toBe('/runs');
+    expect(within(primaryNavigation).getByRole('link', { name: 'Runs' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    expect(document.title).toBe('Runs · Agent Controller');
   });
 
   it('renders ProblemDetails and field validation messages from API failures', async () => {
