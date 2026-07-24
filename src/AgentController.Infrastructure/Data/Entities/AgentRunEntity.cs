@@ -24,6 +24,12 @@ internal sealed class AgentRunEntity
     /// <summary>Type of agent runtime used (e.g. "PiMateria").</summary>
     public string? RuntimeType { get; set; }
 
+    /// <summary>Display name of the runtime environment profile captured for this run.</summary>
+    public string? RuntimeProfileName { get; set; }
+
+    /// <summary>Environment provider type captured from the runtime environment profile.</summary>
+    public string? EnvironmentProviderType { get; set; }
+
     /// <summary>Runtime-assigned run identifier, if the runtime provides one.</summary>
     public string? RuntimeRunId { get; set; }
 

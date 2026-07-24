@@ -2,6 +2,7 @@ using AgentController.Domain.Secrets;
 using AgentController.Infrastructure.Secrets;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace AgentController.Infrastructure.Tests;
@@ -51,6 +52,18 @@ public sealed class SecretsDiResolutionTests
         // Assert — concrete type is DbNamedSecretProvider, not InMemorySecretStore.
         Assert.IsType<DbNamedSecretProvider>(secretStore);
         Assert.NotSame(typeof(InMemorySecretStore), secretStore.GetType());
+    }
+
+    [Fact]
+    public void Register_DoesNotRegisterDatabaseMigrationHostedService()
+    {
+        // Arrange and act — registering secrets must not make the API a schema owner.
+        var (services, _) = SetupServicesWithValidKek();
+
+        // Assert — migrations run only through AgentController.Migrations.
+        Assert.DoesNotContain(
+            services,
+            descriptor => descriptor.ServiceType == typeof(IHostedService));
     }
 
     // ─── Helpers ───────────────────────────────────────────────

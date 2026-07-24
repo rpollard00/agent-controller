@@ -43,6 +43,7 @@ public class RuntimeEventApiTests : IAsyncLifetime
         Environment.SetEnvironmentVariable("persistence__provider", "Sqlite");
         Environment.SetEnvironmentVariable("agentController__workerId", "test-api-worker");
         Environment.SetEnvironmentVariable("agentController__workerEnabled", "false");
+        Environment.SetEnvironmentVariable("workSource__provider", "LocalFake");
 
         _factory = new SilentWebApplicationFactory();
 
@@ -68,6 +69,7 @@ public class RuntimeEventApiTests : IAsyncLifetime
         Environment.SetEnvironmentVariable("persistence__provider", null);
         Environment.SetEnvironmentVariable("agentController__workerId", null);
         Environment.SetEnvironmentVariable("agentController__workerEnabled", null);
+        Environment.SetEnvironmentVariable("workSource__provider", null);
 
         // Clean up the temp database file if it exists
         if (_dbPath is not null && File.Exists(_dbPath))

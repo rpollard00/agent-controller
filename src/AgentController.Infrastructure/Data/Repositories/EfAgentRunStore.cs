@@ -30,6 +30,8 @@ internal sealed class EfAgentRunStore : IAgentRunStore
             WorkItemId = request.WorkItemId,
             WorkerId = request.WorkerId,
             RuntimeType = request.RuntimeType,
+            RuntimeProfileName = request.RuntimeProfileName,
+            EnvironmentProviderType = request.EnvironmentProviderType,
             Status = (int)request.InitialStatus,
             RunAttempt = request.RunAttempt,
             PreviousRunId = request.PreviousRunId,
@@ -93,6 +95,16 @@ internal sealed class EfAgentRunStore : IAgentRunStore
         if (update.RuntimeType is not null)
         {
             entity.RuntimeType = update.RuntimeType;
+            hasChange = true;
+        }
+        if (update.RuntimeProfileName is not null)
+        {
+            entity.RuntimeProfileName = update.RuntimeProfileName;
+            hasChange = true;
+        }
+        if (update.EnvironmentProviderType is not null)
+        {
+            entity.EnvironmentProviderType = update.EnvironmentProviderType;
             hasChange = true;
         }
         if (update.EnvironmentId is not null)
@@ -232,6 +244,8 @@ internal sealed class EfAgentRunStore : IAgentRunStore
             WorkItemId = entity.WorkItemId,
             EnvironmentId = entity.EnvironmentId,
             RuntimeType = entity.RuntimeType,
+            RuntimeProfileName = entity.RuntimeProfileName,
+            EnvironmentProviderType = entity.EnvironmentProviderType,
             RuntimeRunId = entity.RuntimeRunId,
             Status = (RunLifecycleState)entity.Status,
             BranchName = entity.BranchName,

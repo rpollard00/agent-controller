@@ -34,6 +34,12 @@ internal sealed class AgentRunEntityConfiguration : IEntityTypeConfiguration<Age
         builder.Property(x => x.RuntimeType)
             .HasMaxLength(128);
 
+        builder.Property(x => x.RuntimeProfileName)
+            .HasMaxLength(256);
+
+        builder.Property(x => x.EnvironmentProviderType)
+            .HasMaxLength(128);
+
         builder.Property(x => x.RuntimeRunId)
             .HasMaxLength(256);
 
