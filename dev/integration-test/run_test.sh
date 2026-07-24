@@ -2,8 +2,9 @@
 # Tier B integration test: drive a FULL workflow through the REAL controller.
 #
 # Boots the real AgentController.Api (PollingWorker + PiMateriaRuntime) on a
-# fixed port, scaffolds a clean widget repo, seeds one LocalFile work item, and
-# lets the controller discover → claim → provision → clone → cast (real pi +
+# fixed port, scaffolds a clean widget repo, seeds managed runtime/repository
+# profiles and one LocalFile work item, and lets the controller discover → claim
+# → provision → clone → cast (real pi +
 # pi-materia) → ingest runtime.* events over the real HTTP endpoint. Then polls
 # GET /runs/{id} until terminal and asserts the contract.
 #
@@ -144,7 +145,6 @@ q() { printf '%q' "$1"; }
 
   printf 'export Runtime__Provider=%s\n'                       "$(q PiMateria)"
   printf 'export Runtime__PiExecutablePath=%s\n'               "$(q pi)"
-  printf 'export Runtime__DefaultMateriaLoadout=%s\n'          "$(q "$LOADOUT")"
   printf 'export Runtime__ControllerBaseUrl=%s\n'              "$(q "$BASE_URL")"
   printf 'export Runtime__HeartbeatIntervalSeconds=%s\n'       "$(q 30)"
   printf 'export Runtime__PromptAcceptanceTimeoutSeconds=%s\n' "$(q 120)"
@@ -156,11 +156,6 @@ q() { printf '%q' "$1"; }
   printf 'export LocalWork__Definitions__0__Tags__0=%s\n'  "$(q agent-ready)"
   printf 'export LocalWork__Definitions__0__Priority=%s\n' "$(q 1)"
   printf 'export LocalWork__Definitions__0__Status=%s\n'   "$(q New)"
-
-  printf 'export Repositories__widget__CloneUrl=%s\n'          "$(q "$WIDGET_REPO")"
-  printf 'export Repositories__widget__DefaultBranch=%s\n'    "$(q main)"
-  printf 'export Repositories__widget__EnvironmentProfile=%s\n' "$(q local-default)"
-  printf 'export Repositories__widget__RuntimeProfile=%s\n'    "$(q pi-materia-default)"
 } > "$ENV_FILE"
 echo "[test] controller config written to $ENV_FILE"
 # shellcheck disable=SC1090
@@ -203,9 +198,87 @@ if [[ "$healthy" != "1" ]]; then
   tail -30 "$API_LOG" >&2
   exit 1
 fi
-echo "[test] controller healthy. PollingWorker will discover the work item shortly."
+echo "[test] controller healthy."
 
-# ── 7. Poll the run to terminal + assert ─────────────────────────────
+# ── 7. Seed managed execution profiles through the API ──────────────
+# Repository/runtime profile resolution is fully data-driven. Seed the fresh
+# database through the same managed-profile API used by the Web UI rather than
+# relying on legacy appsettings repository entries.
+post_managed_profile() {
+  local profile_name="$1"
+  local endpoint="$2"
+  local payload="$3"
+  local response_file="$RUN_DIR/profile-seed-response.json"
+  local status
+
+  if ! status="$(
+    curl --silent --show-error --max-time 10 \
+      --output "$response_file" \
+      --write-out '%{http_code}' \
+      --header 'Content-Type: application/json' \
+      --data "$payload" \
+      "$BASE_URL/api/webui/$endpoint"
+  )"; then
+    echo "[test] FAIL: could not seed managed $profile_name profile." >&2
+    [[ -s "$response_file" ]] && cat "$response_file" >&2
+    return 1
+  fi
+
+  if [[ "$status" != "201" ]]; then
+    echo "[test] FAIL: seeding managed $profile_name profile returned HTTP $status." >&2
+    [[ -s "$response_file" ]] && cat "$response_file" >&2
+    return 1
+  fi
+
+  rm -f "$response_file"
+  echo "[test] seeded managed $profile_name profile."
+}
+
+runtime_profile_json="$(
+  python3 - "$RUN_ROOT" "$LOADOUT" <<'PY'
+import json
+import sys
+
+workspace_root, loadout = sys.argv[1:]
+json.dump(
+    {
+        "key": "local-default",
+        "displayName": "Tier B Local Workspace",
+        "enabled": True,
+        "environmentProvider": "LocalWorkspace",
+        "environmentSettings": {"workspaceRoot": workspace_root},
+        "runtimeProvider": "PiMateria",
+        "runtimeSettings": {
+            "loadouts": {"newWork": loadout, "rework": loadout},
+        },
+    },
+    sys.stdout,
+)
+PY
+)"
+post_managed_profile "runtime environment" "runtime-environments" "$runtime_profile_json"
+
+repository_profile_json="$(
+  python3 - "$WIDGET_REPO" <<'PY'
+import json
+import sys
+
+json.dump(
+    {
+        "key": "widget",
+        "cloneUrl": sys.argv[1],
+        "defaultBranch": "main",
+        "transport": "local",
+        "runtimeEnvironmentKey": "local-default",
+    },
+    sys.stdout,
+)
+PY
+)"
+post_managed_profile "repository" "repositories" "$repository_profile_json"
+echo "[test] managed profiles ready. PollingWorker will discover the work item shortly."
+
+# ── 8. Poll the run to terminal + assert ─────────────────────────────
 python3 "$HERE/wait_for_terminal.py" \
   --base-url "$BASE_URL" \
   --timeout "$TIMEOUT" \

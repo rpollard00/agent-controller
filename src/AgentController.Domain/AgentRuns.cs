@@ -21,7 +21,7 @@ public sealed record AgentRunSpec
     /// <summary>Stable runtime profile key selected for this execution.</summary>
     public string RuntimeProfile { get; init; } = string.Empty;
 
-    /// <summary>Resolved managed or configured runtime-environment profile.</summary>
+    /// <summary>Resolved managed runtime-environment profile.</summary>
     public RuntimeEnvironmentProfile? RuntimeEnvironmentProfile { get; init; }
 
     /// <summary>Additional context files to write into the run workspace (path → content).</summary>

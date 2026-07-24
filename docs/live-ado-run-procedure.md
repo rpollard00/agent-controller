@@ -358,69 +358,30 @@ The failed cycle is **not** marked reactivated and will be retried on the next p
 
 ## 8. Repository Profiles
 
-The `repositories` section in `appsettings.json` (or an environment-specific override) defines which repos the controller can work with. Each profile is referenced by a `repo:{key}` tag on ADO work items.
+Repository profiles are managed data stored in the controller database. Static `repositories` entries in `appsettings.json` are not loaded. Each profile is referenced by a `repo:{key}` tag on ADO work items.
 
 ### 8.1 Profile Options
 
-| Option | Type | Required | Description |
-|--------|------|----------|-------------|
-| `cloneUrl` | string | Yes | Remote URL or local path. Must be non-empty (validated at startup). |
-| `transport` | string | No | Clone transport: `"Ssh"`, `"HttpsPat"`, or `"Local"`. When omitted, inferred from the URL pattern (`git@...` → Ssh, `https://...` → HttpsPat, local path → Local). |
-| `defaultBranch` | string | No | Branch to check out. Defaults to `"main"`. |
-| `environmentProfile` | string | No | Environment profile name for runs targeting this repo. |
-| `runtimeProfile` | string | No | Runtime profile name for runs targeting this repo. |
+| Option | Required | Description |
+|--------|----------|-------------|
+| `key` | Yes | Stable key used by the `repo:{key}` board tag. |
+| `cloneUrl` | Yes | Remote URL or local path. |
+| `transport` | No | Clone transport: `Ssh`, `HttpsPat`, `Local`, or inferred from the URL. |
+| `defaultBranch` | No | Branch to check out. Defaults to `main`. |
+| `runtimeEnvironmentKey` | Yes | Key of an enabled managed runtime environment. |
+| `repositoryHostConnectionKey` | For connected hosts | Managed connection used for host metadata and HTTPS credentials. |
+| `project` / `remoteIdentity` | For connected hosts | Provider-specific project and repository identity. |
 
-### 8.2 SSH Transport Example (live-ado)
+### 8.2 Adding a Repository Profile
 
-```json
-{
-  "repositories": {
-    "test1": {
-      "cloneUrl": "git@ssh.dev.azure.com:v3/rpollard0630/Projecto/test1",
-      "transport": "Ssh",
-      "defaultBranch": "main",
-      "environmentProfile": "local-default",
-      "runtimeProfile": "pi-materia-default"
-    }
-  }
-}
-```
+1. Create and enable the required runtime environment from the **Runtime Environments** page.
+2. Create the repository from the **Repositories** page. For Azure DevOps, the **Connections** page can discover and onboard a host repository into the same managed store.
+3. Select the required runtime environment and save the profile.
+4. Tag ADO work items with `repo:{key}` (for example, `repo:test1`).
 
-### 8.3 HTTPS+PAT Transport Example
+Use an SSH clone URL such as `git@ssh.dev.azure.com:v3/org/project/repository` with `Ssh`, an HTTPS clone URL with `HttpsPat`, or a filesystem path with `Local`. Credentials are selected through managed connections or secret references; do not embed a PAT in the clone URL.
 
-```json
-{
-  "repositories": {
-    "my-repo": {
-      "cloneUrl": "https://<pat>@dev.azure.com/org/project/_git/repo",
-      "transport": "HttpsPat",
-      "defaultBranch": "main"
-    }
-  }
-}
-```
-
-### 8.4 Local Path Example
-
-```json
-{
-  "repositories": {
-    "local-test": {
-      "cloneUrl": "/home/reese/projects/my-repo",
-      "transport": "Local",
-      "defaultBranch": "main"
-    }
-  }
-}
-```
-
-### 8.5 Adding a New Repository Profile
-
-1. Add a profile entry with a unique key to `appsettings.json` under `repositories`.
-2. Tag ADO work items with `repo:{key}` (e.g., `repo:test1`).
-3. The controller validates the `cloneUrl` at startup — a missing or empty URL fails fast with a clear error.
-
-The controller will post a clarifying comment on any work item whose `repo:` tag doesn't match a configured profile.
+The controller posts a clarifying comment when a work item's `repo:` tag cannot resolve an enabled managed repository and runtime environment.
 
 ## 9. Troubleshooting
 
@@ -429,7 +390,7 @@ The controller will post a clarifying comment on any work item whose `repo:` tag
 - Verify `AZURE_DEVOPS_PAT` is set and non-empty.
 - Check `DOTNET_ENVIRONMENT=Live.ADO` is set.
 - Run the diagnostic endpoint: `GET /api/azure-devops/diagnostic`.
-- Check for config validation errors — malformed or missing `cloneUrl` in repository profiles will fail fast at startup with a clear message.
+- Verify the required managed connection, work-source environment, runtime environment, and repository profiles exist and are enabled.
 
 ### Work item discovered but skipped (preflight failure)
 
@@ -451,7 +412,7 @@ The preflight failure reason is also posted as a comment on the ADO work item fo
 
 - Verify the work item is in an `eligibleStates` state.
 - Verify `agent-ready` tag is present.
-- Verify `repo:{key}` matches a configured repository profile.
+- Verify `repo:{key}` matches a managed repository profile whose runtime environment is enabled.
 - Check excluded tags are not present (`agent-active`, `agent-failed`, `agent-needs-human`).
 
 ### Work item claimed but no execution (silent stall)

@@ -1,12 +1,11 @@
 using AgentController.Application;
 using AgentController.Domain;
-using AgentController.Infrastructure.Options;
 
 namespace AgentController.Api.Tests;
 
 /// <summary>
 /// Tests for the repo:{key} tag association validation at discovery.
-/// Verifies that candidates with missing or mismatched repo keys are
+/// Verifies that candidates with missing or mismatched managed repository keys are
 /// skipped before claiming, with clarifying comments posted for remote sources.
 /// </summary>
 public class RepoKeyValidationTests
@@ -98,7 +97,7 @@ public class RepoKeyValidationTests
         Assert.Contains("repo:nonexistent-repo", expectedComment);
     }
 
-    // ── Scenario 3: repo: tag matches a configured profile ───────
+    // ── Scenario 3: repo: tag matches a managed profile ──────────
 
     [Fact]
     public void ValidateRepoKey_MatchingProfile_ReturnsTrue()
@@ -135,7 +134,7 @@ public class RepoKeyValidationTests
         Assert.Null(expectedComment);
     }
 
-    // ── Scenario 4: Multiple configured profiles ─────────────────
+    // ── Scenario 4: Multiple managed profiles ────────────────────
 
     [Fact]
     public void ValidateRepoKey_MatchesOneOfManyProfiles_ReturnsTrue()
@@ -208,7 +207,7 @@ public class RepoKeyValidationTests
 
         var result = RepoKeyValidator.Validate(
             candidate,
-            RepoConfig(), // Empty configuration
+            RepoConfig(), // No managed profiles
             out string? expectedComment);
 
         Assert.False(result);
@@ -241,13 +240,12 @@ public class RepoKeyValidationTests
         };
     }
 
-    private static Dictionary<string, RepositoryProfileOptions> RepoConfig(
-        params string[] keys)
+    private static Dictionary<string, RepositoryProfile> RepoConfig(params string[] keys)
     {
-        var config = new Dictionary<string, RepositoryProfileOptions>();
+        var config = new Dictionary<string, RepositoryProfile>();
         foreach (var key in keys)
         {
-            config[key] = new RepositoryProfileOptions
+            config[key] = new RepositoryProfile
             {
                 CloneUrl = $"https://dev.azure.com/org/project/_git/{key}",
                 DefaultBranch = "main",
@@ -268,7 +266,7 @@ public class RepoKeyValidationTests
     {
         public static bool Validate(
             WorkCandidate candidate,
-            Dictionary<string, RepositoryProfileOptions> repoConfig,
+            Dictionary<string, RepositoryProfile> repoConfig,
             out string? clarifyingComment)
         {
             clarifyingComment = null;
@@ -283,12 +281,12 @@ public class RepoKeyValidationTests
                 {
                     clarifyingComment =
                         "Skipped: work item has no `repo:` tag. Add a tag like `repo:example-service` " +
-                        "to associate this item with a configured repository profile.";
+                        "to associate this item with a managed repository profile.";
                 }
                 return false;
             }
 
-            // repo: tag present — check against configured profiles
+            // repo: tag present — check against managed profiles
             if (repoConfig.TryGetValue(repoKey, out _))
             {
                 return true; // Profile found — proceed
@@ -299,7 +297,7 @@ public class RepoKeyValidationTests
             {
                 clarifyingComment =
                     $"Skipped: no repository profile matches the `repo:{repoKey}` tag. " +
-                    "Check for typos or add a matching profile to the 'repositories' configuration.";
+                    "Check for typos or add a matching managed repository profile.";
             }
             return false;
         }

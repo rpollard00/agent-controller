@@ -27,7 +27,7 @@ The MVP should evolve the same design into a durable internal service using stro
 - SQLite persistence via EF Core with full entity configurations
 - Migration runner console app (AgentController.Migrations) — sole owner of schema evolution
 - JSON configuration loading with options classes and validation-on-start
-- Repository profile config (`cloneUrl`, `defaultBranch`, `environmentProfile`, `runtimeProfile`)
+- Database-backed managed repository, runtime-environment, and work-source profiles
 
 ### Phase 1: Local Lifecycle ✓
 
@@ -96,7 +96,7 @@ Stale run detection and recovery (`AwaitingResult` → `NeedsHuman`) is implemen
 The local-first milestone (§13a) enables fully local controller runs without Azure DevOps:
 
 - **Slice 1 ✓** — `LocalFileWorkSource` reads work item definitions from `localWork` config, validates required fields, maps to `WorkCandidate`, upserts into `IWorkItemStore`.
-- **Slice 2 ✓** — `LocalGitSourceControlProvider` supports `repositories:{key}:cloneUrl` values for local paths, `file://` URLs, and remote git URLs (via git clone). No separate `localPath` field.
+- **Slice 2 ✓** — `LocalGitSourceControlProvider` supports managed repository `cloneUrl` values for local paths, `file://` URLs, and remote git URLs (via git clone). No separate `localPath` field.
 - **Slice 3 ✓** — `LocalWorkspaceEnvironmentProvider` creates per-run workspace directories under `{runRoot}/{runId}/` with subdirectories for repo, context, logs, artifacts, and results.
 - **Slice 4 ✓** — `MockPiMateriaRuntime` emits a deterministic sequence of runtime events in-process after `StartAsync` is called, driving runs from discovery through completion without Azure DevOps, external processes, or manual HTTP calls. The `PollingWorker` invokes `IAgentRuntime.StartAsync` at the `AgentStarting` milestone. Completion outcome is configurable via `runtime:defaultMateriaLoadout` (`success-pr`, `no-change`, `fail*`).
 
@@ -201,22 +201,7 @@ Docker is the likely MVP environment provider before considering devcontainers, 
 
 ## 3.5 Repository Profiles
 
-Repository profiles are stored in JSON configuration.
-
-Example:
-
-```json
-{
-  "repositories": {
-    "example-service": {
-      "cloneUrl": "https://dev.azure.com/org/project/_git/example-service",
-      "defaultBranch": "main",
-      "environmentProfile": "local-default",
-      "runtimeProfile": "pi-materia-default"
-    }
-  }
-}
-```
+Repository profiles are managed records stored in SQLite. Operators create them through the Web UI or `/api/webui/repositories`; each repository references an enabled managed runtime environment. Static appsettings repository profiles are not supported.
 
 ## 3.6 Work Item Eligibility
 
@@ -683,14 +668,18 @@ CreatedAt
 
 ### Repositories
 
-Repository profiles are loaded from JSON config, but effective resolved repository metadata may be cached in the database for auditability.
+Repository profiles are authoritative managed data stored in the database.
 
 ```text
 Key
 CloneUrl
+WebUrl
 DefaultBranch
-EnvironmentProfile
-RuntimeProfile
+Transport
+RepositoryHostConnectionKey
+Project
+RemoteIdentity
+RuntimeEnvironmentKey
 CreatedAt
 UpdatedAt
 ```
@@ -1312,17 +1301,11 @@ Actions: cancel, retry, cleanup, mark needs-human
     "provider": "PiMateria",
     "piExecutablePath": "pi",
     "defaultMateriaLoadout": "autonomous-dev"
-  },
-  "repositories": {
-    "example-service": {
-      "cloneUrl": "https://dev.azure.com/example-org/ExampleProject/_git/example-service",
-      "defaultBranch": "main",
-      "environmentProfile": "local-default",
-      "runtimeProfile": "pi-materia-default"
-    }
   }
 }
 ```
+
+Repository, runtime-environment, work-source environment, connection, and secret profiles are managed separately through the Web UI/API and persisted in the controller database.
 
 ---
 
@@ -1336,7 +1319,7 @@ Actions: cancel, retry, cleanup, mark needs-human
 4. Add SQLite persistence.
 5. Add lifecycle event table.
 6. Add JSON config loading.
-7. Add repository profile config.
+7. Add managed repository profile persistence.
 
 ## Phase 1: Local Lifecycle (No Azure DevOps, No pi-materia)
 
@@ -1383,7 +1366,7 @@ prototype data model defined in §7.5:
 | `AgentRuns` | One row per controller-orchestrated run |
 | `Environments` | Per-run environment metadata |
 | `LifecycleEvents` | Controller-authoritative event log |
-| `Repositories` | Cached repository profiles from JSON config |
+| `Repositories` | Authoritative managed repository profiles |
 
 Key mapping decisions:
 - JSON-like columns (`Tags`, `AcceptanceCriteria`, `Metadata`, `Payload`) are stored as
@@ -1426,7 +1409,7 @@ Task<bool> ExistsByEventIdAsync(string runId, string eventId, CancellationToken 
 Task<EnvironmentHandle> CreateAsync(CreateEnvironmentRequest request, CancellationToken ct);
 Task UpdateStatusAsync(string environmentId, string status, CancellationToken ct);
 
-// IRepositoryStore — cached repository profiles
+// IRepositoryStore — managed repository profiles
 Task<RepositoryProfile?> GetByKeyAsync(string key, CancellationToken ct);
 Task UpsertAsync(RepositoryProfile profile, CancellationToken ct);
 ```
@@ -1612,7 +1595,7 @@ This makes the full local controller lifecycle inspectable end-to-end.
 
 ## Phase 3: Azure DevOps Repos Clone
 
-1. Resolve repository profile from JSON config.
+1. Resolve repository profile from the managed repository store.
 2. Clone repo into per-run workspace.
 3. Checkout default branch.
 4. Write repository metadata into context files.
@@ -1659,9 +1642,9 @@ This makes the full local controller lifecycle inspectable end-to-end.
 # 13a. Local-First Milestone (Local-Only End-to-End)
 
 **Goal:** Make the controller fully exerciseable end-to-end without Azure DevOps integration.
-A developer should be able to define work items in a config or local file, point the controller
-at a local repository (via a `file://` URL or local path in `repositories:{key}:cloneUrl`),
-run the full controller lifecycle through a real environment, source-control provider, and
+A developer should be able to define work items in a config or local file, create a managed
+repository profile whose `cloneUrl` is a `file://` URL or local path, and run the full
+controller lifecycle through a real environment, source-control provider, and
 mock runtime, and observe a completed run — all without network access or Azure DevOps credentials.
 
 This milestone consists of four slices:
@@ -1699,14 +1682,13 @@ valid definitions.
 
 ## Slice 2: Local Repository Workspace (`feat: support local repository workspace runs`)
 
-Ensure repository checkout/workspace setup supports `repositories:{key}:cloneUrl` values
+Ensure repository checkout/workspace setup supports managed repository `cloneUrl` values
 that are local paths, `file://` URLs, or normal git URLs. Do not introduce a separate
 `localPath` field — reuse the existing `cloneUrl` field.
 
 ### Design Decisions
 
-1. **No new field.** The existing `repositories:{key}:cloneUrl` field is the single
-source of truth. Values can be:
+1. **No new field.** The managed repository's `cloneUrl` field is the single source of truth. Values can be:
    - A standard remote git URL (`https://...`, `git@...`)
    - A `file://` URL (`file:///home/user/projects/repo`)
    - A bare local path (`/home/user/projects/repo` or `~/projects/repo`)

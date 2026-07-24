@@ -86,7 +86,7 @@ The script always adds two tags:
 | Tag | Purpose |
 |-----|---------|
 | `agent-ready` | Eligibility tag — signals the controller to pick up this item |
-| `repo:{key}` | Repository association — maps the item to a configured repository profile |
+| `repo:{key}` | Repository association — maps the item to a managed repository profile |
 
 These match the [board provisioning model](./board-provisioning.md) so the item is immediately eligible for discovery by the agent router polling cycle.
 

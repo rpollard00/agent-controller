@@ -45,7 +45,7 @@ To make a work item eligible:
 
 1. Ensure the item is in an **eligible state** (e.g. `New` or `Approved`).
 2. Add the **eligibility tag** (e.g. `agent-ready`).
-3. Add a **repository association tag** in the form `repo:{key}` where `{key}` matches a configured repository profile key (see §3).
+3. Add a **repository association tag** in the form `repo:{key}` where `{key}` matches a managed repository profile key (see §3).
 4. Ensure no **exclusion tag** is present (e.g. `agent-active`, `agent-failed`, `agent-needs-human`, `agent-blocked`).
 
 Example tag set for an eligible item:
@@ -58,36 +58,25 @@ agent-ready; repo:example-service
 
 ## 3. Repository Association — `repo:{key}` Tag
 
-The `repo:{key}` tag associates a work item with a specific repository profile. The `{key}` portion must match a key defined in the `repositories` configuration section.
+The `repo:{key}` tag associates a work item with a specific managed repository profile. The `{key}` portion must match a profile stored by the controller.
 
 ### 3.1 How It Works
 
 1. **Discovery**: The controller reads `System.Tags` from each ADO work item and looks for a tag starting with `repo:`. The remainder (e.g. `repo:example-service` → `example-service`) becomes the `RepoKey`.
 
-2. **Validation**: After discovery, the controller validates the `RepoKey` against configured repository profiles. Three outcomes are possible:
+2. **Validation**: After discovery, the controller resolves the `RepoKey` against managed repository and runtime-environment profiles. Three outcomes are possible:
 
    | Scenario | Behavior |
    |----------|----------|
    | No `repo:` tag present | Item is **skipped silently** — treated as not-eligible. No comment is posted. |
-   | `repo:` tag present but key does not match any profile | Item is **skipped** and a **clarifying comment** is posted on the ADO work item: `"Skipped: no repository profile matches the \`repo:xxx\` tag. Configure a matching repository profile or correct the tag."` This makes typos visible on the board. |
+   | `repo:` tag present but no enabled managed repository/runtime environment resolves | Item is **skipped** and a **clarifying comment** is posted on the ADO work item. This makes typos and incomplete profiles visible on the board. |
    | `repo:` tag matches a profile | Item proceeds through the lifecycle. The matched profile provides `cloneUrl`, `defaultBranch`, etc. |
 
-### 3.2 Repository Profile Configuration
+### 3.2 Managed Repository Profiles
 
-Repository profiles are defined in the `repositories` configuration section:
+Repository profiles are stored in the controller database and managed from the **Repositories** page or the `/api/webui/repositories` API. Static `repositories` appsettings entries are not loaded. Each repository must reference an enabled managed runtime environment.
 
-```json
-{
-  "repositories": {
-    "example-service": {
-      "cloneUrl": "https://dev.azure.com/org/project/_git/example-service",
-      "defaultBranch": "main"
-    }
-  }
-}
-```
-
-The `repo:example-service` tag on a work item resolves to this profile.
+For example, create a profile with key `example-service`, clone URL `https://dev.azure.com/org/project/_git/example-service`, default branch `main`, and a `runtimeEnvironmentKey` selected from the managed runtime environments. The `repo:example-service` tag then resolves to that persisted profile.
 
 ---
 
@@ -248,7 +237,7 @@ Both ADO and local work sources maintain consistent rework tag-cleanup semantics
 │    - State IN eligibleStates                                        │
 │    - Tags CONTAINS "agent-ready"                                    │
 │    - Tags NOT CONTAINS any excludedTag                              │
-│    - repo: tag resolves to a configured repository profile          │
+│    - repo: tag resolves to managed repository/runtime profiles      │
 └───────────────────────┬─────────────────────────────────────────────┘
                         ▼
 ┌─────────────────────────────────────────────────────────────────────┐

@@ -2,8 +2,9 @@
 
 Drives a **full workflow through the real controller**: boots the real
 `AgentController.Api` (PollingWorker + `PiMateriaRuntime`), scaffolds a clean
-widget repo, seeds one `LocalFile` work item, and lets the controller discover →
-claim → provision → clone → cast (real `pi` + pi-materia) → ingest `runtime.*`
+widget repo, seeds managed runtime/repository profiles and one `LocalFile` work
+item, and lets the controller discover → claim → provision → clone → cast
+(real `pi` + pi-materia) → ingest `runtime.*`
 events over the real `POST /runs/{runId}/events` endpoint. Then polls
 `GET /runs/{id}` until terminal and asserts the contract.
 
@@ -46,13 +47,18 @@ Optional environment overrides:
 
 1. `dotnet build` the solution.
 2. Scaffolds a **clean** widget repo.
-3. Writes controller config as environment variables (layered on the committed
-   `appsettings.json` defaults) — no committed test config file.
+3. Writes controller and LocalFile work-item config as environment variables
+   (layered on the committed `appsettings.json` defaults) — no committed test
+   config file or legacy repository profile config.
 4. Runs migrations (`AgentController.Migrations`).
 5. Boots the API host (`AgentController.Api`) with `workerEnabled=true` and
    `runtime:provider=PiMateria`.
 6. Waits for `GET /health`.
-7. `wait_for_terminal.py` polls `GET /runs` until a run appears, then
+7. Creates the enabled `LocalWorkspace` + `PiMateria` runtime environment and
+   `widget` repository profiles through `POST /api/webui/runtime-environments`
+   and `POST /api/webui/repositories`. The repository references the managed
+   runtime environment, and the selected `LOADOUT` is stored on that profile.
+8. `wait_for_terminal.py` polls `GET /runs` until a run appears, then
    `GET /runs/{id}` until terminal, and asserts `runtime.completed` is present.
 
 ## Output

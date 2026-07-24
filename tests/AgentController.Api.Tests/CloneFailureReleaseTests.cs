@@ -475,11 +475,8 @@ public class CloneFailureReleaseTests : IAsyncLifetime
                     ["localWork:definitions:0:tags:0"] = "agent-ready",
                     ["localWork:definitions:0:priority"] = "1",
                     ["localWork:definitions:0:status"] = "New",
-                    ["repositories:test-repo:cloneUrl"] = repoCloneUrl,
-                    ["repositories:test-repo:transport"] = repoTransport,
-                    ["repositories:test-repo:defaultBranch"] = "main",
-                    ["repositories:test-repo:environmentProfile"] = "local-default",
-                    ["repositories:test-repo:runtimeProfile"] = "pi-materia-default",
+                    ["testRepository:cloneUrl"] = repoCloneUrl,
+                    ["testRepository:transport"] = repoTransport,
                 }
             )
             .Build();
@@ -546,10 +543,10 @@ public class CloneFailureReleaseTests : IAsyncLifetime
                         new RepositoryProfile
                         {
                             Key = "test-repo",
-                            CloneUrl = config["repositories:test-repo:cloneUrl"] ?? string.Empty,
+                            CloneUrl = config["testRepository:cloneUrl"] ?? string.Empty,
                             DefaultBranch = "main",
                             Transport = Enum.Parse<CloneTransport>(
-                                config["repositories:test-repo:transport"] ?? "HttpsPat"
+                                config["testRepository:transport"] ?? "HttpsPat"
                             ),
                             RuntimeEnvironmentKey = "managed-local",
                         },

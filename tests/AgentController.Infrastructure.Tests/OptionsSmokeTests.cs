@@ -1,6 +1,5 @@
 using AgentController.Application;
 using AgentController.Application.Results;
-using AgentController.Domain;
 using AgentController.Infrastructure;
 using AgentController.Infrastructure.Options;
 using Microsoft.Extensions.Configuration;
@@ -27,7 +26,6 @@ public class OptionsSmokeTests
             ["sourceControl:provider"] = "LocalFake",
             ["environmentProvider:provider"] = "LocalWorkspace",
             ["runtime:provider"] = "NoOp",
-            ["repositories:example-service:cloneUrl"] = "https://example.com/repo.git",
         };
 
         if (overrides is not null)
@@ -237,29 +235,6 @@ public class OptionsSmokeTests
 
         Assert.Equal("NoOp", options.Provider);
         Assert.Equal("/usr/local/bin/pi", options.PiExecutablePath);
-    }
-
-    [Fact]
-    public void RepositoryProfileOptions_BindsFromConfiguration()
-    {
-        var config = BuildConfiguration();
-
-        var services = new ServiceCollection();
-        services
-            .AddOptions<Dictionary<string, RepositoryProfileOptions>>()
-            .Bind(config.GetSection("repositories"));
-
-        var options = services
-            .BuildServiceProvider()
-            .GetRequiredService<IOptions<Dictionary<string, RepositoryProfileOptions>>>()
-            .Value;
-
-        Assert.NotNull(options);
-        Assert.True(options.ContainsKey("example-service"));
-
-        var profile = options["example-service"];
-        Assert.Equal("https://example.com/repo.git", profile.CloneUrl);
-        Assert.Equal("main", profile.DefaultBranch);
     }
 
     [Fact]
@@ -653,167 +628,6 @@ public class OptionsSmokeTests
         var message = ex.Message;
         Assert.Contains("1.", message);
         Assert.Contains("2.", message);
-    }
-
-    // ──────────────────────────────────────────────
-    // Repository profile cloneUrl validation tests
-    // ──────────────────────────────────────────────
-
-    [Fact]
-    public void RepositoryProfiles_ValidationCatchesEmptyCloneUrl()
-    {
-        var config = BuildConfiguration(
-            new Dictionary<string, string?>
-            {
-                ["repositories:example-service:cloneUrl"] = "",
-            }
-        );
-
-        var services = new ServiceCollection();
-        services.AddAgentControllerOptions(config);
-
-        var provider = services.BuildServiceProvider();
-        Assert.Throws<OptionsValidationException>(() =>
-            provider.GetRequiredService<IOptions<Dictionary<string, RepositoryProfileOptions>>>().Value
-        );
-    }
-
-    [Fact]
-    public void RepositoryProfiles_ValidationCatchesWhitespaceCloneUrl()
-    {
-        var config = BuildConfiguration(
-            new Dictionary<string, string?>
-            {
-                ["repositories:example-service:cloneUrl"] = "   ",
-            }
-        );
-
-        var services = new ServiceCollection();
-        services.AddAgentControllerOptions(config);
-
-        var provider = services.BuildServiceProvider();
-        Assert.Throws<OptionsValidationException>(() =>
-            provider.GetRequiredService<IOptions<Dictionary<string, RepositoryProfileOptions>>>().Value
-        );
-    }
-
-    [Fact]
-    public void RepositoryProfiles_ValidationPassesForValidHttpsUrl()
-    {
-        var config = BuildConfiguration(
-            new Dictionary<string, string?>
-            {
-                ["repositories:example-service:cloneUrl"] = "https://dev.azure.com/org/project/_git/repo",
-            }
-        );
-
-        var services = new ServiceCollection();
-        services.AddAgentControllerOptions(config);
-
-        var provider = services.BuildServiceProvider();
-        var options = provider.GetRequiredService<IOptions<Dictionary<string, RepositoryProfileOptions>>>().Value;
-
-        Assert.True(options.ContainsKey("example-service"));
-        Assert.Equal("https://dev.azure.com/org/project/_git/repo", options["example-service"].CloneUrl);
-    }
-
-    [Fact]
-    public void RepositoryProfiles_ValidationPassesForValidSshUrl()
-    {
-        var config = BuildConfiguration(
-            new Dictionary<string, string?>
-            {
-                ["repositories:example-service:cloneUrl"] = "git@ssh.dev.azure.com:v3/org/project/repo",
-            }
-        );
-
-        var services = new ServiceCollection();
-        services.AddAgentControllerOptions(config);
-
-        var provider = services.BuildServiceProvider();
-        var options = provider.GetRequiredService<IOptions<Dictionary<string, RepositoryProfileOptions>>>().Value;
-
-        Assert.True(options.ContainsKey("example-service"));
-        Assert.Equal("git@ssh.dev.azure.com:v3/org/project/repo", options["example-service"].CloneUrl);
-    }
-
-    [Fact]
-    public void RepositoryProfiles_ValidationPassesForLocalPath()
-    {
-        var config = BuildConfiguration(
-            new Dictionary<string, string?>
-            {
-                ["repositories:example-service:cloneUrl"] = "/home/user/projects/repo",
-            }
-        );
-
-        var services = new ServiceCollection();
-        services.AddAgentControllerOptions(config);
-
-        var provider = services.BuildServiceProvider();
-        var options = provider.GetRequiredService<IOptions<Dictionary<string, RepositoryProfileOptions>>>().Value;
-
-        Assert.True(options.ContainsKey("example-service"));
-        Assert.Equal("/home/user/projects/repo", options["example-service"].CloneUrl);
-    }
-
-    [Fact]
-    public void RepositoryProfiles_TransportBindsFromConfig_Ssh()
-    {
-        var config = BuildConfiguration(
-            new Dictionary<string, string?>
-            {
-                ["repositories:example-service:cloneUrl"] = "git@ssh.dev.azure.com:v3/org/project/repo",
-                ["repositories:example-service:transport"] = "Ssh",
-            }
-        );
-
-        var services = new ServiceCollection();
-        services.AddAgentControllerOptions(config);
-
-        var provider = services.BuildServiceProvider();
-        var options = provider.GetRequiredService<IOptions<Dictionary<string, RepositoryProfileOptions>>>().Value;
-
-        Assert.Equal(CloneTransport.Ssh, options["example-service"].Transport);
-    }
-
-    [Fact]
-    public void RepositoryProfiles_TransportBindsFromConfig_HttpsPat()
-    {
-        var config = BuildConfiguration(
-            new Dictionary<string, string?>
-            {
-                ["repositories:example-service:cloneUrl"] = "https://dev.azure.com/org/project/_git/repo",
-                ["repositories:example-service:transport"] = "HttpsPat",
-            }
-        );
-
-        var services = new ServiceCollection();
-        services.AddAgentControllerOptions(config);
-
-        var provider = services.BuildServiceProvider();
-        var options = provider.GetRequiredService<IOptions<Dictionary<string, RepositoryProfileOptions>>>().Value;
-
-        Assert.Equal(CloneTransport.HttpsPat, options["example-service"].Transport);
-    }
-
-    [Fact]
-    public void RepositoryProfiles_TransportDefaultsToUnspecified()
-    {
-        var config = BuildConfiguration(
-            new Dictionary<string, string?>
-            {
-                ["repositories:example-service:cloneUrl"] = "https://example.com/repo",
-            }
-        );
-
-        var services = new ServiceCollection();
-        services.AddAgentControllerOptions(config);
-
-        var provider = services.BuildServiceProvider();
-        var options = provider.GetRequiredService<IOptions<Dictionary<string, RepositoryProfileOptions>>>().Value;
-
-        Assert.Equal(CloneTransport.Unspecified, options["example-service"].Transport);
     }
 
     [Fact]

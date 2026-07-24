@@ -3,7 +3,6 @@ using AgentController.Application;
 using AgentController.Domain;
 using AgentController.Infrastructure;
 using AgentController.Infrastructure.Options;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -556,127 +555,6 @@ public class SourceControlNonInteractiveTests : IAsyncLifetime
         var result = LocalGitSourceControlProvider.ResolveTransport(
             CloneTransport.Unspecified, "/home/user/projects/repo");
         Assert.Equal(CloneTransport.Local, result);
-    }
-
-    [Fact]
-    public void TransportSelection_FromRepositoryProfileOptions()
-    {
-        // Verify that RepositoryProfileOptions.Transport is correctly read
-        // and maps to the CloneTransport enum.
-        var profile = new RepositoryProfileOptions
-        {
-            CloneUrl = "git@ssh.dev.azure.com:v3/org/project/repo",
-            Transport = CloneTransport.Ssh,
-            DefaultBranch = "main",
-        };
-
-        Assert.Equal(CloneTransport.Ssh, profile.Transport);
-        Assert.Equal("git@ssh.dev.azure.com:v3/org/project/repo", profile.CloneUrl);
-    }
-
-    [Fact]
-    public void TransportSelection_FromRepositoryProfileOptions_HttpsPat()
-    {
-        var profile = new RepositoryProfileOptions
-        {
-            CloneUrl = "https://dev.azure.com/org/project/_git/repo",
-            Transport = CloneTransport.HttpsPat,
-            DefaultBranch = "develop",
-        };
-
-        Assert.Equal(CloneTransport.HttpsPat, profile.Transport);
-    }
-
-    [Fact]
-    public void TransportSelection_FromRepositoryProfileOptions_UnspecifiedInfersFromUrl()
-    {
-        var profile = new RepositoryProfileOptions
-        {
-            CloneUrl = "git@github.com:user/repo.git",
-            Transport = CloneTransport.Unspecified, // will be inferred at runtime
-        };
-
-        // The profile stores Unspecified; inference happens in ResolveTransport.
-        Assert.Equal(CloneTransport.Unspecified, profile.Transport);
-
-        // When passed through ResolveTransport, it should infer SSH.
-        var inferred = LocalGitSourceControlProvider.ResolveTransport(
-            profile.Transport, profile.CloneUrl);
-        Assert.Equal(CloneTransport.Ssh, inferred);
-    }
-
-    [Fact]
-    public void TransportSelection_ConfigBinding_Ssh()
-    {
-        // Verify that the config binding correctly maps "Ssh" string to CloneTransport.Ssh.
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["repositories:test1:cloneUrl"] = "git@ssh.dev.azure.com:v3/org/project/repo",
-                ["repositories:test1:transport"] = "Ssh",
-                ["repositories:test1:defaultBranch"] = "main",
-            })
-            .Build();
-
-        var repoSection = config.GetSection("repositories:test1");
-        var profile = repoSection.Get<RepositoryProfileOptions>();
-
-        Assert.NotNull(profile);
-        Assert.Equal(CloneTransport.Ssh, profile!.Transport);
-    }
-
-    [Fact]
-    public void TransportSelection_ConfigBinding_HttpsPat()
-    {
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["repositories:test1:cloneUrl"] = "https://dev.azure.com/org/project/_git/repo",
-                ["repositories:test1:transport"] = "HttpsPat",
-            })
-            .Build();
-
-        var repoSection = config.GetSection("repositories:test1");
-        var profile = repoSection.Get<RepositoryProfileOptions>();
-
-        Assert.NotNull(profile);
-        Assert.Equal(CloneTransport.HttpsPat, profile!.Transport);
-    }
-
-    [Fact]
-    public void TransportSelection_ConfigBinding_Local()
-    {
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["repositories:test1:cloneUrl"] = "/home/user/projects/repo",
-                ["repositories:test1:transport"] = "Local",
-            })
-            .Build();
-
-        var repoSection = config.GetSection("repositories:test1");
-        var profile = repoSection.Get<RepositoryProfileOptions>();
-
-        Assert.NotNull(profile);
-        Assert.Equal(CloneTransport.Local, profile!.Transport);
-    }
-
-    [Fact]
-    public void TransportSelection_ConfigBinding_DefaultUnspecified()
-    {
-        // When transport is not specified in config, it defaults to Unspecified.
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["repositories:test1:cloneUrl"] = "git@github.com:user/repo.git",
-            })
-            .Build();
-
-        var repoSection = config.GetSection("repositories:test1");
-        var profile = repoSection.Get<RepositoryProfileOptions>();
-
-        Assert.NotNull(profile);
-        Assert.Equal(CloneTransport.Unspecified, profile!.Transport);
     }
 
     // ═══════════════════════════════════════════════════════════════

@@ -8,13 +8,13 @@ public sealed record EnvironmentSpec
     /// <summary>Run identifier this environment is for.</summary>
     public string RunId { get; init; } = string.Empty;
 
-    /// <summary>Environment profile name from configuration.</summary>
+    /// <summary>Managed runtime-environment profile key.</summary>
     public string Profile { get; init; } = string.Empty;
 
     /// <summary>Root path under which the run environment is created, if specified.</summary>
     public string? RootPath { get; init; }
 
-    /// <summary>The resolved managed or configured runtime-environment profile.</summary>
+    /// <summary>The resolved managed runtime-environment profile.</summary>
     public RuntimeEnvironmentProfile? RuntimeEnvironmentProfile { get; init; }
 
     /// <summary>Additional provider-specific metadata.</summary>

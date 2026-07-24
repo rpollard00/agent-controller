@@ -115,10 +115,6 @@ public class LocalEndToEndSmokeTests : IAsyncLifetime
                     ["localWork:definitions:0:tags:1"] = "test",
                     ["localWork:definitions:0:priority"] = "1",
                     ["localWork:definitions:0:status"] = "New",
-                    ["repositories:test-repo:cloneUrl"] = _tempRepoPath,
-                    ["repositories:test-repo:defaultBranch"] = "main",
-                    ["repositories:test-repo:environmentProfile"] = "local-default",
-                    ["repositories:test-repo:runtimeProfile"] = "pi-materia-default",
                 }
             )
             .Build();

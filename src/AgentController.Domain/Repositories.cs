@@ -7,7 +7,7 @@ namespace AgentController.Domain;
 /// </summary>
 public sealed record RepositorySpec
 {
-    /// <summary>Repository key matching a configured profile.</summary>
+    /// <summary>Repository key matching a controller-managed profile.</summary>
     public string RepoKey { get; init; } = string.Empty;
 
     /// <summary>Remote URL to clone from.</summary>
@@ -19,7 +19,7 @@ public sealed record RepositorySpec
     /// <summary>Clone transport type (SSH, HTTPS+PAT, Local, or inferred).</summary>
     public CloneTransport Transport { get; init; } = CloneTransport.Unspecified;
 
-    /// <summary>Optional resolved repository profile from configuration.</summary>
+    /// <summary>Optional resolved managed repository profile.</summary>
     public RepositoryProfile? Profile { get; init; }
 
     /// <summary>
@@ -55,8 +55,8 @@ public sealed record RepositoryCheckout
 }
 
 /// <summary>
-/// Repository profile loaded from configuration.
-/// Maps a repository key to clone details and associated profiles.
+/// Managed repository profile persisted by the controller.
+/// Maps a repository key to clone details and associated managed profiles.
 /// </summary>
 public sealed record RepositoryProfile
 {
@@ -76,14 +76,14 @@ public sealed record RepositoryProfile
     public CloneTransport Transport { get; init; } = CloneTransport.Unspecified;
 
     /// <summary>
-    /// Legacy environment profile name loaded from appsettings.
-    /// Retained for backward compatibility with existing repository configuration.
+    /// Deprecated environment profile name retained for persisted-row compatibility.
+    /// Managed profile resolution does not consume this value.
     /// </summary>
     public string EnvironmentProfile { get; init; } = string.Empty;
 
     /// <summary>
-    /// Legacy runtime profile name loaded from appsettings.
-    /// Retained for backward compatibility with existing repository configuration.
+    /// Deprecated runtime profile name retained for persisted-row compatibility.
+    /// Managed profile resolution does not consume this value.
     /// </summary>
     public string RuntimeProfile { get; init; } = string.Empty;
 
@@ -107,7 +107,7 @@ public sealed record RepositoryProfile
     /// </summary>
     public string? RemoteIdentity { get; init; }
 
-    /// <summary>Optional key of the managed runtime environment profile.</summary>
+    /// <summary>Key of the managed runtime environment profile used for dispatch.</summary>
     public string? RuntimeEnvironmentKey { get; init; }
 
     /// <summary>
