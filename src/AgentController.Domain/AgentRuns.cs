@@ -70,6 +70,12 @@ public sealed record AgentRunHandle
     /// <summary>Type of agent runtime used for this run (e.g. "PiMateria").</summary>
     public string? RuntimeType { get; init; }
 
+    /// <summary>Display name of the runtime environment profile captured for this run.</summary>
+    public string? RuntimeProfileName { get; init; }
+
+    /// <summary>Environment provider type captured from the runtime environment profile.</summary>
+    public string? EnvironmentProviderType { get; init; }
+
     /// <summary>Runtime-assigned run identifier, if the runtime provides one.</summary>
     public string? RuntimeRunId { get; init; }
 
@@ -145,6 +151,12 @@ public sealed record CreateRunRequest
     /// <summary>Type of agent runtime to use (e.g. "PiMateria").</summary>
     public string? RuntimeType { get; init; }
 
+    /// <summary>Display name of the runtime environment profile captured for this run.</summary>
+    public string? RuntimeProfileName { get; init; }
+
+    /// <summary>Environment provider type captured from the runtime environment profile.</summary>
+    public string? EnvironmentProviderType { get; init; }
+
     /// <summary>Initial lifecycle state for the run. Defaults to <see cref="RunLifecycleState.Claimed"/>.</summary>
     public RunLifecycleState InitialStatus { get; init; } = RunLifecycleState.Claimed;
 
@@ -178,6 +190,12 @@ public sealed record RuntimeFieldUpdate
 
     /// <summary>Type of agent runtime.</summary>
     public string? RuntimeType { get; init; }
+
+    /// <summary>Display name of the runtime environment profile captured for this run.</summary>
+    public string? RuntimeProfileName { get; init; }
+
+    /// <summary>Environment provider type captured from the runtime environment profile.</summary>
+    public string? EnvironmentProviderType { get; init; }
 
     /// <summary>Identifier of the associated environment.</summary>
     public string? EnvironmentId { get; init; }

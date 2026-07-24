@@ -347,6 +347,41 @@ public class DomainSmokeTests
         var handle = new AgentRunHandle { RunId = "run-1" };
         Assert.Equal(RunLifecycleState.Queued, handle.Status);
         Assert.Null(handle.StartedAt);
+        Assert.Null(handle.RuntimeProfileName);
+        Assert.Null(handle.EnvironmentProviderType);
+    }
+
+    [Fact]
+    public void AgentRunRecords_CarryRuntimeEnvironmentSnapshot()
+    {
+        const string profileName = "ReeseProjecto LocalWorkspace";
+        const string providerType = "LocalWorkspace";
+
+        var handle = new AgentRunHandle
+        {
+            RunId = "run-1",
+            RuntimeProfileName = profileName,
+            EnvironmentProviderType = providerType,
+        };
+        var request = new CreateRunRequest
+        {
+            WorkItemId = "12345",
+            WorkerId = "worker-1",
+            RuntimeProfileName = profileName,
+            EnvironmentProviderType = providerType,
+        };
+        var update = new RuntimeFieldUpdate
+        {
+            RuntimeProfileName = profileName,
+            EnvironmentProviderType = providerType,
+        };
+
+        Assert.Equal(profileName, handle.RuntimeProfileName);
+        Assert.Equal(providerType, handle.EnvironmentProviderType);
+        Assert.Equal(profileName, request.RuntimeProfileName);
+        Assert.Equal(providerType, request.EnvironmentProviderType);
+        Assert.Equal(profileName, update.RuntimeProfileName);
+        Assert.Equal(providerType, update.EnvironmentProviderType);
     }
 
     [Fact]
