@@ -78,6 +78,7 @@ public sealed class OnboardRepositoryFromHostCommandHandler(
             RepositoryHostConnectionKey = keyValidation.Key,
             Project = command.Project,
             RemoteIdentity = selected.Id,
+            RuntimeEnvironmentKey = command.RuntimeEnvironmentKey,
         };
 
         // 5. Validate and normalize the draft profile.

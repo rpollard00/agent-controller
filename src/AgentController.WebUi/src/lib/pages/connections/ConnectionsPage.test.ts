@@ -34,6 +34,25 @@ const projects: ConnectionProject[] = [
   { id: 'proj-2', name: 'Test Project' },
 ];
 
+const runtimeEnvironment: RuntimeEnvironmentProfile = {
+  key: 'runtime-main',
+  displayName: 'Primary runtime',
+  enabled: true,
+  environmentProvider: 'LocalWorkspace',
+  environmentSettings: { workspaceRoot: '/srv/agent-controller/workspaces' },
+  runtimeProvider: 'PiMateria',
+  runtimeSettings: {
+    piExecutablePath: null,
+    controllerBaseUrl: null,
+    ptyWrapperPath: null,
+    ptyWrapperArgs: null,
+    loadouts: {},
+    forwardEnvironmentVariables: {},
+  },
+  createdAt: '2026-07-16T00:00:00Z',
+  updatedAt: '2026-07-16T00:00:00Z',
+};
+
 const repos: HostRepository[] = [
   {
     id: 'repo-1',
@@ -58,6 +77,7 @@ function createApi(
     updatedAt: '2026-07-16T00:00:00Z',
     secretType: 'personal-access-token',
   }],
+  initialRuntimeEnvironments: RuntimeEnvironmentProfile[] = [runtimeEnvironment],
 ) {
   let profiles = [...initialConnections];
   let secrets = [...initialSecrets];
@@ -96,7 +116,12 @@ function createApi(
     listProjects: vi.fn(async (): Promise<ConnectionProject[]> => initialProjects),
     listRepositories: vi.fn(async (): Promise<HostRepository[]> => initialRepos),
     listBranches: vi.fn(async (): Promise<string[]> => []),
-    onboardRepository: vi.fn(async (_key: string, _project: string, _repoId: string): Promise<RepositoryProfile> => ({
+    onboardRepository: vi.fn(async (
+      _key: string,
+      _project: string,
+      _repoId: string,
+      _runtimeEnvironmentKey: string,
+    ): Promise<RepositoryProfile> => ({
       key: 'onboarded-repo',
       cloneUrl: 'https://dev.azure.com/example/project/_git/repo',
       webUrl: 'https://dev.azure.com/example/project/_git/repo',
@@ -106,7 +131,7 @@ function createApi(
       runtimeProfile: '',
       repositoryHostConnectionKey: 'ado-main',
       remoteIdentity: 'repo-guid',
-      runtimeEnvironmentKey: null,
+      runtimeEnvironmentKey: 'runtime-main',
       sshKeyReference: null,
       sshKeyInheritEnvironment: false,
       project: null,
@@ -160,7 +185,7 @@ function createApi(
       }),
     },
     connections,
-    runtimeEnvironments: staticResource<RuntimeEnvironmentProfile>([]),
+    runtimeEnvironments: staticResource(initialRuntimeEnvironments),
     runs: { list: vi.fn(async () => []) },
     secrets: secretsClient,
   };
@@ -628,20 +653,32 @@ describe('connection screens', () => {
     expect(screen.getAllByRole('button', { name: /Onboard/i }).length).toBeGreaterThanOrEqual(1);
   });
 
-  it('repo picker: clicking Onboard calls the onboard endpoint and navigates', async () => {
-    window.history.replaceState({}, '', '/connections/ado-main/repos?project=proj-1');
+  it('repo picker: clicking Onboard sends the selected runtime environment and navigates', async () => {
+    window.history.replaceState({}, '', '/connections/ado-main/repos');
     const api = createApi([connection]);
     render(App, { client: api.client });
 
     expect(await screen.findByText('Available repositories')).toBeVisible();
+    await fireEvent.change(screen.getByLabelText(/Project/), {
+      target: { value: 'proj-1' },
+    });
+
+    const runtimeEnvironmentSelect = await screen.findByLabelText(/Runtime environment/);
+    expect(runtimeEnvironmentSelect).toBeRequired();
+
     const onboardButton = await screen.findByRole('button', { name: 'Onboard web-app' });
-    fireEvent.click(onboardButton);
+    expect(onboardButton).toBeDisabled();
+
+    await fireEvent.change(runtimeEnvironmentSelect, { target: { value: 'runtime-main' } });
+    expect(onboardButton).toBeEnabled();
+    await fireEvent.click(onboardButton);
 
     await waitFor(() =>
       expect(api.connections.onboardRepository).toHaveBeenCalledWith(
         'ado-main',
         'proj-1',
         'repo-1',
+        'runtime-main',
         undefined,
         expect.any(AbortSignal),
       ),

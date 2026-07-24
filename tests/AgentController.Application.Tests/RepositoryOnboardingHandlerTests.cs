@@ -99,7 +99,7 @@ public sealed class RepositoryOnboardingHandlerTests
     }
 
     [Fact]
-    public async Task OnboardFromHost_PersistsDiscoveredRepositoryWebUrl()
+    public async Task OnboardFromHost_PersistsDiscoveredRepositoryAndRuntimeEnvironment()
     {
         const string webUrl = "https://dev.azure.com/example/project/_git/repo-one";
         var repositories = new FakeRepositoryStore();
@@ -119,7 +119,7 @@ public sealed class RepositoryOnboardingHandlerTests
             connections,
             resolver,
             repositories,
-            new FakeRuntimeEnvironmentStore(),
+            new FakeRuntimeEnvironmentStore("runtime-default"),
             new InMemorySecretStore()
         );
 
@@ -128,6 +128,7 @@ public sealed class RepositoryOnboardingHandlerTests
                 ConnectionKey: "ado-main",
                 Project: "Agent Controller",
                 RepositoryId: "repo-id",
+                RuntimeEnvironmentKey: " RUNTIME-DEFAULT ",
                 RepositoryKey: null
             ),
             CancellationToken.None
@@ -135,7 +136,82 @@ public sealed class RepositoryOnboardingHandlerTests
 
         Assert.Equal(RepositoryOperationStatus.Succeeded, result.Status);
         Assert.Equal(webUrl, repositories.LastCreated?.WebUrl);
+        Assert.Equal("runtime-default", repositories.LastCreated?.RuntimeEnvironmentKey);
         Assert.Equal(webUrl, result.Repository?.WebUrl);
+    }
+
+    [Fact]
+    public async Task OnboardFromHost_RejectsMissingRuntimeEnvironment()
+    {
+        var repositories = new FakeRepositoryStore();
+        var connections = new FakeConnectionStore("ado-main");
+        var resolver = new FakeConnectionResolver(
+            new HostRepository(
+                Id: "repo-id",
+                Name: "Repo One",
+                DefaultBranch: "main",
+                RemoteUrl: "https://example.test/repo-one.git",
+                WebUrl: null,
+                SshUrl: null,
+                CloneTransportHint: CloneTransportHint.HttpsPat
+            )
+        );
+        var handler = new OnboardRepositoryFromHostCommandHandler(
+            connections,
+            resolver,
+            repositories,
+            new FakeRuntimeEnvironmentStore("runtime-default"),
+            new InMemorySecretStore()
+        );
+
+        var result = await handler.HandleAsync(
+            new OnboardRepositoryFromHostCommand(
+                ConnectionKey: "ado-main",
+                Project: "Agent Controller",
+                RepositoryId: "repo-id",
+                RuntimeEnvironmentKey: null,
+                RepositoryKey: null
+            ),
+            CancellationToken.None
+        );
+
+        Assert.Equal(RepositoryOperationStatus.ValidationFailed, result.Status);
+        Assert.Equal(
+            "A runtime environment is required.",
+            result.ValidationErrors["runtimeEnvironmentKey"].Single()
+        );
+        Assert.Null(repositories.LastCreated);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task Create_RejectsMissingRuntimeEnvironmentReference(string? runtimeEnvironmentKey)
+    {
+        var repositories = new FakeRepositoryStore();
+        var handler = new CreateRepositoryCommandHandler(
+            repositories,
+            new FakeRuntimeEnvironmentStore("runtime-default"),
+            new FakeConnectionStore(),
+            new InMemorySecretStore()
+        );
+        var profile = CreateProfile("missing-runtime") with
+        {
+            RuntimeEnvironmentKey = runtimeEnvironmentKey,
+        };
+
+        var result = await handler.HandleAsync(
+            new CreateRepositoryCommand(profile),
+            CancellationToken.None
+        );
+
+        Assert.Equal(RepositoryOperationStatus.ValidationFailed, result.Status);
+        Assert.Equal(
+            "A runtime environment is required.",
+            result.ValidationErrors["runtimeEnvironmentKey"].Single()
+        );
+        Assert.Null(repositories.LastCreated);
     }
 
     [Fact]
@@ -447,6 +523,7 @@ public sealed class RepositoryOnboardingHandlerTests
             CloneUrl = "git@example.test:repository.git",
             DefaultBranch = "main",
             Transport = CloneTransport.Ssh,
+            RuntimeEnvironmentKey = "runtime-default",
         };
 
     private static void AssertRegistration<TService, TImplementation>(IServiceCollection services)
@@ -569,7 +646,10 @@ public sealed class RepositoryOnboardingHandlerTests
     private sealed class FakeRuntimeEnvironmentStore(params string[] keys)
         : IRuntimeEnvironmentStore
     {
-        private readonly HashSet<string> _keys = new(keys, StringComparer.Ordinal);
+        private readonly HashSet<string> _keys = new(
+            keys.Prepend("runtime-default"),
+            StringComparer.Ordinal
+        );
 
         public Task<IReadOnlyList<RuntimeEnvironmentProfile>> ListAsync(
             CancellationToken cancellationToken

@@ -1,6 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using AgentController.Application.Abstractions;
+using AgentController.Application.Commands;
+using AgentController.Application.Results;
+using AgentController.Domain;
 using AgentController.Infrastructure.Data;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
@@ -525,6 +529,31 @@ public sealed class ConnectionEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ConnectionEndpoints_OnboardThreadsRuntimeEnvironmentReference()
+    {
+        using var response = await _client.PostAsJsonAsync(
+            "/api/webui/connections/ado-main/repositories/onboard",
+            new
+            {
+                project = "Agent Controller",
+                repositoryId = "repo-id",
+                runtimeEnvironmentKey = "runtime-main",
+                repositoryKey = "repo-main",
+            }
+        );
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var command = Assert.IsType<OnboardRepositoryFromHostCommand>(
+            _factory.OnboardHandler.LastCommand
+        );
+        Assert.Equal("ado-main", command.ConnectionKey);
+        Assert.Equal("Agent Controller", command.Project);
+        Assert.Equal("repo-id", command.RepositoryId);
+        Assert.Equal("runtime-main", command.RuntimeEnvironmentKey);
+        Assert.Equal("repo-main", command.RepositoryKey);
+    }
+
+    [Fact]
     public async Task ConnectionEndpoints_ListBranches_Returns400ForMissingProject()
     {
         // No project query parameter provided
@@ -643,6 +672,8 @@ public sealed class ConnectionEndpointTests : IAsyncLifetime
 
     private sealed class ConnectionApiFactory(string databasePath) : SilentWebApplicationFactory
     {
+        public CapturingOnboardHandler OnboardHandler { get; } = new();
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             base.ConfigureWebHost(builder);
@@ -665,6 +696,12 @@ public sealed class ConnectionEndpointTests : IAsyncLifetime
             {
                 services.RemoveAll<AgentControllerDbContext>();
                 services.RemoveAll<DbContextOptions<AgentControllerDbContext>>();
+                services.RemoveAll<
+                    ICommandHandler<OnboardRepositoryFromHostCommand, RepositoryOperationResult>
+                >();
+                services.AddSingleton<
+                    ICommandHandler<OnboardRepositoryFromHostCommand, RepositoryOperationResult>
+                >(OnboardHandler);
                 services.RemoveAll<IDbContextOptionsConfiguration<AgentControllerDbContext>>();
                 services.AddDbContext<AgentControllerDbContext>(options =>
                     options.UseSqlite(
@@ -673,6 +710,31 @@ public sealed class ConnectionEndpointTests : IAsyncLifetime
                     )
                 );
             });
+        }
+    }
+
+    private sealed class CapturingOnboardHandler
+        : ICommandHandler<OnboardRepositoryFromHostCommand, RepositoryOperationResult>
+    {
+        public OnboardRepositoryFromHostCommand? LastCommand { get; private set; }
+
+        public Task<RepositoryOperationResult> HandleAsync(
+            OnboardRepositoryFromHostCommand command,
+            CancellationToken cancellationToken
+        )
+        {
+            LastCommand = command;
+            return Task.FromResult(
+                RepositoryOperationResult.Succeeded(
+                    new RepositoryProfile
+                    {
+                        Key = command.RepositoryKey ?? "onboarded",
+                        CloneUrl = "https://example.test/repository.git",
+                        DefaultBranch = "main",
+                        RuntimeEnvironmentKey = command.RuntimeEnvironmentKey,
+                    }
+                )
+            );
         }
     }
 }

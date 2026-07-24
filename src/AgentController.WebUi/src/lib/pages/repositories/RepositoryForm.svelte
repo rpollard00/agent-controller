@@ -669,6 +669,7 @@
       id="repository-runtimeEnvironmentKey"
       label="Runtime environment"
       error={fieldError('runtimeEnvironmentKey')}
+      required
     >
       <select
         id="repository-runtimeEnvironmentKey"
@@ -676,10 +677,12 @@
         class={inputClasses}
         bind:value={values.runtimeEnvironmentKey}
         disabled={submitting}
+        required
         aria-invalid={fieldError('runtimeEnvironmentKey') ? 'true' : undefined}
         aria-describedby={describedBy('runtimeEnvironmentKey')}
+        onchange={() => clearClientError('runtimeEnvironmentKey')}
       >
-        <option value="">No managed runtime environment</option>
+        <option value="">Select a managed runtime environment</option>
         {#if values.runtimeEnvironmentKey && !hasRuntimeEnvironment(values.runtimeEnvironmentKey)}
           <option value={values.runtimeEnvironmentKey}>
             {values.runtimeEnvironmentKey} (unavailable)

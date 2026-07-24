@@ -38,6 +38,12 @@ export function validateRepositoryForm(values: RepositoryFormValues): Repository
   addRequiredError(errors, 'key', values.key, 'A Repository Name is required.');
   addRequiredError(errors, 'cloneUrl', values.cloneUrl, 'A clone URL or local path is required.');
   addRequiredError(errors, 'defaultBranch', values.defaultBranch, 'A default branch is required.');
+  addRequiredError(
+    errors,
+    'runtimeEnvironmentKey',
+    values.runtimeEnvironmentKey,
+    'A runtime environment is required.',
+  );
 
   if (!values.sshKeyInheritEnvironment && requiresSshKey(values) && !values.sshKeyName.trim()) {
     errors.sshKeyReference = ['Select an SSH key secret for SSH clone transport.'];
@@ -105,7 +111,7 @@ export function toRepositoryProfile(
     repositoryHostConnectionKey: nullableKey(values.repositoryHostConnectionKey),
     project: nullableKey(values.project),
     remoteIdentity: original?.remoteIdentity ?? null,
-    runtimeEnvironmentKey: nullableKey(values.runtimeEnvironmentKey),
+    runtimeEnvironmentKey: values.runtimeEnvironmentKey.trim(),
     sshKeyReference: toSecretReference(values.sshKeyName, values.sshKeyVersion),
     sshKeyInheritEnvironment: values.sshKeyInheritEnvironment,
     environmentProfile: original?.environmentProfile ?? '',

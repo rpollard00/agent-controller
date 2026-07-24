@@ -274,6 +274,7 @@ public static class ConnectionEndpoints
                     key,
                     request.Project,
                     request.RepositoryId,
+                    request.RuntimeEnvironmentKey,
                     request.RepositoryKey
                 );
                 var result = await handler.HandleAsync(command, cancellationToken);
@@ -377,6 +378,9 @@ public static class ConnectionEndpoints
 
         /// <summary>Provider-specific repository identifier (e.g. ADO repo GUID).</summary>
         string RepositoryId,
+
+        /// <summary>Key of the managed runtime environment assigned to the repository.</summary>
+        string? RuntimeEnvironmentKey,
 
         /// <summary>Optional stable key for the new repository profile.</summary>
         string? RepositoryKey

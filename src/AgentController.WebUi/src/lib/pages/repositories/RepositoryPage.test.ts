@@ -220,6 +220,9 @@ async function completeRequiredCreateFields(
   await fireEvent.input(screen.getByLabelText(/Clone URL or local path/), {
     target: { value: cloneUrl },
   });
+  await fireEvent.change(await screen.findByLabelText(/Runtime environment/), {
+    target: { value: 'runtime-main' },
+  });
 }
 
 describe('repository onboarding screens', () => {
@@ -251,9 +254,6 @@ describe('repository onboarding screens', () => {
     await waitFor(() => expect(screen.getByLabelText(/^Project$/)).not.toBeDisabled());
     await fireEvent.change(screen.getByLabelText(/^Project$/), {
       target: { value: 'Agent Controller' },
-    });
-    await fireEvent.change(screen.getByLabelText('Runtime environment'), {
-      target: { value: 'runtime-main' },
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Onboard repository' }));
 
@@ -287,6 +287,8 @@ describe('repository onboarding screens', () => {
     expect(await screen.findByText('Complete the required fields')).toBeVisible();
     expect(screen.getByText('A Repository Name is required.')).toBeVisible();
     expect(screen.getByText('A clone URL or local path is required.')).toBeVisible();
+    expect(screen.getByText('A runtime environment is required.')).toBeVisible();
+    expect(screen.getByLabelText(/Runtime environment/)).toBeRequired();
     expect(api.repositories.create).not.toHaveBeenCalled();
   });
 
@@ -357,9 +359,6 @@ describe('repository onboarding screens', () => {
     await fireEvent.input(screen.getByLabelText(/Default branch/), {
       target: { value: 'develop' },
     });
-    await fireEvent.change(screen.getByLabelText('Runtime environment'), {
-      target: { value: '' },
-    });
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(api.repositories.update).toHaveBeenCalledOnce());
@@ -368,7 +367,7 @@ describe('repository onboarding screens', () => {
       expect.objectContaining({
         key: 'web.repo',
         defaultBranch: 'develop',
-        runtimeEnvironmentKey: null,
+        runtimeEnvironmentKey: 'runtime-main',
         environmentProfile: 'legacy-environment',
         runtimeProfile: 'legacy-runtime',
       }),
@@ -639,6 +638,9 @@ describe('repository onboarding screens', () => {
     await fireEvent.input(branchInput, {
       target: { value: 'main' },
     });
+    await fireEvent.change(screen.getByLabelText(/Runtime environment/), {
+      target: { value: 'runtime-main' },
+    });
     await fireEvent.click(screen.getByRole('button', { name: 'Onboard repository' }));
 
     await waitFor(() => expect(api.repositories.create).toHaveBeenCalledOnce());
@@ -688,6 +690,9 @@ describe('repository onboarding screens', () => {
     // Submit should succeed without requiring an SSH key
     await fireEvent.change(screen.getByLabelText(/Default branch/), {
       target: { value: 'main' },
+    });
+    await fireEvent.change(screen.getByLabelText(/Runtime environment/), {
+      target: { value: 'runtime-main' },
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Onboard repository' }));
 

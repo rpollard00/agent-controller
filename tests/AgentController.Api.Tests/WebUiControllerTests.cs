@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using AgentController.Application;
+using AgentController.Domain;
 using AgentController.Infrastructure.Data;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
@@ -34,6 +36,19 @@ public sealed class WebUiControllerTests : IAsyncLifetime
         using var scope = _factory.Services.CreateScope();
         var database = scope.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
         await database.Database.EnsureCreatedAsync();
+        var runtimeEnvironments = scope.ServiceProvider.GetRequiredService<IRuntimeEnvironmentStore>();
+        Assert.True(
+            await runtimeEnvironments.CreateAsync(
+                new RuntimeEnvironmentProfile
+                {
+                    Key = "repository-runtime",
+                    DisplayName = "Repository runtime",
+                    EnvironmentProvider = "NoOp",
+                    RuntimeProvider = "NoOp",
+                },
+                CancellationToken.None
+            )
+        );
 
         _client = _factory.CreateClient();
     }
@@ -58,6 +73,7 @@ public sealed class WebUiControllerTests : IAsyncLifetime
             cloneUrl = " https://example.test/org/repo.git ",
             defaultBranch = " main ",
             transport = "httpsPat",
+            runtimeEnvironmentKey = "repository-runtime",
         };
 
         using var createResponse = await _client.PostAsJsonAsync(
@@ -127,6 +143,7 @@ public sealed class WebUiControllerTests : IAsyncLifetime
             cloneUrl = "https://example.test/org/repo.git",
             defaultBranch = "develop",
             transport = "httpsPat",
+            runtimeEnvironmentKey = "repository-runtime",
         };
         using var updateResponse = await _client.PutAsJsonAsync(
             "/api/webui/repositories/web.repo",
@@ -207,6 +224,7 @@ public sealed class WebUiControllerTests : IAsyncLifetime
             cloneUrl = "git@example.test:ssh.repo.git",
             defaultBranch = "main",
             transport = "ssh",
+            runtimeEnvironmentKey = "repository-runtime",
             sshKeyReference = new { name = "repository-deploy-key", version = 1 },
         };
         using var createResponse = await _client.PostAsJsonAsync(
@@ -270,6 +288,7 @@ public sealed class WebUiControllerTests : IAsyncLifetime
                 cloneUrl = "git@example.test:invalid-ssh.repo.git",
                 defaultBranch = "main",
                 transport = "ssh",
+                runtimeEnvironmentKey = "repository-runtime",
                 sshKeyReference = new { name = "connection-pat", version = 1 },
             }
         );

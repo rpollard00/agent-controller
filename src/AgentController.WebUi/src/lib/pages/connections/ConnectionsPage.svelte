@@ -6,6 +6,7 @@
     ConnectionProject,
     HostRepository,
     RepositoryProfile,
+    RuntimeEnvironmentProfile,
   } from '../../api/types';
   import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
@@ -35,7 +36,10 @@
   let connections = $state<ConnectionProfile[]>([]);
   let connection = $state<ConnectionProfile>();
   let projects = $state<ConnectionProject[]>([]);
+  let selectedProject = $state('');
   let repositories = $state<HostRepository[]>([]);
+  let runtimeEnvironments = $state<RuntimeEnvironmentProfile[]>([]);
+  let runtimeEnvironmentKey = $state('');
   let requestError = $state<unknown>();
   let mutationError = $state<unknown>();
   let submitting = $state(false);
@@ -96,7 +100,10 @@
     mutationError = undefined;
     connection = undefined;
     projects = [];
+    selectedProject = currentRoute.view === 'repoPicker' ? currentRoute.project ?? '' : '';
     repositories = [];
+    runtimeEnvironments = [];
+    runtimeEnvironmentKey = '';
 
     try {
       if (currentRoute.view === 'list') {
@@ -111,11 +118,11 @@
       }
 
       if (currentRoute.view === 'repoPicker') {
-        connection = await client.connections.get(currentRoute.connectionKey, signal);
-        projects = await client.connections.listProjects(
-          currentRoute.connectionKey,
-          signal,
-        );
+        [connection, projects, runtimeEnvironments] = await Promise.all([
+          client.connections.get(currentRoute.connectionKey, signal),
+          client.connections.listProjects(currentRoute.connectionKey, signal),
+          client.runtimeEnvironments.list(signal),
+        ]);
         if (signal.aborted) return;
         // If a project is specified in the route, load repos for it
         if (currentRoute.project) {
@@ -262,6 +269,7 @@
   async function loadRepositoriesForProject(projectId: string): Promise<void> {
     if (!route || route.view !== 'repoPicker') return;
 
+    selectedProject = projectId;
     loadController?.abort();
     const controller = new AbortController();
     loadController = controller;
@@ -282,7 +290,7 @@
   }
 
   async function onboardRepository(repo: HostRepository): Promise<void> {
-    if (!route || route.view !== 'repoPicker' || !route.project) return;
+    if (!route || route.view !== 'repoPicker' || !selectedProject || !runtimeEnvironmentKey) return;
 
     mutationController?.abort();
     const controller = new AbortController();
@@ -293,8 +301,9 @@
     try {
       const created = await client.connections.onboardRepository(
         route.connectionKey,
-        route.project,
+        selectedProject,
         repo.id,
+        runtimeEnvironmentKey,
         undefined,
         controller.signal,
       );
@@ -346,6 +355,10 @@
       return 'Browse available repositories and onboard one with a single click.';
     }
     return 'Review the connection and credential reference for this provider.';
+  }
+
+  function runtimeEnvironmentLabel(environment: RuntimeEnvironmentProfile): string {
+    return `${environment.displayName} — ${environment.key}${environment.enabled ? '' : ' (disabled)'}`;
   }
 
   function transportLabel(hint: string): string {
@@ -513,27 +526,47 @@
           <Button variant="secondary" onclick={() => startLoad(route)}>Refresh</Button>
         {/snippet}
 
-        {#if projects.length > 0}
-          <div class="mb-4 flex items-center gap-3">
-            <label for="repo-picker-project" class="text-sm font-medium text-slate-300">Project:</label>
+        <div class="mb-4 flex flex-wrap items-center gap-4">
+          {#if projects.length > 0}
+            <div class="flex items-center gap-3">
+              <label for="repo-picker-project" class="text-sm font-medium text-slate-300">Project:</label>
+              <select
+                id="repo-picker-project"
+                class="min-h-9 rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-sm text-slate-100"
+                value={selectedProject}
+                onchange={(e) => {
+                  const selected = (e.target as HTMLSelectElement).value;
+                  if (selected) loadRepositoriesForProject(selected);
+                }}
+              >
+                <option value="">Select a project…</option>
+                {#each projects as project (project.id)}
+                  <option value={project.id}>{project.name}</option>
+                {/each}
+              </select>
+            </div>
+          {/if}
+
+          <div class="flex items-center gap-3">
+            <label for="repo-picker-runtime-environment" class="text-sm font-medium text-slate-300">
+              Runtime environment: <span class="text-rose-300" aria-hidden="true">*</span>
+            </label>
             <select
-              id="repo-picker-project"
+              id="repo-picker-runtime-environment"
               class="min-h-9 rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-sm text-slate-100"
-              value={route.project ?? ''}
-              onchange={(e) => {
-                const selected = (e.target as HTMLSelectElement).value;
-                if (selected) loadRepositoriesForProject(selected);
-              }}
+              bind:value={runtimeEnvironmentKey}
+              disabled={Boolean(onboardingRepo)}
+              required
             >
-              <option value="">Select a project…</option>
-              {#each projects as project (project.id)}
-                <option value={project.id}>{project.name}</option>
+              <option value="">Select a runtime environment…</option>
+              {#each runtimeEnvironments as environment (environment.key)}
+                <option value={environment.key}>{runtimeEnvironmentLabel(environment)}</option>
               {/each}
             </select>
           </div>
-        {/if}
+        </div>
 
-        {#if repositories.length === 0 && !route.project}
+        {#if repositories.length === 0 && !selectedProject}
           <div class="rounded-xl border border-dashed border-slate-700 px-5 py-12 text-center">
             <h2 class="font-semibold text-white">Select a project</h2>
             <p class="mx-auto mt-2 max-w-lg text-sm leading-6 text-slate-400">
@@ -571,7 +604,7 @@
                   <td class="px-4 py-3 text-right">
                     <Button
                       variant="secondary"
-                      disabled={Boolean(onboardingRepo)}
+                      disabled={Boolean(onboardingRepo) || !runtimeEnvironmentKey}
                       ariaLabel={`Onboard ${repo.name}`}
                       onclick={() => void onboardRepository(repo)}
                     >

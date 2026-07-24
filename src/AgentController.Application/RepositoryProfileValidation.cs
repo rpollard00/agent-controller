@@ -47,7 +47,20 @@ internal static class RepositoryProfileValidation
         ValidateOptionalKey(repositoryHostConnectionKey, "repositoryHostConnectionKey", errors);
         ValidateOptionalText(project, "project", MaximumProjectLength, errors);
         ValidateOptionalKey(remoteIdentity, "remoteIdentity", errors);
-        ValidateOptionalKey(runtimeEnvironmentKey, "runtimeEnvironmentKey", errors);
+        if (runtimeEnvironmentKey is null)
+        {
+            errors.Add("runtimeEnvironmentKey", "A runtime environment is required.");
+        }
+        else
+        {
+            ValidateKey(
+                runtimeEnvironmentKey,
+                "runtimeEnvironmentKey",
+                MaximumAssociationKeyLength,
+                errors
+            );
+        }
+
         await ValidateSshKeyReferenceAsync(
             sshKeyReference,
             secretManager,

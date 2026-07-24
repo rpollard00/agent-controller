@@ -52,6 +52,7 @@ export interface ConnectionResourceClient
     key: string,
     project: string,
     repositoryId: string,
+    runtimeEnvironmentKey: string,
     repositoryKey?: string,
     signal?: AbortSignal,
   ): Promise<RepositoryProfile>;
@@ -217,7 +218,7 @@ export function createWebUiApiClient(options: ApiClientOptions = {}): WebUiApiCl
           `/connections/${encodeURIComponent(key)}/repositories/${encodeURIComponent(repositoryId)}/branches?project=${encodeURIComponent(project)}`,
           { signal },
         ),
-      onboardRepository: (key, project, repositoryId, repositoryKey, signal) =>
+      onboardRepository: (key, project, repositoryId, runtimeEnvironmentKey, repositoryKey, signal) =>
         request<RepositoryProfile>(
           `/connections/${encodeURIComponent(key)}/repositories/onboard`,
           {
@@ -227,6 +228,7 @@ export function createWebUiApiClient(options: ApiClientOptions = {}): WebUiApiCl
             body: JSON.stringify({
               project,
               repositoryId,
+              runtimeEnvironmentKey,
               repositoryKey: repositoryKey ?? undefined,
             }),
           },

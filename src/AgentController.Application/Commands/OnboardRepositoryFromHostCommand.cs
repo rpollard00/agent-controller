@@ -17,6 +17,9 @@ public sealed record OnboardRepositoryFromHostCommand(
     /// </summary>
     string RepositoryId,
 
+    /// <summary>Key of the managed runtime environment assigned to the repository.</summary>
+    string? RuntimeEnvironmentKey,
+
     /// <summary>
     /// Optional stable key for the new repository profile. If not provided,
     /// a key is derived from the repository name.

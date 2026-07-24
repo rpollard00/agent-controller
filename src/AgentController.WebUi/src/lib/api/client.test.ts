@@ -17,7 +17,7 @@ const repository: RepositoryProfile = {
   runtimeProfile: '',
   repositoryHostConnectionKey: null,
   remoteIdentity: null,
-  runtimeEnvironmentKey: null,
+  runtimeEnvironmentKey: 'runtime-main',
   sshKeyReference: null,
   sshKeyInheritEnvironment: false,
   project: null,
@@ -288,12 +288,18 @@ describe('Web UI API client', () => {
     );
     const client = createWebUiApiClient({ fetch: fetchMock });
 
-    await client.connections.onboardRepository('ado-main', 'Agent Controller', 'repo-1');
+    await client.connections.onboardRepository(
+      'ado-main',
+      'Agent Controller',
+      'repo-1',
+      'runtime-main',
+    );
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('/api/webui/connections/ado-main/repositories/onboard');
     expect(JSON.parse(init?.body as string)).toEqual({
       project: 'Agent Controller',
       repositoryId: 'repo-1',
+      runtimeEnvironmentKey: 'runtime-main',
     });
   });
 });
