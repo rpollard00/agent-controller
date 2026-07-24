@@ -86,9 +86,27 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
     }
 
     /// <inheritdoc />
+    public Task<AgentRunHandle> CreateRunForWorkItemAsync(
+        string workItemId,
+        string workerId,
+        CancellationToken ct
+    ) =>
+        CreateRunForWorkItemAsync(
+            workItemId,
+            workerId,
+            runtimeType: null,
+            runtimeProfileName: null,
+            environmentProviderType: null,
+            ct
+        );
+
+    /// <inheritdoc />
     public async Task<AgentRunHandle> CreateRunForWorkItemAsync(
         string workItemId,
         string workerId,
+        string? runtimeType,
+        string? runtimeProfileName,
+        string? environmentProviderType,
         CancellationToken ct
     )
     {
@@ -105,6 +123,9 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             {
                 WorkItemId = workItemId,
                 WorkerId = workerId,
+                RuntimeType = runtimeType,
+                RuntimeProfileName = runtimeProfileName,
+                EnvironmentProviderType = environmentProviderType,
                 InitialStatus = RunLifecycleState.Claimed,
             },
             ct
@@ -1111,6 +1132,9 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             {
                 WorkItemId = failedRun.WorkItemId!,
                 WorkerId = workerId,
+                RuntimeType = failedRun.RuntimeType,
+                RuntimeProfileName = failedRun.RuntimeProfileName,
+                EnvironmentProviderType = failedRun.EnvironmentProviderType,
                 InitialStatus = RunLifecycleState.Claimed,
                 RunAttempt = retryAttempt,
                 PreviousRunId = failedRunId,

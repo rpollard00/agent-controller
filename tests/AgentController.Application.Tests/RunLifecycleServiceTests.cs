@@ -83,6 +83,27 @@ public class RunLifecycleServiceTests
         Assert.Equal("controller.claimed", events[0].EventType);
     }
 
+    [Fact]
+    public async Task CreateRunForWorkItem_PersistsRuntimeEnvironmentSnapshot()
+    {
+        var wi = await _workItemStore.CreateAsync(
+            new CreateWorkItemRequest { RepoKey = "repo", Title = "Test" }, CancellationToken.None);
+
+        var run = await _service.CreateRunForWorkItemAsync(
+            wi.Id,
+            "worker-1",
+            "PiMateria",
+            "ReeseProjecto LocalWorkspace",
+            "LocalWorkspace",
+            CancellationToken.None);
+
+        var persisted = await _runStore.GetByIdAsync(run.RunId, CancellationToken.None);
+        Assert.NotNull(persisted);
+        Assert.Equal("PiMateria", persisted.RuntimeType);
+        Assert.Equal("ReeseProjecto LocalWorkspace", persisted.RuntimeProfileName);
+        Assert.Equal("LocalWorkspace", persisted.EnvironmentProviderType);
+    }
+
     // ── CreateRunForWorkItemAsync — upsert + Azure integration ────
 
     [Fact]
@@ -1477,7 +1498,13 @@ public class RunLifecycleServiceTests
         // Create a work item and run
         var wi = await _workItemStore.CreateAsync(
             new CreateWorkItemRequest { RepoKey = "repo", Title = "Retry Test" }, CancellationToken.None);
-        var run = await service.CreateRunForWorkItemAsync(wi.Id, "worker-1", CancellationToken.None);
+        var run = await service.CreateRunForWorkItemAsync(
+            wi.Id,
+            "worker-1",
+            "PiMateria",
+            "ReeseProjecto LocalWorkspace",
+            "LocalWorkspace",
+            CancellationToken.None);
 
         // Advance to AwaitingResult then fail with a retryable error
         await AdvanceToAsync(service, run.RunId, RunLifecycleState.AwaitingResult, CancellationToken.None);
@@ -1498,6 +1525,9 @@ public class RunLifecycleServiceTests
         Assert.Equal(run.RunId, retryRun.PreviousRunId);
         Assert.Equal(wi.Id, retryRun.WorkItemId);
         Assert.Equal(RunLifecycleState.Claimed, retryRun.Status);
+        Assert.Equal("PiMateria", retryRun.RuntimeType);
+        Assert.Equal("ReeseProjecto LocalWorkspace", retryRun.RuntimeProfileName);
+        Assert.Equal("LocalWorkspace", retryRun.EnvironmentProviderType);
 
         // Verify lifecycle events
         var events = await _eventStore.ListByRunIdAsync(retryRun.RunId, CancellationToken.None);
@@ -1821,6 +1851,9 @@ public class RunLifecycleServiceTests
                 Status = request.InitialStatus,
                 RunAttempt = request.RunAttempt,
                 PreviousRunId = request.PreviousRunId,
+                RuntimeType = request.RuntimeType,
+                RuntimeProfileName = request.RuntimeProfileName,
+                EnvironmentProviderType = request.EnvironmentProviderType,
                 StartedAt = request.InitialStatus > RunLifecycleState.Claimed ? DateTimeOffset.UtcNow : null,
                 CreatedAt = DateTimeOffset.UtcNow,
                 UpdatedAt = DateTimeOffset.UtcNow,
@@ -1859,6 +1892,8 @@ public class RunLifecycleServiceTests
                 {
                     RuntimeRunId = update.RuntimeRunId ?? run.RuntimeRunId,
                     RuntimeType = update.RuntimeType ?? run.RuntimeType,
+                    RuntimeProfileName = update.RuntimeProfileName ?? run.RuntimeProfileName,
+                    EnvironmentProviderType = update.EnvironmentProviderType ?? run.EnvironmentProviderType,
                     EnvironmentId = update.EnvironmentId ?? run.EnvironmentId,
                     BranchName = update.BranchName ?? run.BranchName,
                     PullRequestUrl = update.PullRequestUrl ?? run.PullRequestUrl,

@@ -33,6 +33,28 @@ public interface IRunLifecycleService
         CancellationToken ct);
 
     /// <summary>
+    /// Create a new <see cref="AgentRunHandle"/> for a claimed work item and capture
+    /// the runtime environment profile resolved for the dispatch.
+    /// </summary>
+    /// <param name="workItemId">Identifier of the claimed work item.</param>
+    /// <param name="workerId">Identifier of the worker/controller instance.</param>
+    /// <param name="runtimeType">Type of agent runtime used for the run.</param>
+    /// <param name="runtimeProfileName">Display name of the resolved runtime environment profile.</param>
+    /// <param name="environmentProviderType">Environment provider type of the resolved profile.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The created run handle.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the work item is not found.
+    /// </exception>
+    Task<AgentRunHandle> CreateRunForWorkItemAsync(
+        string workItemId,
+        string workerId,
+        string? runtimeType,
+        string? runtimeProfileName,
+        string? environmentProviderType,
+        CancellationToken ct);
+
+    /// <summary>
     /// Transition a run to the specified <paramref name="targetState"/>.
     /// Validates that the transition is legal (forward-only progression,
     /// no transitions from terminal states). Appends a "controller.state_transition"
