@@ -17,6 +17,7 @@
   const repositoryLabel = $derived(card.repoKey ?? 'Unknown repository');
   const workItemLabel = $derived(card.workItemTitle ?? 'Unknown work item');
   const runtimeLabel = $derived(card.runtimeType ?? 'Unknown runtime');
+  const environmentLabel = $derived(card.runtimeProfileName ?? 'Unknown environment');
 </script>
 
 <article
@@ -29,7 +30,7 @@
       aria-label={stoplight.ariaLabel}
     ></span>
 
-    <div class="grid min-w-0 flex-1 gap-4 sm:grid-cols-[minmax(0,1.6fr)_minmax(8rem,0.7fr)_minmax(0,1fr)_minmax(0,1.4fr)] sm:items-center">
+    <div class="grid min-w-0 flex-1 gap-4 sm:grid-cols-[minmax(0,1.6fr)_minmax(8rem,0.7fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)] sm:items-center">
       <div class="min-w-0">
         <div class="flex flex-wrap items-center gap-2">
           <h2 class="font-semibold text-white">{stateLabel}</h2>
@@ -54,6 +55,18 @@
       <div class="min-w-0">
         <p class="text-xs font-medium tracking-wide text-slate-500 uppercase">Runtime</p>
         <p class="mt-1 truncate text-sm text-slate-300" title={runtimeLabel}>{runtimeLabel}</p>
+      </div>
+
+      <div class="min-w-0">
+        <p class="text-xs font-medium tracking-wide text-slate-500 uppercase">Environment</p>
+        <p class="mt-1 truncate text-sm text-slate-300" title={environmentLabel}>
+          {environmentLabel}
+        </p>
+        {#if card.environmentProviderType}
+          <p class="truncate text-xs text-slate-500" title={card.environmentProviderType}>
+            {card.environmentProviderType}
+          </p>
+        {/if}
       </div>
 
       <div class="min-w-0">

@@ -51,6 +51,8 @@ const runCard: RunCardItem = {
   repoKey: 'agent-controller',
   repositoryUrl: 'https://git.example.test/agent-controller',
   runtimeType: 'PiMateria',
+  runtimeProfileName: 'ReeseProjecto LocalWorkspace',
+  environmentProviderType: 'LocalWorkspace',
   runAttempt: 2,
   lastEventType: 'runtime.progress',
   lastEventMessage: 'Implementing API client',

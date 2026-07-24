@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/svelte';
+import { render, screen, within } from '@testing-library/svelte';
 import { describe, expect, it } from 'vitest';
 import type { RunCardCategory, RunCardItem } from '../../api/types';
 import RunCard from './RunCard.svelte';
@@ -14,6 +14,8 @@ const baseCard: RunCardItem = {
   repoKey: 'agent-controller',
   repositoryUrl: 'https://git.example.test/agent-controller',
   runtimeType: 'PiMateria',
+  runtimeProfileName: 'ReeseProjecto LocalWorkspace',
+  environmentProviderType: 'LocalWorkspace',
   runAttempt: 1,
   lastEventType: 'runtime.progress',
   lastEventMessage: 'Implementing the run card',
@@ -67,6 +69,31 @@ describe('RunCard', () => {
     expect(screen.getByText('agent-controller')).not.toBeInstanceOf(HTMLAnchorElement);
     expect(screen.getByText('Add the runs dashboard')).not.toBeInstanceOf(HTMLAnchorElement);
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
+  });
+
+  it('stacks the environment provider below the runtime profile name', () => {
+    render(RunCard, { card: card() });
+
+    const environmentColumn = screen.getByText('Environment').parentElement;
+    expect(environmentColumn).not.toBeNull();
+
+    const profileName = within(environmentColumn!).getByText('ReeseProjecto LocalWorkspace');
+    const providerType = within(environmentColumn!).getByText('LocalWorkspace');
+    expect(profileName).toBeVisible();
+    expect(providerType).toBeVisible();
+    expect(providerType).toHaveClass('text-xs', 'text-slate-500');
+    expect(profileName.compareDocumentPosition(providerType)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it('falls back when the runtime environment snapshot is unavailable', () => {
+    render(RunCard, {
+      card: card({ runtimeProfileName: null, environmentProviderType: null }),
+    });
+
+    expect(screen.getByText('Unknown environment')).toBeVisible();
+    expect(screen.queryByText('LocalWorkspace')).not.toBeInTheDocument();
   });
 
   it('falls back to the latest event type when the event message is null', () => {

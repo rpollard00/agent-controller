@@ -157,6 +157,8 @@ export interface RunCardItem {
   repoKey: string | null;
   repositoryUrl: string | null;
   runtimeType: string | null;
+  runtimeProfileName: string | null;
+  environmentProviderType: string | null;
   runAttempt: number;
   lastEventType: string | null;
   lastEventMessage: string | null;

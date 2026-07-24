@@ -16,6 +16,8 @@ const baseCard: RunCardItem = {
   repoKey: 'agent-controller',
   repositoryUrl: null,
   runtimeType: 'PiMateria',
+  runtimeProfileName: 'ReeseProjecto LocalWorkspace',
+  environmentProviderType: 'LocalWorkspace',
   runAttempt: 1,
   lastEventType: 'runtime.progress',
   lastEventMessage: 'Building the dashboard',
@@ -53,6 +55,8 @@ describe('RunsPage', () => {
     render(RunsPage, { client });
 
     expect(await screen.findByText('Active dashboard work')).toBeVisible();
+    expect(screen.getByText('ReeseProjecto LocalWorkspace')).toBeVisible();
+    expect(screen.getByText('LocalWorkspace')).toBeVisible();
     expect(screen.queryByText('Completed dashboard work')).not.toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Show completed' }));
