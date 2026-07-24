@@ -49,6 +49,8 @@ public sealed class ListRunCardsQueryHandlerTests
             workItemId: "work-1",
             updatedAt: Baseline,
             runtimeType: "PiMateria",
+            runtimeProfileName: "ReeseProjecto LocalWorkspace",
+            environmentProviderType: "LocalWorkspace",
             runAttempt: 2
         );
         var workItem = new WorkCandidate
@@ -89,12 +91,19 @@ public sealed class ListRunCardsQueryHandlerTests
         Assert.Equal(workItem.RepoKey, card.RepoKey);
         Assert.Equal(repository.WebUrl, card.RepositoryUrl);
         Assert.Equal(run.RuntimeType, card.RuntimeType);
+        Assert.Equal(run.RuntimeProfileName, card.RuntimeProfileName);
+        Assert.Equal(run.EnvironmentProviderType, card.EnvironmentProviderType);
         Assert.Equal(run.RunAttempt, card.RunAttempt);
         Assert.Equal("rework.feedback.soaking", card.LastEventType);
         Assert.Contains("3", card.LastEventMessage);
         Assert.Equal(feedback.LastQualifyingCommentAt, card.LastEventAt);
         Assert.Equal(feedback.CreatedAt, card.CreatedAt);
         Assert.Equal(feedback.UpdatedAt, card.UpdatedAt);
+
+        var runCard = Assert.Single(cards, item => item.Kind == "run");
+        Assert.Equal(run.RuntimeType, runCard.RuntimeType);
+        Assert.Equal(run.RuntimeProfileName, runCard.RuntimeProfileName);
+        Assert.Equal(run.EnvironmentProviderType, runCard.EnvironmentProviderType);
     }
 
     [Theory]
@@ -270,6 +279,8 @@ public sealed class ListRunCardsQueryHandlerTests
         DateTimeOffset? createdAt = null,
         DateTimeOffset? updatedAt = null,
         string? runtimeType = null,
+        string? runtimeProfileName = null,
+        string? environmentProviderType = null,
         int runAttempt = 1
     ) =>
         new()
@@ -278,6 +289,8 @@ public sealed class ListRunCardsQueryHandlerTests
             WorkItemId = workItemId,
             Status = status,
             RuntimeType = runtimeType,
+            RuntimeProfileName = runtimeProfileName,
+            EnvironmentProviderType = environmentProviderType,
             RunAttempt = runAttempt,
             CreatedAt = createdAt ?? Baseline,
             UpdatedAt = updatedAt ?? Baseline,

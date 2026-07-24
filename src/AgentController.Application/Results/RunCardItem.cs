@@ -35,6 +35,12 @@ public sealed record RunCardItem
     /// <summary>Agent runtime type used by the run.</summary>
     public string? RuntimeType { get; init; }
 
+    /// <summary>Display name of the runtime environment profile captured for the run.</summary>
+    public string? RuntimeProfileName { get; init; }
+
+    /// <summary>Environment provider type captured for the run.</summary>
+    public string? EnvironmentProviderType { get; init; }
+
     /// <summary>One-based attempt number for the associated run.</summary>
     public int RunAttempt { get; init; } = 1;
 

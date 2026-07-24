@@ -188,6 +188,14 @@ public sealed class WebUiRunsEndpointTests : IAsyncLifetime
             executingCard.GetProperty("repositoryUrl").GetString()
         );
         Assert.Equal("PiMateria", executingCard.GetProperty("runtimeType").GetString());
+        Assert.Equal(
+            "ReeseProjecto LocalWorkspace",
+            executingCard.GetProperty("runtimeProfileName").GetString()
+        );
+        Assert.Equal(
+            "LocalWorkspace",
+            executingCard.GetProperty("environmentProviderType").GetString()
+        );
         Assert.Equal(2, executingCard.GetProperty("runAttempt").GetInt32());
         Assert.Equal("runtime.progress", executingCard.GetProperty("lastEventType").GetString());
         Assert.Equal(
@@ -212,6 +220,15 @@ public sealed class WebUiRunsEndpointTests : IAsyncLifetime
         Assert.Equal("rework-soak", soakCard.GetProperty("kind").GetString());
         Assert.Equal("Rework feedback soaking", soakCard.GetProperty("status").GetString());
         Assert.Equal("pending", soakCard.GetProperty("category").GetString());
+        Assert.Equal("PiMateria", soakCard.GetProperty("runtimeType").GetString());
+        Assert.Equal(
+            "ReeseProjecto LocalWorkspace",
+            soakCard.GetProperty("runtimeProfileName").GetString()
+        );
+        Assert.Equal(
+            "LocalWorkspace",
+            soakCard.GetProperty("environmentProviderType").GetString()
+        );
         Assert.Equal("rework.feedback.soaking", soakCard.GetProperty("lastEventType").GetString());
         Assert.Equal(
             "3 feedback threads awaiting soak",
@@ -235,6 +252,8 @@ public sealed class WebUiRunsEndpointTests : IAsyncLifetime
                 WorkItemId = workItemId,
                 WorkerId = "runs-endpoint-test",
                 RuntimeType = "PiMateria",
+                RuntimeProfileName = "ReeseProjecto LocalWorkspace",
+                EnvironmentProviderType = "LocalWorkspace",
                 InitialStatus = status,
                 RunAttempt = runAttempt,
             },
@@ -273,6 +292,8 @@ public sealed class WebUiRunsEndpointTests : IAsyncLifetime
             "repoKey",
             "repositoryUrl",
             "runtimeType",
+            "runtimeProfileName",
+            "environmentProviderType",
             "runAttempt",
             "lastEventType",
             "lastEventMessage",
