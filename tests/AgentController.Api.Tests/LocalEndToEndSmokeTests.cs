@@ -237,6 +237,9 @@ public class LocalEndToEndSmokeTests : IAsyncLifetime
         Assert.NotEmpty(runs);
         var run = runs[0];
         Assert.Equal(workItem.Id, run.WorkItemId);
+        Assert.Equal("MockPiMateria", run.RuntimeType);
+        Assert.Equal("Managed local runtime", run.RuntimeProfileName);
+        Assert.Equal("LocalWorkspace", run.EnvironmentProviderType);
 
         // The run should be in a terminal or near-terminal state (PrOpened for success-pr loadout)
         Assert.True(
@@ -291,6 +294,33 @@ public class LocalEndToEndSmokeTests : IAsyncLifetime
         {
             Assert.Equal(RunLifecycleState.AwaitingResult, run.Status);
         }
+
+        // Claimed runs created before runtime snapshots were introduced are backfilled
+        // from the profile resolved when the worker actually dispatches them.
+        var lifecycle = verifyScope.ServiceProvider.GetRequiredService<IRunLifecycleService>();
+        var legacyRun = await lifecycle.CreateRunForWorkItemAsync(
+            workItem.Id,
+            "legacy-worker",
+            CancellationToken.None
+        );
+        Assert.Null(legacyRun.RuntimeType);
+        Assert.Null(legacyRun.RuntimeProfileName);
+        Assert.Null(legacyRun.EnvironmentProviderType);
+
+        using var legacyCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await worker.RunPollCycleForTestingAsync(legacyCts.Token);
+
+        await using var legacyVerifyScope = scopeFactory.CreateAsyncScope();
+        var legacyRunStore = legacyVerifyScope.ServiceProvider.GetRequiredService<IAgentRunStore>();
+        var backfilledRun = await legacyRunStore.GetByIdAsync(
+            legacyRun.RunId,
+            CancellationToken.None
+        );
+
+        Assert.NotNull(backfilledRun);
+        Assert.Equal("MockPiMateria", backfilledRun.RuntimeType);
+        Assert.Equal("Managed local runtime", backfilledRun.RuntimeProfileName);
+        Assert.Equal("LocalWorkspace", backfilledRun.EnvironmentProviderType);
     }
 
     [Fact]

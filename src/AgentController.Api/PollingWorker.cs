@@ -351,7 +351,16 @@ public sealed partial class PollingWorker : BackgroundService
         Log.ClaimAcquired(_logger, options.WorkerId, candidate.Id, candidate.Title);
 
         // Create the agent run (starts in Claimed state, records controller.claimed event)
-        var run = await lifecycle.CreateRunForWorkItemAsync(candidate.Id, options.WorkerId, ct);
+        // and snapshot the resolved runtime environment used for this dispatch.
+        var runtimeEnvironment = resolvedProfiles.RuntimeEnvironment;
+        var run = await lifecycle.CreateRunForWorkItemAsync(
+            candidate.Id,
+            options.WorkerId,
+            runtimeEnvironment.RuntimeProvider,
+            runtimeEnvironment.DisplayName,
+            runtimeEnvironment.EnvironmentProvider,
+            ct
+        );
 
         Log.RunCreated(_logger, run.RunId, candidate.Id);
 
@@ -1899,12 +1908,45 @@ public sealed partial class PollingWorker : BackgroundService
             return;
         }
 
+        var runtimeEnvironment = resolvedProfiles.RuntimeEnvironment;
+        if (
+            run.RuntimeType is null
+            || run.RuntimeProfileName is null
+            || run.EnvironmentProviderType is null
+        )
+        {
+            var runtimeType = run.RuntimeType ?? runtimeEnvironment.RuntimeProvider;
+            var runtimeProfileName = run.RuntimeProfileName ?? runtimeEnvironment.DisplayName;
+            var environmentProviderType =
+                run.EnvironmentProviderType ?? runtimeEnvironment.EnvironmentProvider;
+
+            await runStore.UpdateRuntimeFieldsAsync(
+                run.RunId,
+                new RuntimeFieldUpdate
+                {
+                    RuntimeType = run.RuntimeType is null ? runtimeType : null,
+                    RuntimeProfileName = run.RuntimeProfileName is null
+                        ? runtimeProfileName
+                        : null,
+                    EnvironmentProviderType = run.EnvironmentProviderType is null
+                        ? environmentProviderType
+                        : null,
+                },
+                ct
+            );
+
+            run = run with
+            {
+                RuntimeType = runtimeType,
+                RuntimeProfileName = runtimeProfileName,
+                EnvironmentProviderType = environmentProviderType,
+            };
+        }
+
         var environmentProvider = executionProviderResolver.ResolveEnvironmentProvider(
-            resolvedProfiles.RuntimeEnvironment
+            runtimeEnvironment
         );
-        var agentRuntime = executionProviderResolver.ResolveAgentRuntime(
-            resolvedProfiles.RuntimeEnvironment
-        );
+        var agentRuntime = executionProviderResolver.ResolveAgentRuntime(runtimeEnvironment);
 
         RepositoryCheckout? checkout = null;
         EnvironmentHandle? envHandle = null;
