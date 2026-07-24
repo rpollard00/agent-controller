@@ -99,6 +99,46 @@ public sealed class RepositoryOnboardingHandlerTests
     }
 
     [Fact]
+    public async Task OnboardFromHost_PersistsDiscoveredRepositoryWebUrl()
+    {
+        const string webUrl = "https://dev.azure.com/example/project/_git/repo-one";
+        var repositories = new FakeRepositoryStore();
+        var connections = new FakeConnectionStore("ado-main");
+        var resolver = new FakeConnectionResolver(
+            new HostRepository(
+                Id: "repo-id",
+                Name: "Repo One",
+                DefaultBranch: "main",
+                RemoteUrl: "https://dev.azure.com/example/project/_git/repo-one",
+                WebUrl: webUrl,
+                SshUrl: "git@ssh.dev.azure.com:v3/example/project/repo-one",
+                CloneTransportHint: CloneTransportHint.HttpsPat
+            )
+        );
+        var handler = new OnboardRepositoryFromHostCommandHandler(
+            connections,
+            resolver,
+            repositories,
+            new FakeRuntimeEnvironmentStore(),
+            new InMemorySecretStore()
+        );
+
+        var result = await handler.HandleAsync(
+            new OnboardRepositoryFromHostCommand(
+                ConnectionKey: "ado-main",
+                Project: "Agent Controller",
+                RepositoryId: "repo-id",
+                RepositoryKey: null
+            ),
+            CancellationToken.None
+        );
+
+        Assert.Equal(RepositoryOperationStatus.Succeeded, result.Status);
+        Assert.Equal(webUrl, repositories.LastCreated?.WebUrl);
+        Assert.Equal(webUrl, result.Repository?.WebUrl);
+    }
+
+    [Fact]
     public async Task Create_RejectsInvalidCloneBranchTransportAndPathsWithoutPersisting()
     {
         var repositories = new FakeRepositoryStore();
@@ -558,6 +598,35 @@ public sealed class RepositoryOnboardingHandlerTests
 
         public Task<bool> DeleteAsync(string key, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+    }
+
+    private sealed class FakeConnectionResolver(params HostRepository[] repositories)
+        : IConnectionResolver
+    {
+        private readonly IReadOnlyList<HostRepository> _repositories = repositories;
+
+        public Task<ConnectionConnectivityResult> VerifyConnectivityAsync(
+            ConnectionProfile profile,
+            CancellationToken cancellationToken
+        ) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<ConnectionProject>> ListProjectsAsync(
+            ConnectionProfile profile,
+            CancellationToken cancellationToken
+        ) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<HostRepository>> ListRepositoriesAsync(
+            ConnectionProfile profile,
+            string project,
+            CancellationToken cancellationToken
+        ) => Task.FromResult(_repositories);
+
+        public Task<IReadOnlyList<string>> ListBranchesAsync(
+            ConnectionProfile profile,
+            string project,
+            string repositoryId,
+            CancellationToken cancellationToken
+        ) => throw new NotSupportedException();
     }
 
     private sealed class FakeConnectionStore(params string[] keys) : IConnectionStore

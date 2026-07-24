@@ -2016,7 +2016,8 @@ public class AzureDevOpsBoardsClientTests
               "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
               "name": "web-app",
               "defaultBranch": "refs/heads/main",
-              "remoteUrl": "https://dev.azure.com/testorg/TestProject/_git/web-app"
+              "remoteUrl": "https://dev.azure.com/testorg/TestProject/_git/web-app",
+              "webUrl": "https://dev.azure.com/testorg/TestProject/_git/web-app"
             },
             {
               "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
@@ -2046,10 +2047,12 @@ public class AzureDevOpsBoardsClientTests
         Assert.Equal("web-app", repos[0].Name);
         Assert.Equal("refs/heads/main", repos[0].DefaultBranch);
         Assert.Equal("https://dev.azure.com/testorg/TestProject/_git/web-app", repos[0].RemoteUrl);
+        Assert.Equal("https://dev.azure.com/testorg/TestProject/_git/web-app", repos[0].WebUrl);
 
         Assert.Equal("b2c3d4e5-f6a7-8901-bcde-f12345678901", repos[1].Id);
         Assert.Equal("api-service", repos[1].Name);
         Assert.Equal("refs/heads/develop", repos[1].DefaultBranch);
+        Assert.Null(repos[1].WebUrl);
 
         Assert.Equal("c3d4e5f6-a7b8-9012-cdef-123456789012", repos[2].Id);
         Assert.Equal("shared-lib", repos[2].Name);
@@ -2099,6 +2102,7 @@ public class AzureDevOpsBoardsClientTests
         Assert.Null(repos[0].DefaultBranch);
         // Should fall back to webUrl when remoteUrl is absent
         Assert.Equal("https://dev.azure.com/testorg/TestProject/_git/minimal-repo", repos[0].RemoteUrl);
+        Assert.Equal("https://dev.azure.com/testorg/TestProject/_git/minimal-repo", repos[0].WebUrl);
     }
 
     [Fact]
@@ -2205,7 +2209,7 @@ public class AzureDevOpsBoardsClientTests
                     Content = new StringContent(
                         """
                         {"value":[
-                            {"id":"repo-1","name":"FirstRepo","defaultBranch":"refs/heads/main","remoteUrl":"https://dev.azure.com/testorg/TestProject/_git/FirstRepo"},
+                            {"id":"repo-1","name":"FirstRepo","defaultBranch":"refs/heads/main","remoteUrl":"https://dev.azure.com/testorg/TestProject/_git/FirstRepo","webUrl":"https://dev.azure.com/testorg/TestProject/_git/FirstRepo"},
                             {"id":"repo-2","name":"SecondRepo","defaultBranch":"refs/heads/develop","remoteUrl":"https://dev.azure.com/testorg/TestProject/_git/SecondRepo"}
                         ]}
                         """,
@@ -2231,7 +2235,9 @@ public class AzureDevOpsBoardsClientTests
         Assert.True(result.Success);
         Assert.Equal(2, result.Repositories.Count);
         Assert.Equal("FirstRepo", result.Repositories[0].Name);
+        Assert.Equal("https://dev.azure.com/testorg/TestProject/_git/FirstRepo", result.Repositories[0].WebUrl);
         Assert.Equal("SecondRepo", result.Repositories[1].Name);
+        Assert.Null(result.Repositories[1].WebUrl);
 
         Assert.Equal(2, requestedUrls.Count);
         Assert.Contains(requestedUrls, u => u.Contains("_apis/projects/"));

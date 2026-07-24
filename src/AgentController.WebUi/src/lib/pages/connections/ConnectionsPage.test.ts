@@ -40,6 +40,7 @@ const repos: HostRepository[] = [
     name: 'web-app',
     defaultBranch: 'main',
     remoteUrl: 'https://dev.azure.com/example/project/_git/web-app',
+    webUrl: 'https://dev.azure.com/example/project/_git/web-app',
     sshUrl: 'git@ssh.dev.azure.com:v3/example/project/web-app',
     cloneTransportHint: 'httpsPat',
   },
@@ -98,6 +99,7 @@ function createApi(
     onboardRepository: vi.fn(async (_key: string, _project: string, _repoId: string): Promise<RepositoryProfile> => ({
       key: 'onboarded-repo',
       cloneUrl: 'https://dev.azure.com/example/project/_git/repo',
+      webUrl: 'https://dev.azure.com/example/project/_git/repo',
       defaultBranch: 'main',
       transport: 'httpsPat',
       environmentProfile: '',

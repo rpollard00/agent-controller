@@ -893,6 +893,15 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                     defaultBranch = dbEl.GetString();
                 }
 
+                string? webUrl = null;
+                if (
+                    repo.TryGetProperty("webUrl", out var wuEl)
+                    && wuEl.ValueKind == JsonValueKind.String
+                )
+                {
+                    webUrl = wuEl.GetString();
+                }
+
                 string? remoteUrl = null;
                 if (
                     repo.TryGetProperty("remoteUrl", out var ruEl)
@@ -901,13 +910,10 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                 {
                     remoteUrl = ruEl.GetString();
                 }
-                else if (
-                    repo.TryGetProperty("webUrl", out var wuEl)
-                    && wuEl.ValueKind == JsonValueKind.String
-                )
+                else
                 {
                     // Fallback: use webUrl if remoteUrl is not present
-                    remoteUrl = wuEl.GetString();
+                    remoteUrl = webUrl;
                 }
 
                 string? sshUrl = null;
@@ -926,6 +932,7 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                         Name = name,
                         DefaultBranch = defaultBranch,
                         RemoteUrl = remoteUrl,
+                        WebUrl = webUrl,
                         SshUrl = sshUrl,
                     }
                 );
@@ -1603,6 +1610,15 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                         remoteUrl = ruEl.GetString();
                     }
 
+                    string? webUrl = null;
+                    if (
+                        repo.TryGetProperty("webUrl", out var wuEl)
+                        && wuEl.ValueKind == JsonValueKind.String
+                    )
+                    {
+                        webUrl = wuEl.GetString();
+                    }
+
                     repositories.Add(
                         new RepositoryInfo
                         {
@@ -1610,6 +1626,7 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                             Name = name,
                             DefaultBranch = defaultBranch,
                             RemoteUrl = remoteUrl,
+                            WebUrl = webUrl,
                         }
                     );
                 }

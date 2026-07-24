@@ -99,6 +99,7 @@ export function toRepositoryProfile(
   return {
     key: values.key.trim(),
     cloneUrl: values.cloneUrl.trim(),
+    webUrl: original?.webUrl ?? null,
     transport: values.transport,
     defaultBranch: values.defaultBranch.trim(),
     repositoryHostConnectionKey: nullableKey(values.repositoryHostConnectionKey),

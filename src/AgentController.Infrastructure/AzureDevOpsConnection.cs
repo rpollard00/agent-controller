@@ -319,6 +319,7 @@ internal sealed partial class AzureDevOpsConnection(
                 Name: repo.Name,
                 DefaultBranch: StripRefsHeads(repo.DefaultBranch),
                 RemoteUrl: repo.RemoteUrl ?? string.Empty,
+                WebUrl: repo.WebUrl,
                 SshUrl: repo.SshUrl,
                 CloneTransportHint: CloneTransportHint.HttpsPat
             )).ToList();

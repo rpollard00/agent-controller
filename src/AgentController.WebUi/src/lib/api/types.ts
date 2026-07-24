@@ -9,6 +9,7 @@ export interface SecretReference {
 export interface RepositoryProfile {
   key: string;
   cloneUrl: string;
+  webUrl: string | null;
   defaultBranch: string;
   transport: CloneTransport;
   environmentProfile: string;
@@ -133,6 +134,7 @@ export interface HostRepository {
   name: string;
   defaultBranch: string;
   remoteUrl: string;
+  webUrl: string | null;
   sshUrl: string | null;
   cloneTransportHint: CloneTransportHint;
 }

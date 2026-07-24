@@ -152,6 +152,9 @@ public sealed record RepositoryInfo
     /// <summary>Remote URL for cloning, or <c>null</c> if unavailable.</summary>
     public string? RemoteUrl { get; init; }
 
+    /// <summary>Browser URL for the repository, or <c>null</c> if unavailable.</summary>
+    public string? WebUrl { get; init; }
+
     /// <summary>SSH URL for cloning, or <c>null</c> if unavailable.</summary>
     public string? SshUrl { get; init; }
 }

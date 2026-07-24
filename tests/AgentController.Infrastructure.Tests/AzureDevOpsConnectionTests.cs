@@ -266,6 +266,7 @@ public sealed class AzureDevOpsConnectionTests
                     Name = "main-repo",
                     DefaultBranch = "refs/heads/main",
                     RemoteUrl = "https://dev.azure.com/testorg/Project/_git/main-repo",
+                    WebUrl = "https://dev.azure.com/testorg/Project/_git/main-repo",
                 },
                 new RepositoryInfo
                 {
@@ -286,8 +287,10 @@ public sealed class AzureDevOpsConnectionTests
         Assert.Equal("repo-1", repos[0].Id);
         Assert.Equal("main-repo", repos[0].Name);
         Assert.Equal("main", repos[0].DefaultBranch); // refs/heads/ stripped
+        Assert.Equal("https://dev.azure.com/testorg/Project/_git/main-repo", repos[0].WebUrl);
         Assert.Equal(CloneTransportHint.HttpsPat, repos[0].CloneTransportHint);
         Assert.Equal("develop", repos[1].DefaultBranch); // refs/heads/ stripped
+        Assert.Null(repos[1].WebUrl);
     }
 
     // ─── Helpers ───────────────────────────────────────────────

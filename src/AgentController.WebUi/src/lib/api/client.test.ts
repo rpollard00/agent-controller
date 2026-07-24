@@ -5,6 +5,7 @@ import type { ConnectionProfile, ConnectionProject, RepositoryProfile } from './
 const repository: RepositoryProfile = {
   key: 'web.repo',
   cloneUrl: 'https://example.test/repo.git',
+  webUrl: null,
   defaultBranch: 'main',
   transport: 'httpsPat',
   environmentProfile: '',

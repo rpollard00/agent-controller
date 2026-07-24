@@ -39,6 +39,11 @@ public sealed record HostRepository(
     string RemoteUrl,
 
     /// <summary>
+    /// Browser URL for the repository, or <c>null</c> if the host does not expose one.
+    /// </summary>
+    string? WebUrl,
+
+    /// <summary>
     /// SSH URL for cloning, or <c>null</c> if the host does not expose one.
     /// </summary>
     string? SshUrl,

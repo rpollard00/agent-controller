@@ -7,7 +7,7 @@ namespace AgentController.Application.Commands;
 
 /// <summary>
 /// Looks up a repository from a connected host and produces a draft RepositoryProfile
-/// with CloneUrl, DefaultBranch, and Transport pre-filled from the host discovery data.
+/// with CloneUrl, WebUrl, DefaultBranch, and Transport pre-filled from the host discovery data.
 /// Uses the unified IConnection port (IConnectionResolver) instead of IRepositoryHostConnection.
 /// </summary>
 public sealed class OnboardRepositoryFromHostCommandHandler(
@@ -72,6 +72,7 @@ public sealed class OnboardRepositoryFromHostCommandHandler(
         {
             Key = repositoryKey,
             CloneUrl = selected.RemoteUrl,
+            WebUrl = selected.WebUrl,
             DefaultBranch = selected.DefaultBranch,
             Transport = transport,
             RepositoryHostConnectionKey = keyValidation.Key,
