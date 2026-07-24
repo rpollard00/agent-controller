@@ -14,6 +14,9 @@ internal sealed class RepositoryEntity
     /// <summary>Remote URL to clone.</summary>
     public string CloneUrl { get; set; } = string.Empty;
 
+    /// <summary>Optional browser URL for this repository.</summary>
+    public string? WebUrl { get; set; }
+
     /// <summary>Default branch to check out after cloning.</summary>
     public string DefaultBranch { get; set; } = "main";
 

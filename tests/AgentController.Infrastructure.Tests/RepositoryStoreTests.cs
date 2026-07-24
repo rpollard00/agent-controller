@@ -64,6 +64,7 @@ public sealed class RepositoryStoreTests
         var updated = original with
         {
             CloneUrl = "/srv/git/updated",
+            WebUrl = "https://example.test/repositories/updated",
             DefaultBranch = "develop",
             Transport = CloneTransport.Local,
             EnvironmentProfile = "legacy-environment-v2",
@@ -119,6 +120,7 @@ public sealed class RepositoryStoreTests
         var updated = original with
         {
             DefaultBranch = "release",
+            WebUrl = null,
             RepositoryHostConnectionKey = null,
             RuntimeEnvironmentKey = "runtime-production",
         };
@@ -167,6 +169,7 @@ public sealed class RepositoryStoreTests
         var profile = await store.GetByKeyAsync("legacy", CancellationToken.None);
 
         Assert.NotNull(profile);
+        Assert.Null(profile.WebUrl);
         Assert.Null(profile.RepositoryHostConnectionKey);
         Assert.Null(profile.RuntimeEnvironmentKey);
         Assert.Null(profile.SshKeyReference);
@@ -176,6 +179,10 @@ public sealed class RepositoryStoreTests
             migration =>
                 migration.EndsWith("_ExpandRepositoryProfilePersistence", StringComparison.Ordinal)
         );
+        Assert.Contains(
+            await dbContext.Database.GetAppliedMigrationsAsync(),
+            migration => migration.EndsWith("_AddRepositoryWebUrl", StringComparison.Ordinal)
+        );
     }
 
     private static RepositoryProfile CreateProfile(string key)
@@ -184,6 +191,7 @@ public sealed class RepositoryStoreTests
         {
             Key = key,
             CloneUrl = $"git@example.test:{key}.git",
+            WebUrl = $"https://example.test/projects/{key}",
             DefaultBranch = "main",
             Transport = CloneTransport.Ssh,
             EnvironmentProfile = "legacy-environment",
@@ -198,6 +206,7 @@ public sealed class RepositoryStoreTests
     {
         Assert.Equal(expected.Key, actual.Key);
         Assert.Equal(expected.CloneUrl, actual.CloneUrl);
+        Assert.Equal(expected.WebUrl, actual.WebUrl);
         Assert.Equal(expected.DefaultBranch, actual.DefaultBranch);
         Assert.Equal(expected.Transport, actual.Transport);
         Assert.Equal(expected.EnvironmentProfile, actual.EnvironmentProfile);

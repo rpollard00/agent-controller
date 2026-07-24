@@ -141,6 +141,7 @@ internal sealed class EfRepositoryStore : IRepositoryStore
     private static void ApplyProfile(RepositoryEntity entity, RepositoryProfile profile)
     {
         entity.CloneUrl = profile.CloneUrl;
+        entity.WebUrl = profile.WebUrl;
         entity.DefaultBranch = profile.DefaultBranch;
         entity.Transport = profile.Transport;
         entity.EnvironmentProfile = profile.EnvironmentProfile;
@@ -164,6 +165,7 @@ internal sealed class EfRepositoryStore : IRepositoryStore
         {
             Key = entity.Key,
             CloneUrl = entity.CloneUrl,
+            WebUrl = entity.WebUrl,
             DefaultBranch = entity.DefaultBranch,
             Transport = entity.Transport,
             EnvironmentProfile = entity.EnvironmentProfile,

@@ -19,6 +19,8 @@ internal sealed class RepositoryEntityConfiguration : IEntityTypeConfiguration<R
 
         builder.Property(x => x.CloneUrl).IsRequired().HasMaxLength(2048);
 
+        builder.Property(x => x.WebUrl).HasMaxLength(2048);
+
         builder.Property(x => x.DefaultBranch).IsRequired().HasMaxLength(256);
 
         builder.Property(x => x.Transport).IsRequired();
