@@ -130,19 +130,38 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             scope.ServiceProvider.GetRequiredService<Application.ReviewFeedbackFilterPipeline>();
         var workItemStore = scope.ServiceProvider.GetRequiredService<Application.IWorkItemStore>();
         var workSource = scope.ServiceProvider.GetRequiredService<Application.IWorkSource>();
+        var pullRequestDiscovery =
+            scope.ServiceProvider.GetRequiredService<Application.IManagedPullRequestDiscovery>();
 
-        // ── Step 1: Query eligible runs ───────────────────────────
-        // Runs in {PrOpened, BranchPushed, Completed} with non-null PullRequestUrl.
-        var candidateRuns = await runStore.FindRunsForFeedbackAsync(ct);
+        // ── Step 1: Query run-backed revival PRs and managed PRs in parallel ──
+        // Assistance discovery is intentionally independent of originating runs so
+        // controller-external pull requests can enter the soak lifecycle.
+        var candidateRunsTask = runStore.FindRunsForFeedbackAsync(ct);
+        var managedPullRequestsTask = DiscoverManagedPullRequestsAsync(
+            pullRequestDiscovery,
+            ct
+        );
+        await Task.WhenAll(candidateRunsTask, managedPullRequestsTask);
+
+        var candidateRuns = await candidateRunsTask;
+        var managedPullRequests = await managedPullRequestsTask;
+        var assistanceSnapshots = managedPullRequests
+            .Where(snapshot => HasLabel(snapshot.Labels, options.AssistanceMarkerTag))
+            .ToList();
 
         if (candidateRuns.Count == 0)
         {
             Log.NoEligibleRuns(_logger);
-            Log.PollCycleCompleted(_logger);
-            return;
+        }
+        else
+        {
+            Log.FoundEligibleRuns(_logger, candidateRuns.Count);
         }
 
-        Log.FoundEligibleRuns(_logger, candidateRuns.Count);
+        if (assistanceSnapshots.Count > 0)
+        {
+            Log.AssistanceRequestsDiscovered(_logger, assistanceSnapshots.Count);
+        }
 
         // ── Step 2: Determine work items with active rework ───────
         // A work item is "blocked" if it has a Consumed ReworkCycle whose
@@ -194,16 +213,47 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
                 .ToList()
             : candidateRuns.ToList();
 
-        if (eligibleRuns.Count == 0)
+        if (candidateRuns.Count > 0 && eligibleRuns.Count == 0)
         {
             Log.AllRunsBlockedByActiveRework(_logger);
-            Log.PollCycleCompleted(_logger);
-            return;
         }
 
-        // ── Step 4: Build PrUnderTest[] ───────────────────────────
-        var prsUnderTest = new List<Application.PrUnderTest>();
+        // ── Step 4: Build mode-specific PrUnderTest lists ─────────
+        var assistancePrs = new List<Application.PrUnderTest>();
+        foreach (var snapshot in assistanceSnapshots)
+        {
+            if (!snapshot.PullRequest.HasCanonicalIdentity)
+            {
+                Log.AssistanceRequestMissingCanonicalIdentity(
+                    _logger,
+                    snapshot.PullRequestId,
+                    snapshot.PullRequestUrl
+                );
+                continue;
+            }
 
+            // Retain controller lineage when this happens to be a controller-produced
+            // PR, but never require it for Assistance.
+            var originatingRun = candidateRuns.FirstOrDefault(run =>
+                PullRequestsMatch(snapshot.PullRequest, run.PullRequestUrl)
+            );
+
+            assistancePrs.Add(
+                new Application.PrUnderTest
+                {
+                    RequestMode = ReworkRequestMode.Assistance,
+                    PullRequest = snapshot.PullRequest,
+                    OriginatingRunId = originatingRun?.RunId,
+                    WorkItemId = originatingRun?.WorkItemId,
+                    RepoKey = snapshot.RepositoryKey,
+                    PullRequestUrl = snapshot.PullRequestUrl,
+                    PullRequestId = snapshot.PullRequestId,
+                    BranchName = snapshot.SourceBranch,
+                }
+            );
+        }
+
+        var revivalPrs = new List<Application.PrUnderTest>();
         foreach (var run in eligibleRuns)
         {
             var pullRequestId = ExtractPullRequestId(run.PullRequestUrl);
@@ -213,13 +263,30 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
                 continue;
             }
 
+            // Assistance wins when both request markers are present. Excluding the
+            // run-backed copy also prevents duplicate thread fetches for the same PR.
+            if (assistancePrs.Any(pr => PullRequestsMatch(pr.PullRequest, run.PullRequestUrl)))
+            {
+                Log.RevivalSuppressedByAssistance(_logger, pullRequestId);
+                continue;
+            }
+
             var repoKey = ExtractRepoKey(run.PullRequestUrl) ?? string.Empty;
 
-            prsUnderTest.Add(
+            revivalPrs.Add(
                 new Application.PrUnderTest
                 {
+                    RequestMode = ReworkRequestMode.Revival,
+                    PullRequest = new PullRequestReference
+                    {
+                        RepositoryKey = repoKey,
+                        PullRequestId = pullRequestId,
+                        PullRequestUrl = run.PullRequestUrl ?? string.Empty,
+                        SourceBranch = run.BranchName ?? string.Empty,
+                        SourceCommitSha = run.CommitSha ?? string.Empty,
+                    },
                     OriginatingRunId = run.RunId,
-                    WorkItemId = run.WorkItemId ?? string.Empty,
+                    WorkItemId = run.WorkItemId,
                     RepoKey = repoKey,
                     PullRequestUrl = run.PullRequestUrl ?? string.Empty,
                     PullRequestId = pullRequestId,
@@ -228,33 +295,72 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             );
         }
 
-        if (prsUnderTest.Count == 0)
+        if (revivalPrs.Count == 0 && assistancePrs.Count == 0)
         {
-            Log.NoValidPrUrls(_logger, eligibleRuns.Count);
+            if (eligibleRuns.Count > 0)
+            {
+                Log.NoValidPrUrls(_logger, eligibleRuns.Count);
+            }
+
             Log.PollCycleCompleted(_logger);
             return;
         }
 
-        Log.PrUnderTestBuilt(_logger, prsUnderTest.Count);
+        Log.PrUnderTestBuilt(_logger, revivalPrs.Count + assistancePrs.Count);
 
-        // ── Step 5: Poll feedback source ──────────────────────────
-        var query = new Application.FeedbackQuery
+        // ── Steps 5-6: Poll and filter each request mode ──────────
+        var allowedReviewers = new HashSet<string>(options.AllowedReviewers);
+        var filteredSignals = new List<Application.ReworkSignal>();
+        var rawSignalCount = 0;
+
+        if (revivalPrs.Count > 0)
         {
-            OpenPrs = prsUnderTest,
-            AllowedReviewers = new HashSet<string>(options.AllowedReviewers),
-            ReworkMarkerTag = options.ReworkMarkerTag,
-        };
+            var revivalQuery = new Application.FeedbackQuery
+            {
+                OpenPrs = revivalPrs,
+                AllowedReviewers = allowedReviewers,
+                ReworkMarkerTag = options.ReworkMarkerTag,
+            };
+            var revivalSignals = await feedbackSource.PollAsync(revivalQuery, ct);
+            rawSignalCount += revivalSignals.Count;
+            filteredSignals.AddRange(
+                await filterPipeline.FilterAsync(revivalQuery, revivalSignals, ct)
+            );
+        }
 
-        var signals = await feedbackSource.PollAsync(query, ct);
+        if (assistancePrs.Count > 0)
+        {
+            var assistanceQuery = new Application.FeedbackQuery
+            {
+                OpenPrs = assistancePrs,
+                AllowedReviewers = allowedReviewers,
+                ReworkMarkerTag = options.AssistanceMarkerTag,
+            };
+            var fetchedAssistanceSignals = await feedbackSource.PollAsync(assistanceQuery, ct);
+            rawSignalCount += fetchedAssistanceSignals.Count;
 
-        Log.SignalsReceived(_logger, signals.Count);
+            // Feedback sources historically omit PRs with no threads. Synthesize one
+            // observation per marker-bearing PR so zero-comment cleanup requests soak.
+            var observedAt = DateTimeOffset.UtcNow;
+            var assistanceSignals = assistancePrs
+                .Select(pr => CreateAssistanceObservation(
+                    pr,
+                    fetchedAssistanceSignals,
+                    observedAt
+                ))
+                .ToList();
 
-        // ── Step 6: Apply filter pipeline ────────────────────────
-        // 5-step load-bearing filter: marker gate, allowlist fail-closed,
-        // thread-status, thread-author, comment-content.
-        var filteredSignals = await filterPipeline.FilterAsync(query, signals, ct);
+            filteredSignals.AddRange(
+                await filterPipeline.FilterAssistanceAsync(
+                    assistanceQuery,
+                    assistanceSignals,
+                    ct
+                )
+            );
+        }
 
-        Log.SignalsAfterFilter(_logger, filteredSignals.Count, signals.Count);
+        Log.SignalsReceived(_logger, rawSignalCount);
+        Log.SignalsAfterFilter(_logger, filteredSignals.Count, rawSignalCount);
 
         if (filteredSignals.Count == 0)
         {
@@ -268,41 +374,93 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
         // sorted surviving thread ids. Track bundle state in SQLite via
         // ReworkFeedback rows so soak correctness survives restarts.
 
-        // Group signals by PullRequestId (one PR -> one bundle).
+        // Assistance is keyed by canonical PR identity; Revival retains its historical
+        // provider PR-ID grouping. This prevents same-numbered PRs in different managed
+        // repositories from sharing an assistance soak row.
         var signalsByPr = filteredSignals
-            .GroupBy(s => s.PullRequestId)
-            .ToDictionary(g => g.Key, g => g.First());
+            .GroupBy(GetObservationKey, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group.First(),
+                StringComparer.OrdinalIgnoreCase
+            );
 
-        // Fetch existing Watching rows for these PRs.
-        var watchingRows = await reworkFeedbackStore.GetWatchingAsync(ct);
+        var watchingRows = (await reworkFeedbackStore.GetWatchingAsync(ct)).ToList();
+
+        // If a PR changes from the revival marker to assistance (or carries both),
+        // retire its outstanding revival observation before processing Assistance.
+        var suppressedRevivalRows = watchingRows
+            .Where(row => row.RequestMode == ReworkRequestMode.Revival)
+            .Where(row => assistancePrs.Any(pr =>
+                AssistanceMatchesRevivalFeedback(pr.PullRequest, row)
+            ))
+            .ToList();
+        foreach (var row in suppressedRevivalRows)
+        {
+            await reworkFeedbackStore.MarkSupersededAsync(row.Id, ct);
+            watchingRows.Remove(row);
+            Log.RevivalWatchingSuppressedByAssistance(_logger, row.PullRequestId);
+        }
+
         var watchingByPr = watchingRows
-            .GroupBy(r => r.PullRequestId)
-            .ToDictionary(g => g.Key, g => g.ToList());
+            .GroupBy(GetObservationKey, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group.ToList(),
+                StringComparer.OrdinalIgnoreCase
+            );
 
         var now = DateTimeOffset.UtcNow;
         var soakThreshold = TimeSpan.FromMinutes(options.SoakMinutes);
 
-        foreach (var (pullRequestId, signal) in signalsByPr)
+        foreach (var (observationKey, unadjustedSignal) in signalsByPr)
         {
             ct.ThrowIfCancellationRequested();
 
-            var bundleId = ComputeFeedbackBundleId(signal.Threads);
-            var existingRows = watchingByPr.TryGetValue(pullRequestId, out var rows) ? rows : null;
+            var pullRequestId = unadjustedSignal.PullRequestId;
+            var bundleId = ComputeFeedbackBundleId(unadjustedSignal.Threads);
+            var existingRows = watchingByPr.TryGetValue(observationKey, out var rows)
+                ? rows
+                : null;
             var currentRow = existingRows?.FirstOrDefault();
+
+            if (unadjustedSignal.RequestMode == ReworkRequestMode.Assistance)
+            {
+                var correlationId = ComputeMaterializationCorrelationId(
+                    unadjustedSignal.PullRequest,
+                    bundleId
+                );
+                var persisted = await reworkFeedbackStore.GetByCorrelationIdAsync(
+                    correlationId,
+                    ct
+                );
+
+                // A queued/materialized assistance request remains marker-bearing until
+                // execution completes. Do not restart its soak on every poll.
+                if (persisted is not null
+                    && persisted.Status is ReworkFeedbackStatus.Soaked
+                        or ReworkFeedbackStatus.Materialized)
+                {
+                    Log.AssistanceObservationAlreadyAdvanced(
+                        _logger,
+                        pullRequestId,
+                        persisted.Status
+                    );
+                    continue;
+                }
+
+                currentRow ??= persisted;
+            }
+
+            var signal = NormalizeObservationTimestamp(unadjustedSignal, currentRow, now);
 
             if (currentRow is not null && currentRow.FeedbackBundleId == bundleId)
             {
-                // Bundle unchanged — bump LastQualifyingCommentAt.
+                // Same qualifying threads: only a genuinely newer qualifying comment
+                // advances LastQualifyingCommentAt. Empty bundles retain first observation.
                 var bundleJson = JsonSerializer.Serialize(signal.Threads);
-                var updated = await reworkFeedbackStore.UpsertAsync(
-                    signal.OriginatingRunId,
-                    signal.PullRequestId,
-                    bundleId,
-                    bundleJson,
-                    signal.Threads.Count,
-                    signal.FirstQualifyingCommentAt,
-                    signal.LastQualifyingCommentAt,
-                    ReworkFeedbackStatus.Watching,
+                await reworkFeedbackStore.UpsertAsync(
+                    CreateFeedbackUpsertRequest(signal, bundleId, bundleJson),
                     ct
                 );
 
@@ -315,14 +473,7 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
 
                 var bundleJsonChanged = JsonSerializer.Serialize(signal.Threads);
                 await reworkFeedbackStore.UpsertAsync(
-                    signal.OriginatingRunId,
-                    signal.PullRequestId,
-                    bundleId,
-                    bundleJsonChanged,
-                    signal.Threads.Count,
-                    signal.FirstQualifyingCommentAt,
-                    signal.LastQualifyingCommentAt,
-                    ReworkFeedbackStatus.Watching,
+                    CreateFeedbackUpsertRequest(signal, bundleId, bundleJsonChanged),
                     ct
                 );
 
@@ -335,17 +486,11 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             }
             else
             {
-                // First time seeing this PR — create Watching row.
+                // First time seeing this PR — create Watching row. For Assistance,
+                // the marker observation itself starts the soak even when comments are old.
                 var bundleJsonNew = JsonSerializer.Serialize(signal.Threads);
                 await reworkFeedbackStore.UpsertAsync(
-                    signal.OriginatingRunId,
-                    signal.PullRequestId,
-                    bundleId,
-                    bundleJsonNew,
-                    signal.Threads.Count,
-                    signal.FirstQualifyingCommentAt,
-                    signal.LastQualifyingCommentAt,
-                    ReworkFeedbackStatus.Watching,
+                    CreateFeedbackUpsertRequest(signal, bundleId, bundleJsonNew),
                     ct
                 );
 
@@ -374,14 +519,61 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
         }
 
         // ── Step 9: Materialize Pending ReworkCycle from soaked feedback ──
-        // For each Soaked ReworkFeedback row: compute cycle number from
-        // existing cycles, pull BranchName/PullRequestUrl/BaseCommitSha
-        // from the prior run, and create the Pending row.
+        // Assistance creates a fresh, correlation-tagged story and publishes it only
+        // after its Pending cycle is durable. Revival retains the original-story path.
         var soakedRows = await reworkFeedbackStore.GetSoakedAsync(ct);
+        Application.AssistanceStoryMaterializer? assistanceMaterializer = null;
 
         foreach (var soaked in soakedRows)
         {
             ct.ThrowIfCancellationRequested();
+
+            if (soaked.RequestMode == ReworkRequestMode.Assistance)
+            {
+                assistanceMaterializer ??= new Application.AssistanceStoryMaterializer(
+                    runStore,
+                    workItemStore,
+                    workSource,
+                    reworkCycleStore,
+                    reworkFeedbackStore,
+                    scope.ServiceProvider.GetRequiredService<
+                        Application.IAssistanceStoryRelationshipResolver>(),
+                    scope.ServiceProvider.GetRequiredService<
+                        Application.IPullRequestCommentCreator>()
+                );
+                var pullRequestTitle = managedPullRequests.FirstOrDefault(snapshot =>
+                    PullRequestsMatch(snapshot.PullRequest, soaked.PullRequest)
+                )?.Title;
+                var materialized = await assistanceMaterializer.MaterializeAsync(
+                    soaked,
+                    pullRequestTitle,
+                    ct
+                );
+                Log.AssistanceStoryMaterialized(
+                    _logger,
+                    soaked.PullRequestId,
+                    materialized.Story.ExternalId,
+                    materialized.Cycle.CycleNumber,
+                    soaked.ThreadCount
+                );
+                continue;
+            }
+
+            if (soaked.RequestMode != ReworkRequestMode.Revival)
+            {
+                Log.NonRevivalFeedbackSkipped(
+                    _logger,
+                    soaked.RequestMode,
+                    soaked.PullRequestId
+                );
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(soaked.OriginatingRunId))
+            {
+                Log.MissingPriorRun(_logger, "(none)", soaked.PullRequestId);
+                continue;
+            }
 
             // Look up the prior run to get WorkItemId, BranchName, PullRequestUrl, CommitSha.
             var priorRun = await runStore.GetByIdAsync(soaked.OriginatingRunId, ct);
@@ -408,7 +600,11 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             }
 
             // Skip if this bundle was already materialized (e.g. by a prior poll cycle).
-            if (await reworkCycleStore.ExistsByFeedbackBundleIdAsync(soaked.FeedbackBundleId, ct))
+            if (await reworkCycleStore.ExistsAsync(
+                    soaked.RequestMode,
+                    soaked.PullRequest,
+                    soaked.FeedbackBundleId,
+                    ct))
             {
                 await reworkFeedbackStore.MarkMaterializedAsync(soaked.Id, ct);
                 Log.ReworkCycleAlreadyMaterialized(_logger, soaked.FeedbackBundleId);
@@ -420,14 +616,20 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             var cycleNumber = maxCycle + 1;
 
             await reworkCycleStore.CreateAsync(
-                priorRun.WorkItemId,
-                cycleNumber,
-                soaked.OriginatingRunId,
-                priorRun.BranchName,
-                priorRun.PullRequestUrl,
-                priorRun.CommitSha,
-                soaked.FeedbackBundleJson,
-                soaked.FeedbackBundleId,
+                new Application.ReworkCycleCreateRequest
+                {
+                    RequestMode = soaked.RequestMode,
+                    PullRequest = soaked.PullRequest,
+                    WorkItemId = priorRun.WorkItemId,
+                    CycleNumber = cycleNumber,
+                    PriorRunId = soaked.OriginatingRunId,
+                    BranchName = priorRun.BranchName,
+                    PullRequestUrl = priorRun.PullRequestUrl,
+                    BaseCommitSha = priorRun.CommitSha,
+                    FeedbackBundleJson = soaked.FeedbackBundleJson,
+                    FeedbackBundleId = soaked.FeedbackBundleId,
+                    CorrelationId = soaked.CorrelationId,
+                },
                 ct
             );
 
@@ -455,6 +657,13 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
         foreach (var cycle in pendingCycles)
         {
             ct.ThrowIfCancellationRequested();
+
+            // Assistance stories are newly created and explicitly published only after
+            // their cycle is durable. They must never revive an originating story.
+            if (cycle.RequestMode == ReworkRequestMode.Assistance)
+            {
+                continue;
+            }
 
             // Skip: already reactivated by a prior poll cycle.
             if (cycle.ReactivatedAt is not null)
@@ -547,6 +756,216 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
         Log.PollCycleCompleted(_logger);
     }
 
+    private async Task<IReadOnlyList<Application.ManagedPullRequestSnapshot>>
+        DiscoverManagedPullRequestsAsync(
+            Application.IManagedPullRequestDiscovery discovery,
+            CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await discovery.ListActiveAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            // Assistance discovery is additive; a provider outage must not disrupt the
+            // established run-backed Revival path. Avoid logging provider details because
+            // transport exceptions can include credential-bearing request metadata.
+            Log.AssistanceDiscoveryFailed(_logger);
+            return [];
+        }
+    }
+
+    private static Application.ReworkSignal CreateAssistanceObservation(
+        Application.PrUnderTest pr,
+        IReadOnlyList<Application.ReworkSignal> fetchedSignals,
+        DateTimeOffset observedAt)
+    {
+        var fetched = fetchedSignals.FirstOrDefault(signal =>
+            PullRequestsMatch(pr.PullRequest, signal.PullRequest)
+        );
+
+        // Preserve compatibility with feedback fetchers that only populated the
+        // provider PR ID before canonical references were introduced. Only use this
+        // fallback when the ID identifies exactly one returned signal.
+        if (fetched is null)
+        {
+            var matchingIds = fetchedSignals
+                .Where(signal => signal.PullRequestId.Equals(
+                    pr.PullRequestId,
+                    StringComparison.OrdinalIgnoreCase
+                ))
+                .Take(2)
+                .ToList();
+            if (matchingIds.Count == 1)
+            {
+                fetched = matchingIds[0];
+            }
+        }
+
+        return fetched is null
+            ? new Application.ReworkSignal
+            {
+                RequestMode = ReworkRequestMode.Assistance,
+                PullRequest = pr.PullRequest,
+                OriginatingRunId = pr.OriginatingRunId,
+                PullRequestId = pr.PullRequestId,
+                Threads = [],
+                FirstQualifyingCommentAt = observedAt,
+                LastQualifyingCommentAt = observedAt,
+            }
+            : fetched with
+            {
+                RequestMode = ReworkRequestMode.Assistance,
+                PullRequest = pr.PullRequest,
+                OriginatingRunId = pr.OriginatingRunId,
+                PullRequestId = pr.PullRequestId,
+            };
+    }
+
+    private static Application.ReworkSignal NormalizeObservationTimestamp(
+        Application.ReworkSignal signal,
+        ReworkFeedback? currentRow,
+        DateTimeOffset observedAt)
+    {
+        if (signal.RequestMode != ReworkRequestMode.Assistance)
+        {
+            return signal;
+        }
+
+        if (currentRow is null)
+        {
+            var first = signal.Threads.Count > 0
+                ? signal.FirstQualifyingCommentAt
+                : observedAt;
+            var last = signal.Threads.Count > 0 && signal.LastQualifyingCommentAt > observedAt
+                ? signal.LastQualifyingCommentAt
+                : observedAt;
+
+            return signal with
+            {
+                FirstQualifyingCommentAt = first,
+                LastQualifyingCommentAt = last,
+            };
+        }
+
+        var latest = signal.Threads.Count > 0
+            && signal.LastQualifyingCommentAt > currentRow.LastQualifyingCommentAt
+                ? signal.LastQualifyingCommentAt
+                : currentRow.LastQualifyingCommentAt;
+
+        return signal with
+        {
+            FirstQualifyingCommentAt = currentRow.FirstQualifyingCommentAt,
+            LastQualifyingCommentAt = latest,
+        };
+    }
+
+    private static string GetObservationKey(Application.ReworkSignal signal) =>
+        GetObservationKey(signal.RequestMode, signal.PullRequest, signal.PullRequestId);
+
+    private static string GetObservationKey(ReworkFeedback feedback) =>
+        GetObservationKey(feedback.RequestMode, feedback.PullRequest, feedback.PullRequestId);
+
+    private static string GetObservationKey(
+        ReworkRequestMode requestMode,
+        PullRequestReference pullRequest,
+        string pullRequestId)
+    {
+        return requestMode == ReworkRequestMode.Assistance
+            ? $"assistance|{pullRequest.CanonicalKey}"
+            : $"revival|{pullRequestId}";
+    }
+
+    private static bool HasLabel(IEnumerable<string> labels, string marker) =>
+        labels.Any(label => label.Equals(marker, StringComparison.OrdinalIgnoreCase));
+
+    private static bool AssistanceMatchesRevivalFeedback(
+        PullRequestReference assistancePullRequest,
+        ReworkFeedback revivalFeedback)
+    {
+        if (PullRequestsMatch(assistancePullRequest, revivalFeedback.PullRequest))
+        {
+            return true;
+        }
+
+        // Pre-canonical Revival rows only retained the provider PR ID. Their original
+        // grouping had the same limitation, so ID matching is the only available way
+        // to enforce Assistance precedence for migrated observations.
+        return assistancePullRequest.PullRequestId.Equals(
+            revivalFeedback.PullRequestId,
+            StringComparison.OrdinalIgnoreCase
+        );
+    }
+
+    private static bool PullRequestsMatch(
+        PullRequestReference pullRequest,
+        string? candidateUrl)
+    {
+        if (string.IsNullOrWhiteSpace(candidateUrl))
+        {
+            return false;
+        }
+
+        if (UrlsMatch(pullRequest.PullRequestUrl, candidateUrl))
+        {
+            return true;
+        }
+
+        var candidateId = ExtractPullRequestId(candidateUrl);
+        var candidateRepo = ExtractRepoKey(candidateUrl);
+        return candidateId is not null
+            && candidateRepo is not null
+            && candidateId.Equals(pullRequest.PullRequestId, StringComparison.OrdinalIgnoreCase)
+            && candidateRepo.Equals(
+                pullRequest.RepositoryKey,
+                StringComparison.OrdinalIgnoreCase
+            );
+    }
+
+    private static bool PullRequestsMatch(
+        PullRequestReference first,
+        PullRequestReference second)
+    {
+        if (first.HasCanonicalIdentity && second.HasCanonicalIdentity)
+        {
+            return first.CanonicalKey.Equals(
+                second.CanonicalKey,
+                StringComparison.OrdinalIgnoreCase
+            );
+        }
+
+        if (UrlsMatch(first.PullRequestUrl, second.PullRequestUrl))
+        {
+            return true;
+        }
+
+        return first.PullRequestId.Equals(
+                second.PullRequestId,
+                StringComparison.OrdinalIgnoreCase
+            )
+            && first.RepositoryKey.Equals(
+                second.RepositoryKey,
+                StringComparison.OrdinalIgnoreCase
+            );
+    }
+
+    private static bool UrlsMatch(string? first, string? second)
+    {
+        if (string.IsNullOrWhiteSpace(first) || string.IsNullOrWhiteSpace(second))
+        {
+            return false;
+        }
+
+        return first.TrimEnd('/').Equals(
+            second.TrimEnd('/'),
+            StringComparison.OrdinalIgnoreCase
+        );
+    }
+
     /// <summary>
     /// Extract the pull request integer ID from an Azure DevOps PR URL.
     /// Supported formats:
@@ -626,6 +1045,39 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
         return status.IsTerminal();
     }
 
+    private static Application.ReworkFeedbackUpsertRequest CreateFeedbackUpsertRequest(
+        Application.ReworkSignal signal,
+        string feedbackBundleId,
+        string feedbackBundleJson)
+    {
+        var correlationId = signal.RequestMode == ReworkRequestMode.Assistance
+            ? ComputeMaterializationCorrelationId(signal.PullRequest, feedbackBundleId)
+            : null;
+
+        return new Application.ReworkFeedbackUpsertRequest
+        {
+            RequestMode = signal.RequestMode,
+            PullRequest = signal.PullRequest,
+            OriginatingRunId = signal.OriginatingRunId,
+            FeedbackBundleId = feedbackBundleId,
+            FeedbackBundleJson = feedbackBundleJson,
+            ThreadCount = signal.Threads.Count,
+            FirstQualifyingCommentAt = signal.FirstQualifyingCommentAt,
+            LastQualifyingCommentAt = signal.LastQualifyingCommentAt,
+            Status = ReworkFeedbackStatus.Watching,
+            CorrelationId = correlationId,
+        };
+    }
+
+    private static string ComputeMaterializationCorrelationId(
+        PullRequestReference pullRequest,
+        string feedbackBundleId)
+    {
+        var source = $"assistance|{pullRequest.CanonicalKey}|{feedbackBundleId}";
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(source));
+        return Convert.ToHexStringLower(hash);
+    }
+
     /// <summary>
     /// Compute a stable FeedbackBundleId as a SHA-256 hash of sorted thread ids.
     /// Sorting ensures the hash is deterministic regardless of thread ordering
@@ -633,10 +1085,12 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
     /// </summary>
     private static string ComputeFeedbackBundleId(IReadOnlyList<ReviewThread> threads)
     {
-        var sortedIds = threads
-            .OrderBy(t => t.ThreadId, StringComparer.Ordinal)
-            .Select(t => t.ThreadId)
-            .Aggregate((a, b) => a + "|" + b);
+        var sortedIds = string.Join(
+            '|',
+            threads
+                .OrderBy(t => t.ThreadId, StringComparer.Ordinal)
+                .Select(t => t.ThreadId)
+        );
 
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(sortedIds));
         return Convert.ToHexStringLower(hash);
@@ -705,6 +1159,56 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             Message = "Found {Count} eligible run(s) for feedback polling."
         )]
         public static partial void FoundEligibleRuns(ILogger logger, int count);
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "Found {Count} managed pull request(s) carrying the assistance marker."
+        )]
+        public static partial void AssistanceRequestsDiscovered(ILogger logger, int count);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Managed pull request discovery failed; continuing with run-backed Revival polling."
+        )]
+        public static partial void AssistanceDiscoveryFailed(ILogger logger);
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Skipping assistance request for PR {PullRequestId} ({PullRequestUrl}): canonical managed identity is incomplete."
+        )]
+        public static partial void AssistanceRequestMissingCanonicalIdentity(
+            ILogger logger,
+            string pullRequestId,
+            string pullRequestUrl
+        );
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "PR {PullRequestId}: Assistance takes precedence; suppressing run-backed Revival polling."
+        )]
+        public static partial void RevivalSuppressedByAssistance(
+            ILogger logger,
+            string pullRequestId
+        );
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "PR {PullRequestId}: superseded outstanding Revival soak because Assistance takes precedence."
+        )]
+        public static partial void RevivalWatchingSuppressedByAssistance(
+            ILogger logger,
+            string pullRequestId
+        );
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "PR {PullRequestId}: Assistance observation already advanced to {Status}; soak was not restarted."
+        )]
+        public static partial void AssistanceObservationAlreadyAdvanced(
+            ILogger logger,
+            string pullRequestId,
+            ReworkFeedbackStatus status
+        );
 
         [LoggerMessage(
             Level = LogLevel.Debug,
@@ -802,6 +1306,28 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             string pullRequestId,
             string bundleId,
             int threadCount
+        );
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Materialized assistance story {StoryId} and Pending cycle #{CycleNumber} for PR {PullRequestId} with {ThreadCount} thread(s)."
+        )]
+        public static partial void AssistanceStoryMaterialized(
+            ILogger logger,
+            string pullRequestId,
+            string storyId,
+            int cycleNumber,
+            int threadCount
+        );
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "Skipping {RequestMode} feedback for PR {PullRequestId} in the revival materialization path."
+        )]
+        public static partial void NonRevivalFeedbackSkipped(
+            ILogger logger,
+            ReworkRequestMode requestMode,
+            string pullRequestId
         );
 
         [LoggerMessage(

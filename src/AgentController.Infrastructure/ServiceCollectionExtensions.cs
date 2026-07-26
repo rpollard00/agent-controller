@@ -98,6 +98,10 @@ public static class AgentControllerServiceCollectionExtensions
             .Bind(configuration.GetSection(LocalFeedbackOptions.SectionName));
 
         services
+            .AddOptions<LocalPullRequestOptions>()
+            .Bind(configuration.GetSection(LocalPullRequestOptions.SectionName));
+
+        services
             .AddOptions<FeedbackOptions>()
             .Bind(configuration.GetSection(FeedbackOptions.SectionName))
             .ValidateDataAnnotations()
@@ -216,6 +220,21 @@ public static class AgentControllerServiceCollectionExtensions
     )
     {
         services.AddScoped<IRunLifecycleService, RunLifecycleService>();
+        services.AddScoped<IAssistancePullRequestLabelProjector>(serviceProvider =>
+        {
+            var feedback = serviceProvider.GetRequiredService<IOptions<FeedbackOptions>>().Value;
+            return new AssistancePullRequestLabelProjector(
+                serviceProvider.GetRequiredService<IAgentRunStore>(),
+                serviceProvider.GetRequiredService<IReworkCycleStore>(),
+                serviceProvider.GetRequiredService<IPullRequestLabelMutator>(),
+                new AssistancePullRequestLabels
+                {
+                    Requested = feedback.AssistanceMarkerTag,
+                    InProgress = feedback.AssistanceInProgressTag,
+                    RevivalRequested = feedback.ReworkMarkerTag,
+                }
+            );
+        });
 
         // Shared ADO client factory — used by both work-source (Boards) and repo-host (Repos) paths.
         services.AddSingleton<AzureDevOpsClientFactory, DefaultAzureDevOpsClientFactory>();
@@ -285,6 +304,7 @@ public static class AgentControllerServiceCollectionExtensions
     {
         services.AddSingleton<IWorkSource, NoOpWorkSource>();
         services.AddSingleton<ISourceControlProvider, NoOpSourceControlProvider>();
+        services.AddAgentControllerNoOpPullRequestDiscovery();
 
         services.TryAddSingleton<NoOpEnvironmentProvider>();
         services.TryAddSingleton<LocalWorkspaceEnvironmentProvider>();
@@ -300,6 +320,96 @@ public static class AgentControllerServiceCollectionExtensions
             serviceProvider.GetRequiredService<NoOpAgentRuntime>()
         );
 
+        return services;
+    }
+
+    /// <summary>
+    /// Registers empty pull-request discovery plus no-op label mutation, comment creation,
+    /// and assistance-story relationship resolution for deployments without a repository
+    /// provider. Provider-specific integrations should be registered afterward so they
+    /// become the effective implementations.
+    /// </summary>
+    public static IServiceCollection AddAgentControllerNoOpPullRequestDiscovery(
+        this IServiceCollection services
+    )
+    {
+        services.AddSingleton<IManagedPullRequestDiscovery, NoOpPullRequestDiscovery>();
+        services.AddSingleton<IPullRequestLabelMutator, NoOpPullRequestLabelMutator>();
+        services.AddSingleton<IPullRequestCommentCreator, NoOpPullRequestCommentCreator>();
+        services.AddSingleton<
+            IAssistanceStoryRelationshipResolver,
+            NoOpAssistanceStoryRelationshipResolver
+        >();
+        return services;
+    }
+
+    /// <summary>
+    /// Registers configuration-backed local pull-request discovery and in-memory label
+    /// mutation. Both ports share state seeded from the <c>localPullRequests</c> section.
+    /// Comment creation remains a no-op for the offline provider.
+    /// </summary>
+    public static IServiceCollection AddAgentControllerLocalPullRequestDiscovery(
+        this IServiceCollection services
+    )
+    {
+        services.TryAddSingleton<LocalPullRequestState>();
+        services.AddSingleton<IManagedPullRequestDiscovery>(serviceProvider =>
+            new LocalPullRequestDiscovery(
+                serviceProvider.GetRequiredService<LocalPullRequestState>()
+            )
+        );
+        services.AddSingleton<IPullRequestLabelMutator>(serviceProvider =>
+            new LocalPullRequestLabelMutator(
+                serviceProvider.GetRequiredService<LocalPullRequestState>()
+            )
+        );
+        services.TryAddSingleton<IPullRequestCommentCreator, NoOpPullRequestCommentCreator>();
+        return services;
+    }
+
+    /// <summary>
+    /// Registers managed Azure DevOps Repos pull-request discovery, label mutation,
+    /// lifecycle comment creation, and assistance-story relationship resolution. Singleton
+    /// implementations create scopes per operation to resolve repository, connection, and
+    /// named-secret profiles safely.
+    /// </summary>
+    public static IServiceCollection AddAgentControllerAzureDevOpsPullRequestDiscovery(
+        this IServiceCollection services
+    )
+    {
+        services.TryAddScoped<AzureDevOpsPatResolver, DefaultAzureDevOpsPatResolver>();
+        services.TryAddSingleton<
+            AzureDevOpsReposPullRequestClientFactory,
+            DefaultAzureDevOpsReposPullRequestClientFactory
+        >();
+        services.TryAddSingleton<
+            AzureDevOpsPullRequestLabelClientFactory,
+            DefaultAzureDevOpsPullRequestLabelClientFactory
+        >();
+        services.TryAddSingleton<
+            AzureDevOpsPullRequestCommentClientFactory,
+            DefaultAzureDevOpsPullRequestCommentClientFactory
+        >();
+        services.TryAddSingleton<
+            AzureDevOpsAssistanceStoryRelationshipClientFactory,
+            DefaultAzureDevOpsAssistanceStoryRelationshipClientFactory
+        >();
+        services.AddSingleton<
+            IManagedPullRequestDiscovery,
+            AzureDevOpsManagedPullRequestDiscovery
+        >();
+        services.AddSingleton<
+            IPullRequestLabelMutator,
+            AzureDevOpsPullRequestLabelMutator
+        >();
+        services.AddSingleton<
+            IPullRequestCommentCreator,
+            AzureDevOpsPullRequestCommentCreator
+        >();
+        services.AddSingleton<
+            IAssistanceStoryRelationshipResolver,
+            AzureDevOpsAssistanceStoryRelationshipResolver
+        >();
         return services;
     }
 
@@ -511,14 +621,16 @@ public static class AgentControllerServiceCollectionExtensions
     {
         services.AddSingleton<IFeedbackSource, LocalFeedbackSource>();
         services.AddSingleton<IPrLabelSource, LocalPrLabelSource>();
+        services.AddAgentControllerLocalPullRequestDiscovery();
 
         return services;
     }
 
     /// <summary>
     /// Registers the Azure DevOps Repos implementations for the feedback pipeline:
-    /// <see cref="AzureDevOpsReposFeedbackSource"/> as <see cref="IFeedbackSource"/>
-    /// and <see cref="AzureDevOpsReposPrLabelSource"/> as <see cref="IPrLabelSource"/>.
+    /// <see cref="AzureDevOpsReposFeedbackSource"/> as <see cref="IFeedbackSource"/>,
+    /// <see cref="AzureDevOpsReposPrLabelSource"/> as <see cref="IPrLabelSource"/>, and
+    /// managed repository-wide pull-request discovery.
     ///
     /// The feedback source resolves its PAT per-PR from the unified connection
     /// profile that owns the PR's repository (via IRepositoryStore →
@@ -532,6 +644,8 @@ public static class AgentControllerServiceCollectionExtensions
         this IServiceCollection services
     )
     {
+        services.AddAgentControllerAzureDevOpsPullRequestDiscovery();
+
         // Register the feedback source (thread fetcher) as scoped.
         // PAT is resolved per-PR from the owning unified connection profile.
         services.AddScoped<IFeedbackSource>(sp =>

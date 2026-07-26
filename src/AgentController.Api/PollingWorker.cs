@@ -207,6 +207,7 @@ public sealed partial class PollingWorker : BackgroundService
                 sourceControlProvider,
                 environmentStore,
                 profileResolver,
+                reworkCycleStore,
                 options,
                 ct
             );
@@ -266,6 +267,46 @@ public sealed partial class PollingWorker : BackgroundService
         {
             candidate = await workItemStore.UpsertAsync(candidate, ct);
             Log.CandidateUpserted(_logger, candidate.Id, candidate.Source);
+        }
+
+        // ── Resolve rework intent before claiming ─────────────────
+        // A ready-rework marker is an explicit Assistance dispatch contract. Never
+        // claim or execute an orphaned marker as NewWork: the durable Pending cycle
+        // is the restart-safe source of the existing PR branch and context.
+        var tagPrefix = await ResolveWorkSourceTagPrefixAsync(candidate, profileResolver, ct);
+        var readyReworkTag = WorkSourceOptions.TagReadyRework(tagPrefix);
+        var isReadyRework = candidate.Tags.Any(tag =>
+            tag.Equals(readyReworkTag, StringComparison.OrdinalIgnoreCase)
+        );
+        var pendingCycle = await reworkCycleStore.GetPendingForWorkItemAsync(candidate.Id, ct);
+
+        if (
+            isReadyRework
+            && pendingCycle?.RequestMode != ReworkRequestMode.Assistance
+        )
+        {
+            var cycleMode = pendingCycle?.RequestMode.ToString() ?? "none";
+            var guidance = pendingCycle is null
+                ? $"Skipped: work item has `{readyReworkTag}` but no Pending Assistance cycle. "
+                    + "Retry assistance materialization or remove the marker if this is new work."
+                : $"Skipped: work item has `{readyReworkTag}`, but its Pending cycle is "
+                    + $"{pendingCycle.RequestMode} rather than Assistance. Correct the marker or cycle before retrying.";
+
+            Log.ReadyReworkCandidateSkipped(
+                _logger,
+                candidate.Id,
+                candidate.Title,
+                readyReworkTag,
+                cycleMode,
+                guidance
+            );
+
+            if (candidate.Source != "LocalFake" && candidate.Source != "LocalFile")
+            {
+                await PostRepoKeyCommentAsync(workSource, candidate, guidance, ct);
+            }
+
+            return;
         }
 
         // ── Validate repo:{key} tag against repository profiles ────
@@ -364,30 +405,14 @@ public sealed partial class PollingWorker : BackgroundService
 
         Log.RunCreated(_logger, run.RunId, candidate.Id);
 
-        // ── Claim-time ReworkCycle lookup ──────────────────────────
-        // Single seam: after the run is created, check for a Pending
-        // ReworkCycle materialized by the feedback worker. If present,
-        // build a ReworkContext to thread through the happy path.
-        // If null, the happy path is completely untouched.
+        // ── Rework context from the pre-claim durable cycle ────────
+        // Reuse the exact cycle validated before the claim. Assistance context is
+        // rebuilt from persisted canonical PR metadata and does not depend on an
+        // originating run, which keeps human-authored PR dispatch restart-safe.
         ReworkContext? reworkContext = null;
-        var pendingCycle = await reworkCycleStore.GetPendingForWorkItemAsync(candidate.Id, ct);
-
         if (pendingCycle is not null)
         {
-            var feedbackBundle = JsonSerializer.Deserialize<IReadOnlyList<ReviewThread>>(
-                pendingCycle.FeedbackBundleJson,
-                JsonReadOptions
-            );
-
-            reworkContext = new ReworkContext
-            {
-                CycleNumber = pendingCycle.CycleNumber,
-                PriorRunId = pendingCycle.PriorRunId,
-                BranchName = pendingCycle.BranchName,
-                PullRequestUrl = pendingCycle.PullRequestUrl,
-                BaseCommitSha = pendingCycle.BaseCommitSha,
-                FeedbackBundle = feedbackBundle ?? Array.Empty<ReviewThread>(),
-            };
+            reworkContext = BuildReworkContext(pendingCycle);
 
             Log.ReworkCycleFound(
                 _logger,
@@ -549,7 +574,7 @@ public sealed partial class PollingWorker : BackgroundService
         // can see clarifications and ongoing discussion context.
         var comments = await FetchCommentsAsync(workSource, candidate, ct);
 
-        await InjectContextAsync(
+        var contextInjected = await InjectContextAsync(
             run,
             candidate,
             envHandle,
@@ -560,12 +585,29 @@ public sealed partial class PollingWorker : BackgroundService
             ct
         );
 
-        // Mark the pending ReworkCycle as Consumed after successful context injection.
-        // This closes the audit chain and prevents re-injection of the same bundle on retry.
+        // Mark the Pending cycle consumed only when every context artifact was written.
+        // A best-effort context failure must leave the durable cycle available for recovery.
         if (pendingCycle is not null)
         {
-            await reworkCycleStore.MarkConsumedAsync(pendingCycle.Id, run.RunId, ct);
-            Log.ReworkCycleConsumed(_logger, run.RunId, pendingCycle.Id, pendingCycle.CycleNumber);
+            if (contextInjected)
+            {
+                await reworkCycleStore.MarkConsumedAsync(pendingCycle.Id, run.RunId, ct);
+                Log.ReworkCycleConsumed(
+                    _logger,
+                    run.RunId,
+                    pendingCycle.Id,
+                    pendingCycle.CycleNumber
+                );
+            }
+            else
+            {
+                Log.ReworkCycleConsumptionDeferred(
+                    _logger,
+                    run.RunId,
+                    pendingCycle.Id,
+                    pendingCycle.CycleNumber
+                );
+            }
         }
 
         await AppendMilestoneEvent(
@@ -630,6 +672,63 @@ public sealed partial class PollingWorker : BackgroundService
 
         Log.RunAdvanced(_logger, run.RunId, candidate.Id);
     }
+
+    private async Task<string> ResolveWorkSourceTagPrefixAsync(
+        WorkCandidate candidate,
+        IManagedProfileResolver profileResolver,
+        CancellationToken ct
+    )
+    {
+        var environmentKey = GetWorkSourceEnvironmentKey(candidate.SourceMetadata);
+        if (!string.IsNullOrWhiteSpace(environmentKey))
+        {
+            var environment = await profileResolver.ResolveWorkSourceEnvironmentAsync(
+                environmentKey,
+                ct
+            );
+            if (environment is not null)
+            {
+                return NormalizeTagPrefix(environment.Profile.TagPrefix);
+            }
+        }
+
+        return NormalizeTagPrefix(_workSourceOptions.CurrentValue.TagPrefix);
+    }
+
+    private static string NormalizeTagPrefix(string? tagPrefix) =>
+        string.IsNullOrWhiteSpace(tagPrefix)
+            ? WorkSourceOptions.DefaultTagPrefix
+            : tagPrefix.Trim();
+
+    private static ReworkContext BuildReworkContext(ReworkCycle cycle)
+    {
+        var feedbackBundle = JsonSerializer.Deserialize<IReadOnlyList<ReviewThread>>(
+            cycle.FeedbackBundleJson,
+            JsonReadOptions
+        );
+        var usePullRequestMetadata = cycle.RequestMode == ReworkRequestMode.Assistance;
+
+        return new ReworkContext
+        {
+            RequestMode = cycle.RequestMode,
+            PullRequest = cycle.PullRequest,
+            CycleNumber = cycle.CycleNumber,
+            PriorRunId = cycle.PriorRunId,
+            BranchName = usePullRequestMetadata
+                ? FirstNonBlank(cycle.PullRequest.SourceBranch, cycle.BranchName)
+                : FirstNonBlank(cycle.BranchName, cycle.PullRequest.SourceBranch),
+            PullRequestUrl = usePullRequestMetadata
+                ? FirstNonBlank(cycle.PullRequest.PullRequestUrl, cycle.PullRequestUrl)
+                : FirstNonBlank(cycle.PullRequestUrl, cycle.PullRequest.PullRequestUrl),
+            BaseCommitSha = usePullRequestMetadata
+                ? FirstNonBlank(cycle.PullRequest.SourceCommitSha, cycle.BaseCommitSha)
+                : FirstNonBlank(cycle.BaseCommitSha, cycle.PullRequest.SourceCommitSha),
+            FeedbackBundle = feedbackBundle ?? Array.Empty<ReviewThread>(),
+        };
+    }
+
+    private static string FirstNonBlank(string primary, string fallback) =>
+        string.IsNullOrWhiteSpace(primary) ? fallback : primary;
 
     /// <summary>
     /// Resolves a candidate's managed repository and associated environments before claiming it.
@@ -815,8 +914,10 @@ public sealed partial class PollingWorker : BackgroundService
             var cloneUrl = repository.CloneUrl;
             var defaultBranch = repository.DefaultBranch;
 
-            // Override default branch when rework context specifies the prior PR branch.
-            var effectiveBranch = reworkContext?.BranchName ?? defaultBranch;
+            // Override default branch when rework context specifies the existing PR branch.
+            var effectiveBranch = string.IsNullOrWhiteSpace(reworkContext?.BranchName)
+                ? defaultBranch
+                : reworkContext.BranchName;
             var spec = new RepositorySpec
             {
                 RepoKey = repoKey,
@@ -842,7 +943,10 @@ public sealed partial class PollingWorker : BackgroundService
 
             // Guard: if we are overriding the branch for rework, verify it exists on origin.
             // Fail loud with [rework_branch_missing] — no silent fallback to main.
-            if (reworkContext?.BranchName is not null && reworkContext.BranchName != defaultBranch)
+            if (
+                !string.IsNullOrWhiteSpace(reworkContext?.BranchName)
+                && !reworkContext.BranchName.Equals(defaultBranch, StringComparison.Ordinal)
+            )
             {
                 var (exitCode, stdErr) = await CheckBranchExistsOnRemoteAsync(
                     cloneUrl,
@@ -967,7 +1071,7 @@ public sealed partial class PollingWorker : BackgroundService
     /// comments, and controller run configuration.
     /// This is best-effort: failures are logged but do not fail the run.
     /// </summary>
-    private async Task InjectContextAsync(
+    private async Task<bool> InjectContextAsync(
         AgentRunHandle run,
         WorkCandidate candidate,
         EnvironmentHandle envHandle,
@@ -1044,12 +1148,15 @@ public sealed partial class PollingWorker : BackgroundService
             await File.WriteAllTextAsync(Path.Combine(contextDir, "repository.json"), repoJson, ct);
 
             Log.ContextInjected(_logger, run.RunId, contextDir);
+            return true;
         }
         catch (Exception ex)
         {
             // Context injection is best-effort — failures are logged but
-            // do not prevent the run from proceeding.
+            // do not prevent the run from proceeding. Rework callers use the
+            // false result to keep their Pending cycle unconsumed.
             Log.ContextInjectionFailed(_logger, run.RunId, contextDir, ex);
+            return false;
         }
     }
 
@@ -1105,6 +1212,7 @@ public sealed partial class PollingWorker : BackgroundService
                         ["runtimeStatus"] = handle.Status.ToString(),
                         ["runtimeProfile"] = runtimeEnvironment.Key,
                         ["runtimeProvider"] = runtimeEnvironment.RuntimeProvider,
+                        ["executionKind"] = spec.ExecutionKind.ToString(),
                     },
                     ct
                 );
@@ -1512,12 +1620,22 @@ public sealed partial class PollingWorker : BackgroundService
         // ── Prior run metadata ─────────────────────────────────────
         sb.AppendLine("## Prior Run");
         sb.AppendLine();
+        sb.Append("- **Request Mode:** ");
+        sb.AppendLine(rework.RequestMode.ToString());
         sb.Append("- **Cycle:** ");
         sb.AppendLine(rework.CycleNumber.ToString(inv));
         sb.Append("- **Prior Run ID:** ");
-        sb.AppendLine(rework.PriorRunId);
+        sb.AppendLine(
+            string.IsNullOrWhiteSpace(rework.PriorRunId) ? "(not applicable)" : rework.PriorRunId
+        );
+        sb.Append("- **Repository:** ");
+        sb.AppendLine(rework.PullRequest.RepositoryKey);
+        sb.Append("- **Pull Request ID:** ");
+        sb.AppendLine(rework.PullRequest.PullRequestId);
         sb.Append("- **Branch:** ");
         sb.AppendLine(rework.BranchName);
+        sb.Append("- **Target Branch:** ");
+        sb.AppendLine(rework.PullRequest.TargetBranch);
         sb.Append("- **Pull Request:** ");
         sb.AppendLine(rework.PullRequestUrl);
         sb.Append("- **Base Commit:** ");
@@ -1622,11 +1740,22 @@ public sealed partial class PollingWorker : BackgroundService
         var reworkBlock = rework is not null
             ? new
             {
+                requestMode = rework.RequestMode.ToString(),
                 cycleNumber = rework.CycleNumber,
                 priorRunId = rework.PriorRunId,
                 branchName = rework.BranchName,
                 pullRequestUrl = rework.PullRequestUrl,
                 baseCommitSha = rework.BaseCommitSha,
+                pullRequest = new
+                {
+                    environmentKey = rework.PullRequest.EnvironmentKey,
+                    repositoryKey = rework.PullRequest.RepositoryKey,
+                    pullRequestId = rework.PullRequest.PullRequestId,
+                    url = rework.PullRequest.PullRequestUrl,
+                    sourceBranch = rework.PullRequest.SourceBranch,
+                    targetBranch = rework.PullRequest.TargetBranch,
+                    sourceCommitSha = rework.PullRequest.SourceCommitSha,
+                },
                 feedbackBundle = rework
                     .FeedbackBundle.Select(t => new
                     {
@@ -1820,6 +1949,7 @@ public sealed partial class PollingWorker : BackgroundService
         ISourceControlProvider sourceControlProvider,
         IEnvironmentStore environmentStore,
         IManagedProfileResolver profileResolver,
+        IReworkCycleStore reworkCycleStore,
         AgentControllerOptions options,
         CancellationToken ct
     )
@@ -1850,6 +1980,7 @@ public sealed partial class PollingWorker : BackgroundService
                     sourceControlProvider,
                     environmentStore,
                     profileResolver,
+                    reworkCycleStore,
                     lifecycle,
                     ct
                 );
@@ -1873,6 +2004,7 @@ public sealed partial class PollingWorker : BackgroundService
         ISourceControlProvider sourceControlProvider,
         IEnvironmentStore environmentStore,
         IManagedProfileResolver profileResolver,
+        IReworkCycleStore reworkCycleStore,
         IRunLifecycleService lifecycle,
         CancellationToken ct
     )
@@ -1885,17 +2017,26 @@ public sealed partial class PollingWorker : BackgroundService
             return;
         }
 
-        var candidate = new WorkCandidate
+        var candidate = workItem;
+        var reworkCycle = await ResolveReworkCycleForRunAsync(
+            run,
+            runStore,
+            reworkCycleStore,
+            ct
+        );
+        var reworkContext = reworkCycle is null ? null : BuildReworkContext(reworkCycle);
+
+        if (reworkCycle is not null)
         {
-            Id = workItem.Id,
-            Title = workItem.Title ?? "",
-            ExternalId = workItem.ExternalId,
-            ExternalUrl = workItem.ExternalUrl,
-            Source = workItem.Source ?? "LocalFake",
-            RepoKey = workItem.RepoKey,
-            Priority = workItem.Priority,
-            SourceMetadata = workItem.SourceMetadata,
-        };
+            Log.ReworkCycleFound(
+                _logger,
+                run.RunId,
+                candidate.Id,
+                reworkCycle.Id,
+                reworkCycle.CycleNumber,
+                reworkContext!.FeedbackBundle.Count
+            );
+        }
 
         var resolvedProfiles = await profileResolver.ResolveForRepositoryAsync(
             candidate.RepoKey,
@@ -2021,7 +2162,7 @@ public sealed partial class PollingWorker : BackgroundService
             runStore,
             lifecycle,
             null,
-            null,
+            reworkContext,
             ct
         );
 
@@ -2078,16 +2219,43 @@ public sealed partial class PollingWorker : BackgroundService
         // ── 5. ContextInjected ─────────────────────────────────────
         await lifecycle.TransitionAsync(run.RunId, RunLifecycleState.ContextInjected, ct);
 
-        await InjectContextAsync(
+        var contextInjected = await InjectContextAsync(
             run,
             candidate,
             envHandle,
             checkout,
             lifecycle,
             Array.Empty<WorkItemComment>(),
-            null,
+            reworkContext,
             ct
         );
+
+        // A restart may recover a cycle that was not consumed before the process
+        // stopped. Retry runs recover an already-consumed cycle through run lineage
+        // and must not replace its original consuming run.
+        if (reworkCycle?.Status == ReworkCycleStatus.Pending)
+        {
+            if (contextInjected)
+            {
+                await reworkCycleStore.MarkConsumedAsync(reworkCycle.Id, run.RunId, ct);
+                Log.ReworkCycleConsumed(
+                    _logger,
+                    run.RunId,
+                    reworkCycle.Id,
+                    reworkCycle.CycleNumber
+                );
+            }
+            else
+            {
+                Log.ReworkCycleConsumptionDeferred(
+                    _logger,
+                    run.RunId,
+                    reworkCycle.Id,
+                    reworkCycle.CycleNumber
+                );
+            }
+        }
+
         await AppendMilestoneEvent(
             lifecycle,
             run.RunId,
@@ -2120,7 +2288,7 @@ public sealed partial class PollingWorker : BackgroundService
             checkout,
             agentRuntime,
             lifecycle,
-            null,
+            reworkContext,
             ct
         );
 
@@ -2147,6 +2315,47 @@ public sealed partial class PollingWorker : BackgroundService
         );
 
         Log.RunAdvanced(_logger, run.RunId, candidate.Id);
+    }
+
+    private static async Task<ReworkCycle?> ResolveReworkCycleForRunAsync(
+        AgentRunHandle run,
+        IAgentRunStore runStore,
+        IReworkCycleStore reworkCycleStore,
+        CancellationToken ct
+    )
+    {
+        // Prefer a cycle already consumed by this retry lineage over a newer
+        // Pending cycle for the same story. This ensures an automatic retry
+        // continues the pull request that its failed attempt was executing.
+        var visitedRunIds = new HashSet<string>(StringComparer.Ordinal);
+        AgentRunHandle? lineageRun = run;
+
+        while (lineageRun is not null && visitedRunIds.Add(lineageRun.RunId))
+        {
+            var consumedCycle = await reworkCycleStore.GetConsumedByRunIdAsync(
+                lineageRun.RunId,
+                ct
+            );
+            if (
+                consumedCycle is not null
+                && string.Equals(
+                    consumedCycle.WorkItemId,
+                    run.WorkItemId,
+                    StringComparison.Ordinal
+                )
+            )
+            {
+                return consumedCycle;
+            }
+
+            lineageRun = string.IsNullOrWhiteSpace(lineageRun.PreviousRunId)
+                ? null
+                : await runStore.GetByIdAsync(lineageRun.PreviousRunId, ct);
+        }
+
+        return string.IsNullOrWhiteSpace(run.WorkItemId)
+            ? null
+            : await reworkCycleStore.GetPendingForWorkItemAsync(run.WorkItemId, ct);
     }
 
     /// <summary>
@@ -2242,6 +2451,19 @@ public sealed partial class PollingWorker : BackgroundService
         );
 
         [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Skipping ready-rework candidate {CandidateId} ({Title}). Marker={ReadyReworkTag}, PendingCycleMode={CycleMode}. {Guidance}"
+        )]
+        public static partial void ReadyReworkCandidateSkipped(
+            ILogger logger,
+            string candidateId,
+            string title,
+            string readyReworkTag,
+            string cycleMode,
+            string guidance
+        );
+
+        [LoggerMessage(
             Level = LogLevel.Debug,
             Message = "Could not claim candidate {CandidateId}: {Reason}"
         )]
@@ -2292,6 +2514,17 @@ public sealed partial class PollingWorker : BackgroundService
             Message = "[rework] ReworkCycle consumed — runId={RunId}, cycleId={CycleId}, cycleNumber={CycleNumber}"
         )]
         public static partial void ReworkCycleConsumed(
+            ILogger logger,
+            string runId,
+            string cycleId,
+            int cycleNumber
+        );
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "[rework] ReworkCycle remains Pending because context injection was incomplete — runId={RunId}, cycleId={CycleId}, cycleNumber={CycleNumber}"
+        )]
+        public static partial void ReworkCycleConsumptionDeferred(
             ILogger logger,
             string runId,
             string cycleId,
@@ -2410,7 +2643,7 @@ public sealed partial class PollingWorker : BackgroundService
         [LoggerMessage(
             Level = LogLevel.Information,
             Message = "Released ADO claim for run {RunId} (work item {WorkItemId}). "
-                + "Stripped agent-active/agent-worker tags, reverted to '{TargetState}'."
+                + "Stripped managed active/worker tags, reverted to '{TargetState}'."
         )]
         public static partial void ClaimReleased(
             ILogger logger,

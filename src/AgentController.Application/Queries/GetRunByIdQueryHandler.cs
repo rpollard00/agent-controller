@@ -13,13 +13,17 @@ public sealed class GetRunByIdQueryHandler(
     IAgentRunStore runStore,
     IWorkItemStore workItemStore,
     IEnvironmentStore environmentStore,
-    ILifecycleEventStore lifecycleEventStore
+    ILifecycleEventStore lifecycleEventStore,
+    IReworkCycleStore reworkCycleStore,
+    IReworkFeedbackStore reworkFeedbackStore
 ) : IQueryHandler<GetRunByIdQuery, RunDetailResult?>
 {
     private readonly IAgentRunStore _runStore = runStore;
     private readonly IWorkItemStore _workItemStore = workItemStore;
     private readonly IEnvironmentStore _environmentStore = environmentStore;
     private readonly ILifecycleEventStore _lifecycleEventStore = lifecycleEventStore;
+    private readonly IReworkCycleStore _reworkCycleStore = reworkCycleStore;
+    private readonly IReworkFeedbackStore _reworkFeedbackStore = reworkFeedbackStore;
 
     public async Task<RunDetailResult?> ExecuteAsync(
         GetRunByIdQuery query,
@@ -57,6 +61,8 @@ public sealed class GetRunByIdQueryHandler(
             query.RunId,
             cancellationToken
         );
+        var cycle = await ResolveCycleAsync(run, cancellationToken);
+        var feedback = await ResolveFeedbackAsync(cycle, cancellationToken);
 
         return new RunDetailResult
         {
@@ -74,10 +80,87 @@ public sealed class GetRunByIdQueryHandler(
             FinishedAt = run.FinishedAt,
             LastHeartbeatAt = run.LastHeartbeatAt,
             Error = run.Error,
+            RequestMode = cycle?.RequestMode,
+            PullRequest = cycle?.PullRequest,
+            CycleNumber = cycle?.CycleNumber,
+            AssistanceStoryWorkItemId = feedback?.AssistanceStoryWorkItemId
+                ?? (cycle?.RequestMode == ReworkRequestMode.Assistance ? cycle.WorkItemId : null),
+            AssistanceStoryExternalId = feedback?.AssistanceStoryExternalId
+                ?? (cycle?.RequestMode == ReworkRequestMode.Assistance ? workItem?.ExternalId : null),
+            AssistanceStoryUrl = feedback?.AssistanceStoryUrl
+                ?? (cycle?.RequestMode == ReworkRequestMode.Assistance ? workItem?.ExternalUrl : null),
+            FeedbackStatus = feedback?.Status,
+            CycleStatus = cycle?.Status,
+            ConsumingRunId = cycle?.NewRunId,
             Environment = environment,
             LifecycleEvents = lifecycleEvents,
             CreatedAt = run.CreatedAt,
             UpdatedAt = run.UpdatedAt,
         };
+    }
+
+    private async Task<ReworkCycle?> ResolveCycleAsync(
+        AgentRunHandle run,
+        CancellationToken cancellationToken
+    )
+    {
+        var visitedRunIds = new HashSet<string>(StringComparer.Ordinal);
+        AgentRunHandle? lineageRun = run;
+        while (lineageRun is not null && visitedRunIds.Add(lineageRun.RunId))
+        {
+            var consumedCycle = await _reworkCycleStore.GetConsumedByRunIdAsync(
+                lineageRun.RunId,
+                cancellationToken
+            );
+            if (consumedCycle is not null)
+            {
+                return consumedCycle;
+            }
+
+            if (string.IsNullOrWhiteSpace(lineageRun.PreviousRunId))
+            {
+                break;
+            }
+
+            lineageRun = await _runStore.GetByIdAsync(
+                lineageRun.PreviousRunId,
+                cancellationToken
+            );
+        }
+
+        return string.IsNullOrWhiteSpace(run.WorkItemId)
+            ? null
+            : await _reworkCycleStore.GetPendingForWorkItemAsync(
+                run.WorkItemId,
+                cancellationToken
+            );
+    }
+
+    private async Task<ReworkFeedback?> ResolveFeedbackAsync(
+        ReworkCycle? cycle,
+        CancellationToken cancellationToken
+    )
+    {
+        if (cycle is null)
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(cycle.CorrelationId))
+        {
+            var correlated = await _reworkFeedbackStore.GetByCorrelationIdAsync(
+                cycle.CorrelationId,
+                cancellationToken
+            );
+            if (correlated is not null)
+            {
+                return correlated;
+            }
+        }
+
+        var trackedFeedback = await _reworkFeedbackStore.GetTrackedAsync(cancellationToken);
+        return trackedFeedback.FirstOrDefault(feedback =>
+            ReworkTrackingMatcher.IsSameMaterialization(feedback, cycle)
+        );
     }
 }

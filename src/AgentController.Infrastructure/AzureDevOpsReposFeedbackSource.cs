@@ -114,6 +114,8 @@ internal sealed class AzureDevOpsReposFeedbackSource : IFeedbackSource
 
             signals.Add(new ReworkSignal
             {
+                RequestMode = pr.RequestMode,
+                PullRequest = pr.PullRequest,
                 OriginatingRunId = pr.OriginatingRunId,
                 PullRequestId = pr.PullRequestId,
                 Threads = threads,

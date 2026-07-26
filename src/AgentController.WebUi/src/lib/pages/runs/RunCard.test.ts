@@ -17,6 +17,15 @@ const baseCard: RunCardItem = {
   runtimeProfileName: 'ReeseProjecto LocalWorkspace',
   environmentProviderType: 'LocalWorkspace',
   runAttempt: 1,
+  requestMode: null,
+  pullRequest: null,
+  cycleNumber: null,
+  assistanceStoryWorkItemId: null,
+  assistanceStoryExternalId: null,
+  assistanceStoryUrl: null,
+  feedbackStatus: null,
+  cycleStatus: null,
+  consumingRunId: null,
   lastEventType: 'runtime.progress',
   lastEventMessage: 'Implementing the run card',
   lastEventAt: new Date().toISOString(),
@@ -26,6 +35,27 @@ const baseCard: RunCardItem = {
 
 function card(overrides: Partial<RunCardItem> = {}): RunCardItem {
   return { ...baseCard, ...overrides };
+}
+
+const assistancePullRequest = {
+  environmentKey: 'ado-prod',
+  repositoryKey: 'agent-controller',
+  pullRequestId: '42',
+  pullRequestUrl: 'https://dev.azure.test/agent-controller/pullrequest/42',
+  sourceBranch: 'refs/heads/contributor/change',
+  targetBranch: 'refs/heads/main',
+  sourceCommitSha: 'abc123',
+  canonicalKey: 'ado-prod:agent-controller:42',
+  hasCanonicalIdentity: true,
+} as const;
+
+function assistanceCard(overrides: Partial<RunCardItem> = {}): RunCardItem {
+  return card({
+    requestMode: 'assistance',
+    pullRequest: assistancePullRequest,
+    feedbackStatus: 'watching',
+    ...overrides,
+  });
 }
 
 describe('RunCard', () => {
@@ -113,17 +143,142 @@ describe('RunCard', () => {
     expect(screen.getByText('Attempt 3')).toBeVisible();
   });
 
-  it('uses the synthesized rework soak state and thread-count message', () => {
+  it('preserves the revival rework soak presentation', () => {
     render(RunCard, {
       card: card({
         kind: 'rework-soak',
         status: 'Rework feedback soaking',
         category: 'pending',
+        requestMode: 'revival',
+        pullRequest: assistancePullRequest,
+        feedbackStatus: 'watching',
         lastEventMessage: '3 feedback threads awaiting soak',
       }),
     });
 
     expect(screen.getByRole('heading', { name: 'Rework soak' })).toBeVisible();
+    expect(screen.getByText('Revival rework')).toBeVisible();
     expect(screen.getByText('3 feedback threads awaiting soak')).toBeVisible();
+    expect(screen.getByText('Work item')).toBeVisible();
+    expect(screen.queryByText('PR & story')).not.toBeInTheDocument();
+  });
+
+  it.each<[
+    RunCardItem['feedbackStatus'],
+    RunCardItem['cycleStatus'],
+    string,
+  ]>([
+    ['watching', null, 'Assistance soaking'],
+    ['soaked', null, 'Assistance ready'],
+    ['materialized', 'pending', 'Assistance story queued'],
+  ])(
+    'labels assistance tracking state %s/%s as %s',
+    (feedbackStatus, cycleStatus, expectedLabel) => {
+      render(RunCard, {
+        card: assistanceCard({
+          kind: 'rework-soak',
+          status: expectedLabel,
+          category: 'pending',
+          feedbackStatus,
+          cycleStatus,
+        }),
+      });
+
+      expect(screen.getByRole('heading', { name: expectedLabel })).toBeVisible();
+      expect(screen.getByText('PR assistance')).toBeVisible();
+    },
+  );
+
+  it('links an assistance soak directly to its pull request before a story exists', () => {
+    render(RunCard, {
+      card: assistanceCard({
+        kind: 'rework-soak',
+        status: 'Assistance feedback soaking',
+        category: 'pending',
+      }),
+    });
+
+    const pullRequestLink = screen.getByRole('link', { name: 'PR #42' });
+    expect(pullRequestLink).toHaveAttribute(
+      'href',
+      'https://dev.azure.test/agent-controller/pullrequest/42',
+    );
+    expect(pullRequestLink).toHaveAttribute('target', '_blank');
+    expect(pullRequestLink).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(screen.getByText('Story not created yet')).toBeVisible();
+  });
+
+  it('links a queued assistance cycle to both the pull request and generated story', () => {
+    render(RunCard, {
+      card: assistanceCard({
+        kind: 'rework-soak',
+        status: 'Assistance story queued',
+        category: 'pending',
+        feedbackStatus: 'materialized',
+        cycleStatus: 'pending',
+        cycleNumber: 2,
+        assistanceStoryWorkItemId: 'story-local-8042',
+        assistanceStoryExternalId: '8042',
+        assistanceStoryUrl: 'https://dev.azure.test/workitems/8042',
+        workItemTitle: 'Assist PR 42',
+        workItemUrl: 'https://dev.azure.test/workitems/8042',
+      }),
+    });
+
+    expect(screen.getByRole('heading', { name: 'Assistance story queued' })).toBeVisible();
+    expect(screen.getByText('Cycle 2')).toBeVisible();
+    expect(screen.getByRole('link', { name: 'PR #42' })).toHaveAttribute(
+      'href',
+      assistancePullRequest.pullRequestUrl,
+    );
+    const storyLink = screen.getByRole('link', { name: 'Story #8042' });
+    expect(storyLink).toHaveAttribute('href', 'https://dev.azure.test/workitems/8042');
+    expect(storyLink).toHaveAttribute('target', '_blank');
+    expect(storyLink).toHaveAttribute('rel', 'noopener noreferrer');
+  });
+
+  it('labels a consuming assistance run as in progress', () => {
+    render(RunCard, {
+      card: assistanceCard({
+        status: 'AgentRunning',
+        category: 'executing',
+        feedbackStatus: 'materialized',
+        cycleStatus: 'consumed',
+        cycleNumber: 2,
+        assistanceStoryWorkItemId: 'story-local-8042',
+        assistanceStoryExternalId: '8042',
+        assistanceStoryUrl: 'https://dev.azure.test/workitems/8042',
+      }),
+    });
+
+    expect(screen.getByRole('heading', { name: 'Assistance in progress' })).toBeVisible();
+    expect(screen.getByText('Agent running')).toBeVisible();
+    expect(screen.getByText('PR assistance')).toBeVisible();
+    expect(screen.getByRole('link', { name: 'PR #42' })).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Story #8042' })).toBeVisible();
+  });
+
+  it.each<[
+    string,
+    RunCardCategory,
+    string,
+  ]>([
+    ['BranchPushed', 'completed', 'Assistance completed'],
+    ['Completed', 'completed', 'Assistance completed'],
+    ['Failed', 'attention', 'Assistance failed'],
+    ['NeedsHuman', 'attention', 'Assistance needs human'],
+    ['Cancelled', 'attention', 'Assistance cancelled'],
+  ])('labels the %s assistance outcome in %s as %s', (status, category, expectedLabel) => {
+    render(RunCard, {
+      card: assistanceCard({
+        status,
+        category,
+        feedbackStatus: 'materialized',
+        cycleStatus: 'consumed',
+      }),
+    });
+
+    expect(screen.getByRole('heading', { name: expectedLabel })).toBeVisible();
+    expect(screen.getByText('PR assistance')).toBeVisible();
   });
 });

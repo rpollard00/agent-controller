@@ -214,4 +214,8 @@ public static class ControllerEventTypes
     /// <summary>Work-source projection failed (best-effort). The controller internal
     /// state transition succeeded but the external work source could not be updated.</summary>
     public const string WorkSourceProjectionFailed = "controller.work_source_projection_failed";
+
+    /// <summary>Assistance progress could not be projected to pull-request labels.</summary>
+    public const string AssistancePullRequestLabelProjectionFailed =
+        "controller.assistance_pull_request_label_projection_failed";
 }

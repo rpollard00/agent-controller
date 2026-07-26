@@ -419,6 +419,11 @@ public sealed class AzureDevOpsConnectionTests
             CancellationToken ct
         ) => Task.FromResult<IReadOnlyList<WorkCandidate>>(Array.Empty<WorkCandidate>());
 
+        public Task<CreatedWorkItemResult> CreateWorkItemAsync(
+            BoardsCreateWorkItemParameters parameters,
+            CancellationToken ct
+        ) => throw new NotSupportedException();
+
         public Task<ClaimResult> TryClaimWorkItemAsync(
             ExternalWorkRef workRef,
             ClaimRequest claim,

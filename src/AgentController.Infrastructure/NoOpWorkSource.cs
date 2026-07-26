@@ -33,6 +33,18 @@ public sealed class NoOpWorkSource : IWorkSource
         );
     }
 
+    public Task<CreatedWorkItemResult> CreateAssistanceStoryAsync(
+        CreateAssistanceStoryRequest request,
+        CancellationToken cancellationToken
+    )
+    {
+        return Task.FromException<CreatedWorkItemResult>(
+            new NotSupportedException(
+                "No-op work source: assistance story creation is not supported."
+            )
+        );
+    }
+
     public Task UpdateStatusAsync(
         ExternalWorkRef workRef,
         ExternalWorkStatus status,

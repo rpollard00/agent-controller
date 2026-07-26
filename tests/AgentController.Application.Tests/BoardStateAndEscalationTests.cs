@@ -826,6 +826,12 @@ public class BoardStateAndEscalationTests
             return Task.FromResult(new ClaimResult { Success = true });
         }
 
+        public Task<CreatedWorkItemResult> CreateAssistanceStoryAsync(
+            CreateAssistanceStoryRequest request, CancellationToken ct)
+        {
+            throw new NotSupportedException();
+        }
+
         public Task UpdateStatusAsync(ExternalWorkRef workRef, ExternalWorkStatus status, CancellationToken ct)
         {
             StatusUpdates.Add((workRef, status));
@@ -867,6 +873,12 @@ public class BoardStateAndEscalationTests
         public Task<ClaimResult> TryClaimAsync(WorkCandidate candidate, ClaimRequest claim, CancellationToken ct)
         {
             return Task.FromResult(new ClaimResult { Success = true });
+        }
+
+        public Task<CreatedWorkItemResult> CreateAssistanceStoryAsync(
+            CreateAssistanceStoryRequest request, CancellationToken ct)
+        {
+            throw new InvalidOperationException("Simulated work source failure");
         }
 
         public Task UpdateStatusAsync(ExternalWorkRef workRef, ExternalWorkStatus status, CancellationToken ct)

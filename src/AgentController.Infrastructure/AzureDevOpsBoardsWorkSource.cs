@@ -116,7 +116,96 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
             EnvironmentKey = environmentKey,
         };
 
-        return await selection.Client.TryClaimWorkItemAsync(workRef, claim, cancellationToken);
+        return await selection.Client.TryClaimWorkItemAsync(
+            workRef,
+            claim with { TagPrefix = GetTagPrefix(selection.Environment.Profile) },
+            cancellationToken
+        );
+    }
+
+    public async Task<CreatedWorkItemResult> CreateAssistanceStoryAsync(
+        CreateAssistanceStoryRequest request,
+        CancellationToken cancellationToken
+    )
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var selection = await ResolveRequiredClientAsync(
+            scope.ServiceProvider,
+            request.EnvironmentKey,
+            cancellationToken
+        );
+        using var disposableClient = selection.Client as IDisposable;
+
+        var profile = selection.Environment.Profile;
+        var created = await selection.Client.CreateWorkItemAsync(
+            new BoardsCreateWorkItemParameters
+            {
+                Project = profile.Project,
+                WorkItemType = request.WorkItemType,
+                RepoKey = request.RepoKey,
+                Title = request.Title,
+                Description = request.Description,
+                Tags = AssistanceStoryCreation.BuildManagedTags(
+                    request,
+                    GetTagPrefix(profile)
+                ),
+                Relations = request.Relations,
+            },
+            cancellationToken
+        );
+
+        return created with
+        {
+            Candidate = created.Candidate with
+            {
+                SourceMetadata = AddEnvironmentKey(
+                    created.Candidate.SourceMetadata,
+                    profile.Key
+                ),
+            },
+        };
+    }
+
+    public async Task<WorkCandidate> MakeAssistanceStoryReadyAsync(
+        WorkCandidate candidate,
+        CancellationToken cancellationToken
+    )
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+
+        var environmentKey = GetEnvironmentKey(candidate.SourceMetadata);
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var selection = await ResolveRequiredClientAsync(
+            scope.ServiceProvider,
+            environmentKey,
+            cancellationToken
+        );
+        using var disposableClient = selection.Client as IDisposable;
+
+        var readyTag = WorkSourceOptions.TagReadyRework(
+            GetTagPrefix(selection.Environment.Profile)
+        );
+        var updated = await selection.Client.UpdateWorkItemStatusAsync(
+            ToExternalWorkRef(candidate, environmentKey),
+            new ExternalWorkStatus { Tags = [readyTag] },
+            cancellationToken
+        );
+        if (!updated)
+        {
+            throw new InvalidOperationException(
+                $"Could not publish assistance story '{candidate.ExternalId}' with its ready-rework tag."
+            );
+        }
+
+        return candidate with
+        {
+            Tags = candidate.Tags
+                .Append(readyTag)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+        };
     }
 
     public async Task UpdateStatusAsync(
@@ -183,7 +272,10 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
         );
         using var disposableClient = selection.Client as IDisposable;
 
-        await selection.Client.ReleaseClaimWorkItemAsync(request, cancellationToken);
+        await selection.Client.ReleaseClaimWorkItemAsync(
+            request with { TagPrefix = GetTagPrefix(selection.Environment.Profile) },
+            cancellationToken
+        );
     }
 
     public async Task<ReworkReactivateResult> ReactivateForReworkAsync(
@@ -228,9 +320,7 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
         //     [rework_tag_strip_failed] so the cycle is NOT marked reactivated.
         // Use prefix-aware tag helpers so managed profiles with custom TagPrefix
         // get the correct lifecycle tag names.
-        var tagPrefix = string.IsNullOrWhiteSpace(selection.Environment.Profile.TagPrefix)
-            ? WorkSourceOptions.DefaultTagPrefix
-            : selection.Environment.Profile.TagPrefix;
+        var tagPrefix = GetTagPrefix(selection.Environment.Profile);
 
         var mergedOk = await selection.Client.UpdateWorkItemStatusAsync(
             workRef,
@@ -275,22 +365,32 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
         WorkSourceEnvironmentProfile profile
     )
     {
-        var tagPrefix = string.IsNullOrWhiteSpace(profile.TagPrefix)
-            ? WorkSourceOptions.DefaultTagPrefix
-            : profile.TagPrefix;
+        var tagPrefix = GetTagPrefix(profile);
         return new BoardsQueryParameters
         {
             Project = query.Project ?? profile.Project,
             ExcludedStates = query.States is { Count: > 0 }
                 ? null
                 : BoardTerminalStates.Values,
-            Tags = query.Tags is { Count: > 0 } ? query.Tags : [WorkSourceOptions.TagReady(tagPrefix)],
+            Tags = query.Tags is { Count: > 0 } ? query.Tags : null,
+            AnyTags = query.Tags is { Count: > 0 }
+                ? null
+                :
+                [
+                    WorkSourceOptions.TagReady(tagPrefix),
+                    WorkSourceOptions.TagReadyRework(tagPrefix),
+                ],
             ExcludedTags = query.ExcludedTags is { Count: > 0 }
                 ? query.ExcludedTags
                 : WorkSourceOptions.LifecycleTags(tagPrefix),
             MaxResults = query.MaxResults,
         };
     }
+
+    private static string GetTagPrefix(WorkSourceEnvironmentProfile profile) =>
+        string.IsNullOrWhiteSpace(profile.TagPrefix)
+            ? WorkSourceOptions.DefaultTagPrefix
+            : profile.TagPrefix.Trim();
 
     private static async Task<ClientSelection?> ResolveClientAsync(
         IServiceProvider services,
@@ -343,6 +443,24 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
     private static string? GetEnvironmentKey(IReadOnlyDictionary<string, string>? metadata)
     {
         return metadata?.TryGetValue("workSourceEnvironmentKey", out var key) == true ? key : null;
+    }
+
+    private static ExternalWorkRef ToExternalWorkRef(
+        WorkCandidate candidate,
+        string? environmentKey
+    )
+    {
+        var revision = candidate.SourceMetadata?.TryGetValue("revision", out var value) == true
+            ? value
+            : null;
+        return new ExternalWorkRef
+        {
+            Source = candidate.Source,
+            ExternalId = candidate.ExternalId,
+            Url = candidate.ExternalUrl,
+            Revision = revision,
+            EnvironmentKey = environmentKey,
+        };
     }
 
     private sealed record ClientSelection(

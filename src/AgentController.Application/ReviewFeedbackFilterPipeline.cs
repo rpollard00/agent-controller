@@ -43,26 +43,65 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
     }
 
     /// <summary>
-    /// Apply the full 5-step filter pipeline to raw rework signals.
+    /// Apply the full 5-step filter pipeline to raw revival signals.
     /// Returns signals with only surviving threads; signals with zero surviving
     /// threads are dropped from the result.
     /// </summary>
-    public async Task<IReadOnlyList<ReworkSignal>> FilterAsync(
+    public Task<IReadOnlyList<ReworkSignal>> FilterAsync(
         FeedbackQuery query,
         IReadOnlyList<ReworkSignal> rawSignals,
         CancellationToken cancellationToken)
     {
-        // ── (2) Allowlist fail-closed ─────────────────────────────
-        // Check once at startup; if empty, log warning and return nothing.
-        if (query.AllowedReviewers.Count == 0)
-        {
-            await LogAllowlistEmptyWarningAsync();
-            return [];
-        }
+        return FilterCoreAsync(
+            query,
+            rawSignals,
+            applyMarkerGate: true,
+            preserveEmptySignals: false,
+            cancellationToken
+        );
+    }
 
+    /// <summary>
+    /// Filter review threads included in assistance requests discovered from managed
+    /// pull requests. Discovery has already applied the assistance-marker gate, so this
+    /// path reuses reviewer, status, and content filtering while retaining the request
+    /// when no thread qualifies. An empty reviewer allowlist therefore produces an empty
+    /// bundle rather than suppressing the label-driven assistance request.
+    /// </summary>
+    public Task<IReadOnlyList<ReworkSignal>> FilterAssistanceAsync(
+        FeedbackQuery query,
+        IReadOnlyList<ReworkSignal> rawSignals,
+        CancellationToken cancellationToken)
+    {
+        return FilterCoreAsync(
+            query,
+            rawSignals,
+            applyMarkerGate: false,
+            preserveEmptySignals: true,
+            cancellationToken
+        );
+    }
+
+    private async Task<IReadOnlyList<ReworkSignal>> FilterCoreAsync(
+        FeedbackQuery query,
+        IReadOnlyList<ReworkSignal> rawSignals,
+        bool applyMarkerGate,
+        bool preserveEmptySignals,
+        CancellationToken cancellationToken)
+    {
         if (rawSignals.Count == 0)
         {
             return [];
+        }
+
+        var hasAllowedReviewers = query.AllowedReviewers.Count > 0;
+        if (!hasAllowedReviewers)
+        {
+            await LogAllowlistEmptyWarningAsync();
+            if (!preserveEmptySignals)
+            {
+                return [];
+            }
         }
 
         var filteredSignals = new List<ReworkSignal>();
@@ -71,22 +110,26 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            // Find the matching PrUnderTest for this signal (needed for label fetch).
-            var pr = query.OpenPrs
-                .FirstOrDefault(p => p.PullRequestId == signal.PullRequestId);
-
-            if (pr is null)
+            if (applyMarkerGate)
             {
-                // Signal without a matching PR — skip (shouldn't happen).
-                Log.SignalWithoutMatchingPr(_logger, signal.PullRequestId);
-                continue;
-            }
+                // Find the matching PrUnderTest for this signal (needed for label fetch).
+                var pr = query.OpenPrs.FirstOrDefault(candidate =>
+                    candidate.PullRequestId == signal.PullRequestId
+                );
 
-            // ── (1) Marker gate ───────────────────────────────────
-            if (!await PassMarkerGateAsync(pr, query, cancellationToken))
-            {
-                Log.PrFailedMarkerGate(_logger, signal.PullRequestId, pr.PullRequestUrl);
-                continue;
+                if (pr is null)
+                {
+                    // Signal without a matching PR — skip (shouldn't happen).
+                    Log.SignalWithoutMatchingPr(_logger, signal.PullRequestId);
+                    continue;
+                }
+
+                // ── (1) Marker gate ───────────────────────────────
+                if (!await PassMarkerGateAsync(pr, query, cancellationToken))
+                {
+                    Log.PrFailedMarkerGate(_logger, signal.PullRequestId, pr.PullRequestUrl);
+                    continue;
+                }
             }
 
             // ── (3) Thread-status filter ──────────────────────────
@@ -97,46 +140,62 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
             if (activeThreads.Count != signal.Threads.Count)
             {
                 Log.ThreadsFilteredByStatus(
-                    _logger, signal.PullRequestId, signal.Threads.Count, activeThreads.Count);
+                    _logger,
+                    signal.PullRequestId,
+                    signal.Threads.Count,
+                    activeThreads.Count
+                );
             }
 
             if (activeThreads.Count == 0)
             {
                 Log.PrNoActiveThreads(_logger, signal.PullRequestId);
-                continue;
             }
 
             // ── (4) Thread-author filter ──────────────────────────
-            var authorFilteredThreads = activeThreads
-                .Where(t => HasCommentByAllowedReviewer(t, query.AllowedReviewers))
-                .ToList();
+            var authorFilteredThreads = hasAllowedReviewers
+                ? activeThreads
+                    .Where(t => HasCommentByAllowedReviewer(t, query.AllowedReviewers))
+                    .ToList()
+                : [];
 
             if (authorFilteredThreads.Count != activeThreads.Count)
             {
                 Log.ThreadsFilteredByAuthor(
-                    _logger, signal.PullRequestId, activeThreads.Count, authorFilteredThreads.Count);
+                    _logger,
+                    signal.PullRequestId,
+                    activeThreads.Count,
+                    authorFilteredThreads.Count
+                );
             }
 
-            if (authorFilteredThreads.Count == 0)
+            if (activeThreads.Count > 0 && authorFilteredThreads.Count == 0)
             {
                 Log.PrNoThreadsByAllowedReviewer(_logger, signal.PullRequestId);
-                continue;
             }
 
             // ── (5) Comment-content filter ────────────────────────
             var contentFilteredThreads = authorFilteredThreads
-                .Where(t => HasNonEmptyComment(t))
+                .Where(HasNonEmptyComment)
                 .ToList();
 
             if (contentFilteredThreads.Count != authorFilteredThreads.Count)
             {
                 Log.ThreadsFilteredByContent(
-                    _logger, signal.PullRequestId, authorFilteredThreads.Count, contentFilteredThreads.Count);
+                    _logger,
+                    signal.PullRequestId,
+                    authorFilteredThreads.Count,
+                    contentFilteredThreads.Count
+                );
             }
 
-            if (contentFilteredThreads.Count == 0)
+            if (authorFilteredThreads.Count > 0 && contentFilteredThreads.Count == 0)
             {
                 Log.PrNoThreadsWithContent(_logger, signal.PullRequestId);
+            }
+
+            if (contentFilteredThreads.Count == 0 && !preserveEmptySignals)
+            {
                 continue;
             }
 
@@ -153,17 +212,21 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
                 ? survivingComments.Max(c => c.CreatedAt)
                 : signal.LastQualifyingCommentAt;
 
-            filteredSignals.Add(new ReworkSignal
+            filteredSignals.Add(signal with
             {
-                OriginatingRunId = signal.OriginatingRunId,
-                PullRequestId = signal.PullRequestId,
                 Threads = contentFilteredThreads,
                 FirstQualifyingCommentAt = firstQualifyingCommentAt,
                 LastQualifyingCommentAt = lastQualifyingCommentAt,
             });
 
-            Log.PrPassedAllFilters(
-                _logger, signal.PullRequestId, contentFilteredThreads.Count);
+            if (contentFilteredThreads.Count > 0)
+            {
+                Log.PrPassedAllFilters(
+                    _logger,
+                    signal.PullRequestId,
+                    contentFilteredThreads.Count
+                );
+            }
         }
 
         return filteredSignals;

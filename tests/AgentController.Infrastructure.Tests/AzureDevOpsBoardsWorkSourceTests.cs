@@ -28,7 +28,10 @@ public class AzureDevOpsBoardsWorkSourceTests
     [Fact]
     public async Task FindEligibleAsync_PollsAllEnabledManagedEnvironmentsWithProfileSettings()
     {
-        var alphaProfile = ManagedEnvironment("alpha", "AlphaProject");
+        var alphaProfile = ManagedEnvironment("alpha", "AlphaProject") with
+        {
+            TagPrefix = "custom",
+        };
         var zetaProfile = ManagedEnvironment("zeta", "ZetaProject");
         var alphaClient = new MockAzureDevOpsBoardsClient
         {
@@ -81,11 +84,19 @@ public class AzureDevOpsBoardsWorkSourceTests
         Assert.Equal("AlphaProject", Assert.Single(alphaClient.QueryCalls).Project);
         Assert.Equal(BoardTerminalStates.Values, alphaClient.QueryCalls[0].ExcludedStates);
         Assert.Null(alphaClient.QueryCalls[0].States);
-        Assert.Equal(["agent-ready"], alphaClient.QueryCalls[0].Tags);
+        Assert.Null(alphaClient.QueryCalls[0].Tags);
+        Assert.Equal(
+            ["custom-ready", "custom-ready-rework"],
+            alphaClient.QueryCalls[0].AnyTags
+        );
         Assert.Equal("ZetaProject", Assert.Single(zetaClient.QueryCalls).Project);
         Assert.Equal(BoardTerminalStates.Values, zetaClient.QueryCalls[0].ExcludedStates);
         Assert.Null(zetaClient.QueryCalls[0].States);
-        Assert.Equal(["agent-ready"], zetaClient.QueryCalls[0].Tags);
+        Assert.Null(zetaClient.QueryCalls[0].Tags);
+        Assert.Equal(
+            ["agent-ready", "agent-ready-rework"],
+            zetaClient.QueryCalls[0].AnyTags
+        );
         Assert.Equal("alpha", candidates[0].SourceMetadata?["workSourceEnvironmentKey"]);
         Assert.Equal("zeta", candidates[1].SourceMetadata?["workSourceEnvironmentKey"]);
     }
@@ -143,6 +154,177 @@ public class AzureDevOpsBoardsWorkSourceTests
         );
 
         Assert.Contains("managed", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ClaimAndRelease_ForwardManagedEnvironmentTagPrefix()
+    {
+        var client = new MockAzureDevOpsBoardsClient
+        {
+            ClaimResult = new ClaimResult { Success = true },
+        };
+        var environment = ManagedEnvironment("managed", Project) with
+        {
+            TagPrefix = "ac",
+        };
+        var workSource = CreateWorkSource(client, environment);
+        var candidate = new WorkCandidate
+        {
+            Id = "wi-1",
+            ExternalId = "1",
+            Source = "AzureDevOpsBoards",
+            SourceMetadata = new Dictionary<string, string>
+            {
+                ["workSourceEnvironmentKey"] = environment.Key,
+            },
+        };
+
+        var result = await workSource.TryClaimAsync(
+            candidate,
+            new ClaimRequest { WorkerId = "worker-1" },
+            CancellationToken.None
+        );
+        await workSource.ReleaseClaimAsync(
+            new ReleaseClaimRequest
+            {
+                WorkRef = new ExternalWorkRef
+                {
+                    Source = candidate.Source,
+                    ExternalId = candidate.ExternalId,
+                    EnvironmentKey = environment.Key,
+                },
+                WorkerId = "worker-1",
+            },
+            CancellationToken.None
+        );
+
+        Assert.True(result.Success);
+        Assert.Equal("ac", Assert.Single(client.ClaimCalls).TagPrefix);
+        Assert.Equal("ac", Assert.Single(client.ReleaseClaimCalls).TagPrefix);
+    }
+
+    [Fact]
+    public async Task CreateAssistanceStoryAsync_AppliesManagedTagsAndEnvironmentMetadata()
+    {
+        var client = new MockAzureDevOpsBoardsClient
+        {
+            CreateResult = new CreatedWorkItemResult
+            {
+                ExternalId = "501",
+                Url = "https://dev.azure.com/testorg/TestProject/_workitems/edit/501",
+                Revision = "3",
+                Candidate = new WorkCandidate
+                {
+                    Id = "wi_501",
+                    ExternalId = "501",
+                    Source = "AzureDevOpsBoards",
+                    SourceMetadata = new Dictionary<string, string> { ["revision"] = "3" },
+                },
+            },
+        };
+        var environment = ManagedEnvironment("managed", Project) with
+        {
+            TagPrefix = "custom",
+        };
+        var workSource = CreateWorkSource(client, environment);
+        var relation = new WorkItemRelation
+        {
+            RelationType = "System.LinkTypes.Related",
+            Url = "https://dev.azure.com/testorg/_apis/wit/workItems/41",
+        };
+
+        var created = await workSource.CreateAssistanceStoryAsync(
+            new CreateAssistanceStoryRequest
+            {
+                EnvironmentKey = environment.Key,
+                WorkItemType = "Product Backlog Item",
+                RepoKey = "widgets",
+                Title = "Continue PR 17",
+                Description = "<p>Review &amp; update the existing PR.</p>",
+                CorrelationTags = ["assistance:correlation-17", "repo:widgets"],
+                Relations = [relation],
+            },
+            CancellationToken.None
+        );
+
+        var call = Assert.Single(client.CreateCalls);
+        Assert.Equal(Project, call.Project);
+        Assert.Equal("Product Backlog Item", call.WorkItemType);
+        Assert.Equal("widgets", call.RepoKey);
+        Assert.Equal("Continue PR 17", call.Title);
+        Assert.Equal("<p>Review &amp; update the existing PR.</p>", call.Description);
+        Assert.Equal(
+            ["repo:widgets", "custom-ready-rework", "assistance:correlation-17"],
+            call.Tags
+        );
+        Assert.Equal(relation, Assert.Single(call.Relations));
+        Assert.Equal("501", created.ExternalId);
+        Assert.Equal("3", created.Revision);
+        Assert.Equal("managed", created.Candidate.SourceMetadata?["workSourceEnvironmentKey"]);
+        Assert.Equal("3", created.Candidate.SourceMetadata?["revision"]);
+    }
+
+    [Fact]
+    public async Task CreateThenPublishAssistanceStory_DefersReadyTagUntilPublication()
+    {
+        var client = new MockAzureDevOpsBoardsClient
+        {
+            CreateResult = new CreatedWorkItemResult
+            {
+                ExternalId = "502",
+                Url = "https://dev.azure.com/testorg/TestProject/_workitems/edit/502",
+                Revision = "1",
+                Candidate = new WorkCandidate
+                {
+                    Id = "wi_502",
+                    ExternalId = "502",
+                    ExternalUrl =
+                        "https://dev.azure.com/testorg/TestProject/_workitems/edit/502",
+                    RepoKey = "widgets",
+                    Tags = ["repo:widgets", "assistance:correlation-18"],
+                    Source = "AzureDevOpsBoards",
+                    SourceMetadata = new Dictionary<string, string>
+                    {
+                        ["revision"] = "1",
+                    },
+                },
+            },
+        };
+        var environment = ManagedEnvironment("managed", Project) with
+        {
+            TagPrefix = "custom",
+        };
+        var workSource = CreateWorkSource(client, environment);
+
+        var created = await workSource.CreateAssistanceStoryAsync(
+            new CreateAssistanceStoryRequest
+            {
+                EnvironmentKey = environment.Key,
+                RepoKey = "widgets",
+                Title = "Continue PR 18",
+                Description = "<p>Continue.</p>",
+                CorrelationTags = ["assistance:correlation-18"],
+                ReadyForClaim = false,
+            },
+            CancellationToken.None
+        );
+
+        Assert.Equal(
+            ["repo:widgets", "assistance:correlation-18"],
+            Assert.Single(client.CreateCalls).Tags
+        );
+        Assert.DoesNotContain("custom-ready-rework", client.CreateCalls[0].Tags);
+
+        var published = await workSource.MakeAssistanceStoryReadyAsync(
+            created.Candidate,
+            CancellationToken.None
+        );
+
+        var update = Assert.Single(client.UpdateWorkItemStatusCalls);
+        Assert.Equal("502", update.WorkRef.ExternalId);
+        Assert.Equal("managed", update.WorkRef.EnvironmentKey);
+        Assert.Equal(["custom-ready-rework"], update.Status.Tags);
+        Assert.Contains("custom-ready-rework", published.Tags);
     }
 
     [Fact]
@@ -866,8 +1048,13 @@ public class AzureDevOpsBoardsWorkSourceTests
     private sealed class MockAzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
     {
         public bool UpdateWorkItemStatusAsyncReturns { get; set; } = true;
+        public ClaimResult ClaimResult { get; init; } = new() { Success = false };
+        public CreatedWorkItemResult CreateResult { get; init; } = new();
         public IReadOnlyList<WorkCandidate> QueryResults { get; init; } = [];
         public List<BoardsQueryParameters> QueryCalls { get; } = [];
+        public List<BoardsCreateWorkItemParameters> CreateCalls { get; } = [];
+        public List<ClaimRequest> ClaimCalls { get; } = [];
+        public List<ReleaseClaimRequest> ReleaseClaimCalls { get; } = [];
         public List<(
             ExternalWorkRef WorkRef,
             ExternalWorkStatus Status
@@ -886,11 +1073,24 @@ public class AzureDevOpsBoardsWorkSourceTests
             return Task.FromResult(QueryResults);
         }
 
+        public Task<CreatedWorkItemResult> CreateWorkItemAsync(
+            BoardsCreateWorkItemParameters parameters,
+            CancellationToken ct
+        )
+        {
+            CreateCalls.Add(parameters);
+            return Task.FromResult(CreateResult);
+        }
+
         public Task<ClaimResult> TryClaimWorkItemAsync(
             ExternalWorkRef workRef,
             ClaimRequest claim,
             CancellationToken ct
-        ) => Task.FromResult(new ClaimResult { Success = false });
+        )
+        {
+            ClaimCalls.Add(claim);
+            return Task.FromResult(ClaimResult);
+        }
 
         public Task<bool> UpdateWorkItemStatusAsync(
             ExternalWorkRef workRef,
@@ -919,8 +1119,11 @@ public class AzureDevOpsBoardsWorkSourceTests
             CancellationToken ct
         ) => Task.FromResult<IReadOnlyList<RepositoryInfo>>(Array.Empty<RepositoryInfo>());
 
-        public Task ReleaseClaimWorkItemAsync(ReleaseClaimRequest request, CancellationToken ct) =>
-            Task.CompletedTask;
+        public Task ReleaseClaimWorkItemAsync(ReleaseClaimRequest request, CancellationToken ct)
+        {
+            ReleaseClaimCalls.Add(request);
+            return Task.CompletedTask;
+        }
 
         public Task<AzureDevOpsConnectivityResult> VerifyConnectivityAsync(
             string organizationUrl,

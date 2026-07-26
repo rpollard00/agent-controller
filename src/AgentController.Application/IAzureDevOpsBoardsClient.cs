@@ -23,6 +23,15 @@ public interface IAzureDevOpsBoardsClient
     );
 
     /// <summary>
+    /// Create a work item using an Azure DevOps JSON Patch document and return the
+    /// external identity plus a candidate suitable for local persistence.
+    /// </summary>
+    Task<CreatedWorkItemResult> CreateWorkItemAsync(
+        BoardsCreateWorkItemParameters parameters,
+        CancellationToken cancellationToken
+    );
+
+    /// <summary>
     /// Attempt to claim a work item for exclusive execution.
     /// </summary>
     Task<ClaimResult> TryClaimWorkItemAsync(
@@ -88,8 +97,8 @@ public interface IAzureDevOpsBoardsClient
 
     /// <summary>
     /// Release a previously claimed work item back to the work source.
-    /// Strips agent-controlled tags (agent-active, agent-worker:*) and
-    /// optionally reverts the work item state so it becomes eligible for re-discovery.
+    /// Strips the managed environment's active and worker tags and optionally
+    /// reverts the work item state so it becomes eligible for re-discovery.
     /// </summary>
     Task ReleaseClaimWorkItemAsync(
         ReleaseClaimRequest request,
@@ -159,6 +168,31 @@ public sealed record RepositoryInfo
     public string? SshUrl { get; init; }
 }
 
+/// <summary>Parameters for creating an Azure DevOps Boards work item.</summary>
+public sealed record BoardsCreateWorkItemParameters
+{
+    /// <summary>Project that will contain the work item.</summary>
+    public string Project { get; init; } = string.Empty;
+
+    /// <summary>Configured work item type, for example <c>User Story</c>.</summary>
+    public string WorkItemType { get; init; } = "User Story";
+
+    /// <summary>Repository key represented by the managed <c>repo:&lt;key&gt;</c> tag.</summary>
+    public string RepoKey { get; init; } = string.Empty;
+
+    /// <summary>Work item title.</summary>
+    public string Title { get; init; } = string.Empty;
+
+    /// <summary>Already-rendered rich-text description.</summary>
+    public string Description { get; init; } = string.Empty;
+
+    /// <summary>Complete tag set to write to <c>System.Tags</c>.</summary>
+    public IReadOnlyList<string> Tags { get; init; } = [];
+
+    /// <summary>Relations to create atomically with the work item.</summary>
+    public IReadOnlyList<WorkItemRelation> Relations { get; init; } = [];
+}
+
 /// <summary>
 /// Query parameters for Azure DevOps Boards work item queries.
 /// Field/project-level filters are supplied; the client translates them
@@ -175,8 +209,11 @@ public sealed record BoardsQueryParameters
     /// <summary>Work item states to exclude.</summary>
     public IReadOnlyList<string>? ExcludedStates { get; init; }
 
-    /// <summary>Tags that must be present on a work item.</summary>
+    /// <summary>Tags that must all be present on a work item.</summary>
     public IReadOnlyList<string>? Tags { get; init; }
+
+    /// <summary>Tags of which at least one must be present on a work item.</summary>
+    public IReadOnlyList<string>? AnyTags { get; init; }
 
     /// <summary>Tags that must not be present on a work item.</summary>
     public IReadOnlyList<string>? ExcludedTags { get; init; }

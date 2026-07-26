@@ -145,6 +145,28 @@ export type RunCardKind = 'run' | 'rework-soak';
 /** Server-computed state category used to display and filter run cards. */
 export type RunCardCategory = 'executing' | 'pending' | 'attention' | 'completed';
 
+/** Mode used to request work on an existing pull request. */
+export type ReworkRequestMode = 'revival' | 'assistance';
+
+/** Feedback debounce/materialization lifecycle state. */
+export type ReworkFeedbackStatus = 'watching' | 'soaked' | 'superseded' | 'materialized';
+
+/** Materialized rework-cycle lifecycle state. */
+export type ReworkCycleStatus = 'pending' | 'consumed';
+
+/** Provider-neutral reference to the existing pull request being continued. */
+export interface PullRequestReference {
+  environmentKey: string;
+  repositoryKey: string;
+  pullRequestId: string;
+  pullRequestUrl: string;
+  sourceBranch: string;
+  targetBranch: string;
+  sourceCommitSha: string;
+  canonicalKey: string;
+  hasCanonicalIdentity: boolean;
+}
+
 /** Aggregate dashboard projection for an agent run or rework-feedback soak. */
 export interface RunCardItem {
   id: string;
@@ -160,6 +182,15 @@ export interface RunCardItem {
   runtimeProfileName: string | null;
   environmentProviderType: string | null;
   runAttempt: number;
+  requestMode: ReworkRequestMode | null;
+  pullRequest: PullRequestReference | null;
+  cycleNumber: number | null;
+  assistanceStoryWorkItemId: string | null;
+  assistanceStoryExternalId: string | null;
+  assistanceStoryUrl: string | null;
+  feedbackStatus: ReworkFeedbackStatus | null;
+  cycleStatus: ReworkCycleStatus | null;
+  consumingRunId: string | null;
   lastEventType: string | null;
   lastEventMessage: string | null;
   lastEventAt: string | null;

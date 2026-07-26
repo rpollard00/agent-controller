@@ -55,6 +55,51 @@ export function getRunStatusLabel(status: string): string {
     : `${words[0].toUpperCase()}${words.slice(1).toLowerCase()}`;
 }
 
+/** User-facing lifecycle label that keeps assistance distinct from story revival. */
+export function getRunCardStateLabel(
+  card: Pick<
+    RunCardItem,
+    'kind' | 'status' | 'requestMode' | 'feedbackStatus' | 'cycleStatus'
+  >,
+): string {
+  if (card.requestMode !== 'assistance') {
+    return card.kind === 'rework-soak' ? 'Rework soak' : getRunStatusLabel(card.status);
+  }
+
+  if (card.kind === 'rework-soak') {
+    switch (card.feedbackStatus) {
+      case 'watching':
+        return 'Assistance soaking';
+      case 'soaked':
+        return 'Assistance ready';
+      case 'materialized':
+        return card.cycleStatus === 'consumed'
+          ? 'Assistance in progress'
+          : 'Assistance story queued';
+      case 'superseded':
+        return 'Assistance superseded';
+      default:
+        return card.status;
+    }
+  }
+
+  switch (card.status) {
+    case 'NeedsHuman':
+      return 'Assistance needs human';
+    case 'Failed':
+      return 'Assistance failed';
+    case 'Cancelled':
+      return 'Assistance cancelled';
+    case 'BranchPushed':
+    case 'Completed':
+    case 'CleanupPending':
+    case 'CleanedUp':
+      return 'Assistance completed';
+    default:
+      return 'Assistance in progress';
+  }
+}
+
 export function formatRelativeTime(
   isoTimestamp: string,
   nowInMilliseconds: number = Date.now(),

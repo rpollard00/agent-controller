@@ -229,6 +229,10 @@ public sealed class WebUiRunsEndpointTests : IAsyncLifetime
             "LocalWorkspace",
             soakCard.GetProperty("environmentProviderType").GetString()
         );
+        Assert.Equal("revival", soakCard.GetProperty("requestMode").GetString());
+        Assert.Equal("watching", soakCard.GetProperty("feedbackStatus").GetString());
+        Assert.Equal(JsonValueKind.Null, soakCard.GetProperty("cycleNumber").ValueKind);
+        Assert.Equal(JsonValueKind.Null, soakCard.GetProperty("consumingRunId").ValueKind);
         Assert.Equal("rework.feedback.soaking", soakCard.GetProperty("lastEventType").GetString());
         Assert.Equal(
             "3 feedback threads awaiting soak",
@@ -238,6 +242,113 @@ public sealed class WebUiRunsEndpointTests : IAsyncLifetime
             Baseline.AddMinutes(2),
             soakCard.GetProperty("lastEventAt").GetDateTimeOffset()
         );
+    }
+
+    [Fact]
+    public async Task GetRunsAndRunDetail_ExposeMaterializedAssistanceLineage()
+    {
+        AgentRunHandle consumingRun;
+        WorkCandidate assistanceStory;
+        PullRequestReference pullRequest;
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var services = scope.ServiceProvider;
+            var workItemStore = services.GetRequiredService<IWorkItemStore>();
+            var runStore = services.GetRequiredService<IAgentRunStore>();
+            var feedbackStore = services.GetRequiredService<IReworkFeedbackStore>();
+            var cycleStore = services.GetRequiredService<IReworkCycleStore>();
+
+            assistanceStory = await workItemStore.UpsertAsync(
+                new WorkCandidate
+                {
+                    ExternalId = "8042",
+                    ExternalUrl = "https://dev.azure.test/workitems/8042",
+                    RepoKey = "dashboard-repo",
+                    Title = "Assist existing pull request 42",
+                    Status = "Active",
+                    Source = "AzureDevOpsBoards",
+                },
+                CancellationToken.None
+            );
+            pullRequest = new PullRequestReference
+            {
+                EnvironmentKey = "ado-prod",
+                RepositoryKey = "dashboard-repo",
+                PullRequestId = "42",
+                PullRequestUrl = "https://dev.azure.test/repo/pullrequest/42",
+                SourceBranch = "refs/heads/contributor/change",
+                TargetBranch = "refs/heads/main",
+                SourceCommitSha = "abc123",
+            };
+            var feedback = await feedbackStore.UpsertAsync(
+                new ReworkFeedbackUpsertRequest
+                {
+                    RequestMode = ReworkRequestMode.Assistance,
+                    PullRequest = pullRequest,
+                    FeedbackBundleId = "assistance-bundle-42",
+                    FeedbackBundleJson = "[]",
+                    ThreadCount = 0,
+                    FirstQualifyingCommentAt = Baseline,
+                    LastQualifyingCommentAt = Baseline,
+                    Status = ReworkFeedbackStatus.Soaked,
+                    CorrelationId = "assistance-correlation-42",
+                },
+                CancellationToken.None
+            );
+            await feedbackStore.RecordAssistanceStoryAsync(
+                feedback.Id,
+                new AssistanceStoryReceipt
+                {
+                    CorrelationId = feedback.CorrelationId!,
+                    WorkItemId = assistanceStory.Id,
+                    ExternalId = assistanceStory.ExternalId,
+                    Url = assistanceStory.ExternalUrl,
+                },
+                CancellationToken.None
+            );
+            var cycle = await cycleStore.CreateAsync(
+                new ReworkCycleCreateRequest
+                {
+                    RequestMode = ReworkRequestMode.Assistance,
+                    PullRequest = pullRequest,
+                    WorkItemId = assistanceStory.Id,
+                    FeedbackBundleId = feedback.FeedbackBundleId,
+                    FeedbackBundleJson = feedback.FeedbackBundleJson,
+                    CorrelationId = feedback.CorrelationId,
+                    BranchName = pullRequest.SourceBranch,
+                    PullRequestUrl = pullRequest.PullRequestUrl,
+                    BaseCommitSha = pullRequest.SourceCommitSha,
+                },
+                CancellationToken.None
+            );
+            consumingRun = await CreateRunAsync(
+                runStore,
+                assistanceStory.Id,
+                RunLifecycleState.AgentRunning,
+                runAttempt: 1
+            );
+            await cycleStore.MarkConsumedAsync(
+                cycle.Id,
+                consumingRun.RunId,
+                CancellationToken.None
+            );
+            await feedbackStore.MarkMaterializedAsync(feedback.Id, CancellationToken.None);
+        }
+
+        using var cardsResponse = await _client.GetAsync("/api/webui/runs");
+        cardsResponse.EnsureSuccessStatusCode();
+        var cards = await cardsResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var runCard = cards
+            .EnumerateArray()
+            .Single(card => card.GetProperty("id").GetString() == consumingRun.RunId);
+        AssertAssistanceTracking(runCard, consumingRun.RunId, assistanceStory, pullRequest);
+
+        using var detailResponse = await _client.GetAsync($"/runs/{consumingRun.RunId}");
+        detailResponse.EnsureSuccessStatusCode();
+        var detail = await detailResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(consumingRun.RunId, detail.GetProperty("runId").GetString());
+        AssertAssistanceTracking(detail, consumingRun.RunId, assistanceStory, pullRequest);
     }
 
     private static Task<AgentRunHandle> CreateRunAsync(
@@ -278,6 +389,33 @@ public sealed class WebUiRunsEndpointTests : IAsyncLifetime
             CancellationToken.None
         );
 
+    private static void AssertAssistanceTracking(
+        JsonElement result,
+        string consumingRunId,
+        WorkCandidate story,
+        PullRequestReference pullRequest
+    )
+    {
+        Assert.Equal("assistance", result.GetProperty("requestMode").GetString());
+        Assert.Equal(1, result.GetProperty("cycleNumber").GetInt32());
+        Assert.Equal(story.Id, result.GetProperty("assistanceStoryWorkItemId").GetString());
+        Assert.Equal(story.ExternalId, result.GetProperty("assistanceStoryExternalId").GetString());
+        Assert.Equal(story.ExternalUrl, result.GetProperty("assistanceStoryUrl").GetString());
+        Assert.Equal("materialized", result.GetProperty("feedbackStatus").GetString());
+        Assert.Equal("consumed", result.GetProperty("cycleStatus").GetString());
+        Assert.Equal(consumingRunId, result.GetProperty("consumingRunId").GetString());
+
+        var pullRequestResult = result.GetProperty("pullRequest");
+        Assert.Equal(pullRequest.CanonicalKey, pullRequestResult.GetProperty("canonicalKey").GetString());
+        Assert.Equal(pullRequest.EnvironmentKey, pullRequestResult.GetProperty("environmentKey").GetString());
+        Assert.Equal(pullRequest.RepositoryKey, pullRequestResult.GetProperty("repositoryKey").GetString());
+        Assert.Equal(pullRequest.PullRequestId, pullRequestResult.GetProperty("pullRequestId").GetString());
+        Assert.Equal(pullRequest.PullRequestUrl, pullRequestResult.GetProperty("pullRequestUrl").GetString());
+        Assert.Equal(pullRequest.SourceBranch, pullRequestResult.GetProperty("sourceBranch").GetString());
+        Assert.Equal(pullRequest.TargetBranch, pullRequestResult.GetProperty("targetBranch").GetString());
+        Assert.Equal(pullRequest.SourceCommitSha, pullRequestResult.GetProperty("sourceCommitSha").GetString());
+    }
+
     private static void AssertRunCardShape(JsonElement card)
     {
         string[] propertyNames =
@@ -295,6 +433,15 @@ public sealed class WebUiRunsEndpointTests : IAsyncLifetime
             "runtimeProfileName",
             "environmentProviderType",
             "runAttempt",
+            "requestMode",
+            "pullRequest",
+            "cycleNumber",
+            "assistanceStoryWorkItemId",
+            "assistanceStoryExternalId",
+            "assistanceStoryUrl",
+            "feedbackStatus",
+            "cycleStatus",
+            "consumingRunId",
             "lastEventType",
             "lastEventMessage",
             "lastEventAt",

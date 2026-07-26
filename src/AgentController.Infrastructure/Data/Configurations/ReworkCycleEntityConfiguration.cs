@@ -1,3 +1,4 @@
+using AgentController.Domain;
 using AgentController.Infrastructure.Data.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -18,6 +19,25 @@ internal sealed class ReworkCycleEntityConfiguration : IEntityTypeConfiguration<
         builder.Property(x => x.Id)
             .HasMaxLength(128);
 
+        builder.Property(x => x.RequestMode)
+            .IsRequired()
+            .HasDefaultValue((int)ReworkRequestMode.Revival);
+
+        builder.Property(x => x.CanonicalPullRequestKey)
+            .HasMaxLength(1024);
+
+        builder.Property(x => x.PullRequestEnvironmentKey)
+            .HasMaxLength(128);
+
+        builder.Property(x => x.PullRequestRepositoryKey)
+            .HasMaxLength(256);
+
+        builder.Property(x => x.PullRequestId)
+            .HasMaxLength(128);
+
+        builder.Property(x => x.PullRequestTargetBranch)
+            .HasMaxLength(512);
+
         builder.Property(x => x.WorkItemId)
             .IsRequired()
             .HasMaxLength(128);
@@ -26,7 +46,6 @@ internal sealed class ReworkCycleEntityConfiguration : IEntityTypeConfiguration<
             .IsRequired();
 
         builder.Property(x => x.PriorRunId)
-            .IsRequired()
             .HasMaxLength(128);
 
         builder.Property(x => x.BranchName)
@@ -47,6 +66,9 @@ internal sealed class ReworkCycleEntityConfiguration : IEntityTypeConfiguration<
             .IsRequired()
             .HasMaxLength(64);
 
+        builder.Property(x => x.CorrelationId)
+            .HasMaxLength(128);
+
         builder.Property(x => x.Status)
             .IsRequired();
 
@@ -61,11 +83,40 @@ internal sealed class ReworkCycleEntityConfiguration : IEntityTypeConfiguration<
 
         builder.Property(x => x.ConsumedAt);
 
-        // Unique index on FeedbackBundleId — hard idempotency guard
-        // against double-materialization of the same feedback bundle.
+        // Canonical requests are deduplicated per workflow and PR. Rows created
+        // before canonical identity was persisted retain the global bundle guard.
+        builder.HasIndex(x => new
+            {
+                x.RequestMode,
+                x.CanonicalPullRequestKey,
+                x.FeedbackBundleId,
+            })
+            .IsUnique()
+            .HasFilter("\"CanonicalPullRequestKey\" IS NOT NULL")
+            .HasDatabaseName("IX_ReworkCycles_RequestMode_PrKey_FeedbackBundleId");
+
         builder.HasIndex(x => x.FeedbackBundleId)
             .IsUnique()
+            .HasFilter("\"CanonicalPullRequestKey\" IS NULL")
             .HasDatabaseName("IX_ReworkCycles_FeedbackBundleId");
+
+        builder.HasIndex(x => x.CorrelationId)
+            .IsUnique()
+            .HasFilter("\"CorrelationId\" IS NOT NULL")
+            .HasDatabaseName("IX_ReworkCycles_CorrelationId");
+
+        builder.HasIndex(x => new
+            {
+                x.RequestMode,
+                x.CanonicalPullRequestKey,
+                x.CycleNumber,
+            })
+            .IsUnique()
+            .HasFilter("\"CanonicalPullRequestKey\" IS NOT NULL")
+            .HasDatabaseName("IX_ReworkCycles_RequestMode_PrKey_CycleNumber");
+
+        builder.HasIndex(x => new { x.RequestMode, x.CanonicalPullRequestKey, x.Status })
+            .HasDatabaseName("IX_ReworkCycles_RequestMode_PrKey_Status");
 
         // Index for claim-time lookup: find pending cycles by work item.
         builder.HasIndex(x => new { x.WorkItemId, x.Status })

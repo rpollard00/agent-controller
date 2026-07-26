@@ -110,6 +110,18 @@ internal sealed partial class LocalFileWorkSource : IWorkSource, IDisposable
     }
 
     /// <inheritdoc/>
+    public Task<CreatedWorkItemResult> CreateAssistanceStoryAsync(
+        CreateAssistanceStoryRequest request,
+        CancellationToken cancellationToken)
+    {
+        return Task.FromException<CreatedWorkItemResult>(
+            new NotSupportedException(
+                "Local file work source definitions are read-only; assistance story creation is not supported."
+            )
+        );
+    }
+
+    /// <inheritdoc/>
     public Task UpdateStatusAsync(
         ExternalWorkRef workRef,
         ExternalWorkStatus status,
@@ -178,19 +190,35 @@ internal sealed partial class LocalFileWorkSource : IWorkSource, IDisposable
             await store.UpdateStatusAsync(request.WorkItemId, options.ActiveState, cancellationToken);
         }
 
-        // Ensure agent-ready; remove agent lifecycle exclusion tags.
-        // Aligns with the ADO path: strips agent-active, agent-failed,
-        // agent-needs-human, and any agent-worker:{id} tags.
+        // Restore eligibility while removing this source's managed lifecycle tags.
+        // Keep an existing ready-rework marker instead of converting it to new work.
+        var tagPrefix = string.IsNullOrWhiteSpace(options.TagPrefix)
+            ? WorkSourceOptions.DefaultTagPrefix
+            : options.TagPrefix.Trim();
+        var readyTag = WorkSourceOptions.TagReady(tagPrefix);
+        var readyReworkTag = WorkSourceOptions.TagReadyRework(tagPrefix);
+        var workerTagPrefix = $"{tagPrefix}-worker:";
         var tags = candidate.Tags
-            .Where(t => t != WorkSourceOptions.TagActive() &&
-                        t != WorkSourceOptions.TagFailed() &&
-                        t != WorkSourceOptions.TagNeedsHuman() &&
-                        !t.StartsWith("agent-worker:", StringComparison.Ordinal))
+            .Where(t =>
+                !t.Equals(WorkSourceOptions.TagActive(tagPrefix), StringComparison.OrdinalIgnoreCase)
+                && !t.Equals(
+                    WorkSourceOptions.TagFailed(tagPrefix),
+                    StringComparison.OrdinalIgnoreCase
+                )
+                && !t.Equals(
+                    WorkSourceOptions.TagNeedsHuman(tagPrefix),
+                    StringComparison.OrdinalIgnoreCase
+                )
+                && !t.StartsWith(workerTagPrefix, StringComparison.OrdinalIgnoreCase)
+            )
             .ToList();
 
-        if (!tags.Contains(WorkSourceOptions.TagReady()))
+        if (
+            !tags.Contains(readyTag, StringComparer.OrdinalIgnoreCase)
+            && !tags.Contains(readyReworkTag, StringComparer.OrdinalIgnoreCase)
+        )
         {
-            tags.Add(WorkSourceOptions.TagReady());
+            tags.Add(readyTag);
         }
 
         // Upsert with updated tags (idempotent against local state).

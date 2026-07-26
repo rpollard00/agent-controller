@@ -94,6 +94,10 @@ public sealed class ListRunCardsQueryHandlerTests
         Assert.Equal(run.RuntimeProfileName, card.RuntimeProfileName);
         Assert.Equal(run.EnvironmentProviderType, card.EnvironmentProviderType);
         Assert.Equal(run.RunAttempt, card.RunAttempt);
+        Assert.Equal(ReworkRequestMode.Revival, card.RequestMode);
+        Assert.Equal(ReworkFeedbackStatus.Watching, card.FeedbackStatus);
+        Assert.Null(card.CycleNumber);
+        Assert.Null(card.ConsumingRunId);
         Assert.Equal("rework.feedback.soaking", card.LastEventType);
         Assert.Contains("3", card.LastEventMessage);
         Assert.Equal(feedback.LastQualifyingCommentAt, card.LastEventAt);
@@ -104,6 +108,151 @@ public sealed class ListRunCardsQueryHandlerTests
         Assert.Equal(run.RuntimeType, runCard.RuntimeType);
         Assert.Equal(run.RuntimeProfileName, runCard.RuntimeProfileName);
         Assert.Equal(run.EnvironmentProviderType, runCard.EnvironmentProviderType);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ProjectsMaterializedAssistanceOntoConsumingRunCard()
+    {
+        var pullRequest = new PullRequestReference
+        {
+            EnvironmentKey = "ado-prod",
+            RepositoryKey = "repo-1",
+            PullRequestId = "42",
+            PullRequestUrl = "https://dev.azure.test/repo/pullrequest/42",
+            SourceBranch = "refs/heads/contributor/change",
+            TargetBranch = "refs/heads/main",
+            SourceCommitSha = "abc123",
+        };
+        var story = new WorkCandidate
+        {
+            Id = "story-local-1",
+            ExternalId = "8042",
+            ExternalUrl = "https://dev.azure.test/workitems/8042",
+            Title = "Assist PR 42",
+            RepoKey = "repo-1",
+            Source = "AzureDevOpsBoards",
+        };
+        var run = CreateRun(
+            "run-assistance",
+            RunLifecycleState.AgentRunning,
+            workItemId: story.Id,
+            updatedAt: Baseline.AddMinutes(4)
+        );
+        var feedback = new ReworkFeedback
+        {
+            Id = "feedback-assistance",
+            RequestMode = ReworkRequestMode.Assistance,
+            PullRequest = pullRequest,
+            PullRequestId = pullRequest.PullRequestId,
+            FeedbackBundleId = "bundle-assistance",
+            CorrelationId = "correlation-assistance",
+            AssistanceStoryWorkItemId = story.Id,
+            AssistanceStoryExternalId = story.ExternalId,
+            AssistanceStoryUrl = story.ExternalUrl,
+            Status = ReworkFeedbackStatus.Materialized,
+            CreatedAt = Baseline,
+            UpdatedAt = Baseline.AddMinutes(3),
+        };
+        var cycle = new ReworkCycle
+        {
+            Id = "cycle-assistance",
+            RequestMode = ReworkRequestMode.Assistance,
+            PullRequest = pullRequest,
+            WorkItemId = story.Id,
+            CycleNumber = 2,
+            FeedbackBundleId = feedback.FeedbackBundleId,
+            CorrelationId = feedback.CorrelationId,
+            Status = ReworkCycleStatus.Consumed,
+            NewRunId = run.RunId,
+        };
+        var handler = CreateHandler(
+            [run],
+            [story],
+            feedback: [feedback],
+            cycles: [cycle]
+        );
+
+        var cards = await handler.ExecuteAsync(new ListRunCardsQuery(), CancellationToken.None);
+
+        var card = Assert.Single(cards);
+        Assert.Equal("run", card.Kind);
+        Assert.Equal(ReworkRequestMode.Assistance, card.RequestMode);
+        Assert.Equal(pullRequest, card.PullRequest);
+        Assert.Equal(2, card.CycleNumber);
+        Assert.Equal(story.Id, card.AssistanceStoryWorkItemId);
+        Assert.Equal(story.ExternalId, card.AssistanceStoryExternalId);
+        Assert.Equal(story.ExternalUrl, card.AssistanceStoryUrl);
+        Assert.Equal(ReworkFeedbackStatus.Materialized, card.FeedbackStatus);
+        Assert.Equal(ReworkCycleStatus.Consumed, card.CycleStatus);
+        Assert.Equal(run.RunId, card.ConsumingRunId);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_IncludesQueuedAssistanceStoryBeforeRunExists()
+    {
+        var pullRequest = new PullRequestReference
+        {
+            EnvironmentKey = "ado-prod",
+            RepositoryKey = "repo-1",
+            PullRequestId = "43",
+            PullRequestUrl = "https://dev.azure.test/repo/pullrequest/43",
+            SourceBranch = "refs/heads/human/change",
+            TargetBranch = "refs/heads/main",
+            SourceCommitSha = "def456",
+        };
+        var story = new WorkCandidate
+        {
+            Id = "story-local-2",
+            ExternalId = "8043",
+            ExternalUrl = "https://dev.azure.test/workitems/8043",
+            Title = "Assist PR 43",
+            RepoKey = "repo-1",
+            Source = "AzureDevOpsBoards",
+        };
+        var feedback = new ReworkFeedback
+        {
+            Id = "feedback-queued",
+            RequestMode = ReworkRequestMode.Assistance,
+            PullRequest = pullRequest,
+            PullRequestId = pullRequest.PullRequestId,
+            FeedbackBundleId = "bundle-queued",
+            CorrelationId = "correlation-queued",
+            AssistanceStoryWorkItemId = story.Id,
+            AssistanceStoryExternalId = story.ExternalId,
+            AssistanceStoryUrl = story.ExternalUrl,
+            Status = ReworkFeedbackStatus.Materialized,
+            CreatedAt = Baseline,
+            UpdatedAt = Baseline.AddMinutes(2),
+        };
+        var cycle = new ReworkCycle
+        {
+            Id = "cycle-queued",
+            RequestMode = ReworkRequestMode.Assistance,
+            PullRequest = pullRequest,
+            WorkItemId = story.Id,
+            CycleNumber = 1,
+            FeedbackBundleId = feedback.FeedbackBundleId,
+            CorrelationId = feedback.CorrelationId,
+            Status = ReworkCycleStatus.Pending,
+        };
+        var handler = CreateHandler(
+            workItems: [story],
+            feedback: [feedback],
+            cycles: [cycle]
+        );
+
+        var cards = await handler.ExecuteAsync(new ListRunCardsQuery(), CancellationToken.None);
+
+        var card = Assert.Single(cards);
+        Assert.Equal("rework-soak", card.Kind);
+        Assert.Equal("Assistance story queued", card.Status);
+        Assert.Equal(ReworkRequestMode.Assistance, card.RequestMode);
+        Assert.Equal(ReworkFeedbackStatus.Materialized, card.FeedbackStatus);
+        Assert.Equal(ReworkCycleStatus.Pending, card.CycleStatus);
+        Assert.Equal(1, card.CycleNumber);
+        Assert.Equal(story.ExternalId, card.AssistanceStoryExternalId);
+        Assert.Null(card.ConsumingRunId);
+        Assert.Equal("assistance.story.queued", card.LastEventType);
     }
 
     [Theory]
@@ -301,14 +450,16 @@ public sealed class ListRunCardsQueryHandlerTests
         IEnumerable<WorkCandidate>? workItems = null,
         IEnumerable<RepositoryProfile>? repositories = null,
         IEnumerable<ReworkFeedback>? feedback = null,
-        IEnumerable<LifecycleEvent>? events = null
+        IEnumerable<LifecycleEvent>? events = null,
+        IEnumerable<ReworkCycle>? cycles = null
     ) =>
         new(
             new StubAgentRunStore(runs ?? []),
             new StubWorkItemStore(workItems ?? []),
             new StubLifecycleEventStore(events ?? []),
             new StubRepositoryStore(repositories ?? []),
-            new StubReworkFeedbackStore(feedback ?? [])
+            new StubReworkFeedbackStore(feedback ?? []),
+            new StubReworkCycleStore(cycles ?? [])
         );
 
     private sealed class StubAgentRunStore(IEnumerable<AgentRunHandle> runs) : IAgentRunStore
@@ -493,10 +644,25 @@ public sealed class ListRunCardsQueryHandlerTests
 
         public Task<IReadOnlyList<ReworkFeedback>> GetWatchingAsync(
             CancellationToken cancellationToken
-        ) => Task.FromResult(_feedback);
+        ) =>
+            Task.FromResult<IReadOnlyList<ReworkFeedback>>(
+                _feedback.Where(item => item.Status == ReworkFeedbackStatus.Watching).ToList()
+            );
+
+        public Task<IReadOnlyList<ReworkFeedback>> GetTrackedAsync(
+            CancellationToken cancellationToken
+        ) =>
+            Task.FromResult<IReadOnlyList<ReworkFeedback>>(
+                _feedback.Where(item => item.Status != ReworkFeedbackStatus.Superseded).ToList()
+            );
 
         public Task<ReworkFeedback> UpsertAsync(
-            string originatingRunId,
+            ReworkFeedbackUpsertRequest request,
+            CancellationToken cancellationToken
+        ) => throw new NotSupportedException();
+
+        public Task<ReworkFeedback> UpsertAsync(
+            string? originatingRunId,
             string pullRequestId,
             string feedbackBundleId,
             string feedbackBundleJson,
@@ -504,6 +670,17 @@ public sealed class ListRunCardsQueryHandlerTests
             DateTimeOffset firstQualifyingCommentAt,
             DateTimeOffset lastQualifyingCommentAt,
             ReworkFeedbackStatus status,
+            CancellationToken cancellationToken
+        ) => throw new NotSupportedException();
+
+        public Task<ReworkFeedback?> GetByCorrelationIdAsync(
+            string correlationId,
+            CancellationToken cancellationToken
+        ) => throw new NotSupportedException();
+
+        public Task<ReworkFeedback> RecordAssistanceStoryAsync(
+            string id,
+            AssistanceStoryReceipt receipt,
             CancellationToken cancellationToken
         ) => throw new NotSupportedException();
 
@@ -520,6 +697,101 @@ public sealed class ListRunCardsQueryHandlerTests
         ) => throw new NotSupportedException();
 
         public Task MarkMaterializedAsync(string id, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class StubReworkCycleStore(IEnumerable<ReworkCycle> cycles)
+        : IReworkCycleStore
+    {
+        private readonly IReadOnlyList<ReworkCycle> _cycles = cycles.ToList();
+
+        public Task<ReworkCycle?> GetPendingForWorkItemAsync(
+            string workItemId,
+            CancellationToken cancellationToken
+        ) =>
+            Task.FromResult(
+                _cycles.FirstOrDefault(cycle =>
+                    cycle.WorkItemId == workItemId
+                    && cycle.Status == ReworkCycleStatus.Pending
+                )
+            );
+
+        public Task<ReworkCycle?> GetConsumedByRunIdAsync(
+            string runId,
+            CancellationToken cancellationToken
+        ) =>
+            Task.FromResult(
+                _cycles.FirstOrDefault(cycle =>
+                    cycle.NewRunId == runId
+                    && cycle.Status == ReworkCycleStatus.Consumed
+                )
+            );
+
+        public Task<IReadOnlyList<ReworkCycle>> ListPendingAsync(
+            CancellationToken cancellationToken
+        ) =>
+            Task.FromResult<IReadOnlyList<ReworkCycle>>(
+                _cycles.Where(cycle => cycle.Status == ReworkCycleStatus.Pending).ToList()
+            );
+
+        public Task<IReadOnlyList<ReworkCycle>> ListConsumedAsync(
+            CancellationToken cancellationToken
+        ) =>
+            Task.FromResult<IReadOnlyList<ReworkCycle>>(
+                _cycles.Where(cycle => cycle.Status == ReworkCycleStatus.Consumed).ToList()
+            );
+
+        public Task<bool> ExistsByFeedbackBundleIdAsync(
+            string feedbackBundleId,
+            CancellationToken cancellationToken
+        ) => throw new NotSupportedException();
+
+        public Task<bool> ExistsAsync(
+            ReworkRequestMode requestMode,
+            PullRequestReference pullRequest,
+            string feedbackBundleId,
+            CancellationToken cancellationToken
+        ) => throw new NotSupportedException();
+
+        public Task<ReworkCycle?> GetByCorrelationIdAsync(
+            string correlationId,
+            CancellationToken cancellationToken
+        ) => throw new NotSupportedException();
+
+        public Task<ReworkCycle> CreateAsync(
+            ReworkCycleCreateRequest request,
+            CancellationToken cancellationToken
+        ) => throw new NotSupportedException();
+
+        public Task<ReworkCycle> CreateAsync(
+            string workItemId,
+            int cycleNumber,
+            string? priorRunId,
+            string branchName,
+            string pullRequestUrl,
+            string baseCommitSha,
+            string feedbackBundleJson,
+            string feedbackBundleId,
+            CancellationToken cancellationToken
+        ) => throw new NotSupportedException();
+
+        public Task MarkConsumedAsync(
+            string id,
+            string newRunId,
+            CancellationToken cancellationToken
+        ) => throw new NotSupportedException();
+
+        public Task<int> GetMaxCycleNumberAsync(
+            string workItemId,
+            CancellationToken cancellationToken
+        ) => throw new NotSupportedException();
+
+        public Task<int> GetMaxAssistanceCycleNumberAsync(
+            PullRequestReference pullRequest,
+            CancellationToken cancellationToken
+        ) => throw new NotSupportedException();
+
+        public Task MarkReactivatedAsync(string id, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }
 }

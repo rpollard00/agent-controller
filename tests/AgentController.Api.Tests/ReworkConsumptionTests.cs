@@ -494,6 +494,365 @@ public class ReworkConsumptionTests : IAsyncLifetime
         Assert.Equal("main", repoJson!["defaultBranch"].GetString());
     }
 
+    [Fact]
+    public async Task ReadyReworkWithoutPendingAssistanceCycle_IsSkippedBeforeClaim()
+    {
+        var dbPath = Path.Combine(_tempRoot, $"test-orphaned-assistance-{Guid.NewGuid():N}.db");
+        var config = BuildLocalConfiguration(
+            dbPath,
+            "orphaned-assistance-worker",
+            "custom-ready-rework",
+            "custom"
+        );
+        using var provider = BuildServiceProvider(config);
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+
+        await using (var scope = scopeFactory.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
+            await db.Database.EnsureCreatedAsync();
+            await SeedManagedProfilesAsync(scope.ServiceProvider);
+        }
+
+        var worker = CreateWorker(provider, scopeFactory);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await worker.RunPollCycleForTestingAsync(cts.Token);
+
+        await using var verifyScope = scopeFactory.CreateAsyncScope();
+        var runStore = verifyScope.ServiceProvider.GetRequiredService<IAgentRunStore>();
+        var workSource = verifyScope.ServiceProvider.GetRequiredService<IWorkSource>();
+        var runs = await runStore.ListAsync(
+            new ListRunsQuery { MaxResults = 10 },
+            CancellationToken.None
+        );
+        var stillEligible = await workSource.FindEligibleAsync(
+            new WorkQuery { MaxResults = 10 },
+            CancellationToken.None
+        );
+
+        Assert.Empty(runs);
+        Assert.Single(stillEligible);
+        Assert.Contains(
+            "custom-ready-rework",
+            stillEligible[0].Tags,
+            StringComparer.OrdinalIgnoreCase
+        );
+    }
+
+    [Fact]
+    public async Task ReadyReworkWithPendingAssistanceCycle_UsesExistingPrAndReworkExecution()
+    {
+        var dbPath = Path.Combine(_tempRoot, $"test-assistance-dispatch-{Guid.NewGuid():N}.db");
+        var config = BuildLocalConfiguration(
+            dbPath,
+            "assistance-dispatch-worker",
+            "custom-ready-rework",
+            "custom"
+        );
+        using var provider = BuildServiceProvider(config);
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+
+        await using (var scope = scopeFactory.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
+            await db.Database.EnsureCreatedAsync();
+            await SeedManagedProfilesAsync(scope.ServiceProvider);
+        }
+
+        ReworkCycle pendingCycle;
+        await using (var seedScope = scopeFactory.CreateAsyncScope())
+        {
+            var workSource = seedScope.ServiceProvider.GetRequiredService<IWorkSource>();
+            var seedCycleStore = seedScope.ServiceProvider.GetRequiredService<IReworkCycleStore>();
+            var candidates = await workSource.FindEligibleAsync(
+                new WorkQuery { MaxResults = 10 },
+                CancellationToken.None
+            );
+            var candidate = Assert.Single(candidates);
+            var pullRequest = new PullRequestReference
+            {
+                EnvironmentKey = "managed-ado",
+                RepositoryKey = "test-repo",
+                PullRequestId = "314",
+                PullRequestUrl = "https://example.com/test-repo/pullrequest/314",
+                SourceBranch = _reworkBranch,
+                TargetBranch = "main",
+                SourceCommitSha = _reworkBranchSha,
+            };
+
+            pendingCycle = await seedCycleStore.CreateAsync(
+                new ReworkCycleCreateRequest
+                {
+                    RequestMode = ReworkRequestMode.Assistance,
+                    PullRequest = pullRequest,
+                    WorkItemId = candidate.Id,
+                    PriorRunId = null,
+                    // Assistance dispatch must be recoverable from PullRequest metadata.
+                    BranchName = string.Empty,
+                    PullRequestUrl = string.Empty,
+                    BaseCommitSha = string.Empty,
+                    FeedbackBundleJson = "[]",
+                    FeedbackBundleId = $"assistance-bundle-{Guid.NewGuid():N}",
+                    CorrelationId = $"assistance-correlation-{Guid.NewGuid():N}",
+                },
+                CancellationToken.None
+            );
+        }
+
+        var worker = CreateWorker(provider, scopeFactory);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await worker.RunPollCycleForTestingAsync(cts.Token);
+        await Task.Delay(TimeSpan.FromSeconds(1));
+
+        await using var verifyScope = scopeFactory.CreateAsyncScope();
+        var dbContext = verifyScope.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
+        var runStore = verifyScope.ServiceProvider.GetRequiredService<IAgentRunStore>();
+        var cycleStore = verifyScope.ServiceProvider.GetRequiredService<IReworkCycleStore>();
+        var eventStore = verifyScope.ServiceProvider.GetRequiredService<ILifecycleEventStore>();
+        var run = Assert.Single(
+            await runStore.ListAsync(
+                new ListRunsQuery { MaxResults = 10 },
+                CancellationToken.None
+            )
+        );
+        var consumed = Assert.Single(await cycleStore.ListConsumedAsync(CancellationToken.None));
+
+        Assert.Equal(pendingCycle.Id, consumed.Id);
+        Assert.Equal(run.RunId, consumed.NewRunId);
+        Assert.Equal(ReworkRequestMode.Assistance, consumed.RequestMode);
+
+        var environment = await dbContext.Environments.SingleAsync(entity =>
+            entity.RunId == run.RunId
+        );
+        var contextDirectory = Path.Combine(environment.RootPath, "context");
+        using var repositoryJson = JsonDocument.Parse(
+            await File.ReadAllTextAsync(Path.Combine(contextDirectory, "repository.json"))
+        );
+        Assert.Equal(
+            _reworkBranch,
+            repositoryJson.RootElement.GetProperty("defaultBranch").GetString()
+        );
+
+        using var controllerJson = JsonDocument.Parse(
+            await File.ReadAllTextAsync(Path.Combine(contextDirectory, "controller-run.json"))
+        );
+        var rework = controllerJson.RootElement.GetProperty("rework");
+        Assert.Equal("Assistance", rework.GetProperty("requestMode").GetString());
+        Assert.Equal(_reworkBranch, rework.GetProperty("branchName").GetString());
+        Assert.Equal(
+            "314",
+            rework.GetProperty("pullRequest").GetProperty("pullRequestId").GetString()
+        );
+        Assert.Equal(JsonValueKind.Null, rework.GetProperty("priorRunId").ValueKind);
+
+        var events = await eventStore.ListByRunIdAsync(run.RunId, CancellationToken.None);
+        Assert.Contains(
+            events,
+            lifecycleEvent =>
+                lifecycleEvent.EventType == ControllerEventTypes.AgentStarting
+                && lifecycleEvent.Payload?.TryGetValue(
+                    "executionKind",
+                    out var executionKind
+                ) == true
+                && string.Equals(
+                    executionKind?.ToString(),
+                    ExecutionKind.Rework.ToString(),
+                    StringComparison.Ordinal
+                )
+        );
+    }
+
+    [Fact]
+    public async Task PersistedClaimedAssistanceRun_AfterRestart_ReloadsPendingCycle()
+    {
+        var dbPath = Path.Combine(_tempRoot, $"test-assistance-restart-{Guid.NewGuid():N}.db");
+        var config = BuildLocalConfiguration(
+            dbPath,
+            "assistance-restart-worker",
+            "custom-ready-rework",
+            "custom"
+        );
+        using var provider = BuildServiceProvider(config);
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+
+        await using (var scope = scopeFactory.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
+            await db.Database.EnsureCreatedAsync();
+            await SeedManagedProfilesAsync(scope.ServiceProvider);
+        }
+
+        ReworkCycle pendingCycle;
+        AgentRunHandle claimedRun;
+        await using (var seedScope = scopeFactory.CreateAsyncScope())
+        {
+            var workSource = seedScope.ServiceProvider.GetRequiredService<IWorkSource>();
+            var lifecycle = seedScope.ServiceProvider.GetRequiredService<IRunLifecycleService>();
+            var candidate = Assert.Single(
+                await workSource.FindEligibleAsync(
+                    new WorkQuery { MaxResults = 10 },
+                    CancellationToken.None
+                )
+            );
+
+            var claim = await workSource.TryClaimAsync(
+                candidate,
+                new ClaimRequest
+                {
+                    WorkerId = "assistance-restart-worker",
+                    ClaimedAt = DateTimeOffset.UtcNow,
+                },
+                CancellationToken.None
+            );
+            Assert.True(claim.Success);
+
+            pendingCycle = await CreatePendingAssistanceCycleAsync(
+                seedScope.ServiceProvider,
+                candidate.Id,
+                "restart"
+            );
+            claimedRun = await lifecycle.CreateRunForWorkItemAsync(
+                candidate.Id,
+                "assistance-restart-worker",
+                "MockPiMateria",
+                "Managed local runtime",
+                "LocalWorkspace",
+                CancellationToken.None
+            );
+            Assert.Equal(RunLifecycleState.Claimed, claimedRun.Status);
+        }
+
+        var worker = CreateWorker(provider, scopeFactory);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await worker.RunPollCycleForTestingAsync(cts.Token);
+        await Task.Delay(TimeSpan.FromSeconds(1));
+
+        await using var verifyScope = scopeFactory.CreateAsyncScope();
+        var cycleStore = verifyScope.ServiceProvider.GetRequiredService<IReworkCycleStore>();
+        var consumedCycle = Assert.Single(
+            await cycleStore.ListConsumedAsync(CancellationToken.None)
+        );
+        Assert.Equal(pendingCycle.Id, consumedCycle.Id);
+        Assert.Equal(claimedRun.RunId, consumedCycle.NewRunId);
+
+        await AssertAssistanceDispatchAsync(
+            verifyScope.ServiceProvider,
+            claimedRun.RunId
+        );
+    }
+
+    [Fact]
+    public async Task AutomaticRetryOfAssistanceRun_ReloadsConsumedCycleFromRunLineage()
+    {
+        var dbPath = Path.Combine(_tempRoot, $"test-assistance-retry-{Guid.NewGuid():N}.db");
+        var config = BuildLocalConfiguration(
+            dbPath,
+            "assistance-retry-worker",
+            "custom-ready-rework",
+            "custom"
+        );
+        using var provider = BuildServiceProvider(config);
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+
+        await using (var scope = scopeFactory.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
+            await db.Database.EnsureCreatedAsync();
+            await SeedManagedProfilesAsync(scope.ServiceProvider);
+        }
+
+        ReworkCycle consumedCycle;
+        AgentRunHandle failedRun;
+        AgentRunHandle scheduledRetry;
+        await using (var seedScope = scopeFactory.CreateAsyncScope())
+        {
+            var workSource = seedScope.ServiceProvider.GetRequiredService<IWorkSource>();
+            var lifecycle = seedScope.ServiceProvider.GetRequiredService<IRunLifecycleService>();
+            var seedRunStore = seedScope.ServiceProvider.GetRequiredService<IAgentRunStore>();
+            var seedCycleStore = seedScope.ServiceProvider.GetRequiredService<IReworkCycleStore>();
+            var candidate = Assert.Single(
+                await workSource.FindEligibleAsync(
+                    new WorkQuery { MaxResults = 10 },
+                    CancellationToken.None
+                )
+            );
+
+            var claim = await workSource.TryClaimAsync(
+                candidate,
+                new ClaimRequest
+                {
+                    WorkerId = "assistance-retry-worker",
+                    ClaimedAt = DateTimeOffset.UtcNow,
+                },
+                CancellationToken.None
+            );
+            Assert.True(claim.Success);
+
+            consumedCycle = await CreatePendingAssistanceCycleAsync(
+                seedScope.ServiceProvider,
+                candidate.Id,
+                "retry"
+            );
+            failedRun = await lifecycle.CreateRunForWorkItemAsync(
+                candidate.Id,
+                "assistance-retry-worker",
+                "MockPiMateria",
+                "Managed local runtime",
+                "LocalWorkspace",
+                CancellationToken.None
+            );
+            await seedCycleStore.MarkConsumedAsync(
+                consumedCycle.Id,
+                failedRun.RunId,
+                CancellationToken.None
+            );
+            await seedRunStore.UpdateStatusAsync(
+                failedRun.RunId,
+                RunLifecycleState.Failed,
+                CancellationToken.None
+            );
+            await seedRunStore.UpdateRuntimeFieldsAsync(
+                failedRun.RunId,
+                new RuntimeFieldUpdate
+                {
+                    Error = $"[{RetryableFailureReasons.KeepaliveStall}] simulated retry",
+                    FinishedAt = DateTimeOffset.UtcNow,
+                },
+                CancellationToken.None
+            );
+            scheduledRetry = Assert.IsType<AgentRunHandle>(
+                await lifecycle.EvaluateRetryAsync(
+                    failedRun.RunId,
+                    "assistance-retry-worker",
+                    maxRunAttempts: 3,
+                    CancellationToken.None
+                )
+            );
+        }
+
+        var worker = CreateWorker(provider, scopeFactory);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await worker.RunPollCycleForTestingAsync(cts.Token);
+        await Task.Delay(TimeSpan.FromSeconds(1));
+
+        await using var verifyScope = scopeFactory.CreateAsyncScope();
+        var runStore = verifyScope.ServiceProvider.GetRequiredService<IAgentRunStore>();
+        var cycleStore = verifyScope.ServiceProvider.GetRequiredService<IReworkCycleStore>();
+        var retryRun = await runStore.GetByIdAsync(
+            scheduledRetry.RunId,
+            CancellationToken.None
+        );
+        Assert.NotNull(retryRun);
+        Assert.Equal(failedRun.RunId, retryRun.PreviousRunId);
+        var persistedCycle = Assert.Single(
+            await cycleStore.ListConsumedAsync(CancellationToken.None)
+        );
+
+        Assert.Equal(consumedCycle.Id, persistedCycle.Id);
+        Assert.Equal(failedRun.RunId, persistedCycle.NewRunId);
+        await AssertAssistanceDispatchAsync(verifyScope.ServiceProvider, retryRun.RunId);
+    }
+
     /// <summary>
     /// Verify lifecycle events include the full chain through context injection
     /// when a rework cycle is consumed.
@@ -644,6 +1003,150 @@ public class ReworkConsumptionTests : IAsyncLifetime
     }
 
     // ── Helpers ─────────────────────────────────────────────────────
+
+    private async Task<ReworkCycle> CreatePendingAssistanceCycleAsync(
+        IServiceProvider services,
+        string workItemId,
+        string testKey
+    )
+    {
+        var cycleStore = services.GetRequiredService<IReworkCycleStore>();
+        return await cycleStore.CreateAsync(
+            new ReworkCycleCreateRequest
+            {
+                RequestMode = ReworkRequestMode.Assistance,
+                PullRequest = new PullRequestReference
+                {
+                    EnvironmentKey = "managed-ado",
+                    RepositoryKey = "test-repo",
+                    PullRequestId = $"314-{testKey}",
+                    PullRequestUrl = $"https://example.com/test-repo/pullrequest/314-{testKey}",
+                    SourceBranch = _reworkBranch,
+                    TargetBranch = "main",
+                    SourceCommitSha = _reworkBranchSha,
+                },
+                WorkItemId = workItemId,
+                FeedbackBundleJson = "[]",
+                FeedbackBundleId = $"assistance-bundle-{testKey}-{Guid.NewGuid():N}",
+                CorrelationId = $"assistance-correlation-{testKey}-{Guid.NewGuid():N}",
+            },
+            CancellationToken.None
+        );
+    }
+
+    private async Task AssertAssistanceDispatchAsync(
+        IServiceProvider services,
+        string runId
+    )
+    {
+        var dbContext = services.GetRequiredService<AgentControllerDbContext>();
+        var eventStore = services.GetRequiredService<ILifecycleEventStore>();
+        var environment = await dbContext.Environments.SingleAsync(entity =>
+            entity.RunId == runId
+        );
+        var contextDirectory = Path.Combine(environment.RootPath, "context");
+
+        using var repositoryJson = JsonDocument.Parse(
+            await File.ReadAllTextAsync(Path.Combine(contextDirectory, "repository.json"))
+        );
+        Assert.Equal(
+            _reworkBranch,
+            repositoryJson.RootElement.GetProperty("defaultBranch").GetString()
+        );
+
+        using var controllerJson = JsonDocument.Parse(
+            await File.ReadAllTextAsync(Path.Combine(contextDirectory, "controller-run.json"))
+        );
+        Assert.Equal(
+            "Assistance",
+            controllerJson.RootElement
+                .GetProperty("rework")
+                .GetProperty("requestMode")
+                .GetString()
+        );
+        Assert.True(File.Exists(Path.Combine(contextDirectory, "rework-context.md")));
+
+        var events = await eventStore.ListByRunIdAsync(runId, CancellationToken.None);
+        Assert.Contains(
+            events,
+            lifecycleEvent =>
+                lifecycleEvent.EventType == ControllerEventTypes.AgentStarting
+                && lifecycleEvent.Payload?.TryGetValue(
+                    "executionKind",
+                    out var executionKind
+                ) == true
+                && string.Equals(
+                    executionKind?.ToString(),
+                    ExecutionKind.Rework.ToString(),
+                    StringComparison.Ordinal
+                )
+        );
+    }
+
+    private IConfiguration BuildLocalConfiguration(
+        string dbPath,
+        string workerId,
+        string readyTag,
+        string tagPrefix
+    ) =>
+        new ConfigurationBuilder()
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["agentController:workerId"] = workerId,
+                    ["agentController:pollIntervalSeconds"] = "10",
+                    ["agentController:maxConcurrentRuns"] = "1",
+                    ["agentController:staleTimeoutSeconds"] = "300",
+                    ["agentController:runRoot"] = _tempRunRoot,
+                    ["agentController:retainSuccessfulRuns"] = "true",
+                    ["agentController:retainFailedRuns"] = "true",
+                    ["agentController:workerEnabled"] = "true",
+                    ["persistence:provider"] = "Sqlite",
+                    ["persistence:connectionString"] = $"Data Source={dbPath}",
+                    ["workSource:provider"] = "LocalFile",
+                    ["workSource:tagPrefix"] = tagPrefix,
+                    ["sourceControl:provider"] = "LocalGit",
+                    ["environmentProvider:provider"] = "LocalWorkspace",
+                    ["runtime:provider"] = "MockPiMateria",
+                    ["runtime:defaultMateriaLoadout"] = "success-pr",
+                    ["localWork:definitions:0:repoKey"] = "test-repo",
+                    ["localWork:definitions:0:title"] = "Assistance dispatch test",
+                    ["localWork:definitions:0:body"] = "Continue the existing pull request.",
+                    ["localWork:definitions:0:tags:0"] = readyTag,
+                    ["localWork:definitions:0:priority"] = "1",
+                    ["localWork:definitions:0:status"] = "New",
+                }
+            )
+            .Build();
+
+    private static ServiceProvider BuildServiceProvider(IConfiguration configuration)
+    {
+        var services = new ServiceCollection();
+        services.AddSilentLogging();
+        services.AddAgentControllerOptions(configuration);
+        services.AddAgentControllerDbContext(configuration);
+        services.AddAgentControllerRepositories();
+        services.AddAgentControllerLifecycleService();
+        services.AddApplicationHandlers();
+        services.AddAgentControllerNoOpProviders();
+        services.AddAgentControllerLocalFileWorkSource();
+        services.AddAgentControllerLocalGitSourceControl();
+        services.AddAgentControllerLocalWorkspaceEnvironment();
+        services.AddAgentControllerMockPiMateriaRuntime();
+        services.AddSingleton<IServiceScopeFactory, SimpleScopeFactory>();
+        return services.BuildServiceProvider();
+    }
+
+    private static PollingWorker CreateWorker(
+        IServiceProvider provider,
+        IServiceScopeFactory scopeFactory
+    ) =>
+        new(
+            scopeFactory,
+            provider.GetRequiredService<IOptionsMonitor<AgentControllerOptions>>(),
+            provider.GetRequiredService<IOptionsMonitor<WorkSourceOptionsView>>(),
+            provider.GetRequiredService<ILogger<PollingWorker>>()
+        );
 
     private async Task SeedManagedProfilesAsync(IServiceProvider services)
     {

@@ -239,6 +239,168 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         return results;
     }
 
+    public async Task<CreatedWorkItemResult> CreateWorkItemAsync(
+        BoardsCreateWorkItemParameters parameters,
+        CancellationToken cancellationToken
+    )
+    {
+        ArgumentNullException.ThrowIfNull(parameters);
+
+        var project = string.IsNullOrWhiteSpace(parameters.Project)
+            ? _options.Project
+            : parameters.Project.Trim();
+        if (string.IsNullOrWhiteSpace(project))
+        {
+            throw new ArgumentException(
+                "An Azure DevOps project is required to create a work item.",
+                nameof(parameters)
+            );
+        }
+
+        var workItemType = RequireCreationValue(
+            parameters.WorkItemType,
+            nameof(parameters.WorkItemType)
+        );
+        var repoKey = RequireCreationValue(parameters.RepoKey, nameof(parameters.RepoKey));
+        var title = RequireCreationValue(parameters.Title, nameof(parameters.Title));
+        var tags = parameters.Tags
+            .Where(tag => !string.IsNullOrWhiteSpace(tag))
+            .Select(tag => tag.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var patchOperations = new List<object>
+        {
+            new
+            {
+                op = "add",
+                path = "/fields/System.Title",
+                value = title,
+            },
+            new
+            {
+                op = "add",
+                path = "/fields/System.Description",
+                value = parameters.Description,
+            },
+        };
+
+        if (tags.Count > 0)
+        {
+            patchOperations.Add(
+                new
+                {
+                    op = "add",
+                    path = "/fields/System.Tags",
+                    value = string.Join("; ", tags),
+                }
+            );
+        }
+
+        foreach (var relation in parameters.Relations)
+        {
+            var relationType = RequireCreationValue(
+                relation.RelationType,
+                nameof(relation.RelationType)
+            );
+            var relationUrl = RequireCreationValue(relation.Url, nameof(relation.Url));
+            var relationValue = new Dictionary<string, object>
+            {
+                ["rel"] = relationType,
+                ["url"] = relationUrl,
+            };
+            if (relation.Attributes is { Count: > 0 })
+            {
+                relationValue["attributes"] = relation.Attributes;
+            }
+
+            patchOperations.Add(
+                new
+                {
+                    op = "add",
+                    path = "/relations/-",
+                    value = relationValue,
+                }
+            );
+        }
+
+        var body = JsonSerializer.Serialize(patchOperations, JsonOptions);
+        using var content = new StringContent(
+            body,
+            Encoding.UTF8,
+            "application/json-patch+json"
+        );
+        using var response = await _http.PostAsync(
+            $"{Uri.EscapeDataString(project)}/_apis/wit/workitems/${Uri.EscapeDataString(workItemType)}?api-version=7.1",
+            content,
+            cancellationToken
+        );
+        response.EnsureSuccessStatusCode();
+
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var document = JsonDocument.Parse(responseBody);
+        var root = document.RootElement;
+        var externalId = ReadRequiredWorkItemIdentifier(root);
+        var revision = ReadRequiredWorkItemRevision(root);
+        var url = ReadCreatedWorkItemUrl(root, project, externalId);
+
+        var responseFields = root.TryGetProperty("fields", out var fields)
+            && fields.ValueKind == JsonValueKind.Object
+                ? fields
+                : default;
+        var hasResponseFields = responseFields.ValueKind == JsonValueKind.Object;
+        var responseDescription = hasResponseFields
+            ? GetStringField(responseFields, "System.Description")
+            : null;
+        var responseTags = hasResponseFields
+            ? ParseWorkItemTags(responseFields)
+            : [];
+        if (responseTags.Count == 0)
+        {
+            responseTags = tags;
+        }
+
+        var metadata = new Dictionary<string, string>
+        {
+            ["revision"] = revision,
+            ["workItemType"] = workItemType,
+        };
+        var candidate = new WorkCandidate
+        {
+            Id = $"wi_{externalId}",
+            ExternalId = externalId,
+            ExternalUrl = url,
+            RepoKey = repoKey,
+            Title = hasResponseFields
+                ? GetStringField(responseFields, "System.Title") ?? title
+                : title,
+            Description = responseDescription ?? parameters.Description,
+            AcceptanceCriteria = hasResponseFields
+                ? ParseAcceptanceCriteria(responseFields, responseDescription)
+                : null,
+            Priority = hasResponseFields
+                ? GetIntField(responseFields, "Microsoft.VSTS.Common.Priority")
+                : null,
+            Status = hasResponseFields
+                ? GetStringField(responseFields, "System.State")
+                : null,
+            Tags = responseTags,
+            AssignedTo = hasResponseFields
+                ? GetAssignedToDisplayName(responseFields)
+                : null,
+            Source = "AzureDevOpsBoards",
+            SourceMetadata = metadata,
+        };
+
+        return new CreatedWorkItemResult
+        {
+            ExternalId = externalId,
+            Url = url,
+            Revision = revision,
+            Candidate = candidate,
+        };
+    }
+
     public async Task<ClaimResult> TryClaimWorkItemAsync(
         ExternalWorkRef workRef,
         ClaimRequest request,
@@ -296,7 +458,11 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                     ? rev
                     : (int?)null;
 
-            // 2. Check if already claimed — look for agent-active or agent-worker: tags
+            var tagPrefix = NormalizeTagPrefix(request.TagPrefix);
+            var activeTag = WorkSourceOptions.TagActive(tagPrefix);
+            var workerTagPrefix = $"{tagPrefix}-worker:";
+
+            // 2. Check if already claimed using this managed environment's tags.
             var currentTags = string.Empty;
             if (
                 getDoc.RootElement.TryGetProperty("fields", out var fields)
@@ -311,20 +477,20 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                 .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            if (existingTags.Contains("agent-active"))
+            if (existingTags.Contains(activeTag))
             {
                 return new ClaimResult
                 {
                     Success = false,
                     FailureReason =
                         $"Work item {workRef.ExternalId} is already claimed "
-                        + "(has 'agent-active' tag).",
+                        + $"(has '{activeTag}' tag).",
                 };
             }
 
-            // Also check for any agent-worker: tag to detect re-claim attempts
+            // Also check for any managed worker tag to detect re-claim attempts.
             var workerTag = existingTags.FirstOrDefault(t =>
-                t.StartsWith("agent-worker:", StringComparison.OrdinalIgnoreCase)
+                t.StartsWith(workerTagPrefix, StringComparison.OrdinalIgnoreCase)
             );
             if (workerTag is not null)
             {
@@ -337,11 +503,13 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                 };
             }
 
-            // 3. Build PATCH operations: add agent-active tag, agent-worker tag,
-            //    and a claiming comment
-            var newTags = string.IsNullOrWhiteSpace(currentTags)
-                ? $"agent-active; agent-worker:{request.WorkerId}"
-                : $"{currentTags.TrimEnd(';')}; agent-active; agent-worker:{request.WorkerId}";
+            // 3. Preserve all existing tags while adding the managed active and worker tags.
+            existingTags.Add(activeTag);
+            existingTags.Add($"{workerTagPrefix}{request.WorkerId}");
+            var newTags = string.Join(
+                "; ",
+                existingTags.OrderBy(tag => tag, StringComparer.OrdinalIgnoreCase)
+            );
 
             var claimedAt = request.ClaimedAt.ToString(
                 "yyyy-MM-dd HH:mm:ss UTC",
@@ -468,76 +636,48 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             );
         }
 
-        if (status.Tags is { Count: > 0 } && status.RemovedTags is null or [])
-        {
-            // Simple tag addition — no removals needed.
-            patchOps.Add(
-                new
-                {
-                    op = "add",
-                    path = "/fields/System.Tags",
-                    value = string.Join("; ", status.Tags),
-                }
-            );
-        }
-
-        // Track fresh revision from the tag-read GET (when RemovedTags path is taken).
-        // Used as If-Match token to prevent 412 on the tag-strip PATCH.
+        // ADO stores tags as one semicolon-delimited field, so every tag mutation must
+        // merge against the current field value. Replacing it with only the added tags
+        // would discard eligibility and repo markers after lifecycle projection.
+        var hasTagsToAdd = status.Tags is { Count: > 0 };
+        var hasTagsToRemove = status.RemovedTags is { Count: > 0 };
         string? freshRev = null;
 
-        // Handle tag removal (and optional addition): read current tags, filter,
-        // merge in any new tags, and write back in a single PATCH operation.
-        // The tag-read GET is load-bearing: if RemovedTags is specified and the
-        // GET fails, abort entirely — no state-only PATCH masquerading as success.
-        if (status.RemovedTags is { Count: > 0 })
+        if (hasTagsToAdd || hasTagsToRemove)
         {
-            // Fetch current work item to read existing tags.
-            //     Plain GET without $expand — ADO returns all fields by default.
-            //     Using $expand=minimal is unnecessary and may trigger field-selection
-            //     rules that omit System.Tags in the live ADO environment.
             var getResponse = await _http.GetAsync(
                 $"{project}/_apis/wit/workitems/{workRef.ExternalId}?api-version=7.1",
                 cancellationToken
             );
 
-            // [rework_reactivate_get] — structured log for the tag-read GET.
-            // Lets an operator confirm whether the GET is succeeding and whether
-            // System.Tags is present in the response.
-            var tagsPresent = false;
-            int? getRev = null;
-            int tagCount = 0;
-
             if (!getResponse.IsSuccessStatusCode)
             {
-                Log.ReworkReactivateGetFailed(
-                    _logger,
-                    workRef.ExternalId,
-                    (int)getResponse.StatusCode,
-                    getResponse.ReasonPhrase ?? "(no reason phrase)"
-                );
+                if (hasTagsToRemove)
+                {
+                    Log.ReworkReactivateGetFailed(
+                        _logger,
+                        workRef.ExternalId,
+                        (int)getResponse.StatusCode,
+                        getResponse.ReasonPhrase ?? "(no reason phrase)"
+                    );
+                }
 
-                // Load-bearing GET failed — abort the PATCH entirely.
-                // Returning false so the caller (e.g. reactivation) knows the
-                // tag operations were NOT applied.
+                // Never risk replacing existing tags when their current value is unknown.
                 return false;
             }
 
             var getJson = await getResponse.Content.ReadAsStringAsync(cancellationToken);
             using var getDoc = JsonDocument.Parse(getJson);
 
-            // Capture the freshly-read revision from this GET so the PATCH
-            // uses the current rev, not a possibly-stale workRef.Revision.
-            // This prevents 412 Precondition Failed on the tag-strip PATCH.
             freshRev =
                 getDoc.RootElement.TryGetProperty("rev", out var freshRevEl)
                 && freshRevEl.ValueKind == JsonValueKind.Number
                 && freshRevEl.TryGetInt32(out var freshRevInt)
                     ? freshRevInt.ToString(CultureInfo.InvariantCulture)
                     : null;
-            if (!string.IsNullOrWhiteSpace(freshRev))
-                getRev = int.Parse(freshRev, CultureInfo.InvariantCulture);
 
             var currentTags = string.Empty;
+            var tagsPresent = false;
             if (
                 getDoc.RootElement.TryGetProperty("fields", out var fields)
                 && fields.TryGetProperty("System.Tags", out var tagsEl)
@@ -551,56 +691,59 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             var existingTags = currentTags
                 .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            tagCount = existingTags.Count;
 
-            Log.ReworkReactivateGet(
-                _logger,
-                workRef.ExternalId,
-                (int)getResponse.StatusCode,
-                tagsPresent,
-                getRev,
-                tagCount
+            if (hasTagsToRemove)
+            {
+                var getRev = !string.IsNullOrWhiteSpace(freshRev)
+                    ? int.Parse(freshRev, CultureInfo.InvariantCulture)
+                    : (int?)null;
+                Log.ReworkReactivateGet(
+                    _logger,
+                    workRef.ExternalId,
+                    (int)getResponse.StatusCode,
+                    tagsPresent,
+                    getRev,
+                    existingTags.Count
+                );
+
+                // Remove matching tags (supports exact match and prefix:* wildcard).
+                foreach (var tagToRemove in status.RemovedTags!)
+                {
+                    var trimmed = tagToRemove?.Trim();
+                    if (string.IsNullOrWhiteSpace(trimmed))
+                        continue;
+
+                    if (trimmed.EndsWith(":*", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var prefix = trimmed[..^1]; // strip the '*', keep the ':'
+                        existingTags.RemoveWhere(t =>
+                            t.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                        );
+                    }
+                    else
+                    {
+                        existingTags.RemoveWhere(t =>
+                            t.Equals(trimmed, StringComparison.OrdinalIgnoreCase)
+                        );
+                    }
+                }
+            }
+
+            if (hasTagsToAdd)
+            {
+                foreach (var tagToAdd in status.Tags!)
+                {
+                    if (!string.IsNullOrWhiteSpace(tagToAdd))
+                    {
+                        existingTags.Add(tagToAdd.Trim());
+                    }
+                }
+            }
+
+            var newTags = string.Join(
+                "; ",
+                existingTags.OrderBy(t => t, StringComparer.OrdinalIgnoreCase)
             );
-
-            // Remove matching tags (supports exact match and prefix:* wildcard).
-            foreach (var tagToRemove in status.RemovedTags)
-            {
-                var trimmed = tagToRemove?.Trim();
-                if (string.IsNullOrWhiteSpace(trimmed))
-                    continue;
-
-                if (trimmed.EndsWith(":*", StringComparison.OrdinalIgnoreCase))
-                {
-                    var prefix = trimmed[..^1]; // strip the '*', keep the ':'
-                    existingTags.RemoveWhere(t =>
-                        t.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
-                    );
-                }
-                else
-                {
-                    existingTags.RemoveWhere(t =>
-                        t.Equals(trimmed, StringComparison.OrdinalIgnoreCase)
-                    );
-                }
-            }
-
-            // Merge in any tags to add.
-            if (status.Tags is { Count: > 0 })
-            {
-                foreach (var tagToAdd in status.Tags)
-                {
-                    existingTags.Add(tagToAdd);
-                }
-            }
-
-            var newTags =
-                existingTags.Count > 0
-                    ? string.Join(
-                        "; ",
-                        existingTags.OrderBy(t => t, StringComparer.OrdinalIgnoreCase)
-                    )
-                    : string.Empty;
-
             patchOps.Add(
                 new
                 {
@@ -653,20 +796,23 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         var response = await _http.SendAsync(request, cancellationToken);
 
         // 412 Precondition Failed: concurrent modification.
-        // For RemovedTags-bearing PATCHes (reactivation path) fail loudly so the
-        // caller can surface the failure and retry on the next poll.
-        // Status-only projections retain best-effort behavior.
+        // Tag mutations must report failure so callers do not persist a tag as
+        // published when ADO rejected the update. Status-only projections retain
+        // best-effort behavior.
         if (response.StatusCode == System.Net.HttpStatusCode.PreconditionFailed)
         {
-            if (status.RemovedTags is { Count: > 0 })
+            if (hasTagsToAdd || hasTagsToRemove)
             {
-                var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-                Log.ReworkReactivatePatchFailed(
-                    _logger,
-                    workRef.ExternalId,
-                    (int)response.StatusCode,
-                    Truncate(errorBody, 200)
-                );
+                if (hasTagsToRemove)
+                {
+                    var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                    Log.ReworkReactivatePatchFailed(
+                        _logger,
+                        workRef.ExternalId,
+                        (int)response.StatusCode,
+                        Truncate(errorBody, 200)
+                    );
+                }
                 return false;
             }
             // Best-effort status projection: concurrent modification is not fatal.
@@ -1072,7 +1218,7 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                     ? rev
                     : (int?)null;
 
-            // 2. Read current tags and strip agent-controlled tags
+            // 2. Read current tags and strip this environment's claim tags.
             var currentTags = string.Empty;
             if (
                 getDoc.RootElement.TryGetProperty("fields", out var fields)
@@ -1087,10 +1233,12 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
                 .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .ToList();
 
-            // Strip agent-active and any agent-worker:* tags
+            var tagPrefix = NormalizeTagPrefix(request.TagPrefix);
+            var activeTag = WorkSourceOptions.TagActive(tagPrefix);
+            var workerTagPrefix = $"{tagPrefix}-worker:";
             existingTags.RemoveAll(t =>
-                t.Equals("agent-active", StringComparison.OrdinalIgnoreCase)
-                || t.StartsWith("agent-worker:", StringComparison.OrdinalIgnoreCase)
+                t.Equals(activeTag, StringComparison.OrdinalIgnoreCase)
+                || t.StartsWith(workerTagPrefix, StringComparison.OrdinalIgnoreCase)
             );
 
             var newTags = existingTags.Count > 0 ? string.Join("; ", existingTags) : string.Empty;
@@ -1218,6 +1366,17 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
             }
         }
 
+        if (parameters.AnyTags is { Count: > 0 })
+        {
+            var anyTagClauses = string.Join(
+                " OR ",
+                parameters.AnyTags.Select(tag =>
+                    $"[System.Tags] CONTAINS '{EscapeWiql(tag)}'"
+                )
+            );
+            sb.Append(CultureInfo.InvariantCulture, $" AND ({anyTagClauses})");
+        }
+
         if (parameters.ExcludedTags is { Count: > 0 })
         {
             foreach (var tag in parameters.ExcludedTags)
@@ -1238,6 +1397,11 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
     }
 
     private static string EscapeWiql(string value) => value.Replace("'", "''");
+
+    private static string NormalizeTagPrefix(string? tagPrefix) =>
+        string.IsNullOrWhiteSpace(tagPrefix)
+            ? WorkSourceOptions.DefaultTagPrefix
+            : tagPrefix.Trim();
 
     // ─── Concurrency helpers ────────────────────────────
 
@@ -1775,6 +1939,114 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
     }
 
     // ─── Field helpers ────────────────────────────────────
+
+    private static string RequireCreationValue(string? value, string parameterName)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new ArgumentException("A non-empty value is required.", parameterName);
+        }
+
+        return value.Trim();
+    }
+
+    private static string ReadRequiredWorkItemIdentifier(JsonElement root)
+    {
+        if (root.TryGetProperty("id", out var id))
+        {
+            if (id.ValueKind == JsonValueKind.Number && id.TryGetInt64(out var numericId))
+            {
+                return numericId.ToString(CultureInfo.InvariantCulture);
+            }
+
+            if (id.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(id.GetString()))
+            {
+                return id.GetString()!;
+            }
+        }
+
+        throw new InvalidOperationException(
+            "Azure DevOps returned a created work item without an identifier."
+        );
+    }
+
+    private static string ReadRequiredWorkItemRevision(JsonElement root)
+    {
+        if (root.TryGetProperty("rev", out var revision))
+        {
+            if (
+                revision.ValueKind == JsonValueKind.Number
+                && revision.TryGetInt64(out var numericRevision)
+            )
+            {
+                return numericRevision.ToString(CultureInfo.InvariantCulture);
+            }
+
+            if (
+                revision.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(revision.GetString())
+            )
+            {
+                return revision.GetString()!;
+            }
+        }
+
+        throw new InvalidOperationException(
+            "Azure DevOps returned a created work item without a revision."
+        );
+    }
+
+    private string ReadCreatedWorkItemUrl(
+        JsonElement root,
+        string project,
+        string externalId
+    )
+    {
+        if (
+            root.TryGetProperty("_links", out var links)
+            && links.ValueKind == JsonValueKind.Object
+            && links.TryGetProperty("html", out var html)
+            && html.ValueKind == JsonValueKind.Object
+            && html.TryGetProperty("href", out var href)
+            && href.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(href.GetString())
+        )
+        {
+            return href.GetString()!;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_options.BaseUrl))
+        {
+            return $"{_options.BaseUrl.TrimEnd('/')}/{Uri.EscapeDataString(project)}/_workitems/edit/{externalId}";
+        }
+
+        if (
+            root.TryGetProperty("url", out var apiUrl)
+            && apiUrl.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(apiUrl.GetString())
+        )
+        {
+            return apiUrl.GetString()!;
+        }
+
+        throw new InvalidOperationException(
+            "Azure DevOps returned a created work item without a URL."
+        );
+    }
+
+    private static List<string> ParseWorkItemTags(JsonElement fields)
+    {
+        var serialized = GetStringField(fields, "System.Tags");
+        return string.IsNullOrWhiteSpace(serialized)
+            ? []
+            : serialized
+                .Split(
+                    ';',
+                    StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries
+                )
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+    }
 
     private static string? GetStringField(JsonElement fields, string name)
     {

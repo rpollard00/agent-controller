@@ -1,3 +1,5 @@
+using AgentController.Domain;
+
 namespace AgentController.Application.Results;
 
 /// <summary>
@@ -43,6 +45,33 @@ public sealed record RunCardItem
 
     /// <summary>One-based attempt number for the associated run.</summary>
     public int RunAttempt { get; init; } = 1;
+
+    /// <summary>How work on an existing pull request was requested, when applicable.</summary>
+    public ReworkRequestMode? RequestMode { get; init; }
+
+    /// <summary>Canonical pull-request reference associated with the rework request.</summary>
+    public PullRequestReference? PullRequest { get; init; }
+
+    /// <summary>One-based rework cycle number after the request is materialized.</summary>
+    public int? CycleNumber { get; init; }
+
+    /// <summary>Controller-local work-item ID of a generated assistance story.</summary>
+    public string? AssistanceStoryWorkItemId { get; init; }
+
+    /// <summary>Provider-assigned ID of a generated assistance story.</summary>
+    public string? AssistanceStoryExternalId { get; init; }
+
+    /// <summary>Browser URL of a generated assistance story.</summary>
+    public string? AssistanceStoryUrl { get; init; }
+
+    /// <summary>Current feedback soak/materialization state.</summary>
+    public ReworkFeedbackStatus? FeedbackStatus { get; init; }
+
+    /// <summary>Current state of the materialized rework cycle.</summary>
+    public ReworkCycleStatus? CycleStatus { get; init; }
+
+    /// <summary>Run that originally consumed the materialized cycle.</summary>
+    public string? ConsumingRunId { get; init; }
 
     /// <summary>Type of the latest lifecycle event or synthesized soak event.</summary>
     public string? LastEventType { get; init; }

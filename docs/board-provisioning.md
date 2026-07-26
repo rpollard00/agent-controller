@@ -14,45 +14,53 @@ The controller's internal database is the authoritative source of truth. Azure D
 
 ## 2. Tag-Based Eligibility Model
 
-Eligibility is determined by three configuration dimensions in the `workSource` section:
+Each enabled managed work-source environment defines a `tagPrefix` (default `agent`). The controller derives its board tags from that prefix:
 
-| Setting | Purpose | Default |
-|---------|---------|---------|
-| `eligibleTags` | Tags that **must** be present for the item to be considered | `["agent-ready"]` |
-| `excludedTags` | Tags that **exclude** the item even if it otherwise matches | `["agent-active", "agent-failed", "agent-needs-human"]` |
-| `eligibleStates` | Board states the item must be in to be polled | `["New", "Approved"]` |
+| Derived tag | Purpose |
+|---|---|
+| `<prefix>-ready` | Ordinary new work. Dispatches the `NewWork` loadout. |
+| `<prefix>-ready-rework` | Generated Assistance story for an existing PR. Requires a durable Pending Assistance cycle and dispatches the `Rework` loadout. |
+| `<prefix>-active` | Work item is claimed. |
+| `<prefix>-failed` | Exclusion marker when projected by lifecycle policy. |
+| `<prefix>-needs-human` | Human intervention is required. |
+| `<prefix>-worker:<id>` | Identifies the claiming worker. |
 
 ### 2.1 Eligibility Query (WIQL)
 
-The controller builds a WIQL query that combines these filters:
+Default Azure DevOps discovery requires **either** ready marker, excludes controller lifecycle markers, and excludes the fixed terminal states `Closed`, `Removed`, `Resolved`, and `Completed`:
 
 ```sql
 SELECT [System.Id] FROM WorkItems
 WHERE [System.TeamProject] = 'MyProject'
-  AND [System.State] IN ('New', 'Approved')
-  AND [System.Tags] CONTAINS 'agent-ready'
+  AND [System.State] NOT IN ('Closed', 'Removed', 'Resolved', 'Completed')
+  AND (
+       [System.Tags] CONTAINS 'agent-ready'
+       OR [System.Tags] CONTAINS 'agent-ready-rework'
+  )
   AND [System.Tags] NOT CONTAINS 'agent-active'
   AND [System.Tags] NOT CONTAINS 'agent-failed'
   AND [System.Tags] NOT CONTAINS 'agent-needs-human'
 ORDER BY [Microsoft.VSTS.Common.Priority] ASC, [System.CreatedDate] DESC
 ```
 
-Each entry in `eligibleTags` adds a `CONTAINS` clause. Each entry in `excludedTags` adds a `NOT CONTAINS` clause.
+The ready conditions are a parenthesized OR. A story is not required to carry both markers. The selected managed environment's prefix is used consistently for discovery, claim, release, and lifecycle projection.
 
 ### 2.2 Tagging a Board Item for Agent Pickup
 
-To make a work item eligible:
+For ordinary new work:
 
-1. Ensure the item is in an **eligible state** (e.g. `New` or `Approved`).
-2. Add the **eligibility tag** (e.g. `agent-ready`).
-3. Add a **repository association tag** in the form `repo:{key}` where `{key}` matches a managed repository profile key (see §3).
-4. Ensure no **exclusion tag** is present (e.g. `agent-active`, `agent-failed`, `agent-needs-human`, `agent-blocked`).
+1. Put the item in a nonterminal state accepted by the board process.
+2. Add `<prefix>-ready` (for example, `agent-ready`).
+3. Add `repo:{key}`, where `{key}` matches an enabled managed repository profile (see §3).
+4. Remove the selected prefix's managed exclusion tags (`<prefix>-active`, `<prefix>-failed`, and `<prefix>-needs-human`).
 
-Example tag set for an eligible item:
+Example:
 
 ```
 agent-ready; repo:example-service
 ```
+
+Do not manually use `<prefix>-ready-rework` as a shortcut. The Assistance materializer adds it only after creating the linked story and its durable Pending cycle. An orphaned ready-rework item is skipped rather than executed as new work.
 
 ---
 
@@ -151,22 +159,24 @@ To retry a failed or needs-human item:
 
 ---
 
-## 6. Rework Reactivation — Tag-Cleanup Guarantee
+## 6. Revival Rework — Original-Story Reactivation
 
-When a completed work item is moved back to an eligible state for rework (e.g. the PR was rejected and the item is moved back to `New`), the controller's reactivation path (`ReactivateForReworkAsync`) performs a **GET-then-PATCH** flow:
+This section applies only to the **Revival** request mode (`agent-rework-requested`). After qualifying feedback soaks, the controller's `ReactivateForReworkAsync` path returns the original controller story to eligibility. Assistance (`agent-assistance-requested`) creates a new story instead and never calls this path.
+
+Revival reactivation performs a **GET-then-PATCH** flow:
 
 1. **Tag-read GET**: A `GET /workitems/{id}?api-version=7.1` reads the work item's current `System.Tags` and revision (`rev`). This GET is **load-bearing** — if it returns non-success, the entire reactivation aborts and returns `false` (no state-only PATCH is emitted, no false success).
 2. **Combined PATCH**: A single `PATCH /workitems/{id}` carries both the state transition and tag operations, using the **freshly-read `rev` from the GET** as the `If-Match` token (not a possibly-stale revision from the work item reference). This prevents 412 errors from stale revision tokens.
 
 ### 6.1 Tag Operations (Always Emitted)
 
-The reactivation tag set is **always included** in the PATCH payload, even when the read-back `existingTags` set is empty or contains none of the target tags. This guarantees:
-- `agent-active` — removed (via `RemovedTags`).
-- `agent-failed` — removed (via `RemovedTags`).
-- `agent-needs-human` — removed (via `RemovedTags`).
-- `agent-worker:{id}` — removed (exact match, via `RemovedTags`).
-- `agent-worker:*` — wildcard pattern that strips any `agent-worker:` prefixed tag (via `RemovedTags`).
-- `agent-ready` — re-added (via `Tags` add operation).
+The reactivation tag set is **always included** in the PATCH payload, even when the read-back `existingTags` set is empty or contains none of the target tags. Using the selected environment's prefix, this guarantees:
+- `<prefix>-active` — removed (via `RemovedTags`).
+- `<prefix>-failed` — removed (via `RemovedTags`).
+- `<prefix>-needs-human` — removed (via `RemovedTags`).
+- `<prefix>-worker:{id}` — removed (exact match, via `RemovedTags`).
+- `<prefix>-worker:*` — wildcard pattern that strips any matching worker tag (via `RemovedTags`).
+- `<prefix>-ready` — re-added (via `Tags` add operation).
 
 ADO tolerates `RemovedTags` entries for tags that are not present, so this defensive approach ensures re-pickup eligibility regardless of prior tag state.
 
@@ -212,11 +222,17 @@ These markers let an operator confirm whether the GET succeeded, whether the tag
 ### 6.5 Local File Source Alignment
 
 `LocalFileWorkSource.ReactivateForReworkAsync` applies the same tag-cleanup logic:
-- Strips `agent-active`, `agent-failed`, `agent-needs-human`, and any tag matching `agent-worker:` prefix.
-- Re-adds `agent-ready`.
+- Strips `<prefix>-active`, `<prefix>-failed`, `<prefix>-needs-human`, and any tag matching the `<prefix>-worker:` prefix.
+- Re-adds `<prefix>-ready`.
 - Transitions to the first eligible state.
 
 Both ADO and local work sources maintain consistent rework tag-cleanup semantics.
+
+### 6.6 Assistance Stories — New Work Item, Existing PR
+
+After an `agent-assistance-requested` PR finishes soaking, the controller creates a fresh User Story with `repo:<key>`, a stable correlation tag, and a direct PR artifact relation. Source stories are related when available, and a parent is inherited only when all source stories share one unambiguous parent. Human-submitted PRs with no linked stories are supported.
+
+The story receives `<prefix>-ready-rework` only after its Pending Assistance cycle is durable. It then follows the normal claim and board-state lifecycle, while the runtime checks out the PR source branch and uses `ExecutionKind.Rework`. Assistance cycle numbers are per canonical PR, not per generated story. See [Pull Request Revival and Assistance Workflows](./pull-request-feedback-workflows.md) for the complete lifecycle and PR-label failure policy.
 
 ---
 
@@ -337,29 +353,40 @@ The controller fetches ADO work item thread history (discussion comments) during
 
 ## 10. Configuration Reference
 
-Complete `workSource` configuration with defaults:
+Azure DevOps connection, work-source environment, and repository profiles are managed through the Web UI/API and persisted in the controller database. The work-source environment supplies `connectionKey`, `project`, `tagPrefix`, `activeState`, and `completedState`; the repository profile supplies the `repo:{key}` identity and points to that environment.
 
-```json
+The process-level feedback and loadout settings are:
+
+```jsonc
 {
-  "workSource": {
-    "provider": "AzureDevOpsBoards",
-    "organizationUrl": "https://dev.azure.com/YOUR_ORG",
-    "project": "YOUR_PROJECT",
-    "eligibleTags": ["agent-ready"],
-    "excludedTags": ["agent-active", "agent-failed", "agent-needs-human"],
-    "eligibleStates": ["New", "Approved"],
-    "activeState": "Active",
-    "completedState": "Resolved",
-    "maxComments": 50
+  "feedback": {
+    "provider": "AzureDevOpsRepos",
+    "enabled": true,
+    "pollIntervalSeconds": 60,
+    "maxConcurrentPolls": 2,
+    "soakMinutes": 5,
+    "reworkMarkerTag": "agent-rework-requested",
+    "assistanceMarkerTag": "agent-assistance-requested",
+    "assistanceInProgressTag": "agent-assistance-in-progress",
+    "allowedReviewers": ["reviewer@example.com"],
+    "maxReviewThreadsPerBundle": 50
+  },
+  "runtime": {
+    "loadouts": {
+      "NewWork": "ADO-Build-NewWork",
+      "Rework": "ADO-Build-Rework"
+    }
   }
 }
 ```
+
+PR labels are independent of `tagPrefix`. Assistance label names are required and all three request/progress names must be distinct case-insensitively. See [Pull Request Revival and Assistance Workflows §7](./pull-request-feedback-workflows.md#7-configuration).
 
 ### 10.1 Switching Between Mock and Live Providers
 
 | Provider | When to Use | Notes |
 |----------|-------------|-------|
-| `AzureDevOpsBoards` | Live ADO integration | Requires `azureDevOps.personalAccessToken` with "Work items: Read & write" scope |
+| `AzureDevOpsBoards` | Live ADO integration | The managed connection's PAT needs `Work Items: Read & write`; Assistance also needs `Code: Read & write`. |
 | `LocalFake` | Offline testing | Uses `POST /work-items` to seed work items |
 | `LocalFile` | Declarative local testing | Reads work item definitions from `localWork.definitions` in config |
 
@@ -373,6 +400,7 @@ If a run in `AwaitingResult` state exceeds `agentController.staleTimeoutSeconds`
 
 - [Boards Setup Flow and PAT Runtime Requirement](./boards-setup.md) — Connect-first flow for web UI setup and PAT-as-env-var runtime model.
 - [Architecture Document](./arch.md) — §3.6 (Work Item Eligibility), §8 (Azure DevOps Boards Integration), §10 (Runtime Event Contract).
+- [Pull Request Revival and Assistance Workflows](./pull-request-feedback-workflows.md) — Marker semantics, soaking, generated-story lineage, PR labels, permissions, and loadouts.
 - [Runtime Event Contract](./runtime-events.md) — Event types, state transitions, and API contract.
 - [Development Guide](./development.md) — Local setup, running tests, and integration harnesses.
 - [create-ado-story.sh](./create-ado-story-script.md) — Dev script for creating pre-tagged test stories.

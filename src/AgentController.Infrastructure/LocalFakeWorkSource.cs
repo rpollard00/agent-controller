@@ -89,6 +89,76 @@ internal sealed class LocalFakeWorkSource : IWorkSource
         return result;
     }
 
+    public async Task<CreatedWorkItemResult> CreateAssistanceStoryAsync(
+        CreateAssistanceStoryRequest request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var options = _options.CurrentValue;
+        var tags = AssistanceStoryCreation.BuildManagedTags(request, options.TagPrefix);
+        var externalId = $"local-assistance-{Guid.NewGuid():N}";
+        var url = $"localfake://work-items/{externalId}";
+        var metadata = new Dictionary<string, string>
+        {
+            ["revision"] = "1",
+            ["workItemType"] = request.WorkItemType.Trim(),
+        };
+        if (!string.IsNullOrWhiteSpace(request.EnvironmentKey))
+        {
+            metadata["workSourceEnvironmentKey"] = request.EnvironmentKey.Trim();
+        }
+
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var store = scope.ServiceProvider.GetRequiredService<IWorkItemStore>();
+        var candidate = await store.UpsertAsync(
+            new WorkCandidate
+            {
+                ExternalId = externalId,
+                ExternalUrl = url,
+                RepoKey = request.RepoKey.Trim(),
+                Title = request.Title.Trim(),
+                Description = request.Description,
+                Status = "New",
+                Tags = tags,
+                Source = "LocalFake",
+                SourceMetadata = metadata,
+            },
+            cancellationToken
+        );
+
+        return new CreatedWorkItemResult
+        {
+            ExternalId = externalId,
+            Url = url,
+            Revision = "1",
+            Candidate = candidate,
+        };
+    }
+
+    public async Task<WorkCandidate> MakeAssistanceStoryReadyAsync(
+        WorkCandidate candidate,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+
+        var prefix = string.IsNullOrWhiteSpace(_options.CurrentValue.TagPrefix)
+            ? WorkSourceOptions.DefaultTagPrefix
+            : _options.CurrentValue.TagPrefix.Trim();
+        var readyTag = WorkSourceOptions.TagReadyRework(prefix);
+        var published = candidate with
+        {
+            Tags = candidate.Tags
+                .Append(readyTag)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+        };
+
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var store = scope.ServiceProvider.GetRequiredService<IWorkItemStore>();
+        return await store.UpsertAsync(published, cancellationToken);
+    }
+
     public Task UpdateStatusAsync(
         ExternalWorkRef workRef,
         ExternalWorkStatus status,
@@ -153,16 +223,35 @@ internal sealed class LocalFakeWorkSource : IWorkSource
             await store.UpdateStatusAsync(request.WorkItemId, options.ActiveState, cancellationToken);
         }
 
-        // Ensure agent-ready; remove agent lifecycle exclusion tags.
+        // Restore eligibility while removing this source's managed lifecycle tags.
+        // Keep an existing ready-rework marker instead of converting it to new work.
+        var tagPrefix = string.IsNullOrWhiteSpace(options.TagPrefix)
+            ? WorkSourceOptions.DefaultTagPrefix
+            : options.TagPrefix.Trim();
+        var readyTag = WorkSourceOptions.TagReady(tagPrefix);
+        var readyReworkTag = WorkSourceOptions.TagReadyRework(tagPrefix);
+        var workerTagPrefix = $"{tagPrefix}-worker:";
         var tags = candidate.Tags
-            .Where(t => t != WorkSourceOptions.TagActive() &&
-                        t != WorkSourceOptions.TagFailed() &&
-                        t != WorkSourceOptions.TagNeedsHuman())
+            .Where(t =>
+                !t.Equals(WorkSourceOptions.TagActive(tagPrefix), StringComparison.OrdinalIgnoreCase)
+                && !t.Equals(
+                    WorkSourceOptions.TagFailed(tagPrefix),
+                    StringComparison.OrdinalIgnoreCase
+                )
+                && !t.Equals(
+                    WorkSourceOptions.TagNeedsHuman(tagPrefix),
+                    StringComparison.OrdinalIgnoreCase
+                )
+                && !t.StartsWith(workerTagPrefix, StringComparison.OrdinalIgnoreCase)
+            )
             .ToList();
 
-        if (!tags.Contains(WorkSourceOptions.TagReady()))
+        if (
+            !tags.Contains(readyTag, StringComparer.OrdinalIgnoreCase)
+            && !tags.Contains(readyReworkTag, StringComparer.OrdinalIgnoreCase)
+        )
         {
-            tags.Add(WorkSourceOptions.TagReady());
+            tags.Add(readyTag);
         }
 
         // Upsert with updated tags (idempotent against local state).

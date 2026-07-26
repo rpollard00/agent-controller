@@ -398,4 +398,349 @@ public class ReworkStoreIdempotencyTests : IAsyncLifetime, IDisposable
         // Assert: returns null (only transitions from Watching).
         Assert.Null(result);
     }
+
+    [Fact]
+    public async Task AssistanceFeedback_UpsertAndStoryReceipt_AreRestartSafe()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var request = new ReworkFeedbackUpsertRequest
+        {
+            RequestMode = ReworkRequestMode.Assistance,
+            PullRequest = CreatePullRequest("repo-one", "42"),
+            OriginatingRunId = null,
+            FeedbackBundleId = "assistance-bundle-1",
+            FeedbackBundleJson = "[]",
+            ThreadCount = 0,
+            FirstQualifyingCommentAt = now,
+            LastQualifyingCommentAt = now,
+            Status = ReworkFeedbackStatus.Watching,
+            CorrelationId = "assistance-correlation-1",
+        };
+
+        var created = await _feedbackStore!.UpsertAsync(request, CancellationToken.None);
+        var retried = await _feedbackStore.UpsertAsync(request, CancellationToken.None);
+
+        Assert.Equal(created.Id, retried.Id);
+        Assert.Equal(ReworkRequestMode.Assistance, retried.RequestMode);
+        Assert.Equal(request.PullRequest.CanonicalKey, retried.PullRequest.CanonicalKey);
+        Assert.Null(retried.OriginatingRunId);
+        Assert.Equal(request.CorrelationId, retried.CorrelationId);
+
+        await _feedbackStore.RecordAssistanceStoryAsync(
+            created.Id,
+            new AssistanceStoryReceipt
+            {
+                CorrelationId = request.CorrelationId,
+                ExternalId = "ado-9001",
+                Url = "https://dev.azure.com/example/_workitems/edit/9001",
+            },
+            CancellationToken.None);
+
+        var recorded = await _feedbackStore.RecordAssistanceStoryAsync(
+            created.Id,
+            new AssistanceStoryReceipt
+            {
+                CorrelationId = request.CorrelationId,
+                WorkItemId = "work-local-9001",
+                ExternalId = "ado-9001",
+                Url = "https://dev.azure.com/example/_workitems/edit/9001",
+            },
+            CancellationToken.None);
+
+        var found = await _feedbackStore.GetByCorrelationIdAsync(
+            request.CorrelationId,
+            CancellationToken.None);
+        Assert.NotNull(found);
+        Assert.Equal(recorded.Id, found.Id);
+        Assert.Equal("work-local-9001", found.AssistanceStoryWorkItemId);
+        Assert.Equal("ado-9001", found.AssistanceStoryExternalId);
+        Assert.Equal("https://dev.azure.com/example/_workitems/edit/9001", found.AssistanceStoryUrl);
+        Assert.Single(await _db!.ReworkFeedback.ToListAsync());
+    }
+
+    [Fact]
+    public async Task AssistanceFeedback_ReceiptRejectsConflictingExternalId()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var row = await _feedbackStore!.UpsertAsync(
+            new ReworkFeedbackUpsertRequest
+            {
+                RequestMode = ReworkRequestMode.Assistance,
+                PullRequest = CreatePullRequest("repo-one", "43"),
+                FeedbackBundleId = "assistance-bundle-conflict",
+                FeedbackBundleJson = "[]",
+                FirstQualifyingCommentAt = now,
+                LastQualifyingCommentAt = now,
+                CorrelationId = "assistance-correlation-conflict",
+            },
+            CancellationToken.None);
+
+        await _feedbackStore.RecordAssistanceStoryAsync(
+            row.Id,
+            new AssistanceStoryReceipt
+            {
+                CorrelationId = "assistance-correlation-conflict",
+                ExternalId = "ado-1",
+            },
+            CancellationToken.None);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _feedbackStore.RecordAssistanceStoryAsync(
+                row.Id,
+                new AssistanceStoryReceipt
+                {
+                    CorrelationId = "assistance-correlation-conflict",
+                    ExternalId = "ado-2",
+                },
+                CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task AssistanceFeedback_SameProviderIdAndBundleInDifferentRepos_AreIndependent()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var first = await _feedbackStore!.UpsertAsync(
+            new ReworkFeedbackUpsertRequest
+            {
+                RequestMode = ReworkRequestMode.Assistance,
+                PullRequest = CreatePullRequest("repo-one", "44"),
+                FeedbackBundleId = "shared-bundle",
+                FeedbackBundleJson = "[]",
+                FirstQualifyingCommentAt = now,
+                LastQualifyingCommentAt = now,
+                CorrelationId = "correlation-repo-one",
+            },
+            CancellationToken.None);
+        var second = await _feedbackStore.UpsertAsync(
+            new ReworkFeedbackUpsertRequest
+            {
+                RequestMode = ReworkRequestMode.Assistance,
+                PullRequest = CreatePullRequest("repo-two", "44"),
+                FeedbackBundleId = "shared-bundle",
+                FeedbackBundleJson = "[]",
+                FirstQualifyingCommentAt = now,
+                LastQualifyingCommentAt = now,
+                CorrelationId = "correlation-repo-two",
+            },
+            CancellationToken.None);
+
+        Assert.NotEqual(first.Id, second.Id);
+        Assert.Equal(2, await _db!.ReworkFeedback.CountAsync());
+    }
+
+    [Fact]
+    public async Task AssistanceCycle_CreateAsync_IsIdempotentWithoutPriorRun()
+    {
+        var request = new ReworkCycleCreateRequest
+        {
+            RequestMode = ReworkRequestMode.Assistance,
+            PullRequest = CreatePullRequest("repo-one", "50"),
+            WorkItemId = "assistance-work-50",
+            CycleNumber = 1,
+            PriorRunId = null,
+            BranchName = "feature/human-pr",
+            PullRequestUrl = "https://dev.azure.com/example/_git/repo-one/pullrequest/50",
+            BaseCommitSha = "abc123",
+            FeedbackBundleJson = "[]",
+            FeedbackBundleId = "assistance-cycle-bundle",
+            CorrelationId = "assistance-cycle-correlation",
+        };
+
+        var created = await _cycleStore!.CreateAsync(request, CancellationToken.None);
+        var retried = await _cycleStore.CreateAsync(request, CancellationToken.None);
+        var found = await _cycleStore.GetByCorrelationIdAsync(
+            request.CorrelationId!,
+            CancellationToken.None);
+
+        Assert.Equal(created.Id, retried.Id);
+        Assert.NotNull(found);
+        Assert.Equal(created.Id, found.Id);
+        Assert.Equal(ReworkRequestMode.Assistance, found.RequestMode);
+        Assert.Equal(request.PullRequest.CanonicalKey, found.PullRequest.CanonicalKey);
+        Assert.Null(found.PriorRunId);
+        Assert.Single(await _db!.ReworkCycles.ToListAsync());
+    }
+
+    [Fact]
+    public async Task AssistanceCycle_SameBundleInDifferentRepos_IsAllowed()
+    {
+        var firstRequest = CreateAssistanceCycleRequest("repo-one", "51", "cycle-correlation-one");
+        var secondRequest = CreateAssistanceCycleRequest("repo-two", "51", "cycle-correlation-two")
+            with { WorkItemId = "assistance-work-two" };
+
+        var first = await _cycleStore!.CreateAsync(firstRequest, CancellationToken.None);
+        var second = await _cycleStore.CreateAsync(secondRequest, CancellationToken.None);
+
+        Assert.NotEqual(first.Id, second.Id);
+        Assert.Equal(2, await _db!.ReworkCycles.CountAsync());
+    }
+
+    [Fact]
+    public async Task AssistanceCycle_CreateAsync_NumbersAcrossStoriesForCanonicalPullRequest()
+    {
+        var firstRequest = CreateAssistanceCycleRequest(
+            "repo-cycle-scope",
+            "52",
+            "cycle-scope-correlation-one") with
+        {
+            WorkItemId = "assistance-story-one",
+            CycleNumber = 99,
+            FeedbackBundleId = "cycle-scope-bundle-one",
+        };
+        var secondRequest = firstRequest with
+        {
+            WorkItemId = "assistance-story-two",
+            CycleNumber = 99,
+            FeedbackBundleId = "cycle-scope-bundle-two",
+            CorrelationId = "cycle-scope-correlation-two",
+        };
+
+        var first = await _cycleStore!.CreateAsync(firstRequest, CancellationToken.None);
+        var second = await _cycleStore.CreateAsync(secondRequest, CancellationToken.None);
+        var max = await _cycleStore.GetMaxAssistanceCycleNumberAsync(
+            firstRequest.PullRequest,
+            CancellationToken.None);
+
+        Assert.Equal(1, first.CycleNumber);
+        Assert.Equal(2, second.CycleNumber);
+        Assert.Equal(2, max);
+    }
+
+    [Fact]
+    public async Task AssistanceCycle_CreateAsync_NumberingIsIndependentBetweenPullRequests()
+    {
+        var firstRequest = CreateAssistanceCycleRequest(
+            "repo-cycle-scope",
+            "53",
+            "independent-correlation-one") with
+        {
+            WorkItemId = "shared-assistance-story",
+            FeedbackBundleId = "independent-bundle-one",
+        };
+        var secondRequest = CreateAssistanceCycleRequest(
+            "repo-cycle-scope",
+            "54",
+            "independent-correlation-two") with
+        {
+            WorkItemId = "shared-assistance-story",
+            FeedbackBundleId = "independent-bundle-two",
+        };
+
+        var first = await _cycleStore!.CreateAsync(firstRequest, CancellationToken.None);
+        var second = await _cycleStore.CreateAsync(secondRequest, CancellationToken.None);
+
+        Assert.Equal(1, first.CycleNumber);
+        Assert.Equal(1, second.CycleNumber);
+    }
+
+    [Fact]
+    public async Task AssistanceCycle_CreateAsync_ConcurrentRequestsReceiveUniqueNumbers()
+    {
+        const int requestCount = 6;
+        var databasePath = Path.Combine(
+            Path.GetTempPath(),
+            $"agent-controller-assistance-cycles-{Guid.NewGuid():N}.db");
+        var options = new DbContextOptionsBuilder<AgentControllerDbContext>()
+            .UseSqlite($"Data Source={databasePath};Default Timeout=30")
+            .Options;
+
+        try
+        {
+            await using (var setup = new AgentControllerDbContext(options))
+            {
+                await setup.Database.EnsureCreatedAsync();
+                await setup.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;");
+            }
+
+            var requests = Enumerable.Range(1, requestCount)
+                .Select(async index =>
+                {
+                    await using var db = new AgentControllerDbContext(options);
+                    var store = new EfReworkCycleStore(db);
+                    var request = CreateAssistanceCycleRequest(
+                        "repo-concurrent-cycles",
+                        "55",
+                        $"concurrent-correlation-{index}") with
+                    {
+                        WorkItemId = $"concurrent-story-{index}",
+                        FeedbackBundleId = $"concurrent-bundle-{index}",
+                    };
+
+                    return await store.CreateAsync(request, CancellationToken.None);
+                });
+
+            var cycles = await Task.WhenAll(requests);
+
+            Assert.Equal(
+                Enumerable.Range(1, requestCount),
+                cycles.Select(cycle => cycle.CycleNumber).Order());
+            Assert.Equal(requestCount, cycles.Select(cycle => cycle.Id).Distinct().Count());
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            File.Delete(databasePath);
+            File.Delete($"{databasePath}-shm");
+            File.Delete($"{databasePath}-wal");
+        }
+    }
+
+    [Fact]
+    public async Task RevivalCycle_CreateAsync_PreservesCallerSuppliedNumbering()
+    {
+        var cycle = await _cycleStore!.CreateAsync(
+            workItemId: "revival-numbering-story",
+            cycleNumber: 7,
+            priorRunId: "revival-prior-run",
+            branchName: "feature/revival-numbering",
+            pullRequestUrl: "https://dev.azure.com/example/_git/repo/pullrequest/70",
+            baseCommitSha: "abc123",
+            feedbackBundleJson: "[]",
+            feedbackBundleId: "revival-numbering-bundle",
+            cancellationToken: CancellationToken.None);
+
+        var max = await _cycleStore.GetMaxCycleNumberAsync(
+            "revival-numbering-story",
+            CancellationToken.None);
+
+        Assert.Equal(7, cycle.CycleNumber);
+        Assert.Equal(7, max);
+    }
+
+    private static ReworkCycleCreateRequest CreateAssistanceCycleRequest(
+        string repositoryKey,
+        string pullRequestId,
+        string correlationId)
+    {
+        var pullRequest = CreatePullRequest(repositoryKey, pullRequestId);
+        return new ReworkCycleCreateRequest
+        {
+            RequestMode = ReworkRequestMode.Assistance,
+            PullRequest = pullRequest,
+            WorkItemId = "assistance-work-one",
+            CycleNumber = 1,
+            BranchName = pullRequest.SourceBranch,
+            PullRequestUrl = pullRequest.PullRequestUrl,
+            BaseCommitSha = pullRequest.SourceCommitSha,
+            FeedbackBundleJson = "[]",
+            FeedbackBundleId = "bundle-shared-between-prs",
+            CorrelationId = correlationId,
+        };
+    }
+
+    private static PullRequestReference CreatePullRequest(
+        string repositoryKey,
+        string pullRequestId)
+    {
+        return new PullRequestReference
+        {
+            EnvironmentKey = "ado-main",
+            RepositoryKey = repositoryKey,
+            PullRequestId = pullRequestId,
+            PullRequestUrl = $"https://dev.azure.com/example/_git/{repositoryKey}/pullrequest/{pullRequestId}",
+            SourceBranch = "feature/human-pr",
+            TargetBranch = "main",
+            SourceCommitSha = "abc123",
+        };
+    }
 }

@@ -41,8 +41,12 @@ public sealed class WorkSourceOptions : IWorkSourceOptions
 
     // ── Prefix-aware lifecycle tag helpers ──
 
-    /// <summary>Tag added when a work item is prepared for agent pickup.</summary>
+    /// <summary>Tag added when a work item is prepared for new-work pickup.</summary>
     public static string TagReady(string prefix = DefaultTagPrefix) => $"{prefix}-ready";
+
+    /// <summary>Tag added when a work item is prepared for rework pickup.</summary>
+    public static string TagReadyRework(string prefix = DefaultTagPrefix) =>
+        $"{prefix}-ready-rework";
 
     /// <summary>Tag added when the controller claims a work item.</summary>
     public static string TagActive(string prefix = DefaultTagPrefix) => $"{prefix}-active";

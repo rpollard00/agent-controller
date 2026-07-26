@@ -52,6 +52,105 @@ public class ReviewFeedbackFilterPipelineTests
         Assert.Empty(result);
     }
 
+    [Fact]
+    public async Task FilterAssistanceAsync_NoQualifyingThreads_PreservesRequest()
+    {
+        var pipeline = CreatePipeline(new FailingPrLabelSource());
+        var observedAt = DateTimeOffset.UtcNow;
+        var query = new FeedbackQuery
+        {
+            OpenPrs =
+            [
+                new PrUnderTest
+                {
+                    RequestMode = ReworkRequestMode.Assistance,
+                    PullRequestId = "1",
+                },
+            ],
+            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
+            ReworkMarkerTag = "agent-assistance-requested",
+        };
+        var signals = new ReworkSignal[]
+        {
+            new()
+            {
+                RequestMode = ReworkRequestMode.Assistance,
+                PullRequestId = "1",
+                Threads =
+                [
+                    new ReviewThread
+                    {
+                        ThreadId = "resolved",
+                        Status = ReviewThreadStatus.Resolved,
+                        Comments =
+                        [
+                            new ReviewThreadComment
+                            {
+                                Author = "reviewer@example.com",
+                                Body = "already handled",
+                                CreatedAt = observedAt,
+                            },
+                        ],
+                    },
+                    new ReviewThread
+                    {
+                        ThreadId = "other-reviewer",
+                        Status = ReviewThreadStatus.Active,
+                        Comments =
+                        [
+                            new ReviewThreadComment
+                            {
+                                Author = "other@example.com",
+                                Body = "not qualifying",
+                                CreatedAt = observedAt,
+                            },
+                        ],
+                    },
+                ],
+                FirstQualifyingCommentAt = observedAt,
+                LastQualifyingCommentAt = observedAt,
+            },
+        };
+
+        var result = await pipeline.FilterAssistanceAsync(
+            query,
+            signals,
+            CancellationToken.None
+        );
+
+        var assistance = Assert.Single(result);
+        Assert.Empty(assistance.Threads);
+        Assert.Equal(ReworkRequestMode.Assistance, assistance.RequestMode);
+    }
+
+    [Fact]
+    public async Task FilterAssistanceAsync_EmptyAllowlist_PreservesZeroCommentRequest()
+    {
+        var pipeline = CreatePipeline(new FailingPrLabelSource());
+        var query = new FeedbackQuery
+        {
+            AllowedReviewers = new HashSet<string>(),
+            ReworkMarkerTag = "agent-assistance-requested",
+        };
+        var signals = new ReworkSignal[]
+        {
+            new()
+            {
+                RequestMode = ReworkRequestMode.Assistance,
+                PullRequestId = "1",
+                Threads = ActiveThread("t1", "reviewer@example.com"),
+            },
+        };
+
+        var result = await pipeline.FilterAssistanceAsync(
+            query,
+            signals,
+            CancellationToken.None
+        );
+
+        Assert.Empty(Assert.Single(result).Threads);
+    }
+
     // ── Marker gate ────────────────────────────────────────────────
 
     [Fact]

@@ -81,6 +81,91 @@ public sealed record ReviewThread
 }
 
 /// <summary>
+/// Identifies how work on an existing pull request was requested.
+/// Numeric values are persisted; do not reorder or reuse them.
+/// </summary>
+public enum ReworkRequestMode
+{
+    /// <summary>
+    /// Reopen the controller-produced work item and continue the pull request
+    /// created by its prior run.
+    /// </summary>
+    Revival = 0,
+
+    /// <summary>
+    /// Create a new assistance work item and continue an existing pull request,
+    /// whether or not the controller produced it.
+    /// </summary>
+    Assistance = 1,
+}
+
+/// <summary>
+/// Provider-neutral, stable reference to an existing pull request.
+/// The environment, repository, and provider pull-request identifier form its
+/// canonical identity; URL, branches, and commit describe the referenced snapshot.
+/// </summary>
+public sealed record PullRequestReference
+{
+    /// <summary>Managed source environment key.</summary>
+    public string EnvironmentKey { get; init; } = string.Empty;
+
+    /// <summary>Managed repository key.</summary>
+    public string RepositoryKey { get; init; } = string.Empty;
+
+    /// <summary>Pull request identifier assigned by the source provider.</summary>
+    public string PullRequestId { get; init; } = string.Empty;
+
+    /// <summary>Browser URL for the pull request.</summary>
+    public string PullRequestUrl { get; init; } = string.Empty;
+
+    /// <summary>Source branch containing the pull request changes.</summary>
+    public string SourceBranch { get; init; } = string.Empty;
+
+    /// <summary>Target branch into which the pull request will merge.</summary>
+    public string TargetBranch { get; init; } = string.Empty;
+
+    /// <summary>Source-branch commit observed for this pull request snapshot.</summary>
+    public string SourceCommitSha { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Case-insensitive canonical identity suitable for correlation and persistence.
+    /// Empty when an identity component is unavailable.
+    /// </summary>
+    public string CanonicalKey => CreateCanonicalKey(
+        EnvironmentKey,
+        RepositoryKey,
+        PullRequestId
+    );
+
+    /// <summary>Whether all canonical identity components are available.</summary>
+    public bool HasCanonicalIdentity => CanonicalKey.Length > 0;
+
+    private static string CreateCanonicalKey(
+        string environmentKey,
+        string repositoryKey,
+        string pullRequestId
+    )
+    {
+        if (string.IsNullOrWhiteSpace(environmentKey)
+            || string.IsNullOrWhiteSpace(repositoryKey)
+            || string.IsNullOrWhiteSpace(pullRequestId))
+        {
+            return string.Empty;
+        }
+
+        return string.Join(
+            '|',
+            EncodeIdentitySegment(environmentKey),
+            EncodeIdentitySegment(repositoryKey),
+            EncodeIdentitySegment(pullRequestId)
+        );
+    }
+
+    private static string EncodeIdentitySegment(string value) =>
+        Uri.EscapeDataString(value.Trim().ToUpperInvariant());
+}
+
+/// <summary>
 /// Status of a persisted rework cycle row in the store.
 /// Tracks the lifecycle from materialization to consumption by the happy path.
 /// </summary>
@@ -106,11 +191,20 @@ public enum ReworkCycleStatus
 /// </summary>
 public sealed record ReworkContext
 {
+    /// <summary>How work on the existing pull request was requested.</summary>
+    public ReworkRequestMode RequestMode { get; init; } = ReworkRequestMode.Revival;
+
+    /// <summary>Canonical reference to the pull request being continued.</summary>
+    public PullRequestReference PullRequest { get; init; } = new();
+
     /// <summary>Which rework cycle this is (1-based).</summary>
     public int CycleNumber { get; init; }
 
-    /// <summary>Controller-assigned run identifier of the prior run.</summary>
-    public string PriorRunId { get; init; } = string.Empty;
+    /// <summary>
+    /// Controller-assigned run identifier of the prior run.
+    /// Null for assistance requests not originating from a controller run.
+    /// </summary>
+    public string? PriorRunId { get; init; }
 
     /// <summary>Branch name the prior run pushed to.</summary>
     public string BranchName { get; init; } = string.Empty;
@@ -168,15 +262,24 @@ public sealed record ReworkFeedback
     /// <summary>Controller-assigned identifier.</summary>
     public string Id { get; init; } = string.Empty;
 
-    /// <summary>Controller-assigned run identifier of the run that produced the PR.</summary>
-    public string OriginatingRunId { get; init; } = string.Empty;
+    /// <summary>How work on the existing pull request was requested.</summary>
+    public ReworkRequestMode RequestMode { get; init; } = ReworkRequestMode.Revival;
+
+    /// <summary>Canonical reference to the pull request being observed.</summary>
+    public PullRequestReference PullRequest { get; init; } = new();
+
+    /// <summary>
+    /// Controller-assigned run identifier of the run that produced the PR.
+    /// Null for assistance requests not originating from a controller run.
+    /// </summary>
+    public string? OriginatingRunId { get; init; }
 
     /// <summary>Pull request identifier (from the source system).</summary>
     public string PullRequestId { get; init; } = string.Empty;
 
     /// <summary>
     /// Stable hash of the feedback bundle contents.
-    /// Unique index on (PullRequestId, FeedbackBundleId) prevents
+    /// Combined with request mode and canonical PR identity to prevent
     /// duplicate soak rows for the same bundle.
     /// </summary>
     public string FeedbackBundleId { get; init; } = string.Empty;
@@ -196,6 +299,21 @@ public sealed record ReworkFeedback
 
     /// <summary>Number of review threads in the current bundle.</summary>
     public int ThreadCount { get; init; }
+
+    /// <summary>
+    /// Stable materialization correlation identifier. Assistance processing uses
+    /// this value to reconcile external story creation after retries or restarts.
+    /// </summary>
+    public string? CorrelationId { get; init; }
+
+    /// <summary>Controller-local ID of the assistance story created for this feedback.</summary>
+    public string? AssistanceStoryWorkItemId { get; init; }
+
+    /// <summary>Provider-assigned ID of the assistance story created for this feedback.</summary>
+    public string? AssistanceStoryExternalId { get; init; }
+
+    /// <summary>Browser URL of the assistance story created for this feedback.</summary>
+    public string? AssistanceStoryUrl { get; init; }
 
     /// <summary>Current soak-state lifecycle status.</summary>
     public ReworkFeedbackStatus Status { get; init; } = ReworkFeedbackStatus.Watching;
@@ -217,14 +335,26 @@ public sealed record ReworkCycle
     /// <summary>Controller-assigned identifier.</summary>
     public string Id { get; init; } = string.Empty;
 
+    /// <summary>How work on the existing pull request was requested.</summary>
+    public ReworkRequestMode RequestMode { get; init; } = ReworkRequestMode.Revival;
+
+    /// <summary>Canonical reference to the pull request being continued.</summary>
+    public PullRequestReference PullRequest { get; init; } = new();
+
     /// <summary>Identifier of the work item this cycle is for.</summary>
     public string WorkItemId { get; init; } = string.Empty;
 
-    /// <summary>Which rework cycle this is for the work item (1-based).</summary>
+    /// <summary>
+    /// Which rework cycle this is (1-based). Revival is numbered per original
+    /// work item; Assistance is numbered per canonical pull request.
+    /// </summary>
     public int CycleNumber { get; init; }
 
-    /// <summary>Controller-assigned run identifier of the prior run.</summary>
-    public string PriorRunId { get; init; } = string.Empty;
+    /// <summary>
+    /// Controller-assigned run identifier of the prior run.
+    /// Null for assistance cycles not originating from a controller run.
+    /// </summary>
+    public string? PriorRunId { get; init; }
 
     /// <summary>Branch name the prior run pushed to.</summary>
     public string BranchName { get; init; } = string.Empty;
@@ -239,10 +369,16 @@ public sealed record ReworkCycle
     public string FeedbackBundleJson { get; init; } = string.Empty;
 
     /// <summary>
-    /// Stable hash of the feedback bundle contents. Unique index on this
-    /// column is the hard idempotency guard against double-materialization.
+    /// Stable hash of the feedback bundle contents. Combined with request mode
+    /// and canonical PR identity as the hard materialization idempotency guard.
     /// </summary>
     public string FeedbackBundleId { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Stable materialization correlation identifier. Populated for assistance
+    /// cycles so cycle creation can be safely retried after a restart.
+    /// </summary>
+    public string? CorrelationId { get; init; }
 
     /// <summary>Current lifecycle status of the cycle.</summary>
     public ReworkCycleStatus Status { get; init; } = ReworkCycleStatus.Pending;

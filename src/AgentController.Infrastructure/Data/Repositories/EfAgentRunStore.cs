@@ -267,10 +267,14 @@ internal sealed class EfAgentRunStore : IAgentRunStore
         string workItemId,
         CancellationToken cancellationToken)
     {
-        var entity = await _db.AgentRuns
+        // SQLite cannot translate DateTimeOffset ORDER BY clauses. Keep the
+        // work-item filter in SQL and select the latest run on the client.
+        var entities = await _db.AgentRuns
             .Where(e => e.WorkItemId == workItemId)
+            .ToListAsync(cancellationToken);
+        var entity = entities
             .OrderByDescending(e => e.CreatedAt)
-            .FirstOrDefaultAsync(cancellationToken);
+            .FirstOrDefault();
 
         return entity is null ? null : MapToHandle(entity);
     }

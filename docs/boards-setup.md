@@ -19,9 +19,11 @@ These states are matched **case-insensitively** against ADO board item `State` v
 
 This constant is the single source of truth for the terminal-state filter. Every consumer of the discovery query uses `BoardTerminalStates.Values` for `ExcludedStates`.
 
-### Rework Reactivation Is Unaffected
+### Pull Request Continuation Is Unaffected
 
-The rework reactivation flow (e.g., an overriding `rework-requested` tag or state on a pull request) **takes precedence** over the terminal-state filter. When a completed item is moved back to an eligible state for rework, the controller's `ReactivateForReworkAsync` path strips agent lifecycle tags and re-adds `agent-ready`, allowing the item to be re-picked up regardless of its prior terminal state. See [Board Provisioning §6](./board-provisioning.md#6-rework-reactivation---tag-cleanup-guarantee) for the full reactivation contract.
+For **Revival** (`agent-rework-requested`), `ReactivateForReworkAsync` moves the original controller story out of its terminal state, strips lifecycle tags, and re-adds `<prefix>-ready`. For **Assistance** (`agent-assistance-requested`), the original story is not revived; after soaking, the controller creates a fresh linked story and publishes it with `<prefix>-ready-rework`.
+
+See [Board Provisioning §6](./board-provisioning.md#6-revival-rework--original-story-reactivation) and [Pull Request Revival and Assistance Workflows](./pull-request-feedback-workflows.md).
 
 ---
 
@@ -53,7 +55,7 @@ To rotate a PAT without updating every configuration that references it:
 
 | Scenario | Result |
 |----------|--------|
-| Secret is configured with a **valid PAT** | ADO operations (polling, claiming, state projection) work correctly. |
+| Secret is configured with a **valid PAT** carrying `Code: Read & write` and `Work Items: Read & write` | Board operations plus managed-PR discovery, labels, comments, and assistance-story creation work correctly. |
 | Secret holds an **invalid/expired PAT** | ADO returns an HTTP error (e.g., 401), surfaced as a connectivity error. |
 | Secret name is configured but **no secret exists** with that name | ADO operations fail with a secret resolution error. |
 
@@ -73,4 +75,5 @@ See the [KEK Setup Guide](./kek-setup.md) for detailed provisioning instructions
 ## Related Documentation
 
 - [Board Provisioning](./board-provisioning.md) — Tag recipe, eligibility model, and lifecycle state projection.
+- [Pull Request Revival and Assistance Workflows](./pull-request-feedback-workflows.md) — Required PAT scopes and the two existing-PR workflows.
 - [Architecture Document](./arch.md) — §8 (Azure DevOps Boards Integration).

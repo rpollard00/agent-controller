@@ -10,14 +10,35 @@ internal sealed class ReworkCycleEntity
     /// <summary>Controller-assigned identifier (PK).</summary>
     public string Id { get; set; } = string.Empty;
 
+    /// <summary>How work on the existing pull request was requested.</summary>
+    public int RequestMode { get; set; }
+
+    /// <summary>Canonical environment/repository/PR identity, when available.</summary>
+    public string? CanonicalPullRequestKey { get; set; }
+
+    /// <summary>Managed source environment key.</summary>
+    public string? PullRequestEnvironmentKey { get; set; }
+
+    /// <summary>Managed repository key.</summary>
+    public string? PullRequestRepositoryKey { get; set; }
+
+    /// <summary>Provider pull-request identifier.</summary>
+    public string? PullRequestId { get; set; }
+
+    /// <summary>Target branch into which the pull request will merge.</summary>
+    public string? PullRequestTargetBranch { get; set; }
+
     /// <summary>Identifier of the work item this cycle is for.</summary>
     public string WorkItemId { get; set; } = string.Empty;
 
-    /// <summary>Which rework cycle this is for the work item (1-based).</summary>
+    /// <summary>
+    /// Which rework cycle this is (1-based), scoped to the original work item
+    /// for Revival and to the canonical pull request for Assistance.
+    /// </summary>
     public int CycleNumber { get; set; }
 
     /// <summary>Controller-assigned run identifier of the prior run.</summary>
-    public string PriorRunId { get; set; } = string.Empty;
+    public string? PriorRunId { get; set; }
 
     /// <summary>Branch name the prior run pushed to.</summary>
     public string BranchName { get; set; } = string.Empty;
@@ -33,9 +54,12 @@ internal sealed class ReworkCycleEntity
 
     /// <summary>
     /// Stable hash of the feedback bundle contents.
-    /// Unique index on this column is the hard idempotency guard.
+    /// Combined with request mode and canonical PR identity for idempotency.
     /// </summary>
     public string FeedbackBundleId { get; set; } = string.Empty;
+
+    /// <summary>Stable correlation used to reconcile assistance materialization.</summary>
+    public string? CorrelationId { get; set; }
 
     /// <summary>Current lifecycle status (stored as int).</summary>
     public int Status { get; set; }

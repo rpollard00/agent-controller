@@ -154,6 +154,7 @@ public class DomainSmokeTests
     {
         var request = new ClaimRequest { WorkerId = "worker-1" };
         Assert.Equal("worker-1", request.WorkerId);
+        Assert.Equal("agent", request.TagPrefix);
         Assert.Equal(TimeSpan.FromMinutes(30), request.LeaseTimeout);
         Assert.True(request.ClaimedAt <= DateTimeOffset.UtcNow);
     }

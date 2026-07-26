@@ -60,8 +60,8 @@ public interface IWorkSource
 
     /// <summary>
     /// Release a previously claimed work item back to the work source.
-    /// Strips agent-controlled tags (agent-active, agent-worker:*) and
-    /// optionally reverts the work item state so it becomes eligible for re-discovery.
+    /// Strips the managed environment's active and worker tags and optionally
+    /// reverts the work item state so it becomes eligible for re-discovery.
     /// Does NOT add an agent-failed tag — a bad runtime environment should not
     /// dirty the external record.
     /// </summary>
@@ -71,10 +71,31 @@ public interface IWorkSource
     );
 
     /// <summary>
+    /// Create a new assistance story, ready for the rework execution path, and return
+    /// both its external identity and local candidate representation.
+    /// </summary>
+    Task<CreatedWorkItemResult> CreateAssistanceStoryAsync(
+        CreateAssistanceStoryRequest request,
+        CancellationToken cancellationToken
+    );
+
+    /// <summary>
+    /// Publish a previously created assistance story by adding the managed
+    /// ready-rework eligibility tag. Implementations must be idempotent and return
+    /// the candidate with the published tag reflected in its local representation.
+    /// </summary>
+    Task<WorkCandidate> MakeAssistanceStoryReadyAsync(
+        WorkCandidate candidate,
+        CancellationToken cancellationToken
+    ) => throw new NotSupportedException(
+        "This work source does not support publishing assistance stories."
+    );
+
+    /// <summary>
     /// Reactivate a work item for a new rework cycle.
     /// Sets the item state to the first configured eligible state (e.g. Resolved→New),
-    /// ensures the agent-ready tag is present, removes agent lifecycle exclusion tags
-    /// (agent-active, agent-failed, agent-needs-human), and posts a rework-start comment.
+    /// ensures the managed ready tag is present, removes managed lifecycle exclusion
+    /// tags, and posts a rework-start comment.
     /// All operations are idempotent PATCHes.
     /// Surfaces [rework_state_transition_blocked] if the board blocks the state change.
     /// </summary>

@@ -23,6 +23,7 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
     private readonly IWorkItemStore _workItemStore;
     private readonly IWorkSource _workSource;
     private readonly IManagedProfileResolver? _profileResolver;
+    private readonly IAssistancePullRequestLabelProjector? _assistanceLabelProjector;
 
     /// <summary>
     /// Legal state transitions.
@@ -70,7 +71,8 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         ILifecycleEventStore eventStore,
         IWorkItemStore workItemStore,
         IWorkSource workSource,
-        IManagedProfileResolver? profileResolver = null
+        IManagedProfileResolver? profileResolver = null,
+        IAssistancePullRequestLabelProjector? assistanceLabelProjector = null
     )
     {
         _logger = logger;
@@ -79,6 +81,7 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         _workItemStore = workItemStore;
         _workSource = workSource;
         _profileResolver = profileResolver;
+        _assistanceLabelProjector = assistanceLabelProjector;
     }
 
     /// <inheritdoc />
@@ -140,7 +143,7 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             ct
         );
 
-        // Project claim tags (agent-active) to the external work source.
+        // Project the managed active tag to the external work source.
         // Board state (ActiveState) is NOT set here — it is gated on
         // runtime.accepted in HandleAcceptedAsync so the board only goes
         // Active once pi-materia confirms a successful agent start.
@@ -562,6 +565,20 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         CancellationToken ct
     )
     {
+        var assistanceMilestone = targetState switch
+        {
+            RunLifecycleState.BranchPushed => AssistanceRunLabelMilestone.BranchPushed,
+            RunLifecycleState.Completed => AssistanceRunLabelMilestone.Completed,
+            RunLifecycleState.Failed => AssistanceRunLabelMilestone.Failed,
+            RunLifecycleState.NeedsHuman => AssistanceRunLabelMilestone.NeedsHuman,
+            RunLifecycleState.Cancelled => AssistanceRunLabelMilestone.Cancelled,
+            _ => (AssistanceRunLabelMilestone?)null,
+        };
+        if (assistanceMilestone is not null)
+        {
+            await MaybeProjectAssistanceLabelsAsync(run, assistanceMilestone.Value, ct);
+        }
+
         if (string.IsNullOrWhiteSpace(run.WorkItemId))
             return;
 
@@ -731,7 +748,7 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             // HandleAcceptedAsync so the board only goes Active once
             // pi-materia confirms a successful agent start.
             RunLifecycleState.Claimed => (
-                new ExternalWorkStatus { Tags = ["agent-active"] },
+                new ExternalWorkStatus { Tags = [$"{states.TagPrefix}-active"] },
                 "Agent controller claimed this work item and started processing."
             ),
 
@@ -774,7 +791,7 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             // ── Failed: comment only, no agent-failed tag ──
             // A bad runtime environment should not dirty the external record.
             // For pre-agent setup failures (clone, environment), the claim is
-            // released via ReleaseClaimAsync which strips agent-active/agent-worker
+            // released via ReleaseClaimAsync which strips the managed active/worker
             // tags and reverts the item to an eligible state.
             // For runtime failures, the work item stays in active state for visibility.
             RunLifecycleState.Failed => (
@@ -784,7 +801,7 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
 
             // ── Needs human: add needs-human tag (keep in active state) ──
             RunLifecycleState.NeedsHuman => (
-                new ExternalWorkStatus { Tags = ["agent-needs-human"] },
+                new ExternalWorkStatus { Tags = [$"{states.TagPrefix}-needs-human"] },
                 !string.IsNullOrWhiteSpace(run.ResultSummary)
                     ? $"Run requires human input: {run.ResultSummary}"
                     : "Run requires human input."
@@ -834,6 +851,17 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         // the board to ActiveState. This is idempotent — if TransitionAsync
         // already reached AgentRunning it will re-project the same value.
         await MaybeUpdateWorkItemStatus(run, RunLifecycleState.AgentRunning, ct);
+
+        // A late accepted event after an outcome is informational only. Do not restore
+        // the in-progress label after a successful or unsuccessful result cleared it.
+        if (run.Status <= RunLifecycleState.AwaitingResult)
+        {
+            await MaybeProjectAssistanceLabelsAsync(
+                run,
+                AssistanceRunLabelMilestone.RuntimeAccepted,
+                ct
+            );
+        }
     }
 
     private async Task HandleHeartbeatAsync(
@@ -1007,6 +1035,53 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         await _runStore.UpdateRuntimeFieldsAsync(run.RunId, update, ct);
     }
 
+    private async Task MaybeProjectAssistanceLabelsAsync(
+        AgentRunHandle run,
+        AssistanceRunLabelMilestone milestone,
+        CancellationToken ct
+    )
+    {
+        if (_assistanceLabelProjector is null)
+            return;
+
+        try
+        {
+            await _assistanceLabelProjector.ProjectAsync(run, milestone, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.AssistancePullRequestLabelProjectionFailed(
+                _logger,
+                ex,
+                run.RunId,
+                milestone
+            );
+
+            await _eventStore.AppendAsync(
+                new LifecycleEvent
+                {
+                    RunId = run.RunId,
+                    EventType = ControllerEventTypes.AssistancePullRequestLabelProjectionFailed,
+                    Severity = EventSeverity.Warning,
+                    Message =
+                        $"Assistance pull-request label projection failed for run {run.RunId} "
+                        + $"at {milestone}: {ex.Message}",
+                    Payload = new Dictionary<string, object?>
+                    {
+                        ["runId"] = run.RunId,
+                        ["milestone"] = milestone.ToString(),
+                        ["error"] = ex.Message,
+                    },
+                },
+                ct
+            );
+        }
+    }
+
     private async Task<WorkSourceStates> ResolveWorkSourceStatesAsync(
         WorkCandidate workItem,
         CancellationToken ct
@@ -1025,7 +1100,8 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         return environment is not null
             ? new WorkSourceStates(
                 environment.Profile.ActiveState,
-                environment.Profile.CompletedState
+                environment.Profile.CompletedState,
+                NormalizeTagPrefix(environment.Profile.TagPrefix)
             )
             : WorkSourceStates.Empty;
     }
@@ -1037,9 +1113,16 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
         return metadata?.TryGetValue("workSourceEnvironmentKey", out var key) == true ? key : null;
     }
 
-    private sealed record WorkSourceStates(string? ActiveState, string? CompletedState)
+    private static string NormalizeTagPrefix(string? tagPrefix) =>
+        string.IsNullOrWhiteSpace(tagPrefix) ? "agent" : tagPrefix.Trim();
+
+    private sealed record WorkSourceStates(
+        string? ActiveState,
+        string? CompletedState,
+        string TagPrefix
+    )
     {
-        public static WorkSourceStates Empty { get; } = new(null, null);
+        public static WorkSourceStates Empty { get; } = new(null, null, "agent");
     }
 
     private static RunLifecycleState ResolveCompletionState(string? outcome)
@@ -1288,7 +1371,7 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             await _workItemStore.UpdateStatusAsync(failedRun.WorkItemId, "NeedsHuman", ct);
         }
 
-        // Project NeedsHuman to the external work source (adds agent-needs-human tag).
+        // Project NeedsHuman to the external work source using the managed tag prefix.
         // This is best-effort; projection failures are not fatal.
         await MaybeProjectToWorkSource(failedRun, RunLifecycleState.NeedsHuman, ct);
 
@@ -1370,6 +1453,17 @@ internal sealed partial class RunLifecycleService : IRunLifecycleService
             string runId,
             string eventId,
             double elapsedMilliseconds
+        );
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Assistance pull-request label projection failed — runId={RunId}, milestone={Milestone}"
+        )]
+        public static partial void AssistancePullRequestLabelProjectionFailed(
+            ILogger logger,
+            Exception exception,
+            string runId,
+            AssistanceRunLabelMilestone milestone
         );
 
         [LoggerMessage(

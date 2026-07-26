@@ -43,7 +43,10 @@ https://dev.azure.com/YOUR_ORG/_usersSettings/tokens
 
 **Required scopes:**
 
-- **Work items: Read & write** — for discovering, claiming, updating state/tags, and posting comments
+- **Code: Read & write** — for repository-wide active-PR discovery, review threads and linked work items, PR labels/comments, and existing-branch updates.
+- **Work items: Read & write** — for discovering/claiming stories, creating Assistance stories, adding story/parent/PR relations, updating state/tags, and posting comments.
+
+The identity also needs project/repository authorization to read each managed repository and contribute to the existing PR source branch. PAT scopes alone do not grant those repository permissions.
 
 ### 2.2 Setting the PAT
 
@@ -108,11 +111,15 @@ To run with a real `pi` process instead of the mock runtime, edit `appsettings.L
     "provider": "PiMateria",
     "controllerBaseUrl": "http://localhost:5103",
     "piExecutablePath": "pi",
-    "defaultMateriaLoadout": "Wedge",
-    "heartbeatsynthIntervalSeconds": 30
+    "loadouts": {
+      "NewWork": "ADO-Build-NewWork",
+      "Rework": "ADO-Build-Rework"
+    }
   }
 }
 ```
+
+`NewWork` may create a new branch and PR for an ordinary ready story. `Rework` is selected for both Revival and Assistance, checks out the existing PR source branch, and must update that PR rather than open another one.
 
 > **Note:** `PiMateria` requires the controller's HTTP origin in `controllerBaseUrl` so pi-materia can POST runtime events back. The default port is `5103` but verify with `GET /` on the running controller.
 
@@ -297,22 +304,24 @@ When using the real `PiMateria` runtime:
 - **No `agent-failed` tag is left behind** — a bad runtime environment should not dirty the external ADO record.
 - The item is immediately retryable once the underlying issue is fixed.
 
-## 7. Rework Reactivation — Tag-Cleanup Guarantee
+## 7. Revival Rework — Original-Story Reactivation
 
-When a work item is moved back to an eligible state for rework (e.g. the PR was rejected and the item is moved back to `New`), the controller's `FeedbackPollingWorker` detects the item and calls `ReactivateForReworkAsync`. This performs a **GET-then-PATCH** flow:
+This section describes the compatibility **Revival** path selected by `agent-rework-requested`. After qualifying feedback soaks, `FeedbackPollingWorker` calls `ReactivateForReworkAsync` for the original controller story. The newer **Assistance** path uses `agent-assistance-requested`, creates a fresh story, and does not call this method.
+
+Revival performs a **GET-then-PATCH** flow:
 
 1. **Tag-read GET**: A `GET /workitems/{id}?api-version=7.1` reads the work item's current `System.Tags` and revision (`rev`). This GET is **load-bearing** — if it returns non-success, the entire reactivation aborts and returns `false` (no state-only PATCH is emitted, no false success).
 2. **Combined PATCH**: A single `PATCH /workitems/{id}` carries both the state transition and tag operations, using the **freshly-read `rev` from the GET** as the `If-Match` token (not a possibly-stale revision from the work item reference). This prevents 412 errors from stale revision tokens.
 
 ### 7.1 Tag Operations (Always Emitted)
 
-The reactivation tag set is **always included** in the PATCH payload, even when the read-back `existingTags` set is empty or contains none of the target tags. This guarantees:
-- `agent-active` — removed (via `RemovedTags`).
-- `agent-failed` — removed (via `RemovedTags`).
-- `agent-needs-human` — removed (via `RemovedTags`).
-- `agent-worker:{id}` — removed (exact match, via `RemovedTags`).
-- `agent-worker:*` — wildcard pattern that strips any `agent-worker:` prefixed tag (via `RemovedTags`).
-- `agent-ready` — re-added (via `Tags` add operation).
+The reactivation tag set is **always included** in the PATCH payload, even when the read-back `existingTags` set is empty or contains none of the target tags. Using the selected managed environment's prefix, this guarantees:
+- `<prefix>-active` — removed (via `RemovedTags`).
+- `<prefix>-failed` — removed (via `RemovedTags`).
+- `<prefix>-needs-human` — removed (via `RemovedTags`).
+- `<prefix>-worker:{id}` — removed (exact match, via `RemovedTags`).
+- `<prefix>-worker:*` — wildcard pattern strips any matching worker tag (via `RemovedTags`).
+- `<prefix>-ready` — re-added (via `Tags` add operation).
 
 ADO tolerates `RemovedTags` entries for tags that are not present, so this defensive approach ensures re-pickup eligibility regardless of prior tag state.
 
@@ -353,6 +362,14 @@ When rework reactivation fails:
 ```
 
 The failed cycle is **not** marked reactivated and will be retried on the next poll cycle. Use the `[rework_reactivate_*]` log markers to diagnose whether the GET failed (check `[rework_reactivate_get_failed]`), the PATCH was rejected with 412 (check `[rework_reactivate_patch_failed]`), or the tag operations were present in the payload (check `[rework_reactivate_patch]`).
+
+### 7.4 Assistance on Managed and Human-Submitted PRs
+
+Tag any active PR in a managed Azure DevOps repository with `agent-assistance-requested`. Discovery is repository-wide, so no originating controller run is required. The marker starts soaking even with zero comments; qualifying newer feedback extends the soak. Afterward the controller creates a PR-linked User Story with `repo:<key>` and `<prefix>-ready-rework`, then runs the existing branch with the Rework loadout.
+
+At `runtime.accepted`, the PR receives `agent-assistance-in-progress`. Successful branch push/completion clears both Assistance labels and a conflicting Revival marker. Failed, needs-human, or cancelled outcomes clear only in-progress and retain the request marker for retry. If both request markers are present, Assistance wins.
+
+See [Pull Request Revival and Assistance Workflows](./pull-request-feedback-workflows.md) for relationships, per-PR cycles, zero-comment behavior, restart safety, and exact configuration.
 
 ---
 
@@ -495,6 +512,7 @@ Press `Ctrl+C` to stop. The controller handles graceful shutdown:
 ## 11. Related Documentation
 
 - [Board Provisioning](./board-provisioning.md) — Tag recipe, eligibility model, and lifecycle diagram.
+- [Pull Request Revival and Assistance Workflows](./pull-request-feedback-workflows.md) — Existing-PR request modes, labels, permissions, and loadouts.
 - [Architecture Document](./arch.md) — System design and integration points.
 - [Development Guide](./development.md) — Local setup and testing.
 - `appsettings.example.json` — Full configuration reference with examples.

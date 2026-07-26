@@ -37,6 +37,7 @@ public class RunLifecycleServiceTests
     private readonly InMemoryWorkItemStore _workItemStore;
     private readonly RunLifecycleService _service;
     private readonly IManagedProfileResolver _profileResolver;
+    private readonly RecordingAssistanceLabelProjector _assistanceLabelProjector;
 
     public RunLifecycleServiceTests()
     {
@@ -44,10 +45,11 @@ public class RunLifecycleServiceTests
         _eventStore = new InMemoryLifecycleEventStore();
         _workItemStore = new InMemoryWorkItemStore();
         _profileResolver = new TestManagedProfileResolver("Active", "Resolved");
+        _assistanceLabelProjector = new RecordingAssistanceLabelProjector();
         _service = new RunLifecycleService(
             NullLogger<RunLifecycleService>.Instance,
             _runStore, _eventStore, _workItemStore,
-            new StubWorkSource(), _profileResolver);
+            new StubWorkSource(), _profileResolver, _assistanceLabelProjector);
     }
 
     // ── CreateRunForWorkItemAsync ──────────────────────────────────
@@ -485,6 +487,10 @@ public class RunLifecycleServiceTests
         var updated = await _runStore.GetByIdAsync(run.RunId, CancellationToken.None);
         Assert.Equal(RunLifecycleState.AgentRunning, updated!.Status);
         Assert.Equal("pi_123", updated.RuntimeRunId);
+        Assert.Contains(
+            _assistanceLabelProjector.Projections,
+            projection => projection.Milestone == AssistanceRunLabelMilestone.RuntimeAccepted
+        );
     }
 
     [Fact]
@@ -526,12 +532,14 @@ public class RunLifecycleServiceTests
         // (no throw), leaving the run in NeedsHuman and recording the runtime id.
         var evt = CreateEvent(run.RunId, "evt_accepted", RuntimeEventTypes.Accepted,
             "Accepted", runtimeRunId: "pi_456");
+        _assistanceLabelProjector.Projections.Clear();
 
         await _service.IngestRuntimeEventAsync(evt, CancellationToken.None);
 
         var updated = await _runStore.GetByIdAsync(run.RunId, CancellationToken.None);
         Assert.Equal(RunLifecycleState.NeedsHuman, updated!.Status); // state unchanged
         Assert.Equal("pi_456", updated.RuntimeRunId);
+        Assert.Empty(_assistanceLabelProjector.Projections);
     }
 
     // ── IngestRuntimeEventAsync — runtime.heartbeat ────────────────
@@ -627,6 +635,10 @@ public class RunLifecycleServiceTests
 
         var updated = await _runStore.GetByIdAsync(run.RunId, CancellationToken.None);
         Assert.Equal(RunLifecycleState.BranchPushed, updated!.Status);
+        Assert.Contains(
+            _assistanceLabelProjector.Projections,
+            projection => projection.Milestone == AssistanceRunLabelMilestone.BranchPushed
+        );
     }
 
     [Fact]
@@ -646,6 +658,10 @@ public class RunLifecycleServiceTests
 
         var updated = await _runStore.GetByIdAsync(run.RunId, CancellationToken.None);
         Assert.Equal(RunLifecycleState.Completed, updated!.Status);
+        Assert.Contains(
+            _assistanceLabelProjector.Projections,
+            projection => projection.Milestone == AssistanceRunLabelMilestone.Completed
+        );
     }
 
     [Fact]
@@ -754,6 +770,10 @@ public class RunLifecycleServiceTests
         Assert.Equal(RunLifecycleState.Failed, updated!.Status);
         Assert.Contains("Tests failed after implementation", updated.Error);
         Assert.Equal(now, updated.FinishedAt);
+        Assert.Contains(
+            _assistanceLabelProjector.Projections,
+            projection => projection.Milestone == AssistanceRunLabelMilestone.Failed
+        );
     }
 
     // ── IngestRuntimeEventAsync — runtime.needs_human ──────────────
@@ -778,6 +798,10 @@ public class RunLifecycleServiceTests
         var updated = await _runStore.GetByIdAsync(run.RunId, CancellationToken.None);
         Assert.Equal(RunLifecycleState.NeedsHuman, updated!.Status);
         Assert.Equal(now, updated.FinishedAt);
+        Assert.Contains(
+            _assistanceLabelProjector.Projections,
+            projection => projection.Milestone == AssistanceRunLabelMilestone.NeedsHuman
+        );
     }
 
     // ── IngestRuntimeEventAsync — runtime.cancelled ────────────────
@@ -801,6 +825,10 @@ public class RunLifecycleServiceTests
         var updated = await _runStore.GetByIdAsync(run.RunId, CancellationToken.None);
         Assert.Equal(RunLifecycleState.Cancelled, updated!.Status);
         Assert.Equal(now, updated.FinishedAt);
+        Assert.Contains(
+            _assistanceLabelProjector.Projections,
+            projection => projection.Milestone == AssistanceRunLabelMilestone.Cancelled
+        );
     }
 
     // ── IngestRuntimeEventAsync — unsupported event type ───────────
@@ -1225,6 +1253,79 @@ public class RunLifecycleServiceTests
         Assert.Single(statusUpdates);
         Assert.Null(statusUpdates[0].Status.Status);
         Assert.Contains("agent-active", statusUpdates[0].Status.Tags!);
+    }
+
+    [Fact]
+    public async Task Projection_UsesManagedTagPrefixForClaimAndNeedsHuman()
+    {
+        var stubWorkSource = new StubWorkSource();
+        var profileResolver = new TestManagedProfileResolver(
+            activeState: "Active",
+            completedState: "Resolved",
+            tagPrefix: "ac"
+        );
+        var service = new RunLifecycleService(
+            NullLogger<RunLifecycleService>.Instance,
+            _runStore,
+            _eventStore,
+            _workItemStore,
+            stubWorkSource,
+            profileResolver
+        );
+        var candidate = new WorkCandidate
+        {
+            Id = "wi_custom_prefix",
+            ExternalId = "107",
+            Source = "AzureDevOpsBoards",
+            Title = "Custom lifecycle prefix test",
+            Status = "New",
+            RepoKey = "test-repo",
+            Tags = ["ac-ready"],
+            SourceMetadata = new Dictionary<string, string>
+            {
+                ["workSourceEnvironmentKey"] = "test-environment",
+            },
+        };
+        await _workItemStore.UpsertAsync(candidate, CancellationToken.None);
+
+        var run = await service.CreateRunForWorkItemAsync(
+            candidate.Id,
+            "worker-1",
+            CancellationToken.None
+        );
+        await AdvanceToAsync(
+            service,
+            run.RunId,
+            RunLifecycleState.AwaitingResult,
+            CancellationToken.None
+        );
+        await service.IngestRuntimeEventAsync(
+            new RuntimeEvent
+            {
+                EventId = "evt_custom_prefix_needs_human",
+                RunId = run.RunId,
+                EventType = RuntimeEventTypes.NeedsHuman,
+                OccurredAt = DateTimeOffset.UtcNow,
+                Message = "Need clarification",
+            },
+            CancellationToken.None
+        );
+
+        Assert.Contains(
+            stubWorkSource.StatusUpdates,
+            update => update.Status.Tags?.Contains("ac-active") == true
+        );
+        Assert.Contains(
+            stubWorkSource.StatusUpdates,
+            update => update.Status.Tags?.Contains("ac-needs-human") == true
+        );
+        Assert.DoesNotContain(
+            stubWorkSource.StatusUpdates,
+            update =>
+                update.Status.Tags?.Any(tag =>
+                    tag.StartsWith("agent-", StringComparison.OrdinalIgnoreCase)
+                ) == true
+        );
     }
 
     [Fact]
@@ -2212,6 +2313,12 @@ public class RunLifecycleServiceTests
             return Task.FromResult(new ClaimResult { Success = true });
         }
 
+        public Task<CreatedWorkItemResult> CreateAssistanceStoryAsync(
+            CreateAssistanceStoryRequest request, CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
         public Task UpdateStatusAsync(
             ExternalWorkRef workRef, ExternalWorkStatus status, CancellationToken cancellationToken)
         {
@@ -2245,9 +2352,29 @@ public class RunLifecycleServiceTests
         }
     }
 
+    private sealed class RecordingAssistanceLabelProjector
+        : IAssistancePullRequestLabelProjector
+    {
+        public List<(AgentRunHandle Run, AssistanceRunLabelMilestone Milestone)> Projections
+        {
+            get;
+        } = [];
+
+        public Task ProjectAsync(
+            AgentRunHandle run,
+            AssistanceRunLabelMilestone milestone,
+            CancellationToken cancellationToken
+        )
+        {
+            Projections.Add((run, milestone));
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class TestManagedProfileResolver(
         string? activeState,
-        string? completedState) : IManagedProfileResolver
+        string? completedState,
+        string tagPrefix = "agent") : IManagedProfileResolver
     {
         private readonly ResolvedWorkSourceEnvironment _environment = new(
             new WorkSourceEnvironmentProfile
@@ -2255,6 +2382,7 @@ public class RunLifecycleServiceTests
                 Key = "test-environment",
                 ActiveState = activeState,
                 CompletedState = completedState,
+                TagPrefix = tagPrefix,
             },
             Connection: null);
 

@@ -633,6 +633,46 @@ public class AzureDevOpsBoardsClientTests
     }
 
     [Fact]
+    public async Task QueryWorkItemsAsync_TagsAndAnyTags_GenerateAllAndParenthesizedAnyClauses()
+    {
+        string? wiqlBody = null;
+        var handler = new CaptureHttpMessageHandler(async request =>
+        {
+            wiqlBody = request.Content is null
+                ? string.Empty
+                : await request.Content.ReadAsStringAsync();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    WiqlResponse(),
+                    Encoding.UTF8,
+                    "application/json"
+                ),
+            };
+        });
+        var client = CreateClientWithHandler(handler);
+        var parameters = new BoardsQueryParameters
+        {
+            Project = Project,
+            Tags = ["frontend", "approved"],
+            AnyTags = ["agent-ready", "agent-ready-rework"],
+        };
+
+        await client.QueryWorkItemsAsync(parameters, CancellationToken.None);
+
+        Assert.NotNull(wiqlBody);
+        using var body = JsonDocument.Parse(wiqlBody);
+        var wiql = body.RootElement.GetProperty("query").GetString();
+        Assert.Contains(
+            "AND [System.Tags] CONTAINS 'frontend' "
+                + "AND [System.Tags] CONTAINS 'approved' "
+                + "AND ([System.Tags] CONTAINS 'agent-ready' "
+                + "OR [System.Tags] CONTAINS 'agent-ready-rework')",
+            wiql
+        );
+    }
+
+    [Fact]
     public async Task QueryWorkItemsAsync_ExcludedTags_GenerateNotContainsClauses()
     {
         // Verify that excluded tags generate NOT CONTAINS clauses in the WIQL query.
@@ -1113,6 +1153,125 @@ public class AzureDevOpsBoardsClientTests
         Assert.Equal("3", ifMatchHeader);
     }
 
+    [Fact]
+    public async Task TryClaimWorkItem_CustomPrefix_PreservesReadyReworkAndRepoTags()
+    {
+        string? patchBody = null;
+        var handler = new CaptureHttpMessageHandler(async req =>
+        {
+            if (req.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemGetResponse(42, 3, "New", "ac-ready-rework; repo:service"),
+                        Encoding.UTF8,
+                        "application/json"
+                    ),
+                };
+            }
+
+            if (req.Method == HttpMethod.Patch)
+            {
+                patchBody = await req.Content!.ReadAsStringAsync();
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemPatchResponse(42, 4),
+                        Encoding.UTF8,
+                        "application/json"
+                    ),
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+        var client = CreateClientWithHandler(handler);
+
+        var result = await client.TryClaimWorkItemAsync(
+            new ExternalWorkRef { Source = "AzureDevOpsBoards", ExternalId = "42" },
+            new ClaimRequest
+            {
+                WorkerId = "worker-1",
+                TagPrefix = "ac",
+            },
+            CancellationToken.None
+        );
+
+        Assert.True(result.Success);
+        Assert.NotNull(patchBody);
+        Assert.Contains("ac-active", patchBody);
+        Assert.Contains("ac-worker:worker-1", patchBody);
+        Assert.Contains("ac-ready-rework", patchBody);
+        Assert.Contains("repo:service", patchBody);
+        Assert.DoesNotContain("agent-active", patchBody);
+    }
+
+    [Theory]
+    [InlineData("ac-ready")]
+    [InlineData("ac-ready-rework")]
+    public async Task ReleaseClaimWorkItem_CustomPrefix_PreservesEligibilityMarker(
+        string eligibilityTag
+    )
+    {
+        string? patchBody = null;
+        var handler = new CaptureHttpMessageHandler(async req =>
+        {
+            if (req.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemGetResponse(
+                            42,
+                            3,
+                            "New",
+                            $"{eligibilityTag}; repo:service; ac-active; ac-worker:worker-1"
+                        ),
+                        Encoding.UTF8,
+                        "application/json"
+                    ),
+                };
+            }
+
+            if (req.Method == HttpMethod.Patch)
+            {
+                patchBody = await req.Content!.ReadAsStringAsync();
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemPatchResponse(42, 4),
+                        Encoding.UTF8,
+                        "application/json"
+                    ),
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+        var client = CreateClientWithHandler(handler);
+
+        await client.ReleaseClaimWorkItemAsync(
+            new ReleaseClaimRequest
+            {
+                WorkRef = new ExternalWorkRef
+                {
+                    Source = "AzureDevOpsBoards",
+                    ExternalId = "42",
+                },
+                WorkerId = "worker-1",
+                TagPrefix = "ac",
+            },
+            CancellationToken.None
+        );
+
+        Assert.NotNull(patchBody);
+        Assert.Contains(eligibilityTag, patchBody);
+        Assert.Contains("repo:service", patchBody);
+        Assert.DoesNotContain("ac-active", patchBody);
+        Assert.DoesNotContain("ac-worker:", patchBody);
+    }
+
     // ──────────────────────────────────────────────
     // Status projection (UpdateWorkItemStatusAsync)
     // ──────────────────────────────────────────────
@@ -1124,6 +1283,23 @@ public class AzureDevOpsBoardsClientTests
 
         var handler = new CaptureHttpMessageHandler(async (req) =>
         {
+            if (req.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemGetResponse(
+                            42,
+                            4,
+                            "New",
+                            "agent-ready-rework; repo:service"
+                        ),
+                        Encoding.UTF8,
+                        "application/json"
+                    ),
+                };
+            }
+
             if (req.Method == HttpMethod.Patch)
             {
                 if (req.Content is not null)
@@ -1171,6 +1347,8 @@ public class AzureDevOpsBoardsClientTests
         Assert.Contains("Active", patchBody, StringComparison.Ordinal);
         Assert.Contains("System.Tags", patchBody, StringComparison.Ordinal);
         Assert.Contains("agent-active", patchBody, StringComparison.Ordinal);
+        Assert.Contains("agent-ready-rework", patchBody, StringComparison.Ordinal);
+        Assert.Contains("repo:service", patchBody, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1254,6 +1432,50 @@ public class AzureDevOpsBoardsClientTests
             client.UpdateWorkItemStatusAsync(workRef, status, CancellationToken.None));
 
         Assert.Null(ex);
+    }
+
+    [Fact]
+    public async Task UpdateWorkItemStatus_TagsOnlyPreconditionFailed_ReturnsFalse()
+    {
+        var getCount = 0;
+        var patchCount = 0;
+        var handler = new CaptureHttpMessageHandler(req =>
+        {
+            if (req.Method == HttpMethod.Get)
+            {
+                getCount++;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        WorkItemGetResponse(42, 1, "New", "repo:service"),
+                        Encoding.UTF8,
+                        "application/json"),
+                };
+            }
+
+            patchCount++;
+            return new HttpResponseMessage(HttpStatusCode.PreconditionFailed)
+            {
+                Content = new StringContent(
+                    """{"message":"The resource has been modified."}"""),
+            };
+        });
+        var client = CreateClientWithHandler(handler);
+        var workRef = new ExternalWorkRef
+        {
+            Source = "AzureDevOpsBoards",
+            ExternalId = "42",
+            Revision = "1",
+        };
+
+        var updated = await client.UpdateWorkItemStatusAsync(
+            workRef,
+            new ExternalWorkStatus { Tags = ["agent-ready-rework"] },
+            CancellationToken.None);
+
+        Assert.False(updated);
+        Assert.Equal(1, getCount);
+        Assert.Equal(1, patchCount);
     }
 
     // ──────────────────────────────────────────────

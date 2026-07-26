@@ -5,26 +5,25 @@ using AgentController.Domain;
 namespace AgentController.Application.Queries;
 
 /// <summary>
-/// Builds the runs-dashboard projection from agent runs and active rework-feedback soaks.
+/// Builds the runs-dashboard projection from agent runs and tracked rework requests.
 /// </summary>
 public sealed class ListRunCardsQueryHandler(
     IAgentRunStore runStore,
     IWorkItemStore workItemStore,
     ILifecycleEventStore lifecycleEventStore,
     IRepositoryStore repositoryStore,
-    IReworkFeedbackStore reworkFeedbackStore
+    IReworkFeedbackStore reworkFeedbackStore,
+    IReworkCycleStore reworkCycleStore
 ) : IQueryHandler<ListRunCardsQuery, IReadOnlyList<RunCardItem>>
 {
     private const int ResultLimit = 200;
-    private const string RunKind = "run";
-    private const string ReworkSoakKind = "rework-soak";
-    private const string PendingCategory = "pending";
 
     private readonly IAgentRunStore _runStore = runStore;
     private readonly IWorkItemStore _workItemStore = workItemStore;
     private readonly ILifecycleEventStore _lifecycleEventStore = lifecycleEventStore;
     private readonly IRepositoryStore _repositoryStore = repositoryStore;
     private readonly IReworkFeedbackStore _reworkFeedbackStore = reworkFeedbackStore;
+    private readonly IReworkCycleStore _reworkCycleStore = reworkCycleStore;
 
     public async Task<IReadOnlyList<RunCardItem>> ExecuteAsync(
         ListRunCardsQuery query,
@@ -32,7 +31,10 @@ public sealed class ListRunCardsQueryHandler(
     )
     {
         var runs = await ListAllRunsAsync(cancellationToken);
-        var watchingFeedback = await _reworkFeedbackStore.GetWatchingAsync(cancellationToken);
+        var trackedFeedback = await _reworkFeedbackStore.GetTrackedAsync(cancellationToken);
+        var pendingCycles = await _reworkCycleStore.ListPendingAsync(cancellationToken);
+        var consumedCycles = await _reworkCycleStore.ListConsumedAsync(cancellationToken);
+        var cycles = pendingCycles.Concat(consumedCycles).ToList();
 
         var runsById = new Dictionary<string, AgentRunHandle>(StringComparer.Ordinal);
         foreach (var run in runs)
@@ -40,9 +42,18 @@ public sealed class ListRunCardsQueryHandler(
             runsById[run.RunId] = run;
         }
 
+        var consumedCyclesByRunId = new Dictionary<string, ReworkCycle>(StringComparer.Ordinal);
+        foreach (var cycle in consumedCycles)
+        {
+            if (!string.IsNullOrWhiteSpace(cycle.NewRunId))
+            {
+                consumedCyclesByRunId[cycle.NewRunId] = cycle;
+            }
+        }
+
         var workItemsById = new Dictionary<string, WorkCandidate?>(StringComparer.Ordinal);
         var repositoryUrlsByKey = new Dictionary<string, string?>(StringComparer.Ordinal);
-        var cards = new List<RunCardItem>(runs.Count + watchingFeedback.Count);
+        var cards = new List<RunCardItem>(runs.Count + trackedFeedback.Count);
 
         foreach (var run in runs)
         {
@@ -59,36 +70,62 @@ public sealed class ListRunCardsQueryHandler(
                 cancellationToken
             );
             var latestEvent = events.MaxBy(lifecycleEvent => lifecycleEvent.CreatedAt);
+            var cycle = await ResolveCycleForRunAsync(
+                run,
+                runsById,
+                consumedCyclesByRunId,
+                pendingCycles,
+                cancellationToken
+            );
+            var feedback = FindFeedbackForCycle(cycle, trackedFeedback);
 
-            cards.Add(CreateRunCard(run, enrichment, latestEvent));
+            cards.Add(
+                RunCardFactory.CreateRunCard(
+                    run,
+                    enrichment.WorkItem,
+                    enrichment.RepositoryUrl,
+                    latestEvent,
+                    cycle,
+                    feedback
+                )
+            );
         }
 
-        foreach (var feedback in watchingFeedback)
+        foreach (var feedback in trackedFeedback)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (!runsById.TryGetValue(feedback.OriginatingRunId, out var originatingRun))
+            var cycle = FindCycleForFeedback(feedback, cycles);
+            if (!string.IsNullOrWhiteSpace(cycle?.NewRunId)
+                && runsById.ContainsKey(cycle.NewRunId))
             {
-                originatingRun = await _runStore.GetByIdAsync(
-                    feedback.OriginatingRunId,
-                    cancellationToken
-                );
-                if (originatingRun is not null)
-                {
-                    runsById[originatingRun.RunId] = originatingRun;
-                }
+                // The consuming run card carries the same tracking projection.
+                continue;
             }
 
-            var enrichment = originatingRun is null
-                ? RunEnrichment.Empty
-                : await ResolveEnrichmentAsync(
-                    originatingRun,
-                    workItemsById,
-                    repositoryUrlsByKey,
-                    cancellationToken
-                );
+            var associatedRun = await ResolveAssociatedRunAsync(
+                feedback,
+                cycle,
+                runsById,
+                cancellationToken
+            );
+            var enrichment = await ResolveFeedbackEnrichmentAsync(
+                feedback,
+                associatedRun,
+                workItemsById,
+                repositoryUrlsByKey,
+                cancellationToken
+            );
 
-            cards.Add(CreateReworkSoakCard(feedback, originatingRun, enrichment));
+            cards.Add(
+                RunCardFactory.CreateTrackingCard(
+                    feedback,
+                    cycle,
+                    associatedRun,
+                    enrichment.WorkItem,
+                    enrichment.RepositoryUrl
+                )
+            );
         }
 
         return cards
@@ -122,54 +159,66 @@ public sealed class ListRunCardsQueryHandler(
     }
 
     internal static string ClassifyCategory(RunLifecycleState status) =>
-        status switch
-        {
-            RunLifecycleState.AgentStarting
-                or RunLifecycleState.AgentRunning
-                or RunLifecycleState.AwaitingResult => "executing",
+        RunCardFactory.ClassifyCategory(status);
 
-            RunLifecycleState.Queued
-                or RunLifecycleState.Claimed
-                or RunLifecycleState.EnvironmentProvisioning
-                or RunLifecycleState.EnvironmentReady
-                or RunLifecycleState.RepositoryCloning
-                or RunLifecycleState.RepositoryReady
-                or RunLifecycleState.ContextInjected => PendingCategory,
-
-            RunLifecycleState.NeedsHuman
-                or RunLifecycleState.Failed
-                or RunLifecycleState.Cancelled => "attention",
-
-            RunLifecycleState.ResultReceived
-                or RunLifecycleState.PrOpened
-                or RunLifecycleState.BranchPushed
-                or RunLifecycleState.Completed
-                or RunLifecycleState.CleanupPending
-                or RunLifecycleState.CleanedUp => "completed",
-
-            _ => throw new ArgumentOutOfRangeException(
-                nameof(status),
-                status,
-                "Unknown run lifecycle state."
-            ),
-        };
-
-    private async Task<RunEnrichment> ResolveEnrichmentAsync(
+    private Task<RunEnrichment> ResolveEnrichmentAsync(
         AgentRunHandle run,
+        Dictionary<string, WorkCandidate?> workItemsById,
+        Dictionary<string, string?> repositoryUrlsByKey,
+        CancellationToken cancellationToken
+    ) =>
+        ResolveWorkItemEnrichmentAsync(
+            run.WorkItemId,
+            workItemsById,
+            repositoryUrlsByKey,
+            cancellationToken
+        );
+
+    private async Task<RunEnrichment> ResolveFeedbackEnrichmentAsync(
+        ReworkFeedback feedback,
+        AgentRunHandle? associatedRun,
         Dictionary<string, WorkCandidate?> workItemsById,
         Dictionary<string, string?> repositoryUrlsByKey,
         CancellationToken cancellationToken
     )
     {
-        if (string.IsNullOrWhiteSpace(run.WorkItemId))
+        var workItemId = feedback.AssistanceStoryWorkItemId ?? associatedRun?.WorkItemId;
+        var enrichment = await ResolveWorkItemEnrichmentAsync(
+            workItemId,
+            workItemsById,
+            repositoryUrlsByKey,
+            cancellationToken
+        );
+        if (enrichment.RepositoryUrl is not null
+            || string.IsNullOrWhiteSpace(feedback.PullRequest.RepositoryKey))
+        {
+            return enrichment;
+        }
+
+        var repositoryUrl = await ResolveRepositoryUrlAsync(
+            feedback.PullRequest.RepositoryKey,
+            repositoryUrlsByKey,
+            cancellationToken
+        );
+        return new RunEnrichment(enrichment.WorkItem, repositoryUrl);
+    }
+
+    private async Task<RunEnrichment> ResolveWorkItemEnrichmentAsync(
+        string? workItemId,
+        Dictionary<string, WorkCandidate?> workItemsById,
+        Dictionary<string, string?> repositoryUrlsByKey,
+        CancellationToken cancellationToken
+    )
+    {
+        if (string.IsNullOrWhiteSpace(workItemId))
         {
             return RunEnrichment.Empty;
         }
 
-        if (!workItemsById.TryGetValue(run.WorkItemId, out var workItem))
+        if (!workItemsById.TryGetValue(workItemId, out var workItem))
         {
-            workItem = await _workItemStore.GetByIdAsync(run.WorkItemId, cancellationToken);
-            workItemsById[run.WorkItemId] = workItem;
+            workItem = await _workItemStore.GetByIdAsync(workItemId, cancellationToken);
+            workItemsById[workItemId] = workItem;
         }
 
         if (workItem is null || string.IsNullOrWhiteSpace(workItem.RepoKey))
@@ -177,76 +226,121 @@ public sealed class ListRunCardsQueryHandler(
             return new RunEnrichment(workItem, null);
         }
 
-        if (!repositoryUrlsByKey.TryGetValue(workItem.RepoKey, out var repositoryUrl))
-        {
-            var repository = await _repositoryStore.GetByKeyAsync(
-                workItem.RepoKey,
-                cancellationToken
-            );
-            repositoryUrl = ResolveRepositoryUrl(repository);
-            repositoryUrlsByKey[workItem.RepoKey] = repositoryUrl;
-        }
-
+        var repositoryUrl = await ResolveRepositoryUrlAsync(
+            workItem.RepoKey,
+            repositoryUrlsByKey,
+            cancellationToken
+        );
         return new RunEnrichment(workItem, repositoryUrl);
     }
 
-    private static RunCardItem CreateRunCard(
-        AgentRunHandle run,
-        RunEnrichment enrichment,
-        LifecycleEvent? latestEvent
-    ) =>
-        new()
-        {
-            Id = run.RunId,
-            Kind = RunKind,
-            Status = run.Status.ToString(),
-            Category = ClassifyCategory(run.Status),
-            WorkItemTitle = enrichment.WorkItem?.Title,
-            WorkItemUrl = enrichment.WorkItem?.ExternalUrl,
-            WorkItemSource = enrichment.WorkItem?.Source,
-            RepoKey = enrichment.WorkItem?.RepoKey,
-            RepositoryUrl = enrichment.RepositoryUrl,
-            RuntimeType = run.RuntimeType,
-            RuntimeProfileName = run.RuntimeProfileName,
-            EnvironmentProviderType = run.EnvironmentProviderType,
-            RunAttempt = run.RunAttempt,
-            LastEventType = latestEvent?.EventType,
-            LastEventMessage = latestEvent?.Message,
-            LastEventAt = latestEvent?.CreatedAt,
-            CreatedAt = run.CreatedAt,
-            UpdatedAt = run.UpdatedAt,
-        };
-
-    private static RunCardItem CreateReworkSoakCard(
-        ReworkFeedback feedback,
-        AgentRunHandle? originatingRun,
-        RunEnrichment enrichment
+    private async Task<string?> ResolveRepositoryUrlAsync(
+        string repositoryKey,
+        Dictionary<string, string?> repositoryUrlsByKey,
+        CancellationToken cancellationToken
     )
     {
-        var threadLabel = feedback.ThreadCount == 1 ? "thread" : "threads";
-
-        return new RunCardItem
+        if (repositoryUrlsByKey.TryGetValue(repositoryKey, out var repositoryUrl))
         {
-            Id = feedback.Id,
-            Kind = ReworkSoakKind,
-            Status = "Rework feedback soaking",
-            Category = PendingCategory,
-            WorkItemTitle = enrichment.WorkItem?.Title,
-            WorkItemUrl = enrichment.WorkItem?.ExternalUrl,
-            WorkItemSource = enrichment.WorkItem?.Source,
-            RepoKey = enrichment.WorkItem?.RepoKey,
-            RepositoryUrl = enrichment.RepositoryUrl,
-            RuntimeType = originatingRun?.RuntimeType,
-            RuntimeProfileName = originatingRun?.RuntimeProfileName,
-            EnvironmentProviderType = originatingRun?.EnvironmentProviderType,
-            RunAttempt = originatingRun?.RunAttempt ?? 1,
-            LastEventType = "rework.feedback.soaking",
-            LastEventMessage = $"{feedback.ThreadCount} feedback {threadLabel} awaiting soak",
-            LastEventAt = feedback.LastQualifyingCommentAt,
-            CreatedAt = feedback.CreatedAt,
-            UpdatedAt = feedback.UpdatedAt,
-        };
+            return repositoryUrl;
+        }
+
+        var repository = await _repositoryStore.GetByKeyAsync(
+            repositoryKey,
+            cancellationToken
+        );
+        repositoryUrl = ResolveRepositoryUrl(repository);
+        repositoryUrlsByKey[repositoryKey] = repositoryUrl;
+        return repositoryUrl;
     }
+
+    private async Task<ReworkCycle?> ResolveCycleForRunAsync(
+        AgentRunHandle run,
+        Dictionary<string, AgentRunHandle> runsById,
+        Dictionary<string, ReworkCycle> consumedCyclesByRunId,
+        IReadOnlyList<ReworkCycle> pendingCycles,
+        CancellationToken cancellationToken
+    )
+    {
+        var visitedRunIds = new HashSet<string>(StringComparer.Ordinal);
+        AgentRunHandle? lineageRun = run;
+        while (lineageRun is not null && visitedRunIds.Add(lineageRun.RunId))
+        {
+            if (consumedCyclesByRunId.TryGetValue(lineageRun.RunId, out var consumedCycle))
+            {
+                return consumedCycle;
+            }
+
+            if (string.IsNullOrWhiteSpace(lineageRun.PreviousRunId))
+            {
+                break;
+            }
+
+            if (!runsById.TryGetValue(lineageRun.PreviousRunId, out var previousRun))
+            {
+                previousRun = await _runStore.GetByIdAsync(
+                    lineageRun.PreviousRunId,
+                    cancellationToken
+                );
+                if (previousRun is not null)
+                {
+                    runsById[previousRun.RunId] = previousRun;
+                }
+            }
+
+            lineageRun = previousRun;
+        }
+
+        return string.IsNullOrWhiteSpace(run.WorkItemId)
+            ? null
+            : pendingCycles
+                .Where(cycle => cycle.WorkItemId == run.WorkItemId)
+                .OrderBy(cycle => cycle.CycleNumber)
+                .FirstOrDefault();
+    }
+
+    private async Task<AgentRunHandle?> ResolveAssociatedRunAsync(
+        ReworkFeedback feedback,
+        ReworkCycle? cycle,
+        Dictionary<string, AgentRunHandle> runsById,
+        CancellationToken cancellationToken
+    )
+    {
+        var runId = cycle?.NewRunId ?? feedback.OriginatingRunId;
+        if (string.IsNullOrWhiteSpace(runId))
+        {
+            return null;
+        }
+
+        if (!runsById.TryGetValue(runId, out var run))
+        {
+            run = await _runStore.GetByIdAsync(runId, cancellationToken);
+            if (run is not null)
+            {
+                runsById[run.RunId] = run;
+            }
+        }
+
+        return run;
+    }
+
+    private static ReworkFeedback? FindFeedbackForCycle(
+        ReworkCycle? cycle,
+        IReadOnlyList<ReworkFeedback> feedback
+    ) =>
+        cycle is null
+            ? null
+            : feedback.FirstOrDefault(candidate =>
+                ReworkTrackingMatcher.IsSameMaterialization(candidate, cycle)
+            );
+
+    private static ReworkCycle? FindCycleForFeedback(
+        ReworkFeedback feedback,
+        IReadOnlyList<ReworkCycle> cycles
+    ) =>
+        cycles.FirstOrDefault(cycle =>
+            ReworkTrackingMatcher.IsSameMaterialization(feedback, cycle)
+        );
 
     private static string? ResolveRepositoryUrl(RepositoryProfile? repository)
     {

@@ -1605,6 +1605,11 @@ sys.exit(0)
             CancellationToken ct
         ) => Task.FromResult(new ClaimResult { Success = true });
 
+        public Task<CreatedWorkItemResult> CreateAssistanceStoryAsync(
+            CreateAssistanceStoryRequest request,
+            CancellationToken ct
+        ) => throw new NotSupportedException();
+
         public Task UpdateStatusAsync(
             ExternalWorkRef workRef,
             ExternalWorkStatus status,

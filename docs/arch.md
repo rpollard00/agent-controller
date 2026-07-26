@@ -46,6 +46,8 @@ The MVP should evolve the same design into a durable internal service using stro
 - `AzureDevOpsBoardsValidator` for configuration validation with toggle
 - `AzureDevOpsBoardsOptions` with `env:` prefix PAT resolution
 - Remote → local `UpsertAsync` path for persisting ADO work items before claiming
+- Dual PR continuation workflows: run-backed original-story Revival and repository-wide Assistance with fresh linked stories
+- Restart-safe Assistance soaking/materialization, per-PR cycles, existing-branch Rework dispatch, and PR label projection
 
 ### Secrets Management ✓
 
@@ -318,6 +320,19 @@ NOT `WaitForExit`, and does NOT feed state transitions.
 An empty `logs/pi.stderr.log` now signals a **PTY/launch failure** (e.g., `script(1)`
 not installed, TUI init crash) rather than a pipe-buffer stall. Verify the configured
 `PtyWrapperPath` resolves and the TUI can initialize under the pseudo-terminal.
+
+## 3.11 Existing-PR Continuation: Revival and Assistance
+
+Pull-request feedback has two explicit request modes:
+
+- **Revival** (`agent-rework-requested`) is the compatibility path for a controller-produced PR. It requires prior run/work-item lineage, creates a pending cycle for the original story, and reactivates that story with `<prefix>-ready`.
+- **Assistance** (`agent-assistance-requested`) scans active PRs across every managed Azure DevOps repository, including human-submitted PRs. After soaking—even with zero qualifying comments—it creates a fresh PR-linked User Story with `repo:<key>` and `<prefix>-ready-rework`.
+
+Assistance cycle identity is the canonical PR, not the generated story. The story is published only after its Pending cycle is durable. Dispatch validates that cycle, checks out the existing PR source branch, injects the persisted PR/thread context, and selects `ExecutionKind.Rework`. Normal `<prefix>-ready` stories select `ExecutionKind.NewWork`.
+
+At `runtime.accepted`, Assistance adds its configured in-progress PR label. Successful branch push/completion clears the assistance request and in-progress labels (and a conflicting Revival marker); failed, needs-human, and cancelled outcomes clear only in-progress so the request remains visible for retry. If both request markers are present, Assistance wins.
+
+See [Pull Request Revival and Assistance Workflows](./pull-request-feedback-workflows.md) for discovery, zero-comment semantics, relationships, cycle numbering, labels, failure handling, configuration, and required Azure DevOps permissions.
 
 ---
 
@@ -1300,12 +1315,44 @@ Actions: cancel, retry, cleanup, mark needs-human
   "runtime": {
     "provider": "PiMateria",
     "piExecutablePath": "pi",
-    "defaultMateriaLoadout": "autonomous-dev"
+    "loadouts": {
+      "NewWork": "ADO-Build-NewWork",
+      "Rework": "ADO-Build-Rework"
+    }
   }
 }
 ```
 
 Repository, runtime-environment, work-source environment, connection, and secret profiles are managed separately through the Web UI/API and persisted in the controller database.
+
+## 12.2 Pull Request Feedback and Runtime Loadouts
+
+```jsonc
+{
+  "feedback": {
+    "provider": "AzureDevOpsRepos",
+    "enabled": true,
+    "pollIntervalSeconds": 60,
+    "maxConcurrentPolls": 2,
+    "soakMinutes": 5,
+    "reworkMarkerTag": "agent-rework-requested",
+    "assistanceMarkerTag": "agent-assistance-requested",
+    "assistanceInProgressTag": "agent-assistance-in-progress",
+    "allowedReviewers": ["reviewer@example.com"],
+    "maxReviewThreadsPerBundle": 50
+  },
+  "runtime": {
+    "loadouts": {
+      "NewWork": "ADO-Build-NewWork",
+      "Rework": "ADO-Build-Rework"
+    }
+  }
+}
+```
+
+The three PR labels are independent of the managed board tag prefix. Assistance label names must be nonempty, and all three names must be distinct case-insensitively. Managed work-source environments use `tagPrefix` (default `agent`) to derive board tags such as `<prefix>-ready`, `<prefix>-ready-rework`, and `<prefix>-active`.
+
+`NewWork` is for an ordinary ready story and may create a new branch/PR. Both Revival and Assistance carry persisted rework context and select `Rework`, which must update the existing PR source branch rather than create another PR. See [Pull Request Revival and Assistance Workflows](./pull-request-feedback-workflows.md).
 
 ---
 
@@ -2365,7 +2412,7 @@ Observability: OpenTelemetry plus lifecycle event log
 7. What timeout should mark a run as stale?
 8. Should stale runs be retried automatically or marked `needs_human`?
 9. Should successful retained workspaces expire after a TTL?
-10. What minimum Azure DevOps permissions should the service identity have?
+10. ~~What minimum Azure DevOps permissions should the service identity have?~~ **Resolved:** `Code: Read & write` and `Work Items: Read & write`, plus repository/branch authorization; see [Pull Request Revival and Assistance Workflows §8](./pull-request-feedback-workflows.md#8-azure-devops-permissions).
 
 ---
 

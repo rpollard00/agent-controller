@@ -453,6 +453,10 @@ public class AzureDevOpsBoardStateStartupValidatorTests
         public Task<IReadOnlyList<WorkCandidate>> QueryWorkItemsAsync(BoardsQueryParameters parameters, CancellationToken cancellationToken) =>
             throw new NotImplementedException();
 
+        public Task<CreatedWorkItemResult> CreateWorkItemAsync(
+            BoardsCreateWorkItemParameters parameters,
+            CancellationToken cancellationToken) => throw new NotImplementedException();
+
         public Task<ClaimResult> TryClaimWorkItemAsync(ExternalWorkRef workRef, ClaimRequest request, CancellationToken cancellationToken) =>
             throw new NotImplementedException();
 

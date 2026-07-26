@@ -9,11 +9,20 @@ namespace AgentController.Application;
 /// </summary>
 public sealed record PrUnderTest
 {
-    /// <summary>Controller-assigned run identifier of the run that produced this PR.</summary>
-    public string OriginatingRunId { get; init; } = string.Empty;
+    /// <summary>How work on the existing pull request was requested.</summary>
+    public ReworkRequestMode RequestMode { get; init; } = ReworkRequestMode.Revival;
 
-    /// <summary>Identifier of the work item this run was for.</summary>
-    public string WorkItemId { get; init; } = string.Empty;
+    /// <summary>Canonical reference to the pull request under test.</summary>
+    public PullRequestReference PullRequest { get; init; } = new();
+
+    /// <summary>
+    /// Controller-assigned run identifier of the run that produced this PR.
+    /// Null for assistance requests not originating from a controller run.
+    /// </summary>
+    public string? OriginatingRunId { get; init; }
+
+    /// <summary>Identifier of the work item this run was for, when known.</summary>
+    public string? WorkItemId { get; init; }
 
     /// <summary>Repository key (e.g. "org/project") for the source system.</summary>
     public string RepoKey { get; init; } = string.Empty;
@@ -66,8 +75,17 @@ public sealed record FeedbackQuery
 /// </summary>
 public sealed record ReworkSignal
 {
-    /// <summary>Controller-assigned run identifier of the run that produced this PR.</summary>
-    public string OriginatingRunId { get; init; } = string.Empty;
+    /// <summary>How work on the existing pull request was requested.</summary>
+    public ReworkRequestMode RequestMode { get; init; } = ReworkRequestMode.Revival;
+
+    /// <summary>Canonical reference to the pull request carrying the feedback.</summary>
+    public PullRequestReference PullRequest { get; init; } = new();
+
+    /// <summary>
+    /// Controller-assigned run identifier of the run that produced this PR.
+    /// Null for assistance requests not originating from a controller run.
+    /// </summary>
+    public string? OriginatingRunId { get; init; }
 
     /// <summary>Pull request identifier in the source system.</summary>
     public string PullRequestId { get; init; } = string.Empty;

@@ -364,7 +364,15 @@ namespace AgentController.Migrations.Migrations
                         .HasMaxLength(512)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("CanonicalPullRequestKey")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTimeOffset?>("ConsumedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CorrelationId")
+                        .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
                     b.Property<DateTimeOffset>("CreatedAt")
@@ -387,8 +395,23 @@ namespace AgentController.Migrations.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<string>("PriorRunId")
-                        .IsRequired()
                         .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PullRequestEnvironmentKey")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PullRequestId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PullRequestRepositoryKey")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PullRequestTargetBranch")
+                        .HasMaxLength(512)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("PullRequestUrl")
@@ -398,6 +421,11 @@ namespace AgentController.Migrations.Migrations
 
                     b.Property<DateTimeOffset?>("ReactivatedAt")
                         .HasColumnType("TEXT");
+
+                    b.Property<int>("RequestMode")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0);
 
                     b.Property<int>("Status")
                         .HasColumnType("INTEGER");
@@ -409,12 +437,31 @@ namespace AgentController.Migrations.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CorrelationId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ReworkCycles_CorrelationId")
+                        .HasFilter("\"CorrelationId\" IS NOT NULL");
+
                     b.HasIndex("FeedbackBundleId")
                         .IsUnique()
-                        .HasDatabaseName("IX_ReworkCycles_FeedbackBundleId");
+                        .HasDatabaseName("IX_ReworkCycles_FeedbackBundleId")
+                        .HasFilter("\"CanonicalPullRequestKey\" IS NULL");
 
                     b.HasIndex("WorkItemId", "Status")
                         .HasDatabaseName("IX_ReworkCycles_WorkItemId_Status");
+
+                    b.HasIndex("RequestMode", "CanonicalPullRequestKey", "CycleNumber")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ReworkCycles_RequestMode_PrKey_CycleNumber")
+                        .HasFilter("\"CanonicalPullRequestKey\" IS NOT NULL");
+
+                    b.HasIndex("RequestMode", "CanonicalPullRequestKey", "FeedbackBundleId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ReworkCycles_RequestMode_PrKey_FeedbackBundleId")
+                        .HasFilter("\"CanonicalPullRequestKey\" IS NOT NULL");
+
+                    b.HasIndex("RequestMode", "CanonicalPullRequestKey", "Status")
+                        .HasDatabaseName("IX_ReworkCycles_RequestMode_PrKey_Status");
 
                     b.ToTable("ReworkCycles", (string)null);
                 });
@@ -422,6 +469,26 @@ namespace AgentController.Migrations.Migrations
             modelBuilder.Entity("AgentController.Infrastructure.Data.Entities.ReworkFeedbackEntity", b =>
                 {
                     b.Property<string>("Id")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AssistanceStoryExternalId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AssistanceStoryUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AssistanceStoryWorkItemId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CanonicalPullRequestKey")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CorrelationId")
                         .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
@@ -444,7 +511,10 @@ namespace AgentController.Migrations.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<string>("OriginatingRunId")
-                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PullRequestEnvironmentKey")
                         .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
@@ -452,6 +522,31 @@ namespace AgentController.Migrations.Migrations
                         .IsRequired()
                         .HasMaxLength(128)
                         .HasColumnType("TEXT");
+
+                    b.Property<string>("PullRequestRepositoryKey")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PullRequestSourceBranch")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PullRequestSourceCommitSha")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PullRequestTargetBranch")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PullRequestUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("RequestMode")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0);
 
                     b.Property<int>("Status")
                         .HasColumnType("INTEGER");
@@ -464,12 +559,26 @@ namespace AgentController.Migrations.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CorrelationId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ReworkFeedback_CorrelationId")
+                        .HasFilter("\"CorrelationId\" IS NOT NULL");
+
                     b.HasIndex("Status")
                         .HasDatabaseName("IX_ReworkFeedback_Status");
 
-                    b.HasIndex("PullRequestId", "FeedbackBundleId")
+                    b.HasIndex("RequestMode", "CanonicalPullRequestKey", "FeedbackBundleId")
                         .IsUnique()
-                        .HasDatabaseName("IX_ReworkFeedback_PullRequestId_FeedbackBundleId");
+                        .HasDatabaseName("IX_ReworkFeedback_RequestMode_PrKey_FeedbackBundleId")
+                        .HasFilter("\"CanonicalPullRequestKey\" IS NOT NULL");
+
+                    b.HasIndex("RequestMode", "CanonicalPullRequestKey", "Status")
+                        .HasDatabaseName("IX_ReworkFeedback_RequestMode_PrKey_Status");
+
+                    b.HasIndex("RequestMode", "PullRequestId", "FeedbackBundleId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ReworkFeedback_LegacyPullRequest_FeedbackBundleId")
+                        .HasFilter("\"CanonicalPullRequestKey\" IS NULL");
 
                     b.ToTable("ReworkFeedback", (string)null);
                 });

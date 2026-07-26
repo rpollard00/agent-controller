@@ -1,13 +1,17 @@
 <script lang="ts">
   import type { RunCardItem } from '../../api/types';
-  import { formatRelativeTime, getRunCardStoplight, getRunStatusLabel } from './runCardModel';
+  import {
+    formatRelativeTime,
+    getRunCardStateLabel,
+    getRunCardStoplight,
+    getRunStatusLabel,
+  } from './runCardModel';
 
   let { card }: { card: RunCardItem } = $props();
 
   const stoplight = $derived(getRunCardStoplight(card.category));
-  const stateLabel = $derived(
-    card.kind === 'rework-soak' ? 'Rework soak' : getRunStatusLabel(card.status),
-  );
+  const stateLabel = $derived(getRunCardStateLabel(card));
+  const isAssistance = $derived(card.requestMode === 'assistance');
   const lastEvent = $derived(
     card.lastEventMessage ?? card.lastEventType ?? 'No lifecycle events recorded',
   );
@@ -18,6 +22,21 @@
   const workItemLabel = $derived(card.workItemTitle ?? 'Unknown work item');
   const runtimeLabel = $derived(card.runtimeType ?? 'Unknown runtime');
   const environmentLabel = $derived(card.runtimeProfileName ?? 'Unknown environment');
+  const pullRequestLabel = $derived(
+    card.pullRequest?.pullRequestId
+      ? `PR #${card.pullRequest.pullRequestId}`
+      : 'Pull request',
+  );
+  const assistanceStoryReference = $derived(
+    card.assistanceStoryExternalId ?? card.assistanceStoryWorkItemId,
+  );
+  const assistanceStoryLabel = $derived(
+    assistanceStoryReference ? `Story #${assistanceStoryReference}` : 'Assistance story',
+  );
+  const assistanceStoryUrl = $derived(
+    card.assistanceStoryUrl ??
+      (card.assistanceStoryWorkItemId !== null ? card.workItemUrl : null),
+  );
 </script>
 
 <article
@@ -34,6 +53,27 @@
       <div class="min-w-0">
         <div class="flex flex-wrap items-center gap-2">
           <h2 class="font-semibold text-white">{stateLabel}</h2>
+          {#if card.requestMode}
+            <span
+              class="inline-flex rounded-full bg-cyan-950 px-2.5 py-0.5 text-xs font-semibold text-cyan-200"
+            >
+              {isAssistance ? 'PR assistance' : 'Revival rework'}
+            </span>
+          {/if}
+          {#if isAssistance && card.kind === 'run'}
+            <span
+              class="inline-flex rounded-full bg-slate-800 px-2.5 py-0.5 text-xs font-semibold text-slate-300"
+            >
+              {getRunStatusLabel(card.status)}
+            </span>
+          {/if}
+          {#if isAssistance && card.cycleNumber !== null}
+            <span
+              class="inline-flex rounded-full bg-slate-800 px-2.5 py-0.5 text-xs font-semibold text-slate-300"
+            >
+              Cycle {card.cycleNumber}
+            </span>
+          {/if}
           {#if card.runAttempt > 1}
             <span
               class="inline-flex rounded-full bg-slate-800 px-2.5 py-0.5 text-xs font-semibold text-slate-300"
@@ -89,21 +129,55 @@
       </div>
 
       <div class="min-w-0">
-        <p class="text-xs font-medium tracking-wide text-slate-500 uppercase">Work item</p>
-        {#if card.workItemUrl}
-          <a
-            class="mt-1 block truncate text-sm font-medium text-cyan-300 hover:text-cyan-200 hover:underline"
-            href={card.workItemUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            title={workItemLabel}
-          >
-            {workItemLabel}
-          </a>
+        {#if isAssistance}
+          <p class="text-xs font-medium tracking-wide text-slate-500 uppercase">PR &amp; story</p>
+          <div class="mt-1 flex min-w-0 flex-wrap gap-x-3 gap-y-1">
+            {#if card.pullRequest?.pullRequestUrl}
+              <a
+                class="truncate text-sm font-medium text-cyan-300 hover:text-cyan-200 hover:underline"
+                href={card.pullRequest.pullRequestUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {pullRequestLabel}
+              </a>
+            {:else}
+              <span class="truncate text-sm text-slate-300">{pullRequestLabel}</span>
+            {/if}
+
+            {#if assistanceStoryUrl}
+              <a
+                class="truncate text-sm font-medium text-cyan-300 hover:text-cyan-200 hover:underline"
+                href={assistanceStoryUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={workItemLabel}
+              >
+                {assistanceStoryLabel}
+              </a>
+            {:else if assistanceStoryReference}
+              <span class="truncate text-sm text-slate-300">{assistanceStoryLabel}</span>
+            {:else}
+              <span class="truncate text-sm text-slate-500">Story not created yet</span>
+            {/if}
+          </div>
         {:else}
-          <p class="mt-1 truncate text-sm text-slate-300" title={workItemLabel}>
-            {workItemLabel}
-          </p>
+          <p class="text-xs font-medium tracking-wide text-slate-500 uppercase">Work item</p>
+          {#if card.workItemUrl}
+            <a
+              class="mt-1 block truncate text-sm font-medium text-cyan-300 hover:text-cyan-200 hover:underline"
+              href={card.workItemUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={workItemLabel}
+            >
+              {workItemLabel}
+            </a>
+          {:else}
+            <p class="mt-1 truncate text-sm text-slate-300" title={workItemLabel}>
+              {workItemLabel}
+            </p>
+          {/if}
         {/if}
       </div>
     </div>

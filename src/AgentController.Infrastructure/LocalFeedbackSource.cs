@@ -60,7 +60,14 @@ internal sealed partial class LocalFeedbackSource : IFeedbackSource, IDisposable
         {
             if (_signals.TryGetValue(pr.PullRequestId, out var signal))
             {
-                signals.Add(signal);
+                signals.Add(signal with
+                {
+                    RequestMode = pr.RequestMode,
+                    PullRequest = pr.PullRequest,
+                    OriginatingRunId = pr.RequestMode == ReworkRequestMode.Assistance
+                        ? pr.OriginatingRunId
+                        : signal.OriginatingRunId,
+                });
                 Log.SignalMatched(_logger, pr.PullRequestId, signal.Threads.Count);
             }
         }

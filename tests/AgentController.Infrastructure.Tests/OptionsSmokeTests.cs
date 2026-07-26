@@ -129,6 +129,7 @@ public class OptionsSmokeTests
         // Prefix-aware helpers with default prefix produce the expected
         // controller-owned lifecycle tags.
         Assert.Equal("agent-ready", WorkSourceOptions.TagReady());
+        Assert.Equal("agent-ready-rework", WorkSourceOptions.TagReadyRework());
         Assert.Equal("agent-active", WorkSourceOptions.TagActive());
         Assert.Equal("agent-failed", WorkSourceOptions.TagFailed());
         Assert.Equal("agent-needs-human", WorkSourceOptions.TagNeedsHuman());
@@ -145,6 +146,7 @@ public class OptionsSmokeTests
     {
         // Custom prefix produces namespaced tags for collision avoidance.
         Assert.Equal("ac-ready", WorkSourceOptions.TagReady("ac"));
+        Assert.Equal("ac-ready-rework", WorkSourceOptions.TagReadyRework("ac"));
         Assert.Equal("ac-active", WorkSourceOptions.TagActive("ac"));
         Assert.Equal("ac-failed", WorkSourceOptions.TagFailed("ac"));
         Assert.Equal("ac-needs-human", WorkSourceOptions.TagNeedsHuman("ac"));

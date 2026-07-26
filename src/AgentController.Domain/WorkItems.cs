@@ -131,8 +131,8 @@ public sealed record ExternalWorkStatus
 
 /// <summary>
 /// Request to release a previously claimed work item back to the work source.
-/// Strips agent-controlled tags (agent-active, agent-worker:*) and optionally
-/// reverts the work item state so it becomes eligible for re-discovery.
+/// Strips controller-managed active and worker tags and optionally reverts the
+/// work item state so it becomes eligible for re-discovery.
 /// </summary>
 public sealed record ReleaseClaimRequest
 {
@@ -141,6 +141,9 @@ public sealed record ReleaseClaimRequest
 
     /// <summary>Worker ID that originally claimed the item (used for logging and tag matching).</summary>
     public string WorkerId { get; init; } = string.Empty;
+
+    /// <summary>Prefix used for controller-managed lifecycle tags.</summary>
+    public string TagPrefix { get; init; } = "agent";
 
     /// <summary>State to revert the work item to after releasing (e.g. "New"). Null to leave unchanged.</summary>
     public string? TargetState { get; init; }
@@ -196,6 +199,9 @@ public sealed record ClaimRequest
 {
     /// <summary>Identifier of the worker/controller instance claiming the item.</summary>
     public string WorkerId { get; init; } = string.Empty;
+
+    /// <summary>Prefix used for controller-managed lifecycle tags.</summary>
+    public string TagPrefix { get; init; } = "agent";
 
     /// <summary>How long the lease should last before expiring.</summary>
     public TimeSpan LeaseTimeout { get; init; } = TimeSpan.FromMinutes(30);
@@ -253,6 +259,81 @@ public sealed record CreateWorkItemRequest
 
     /// <summary>Identifier of the work source. Defaults to "LocalFake".</summary>
     public string Source { get; init; } = "LocalFake";
+}
+
+/// <summary>
+/// Request to create a new assistance story for work against an existing pull request.
+/// The work-source implementation supplies its managed repository and ready-rework tags.
+/// </summary>
+public sealed record CreateAssistanceStoryRequest
+{
+    /// <summary>Managed work-source environment that owns the story.</summary>
+    public string? EnvironmentKey { get; init; }
+
+    /// <summary>Configured board work item type. Defaults to the Agile process story type.</summary>
+    public string WorkItemType { get; init; } = "User Story";
+
+    /// <summary>Repository key used to route the generated work.</summary>
+    public string RepoKey { get; init; } = string.Empty;
+
+    /// <summary>Caller-supplied story title.</summary>
+    public string Title { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Caller-supplied rich-text description. Providers must encode this value for their
+    /// transport without changing the already-rendered content.
+    /// </summary>
+    public string Description { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Stable tags used to reconcile story materialization after retries or restarts.
+    /// </summary>
+    public IReadOnlyList<string> CorrelationTags { get; init; } = [];
+
+    /// <summary>
+    /// Whether the ready-rework eligibility tag should be written during creation.
+    /// Assistance materialization sets this to <see langword="false"/> until its local
+    /// Pending cycle is durable; direct callers retain the historical ready-on-create behavior.
+    /// </summary>
+    public bool ReadyForClaim { get; init; } = true;
+
+    /// <summary>Relations to add to the story at creation time.</summary>
+    public IReadOnlyList<WorkItemRelation> Relations { get; init; } = [];
+}
+
+/// <summary>A provider-neutral relation attached to a work item.</summary>
+public sealed record WorkItemRelation
+{
+    /// <summary>
+    /// Provider relation identifier, such as <c>System.LinkTypes.Related</c> or
+    /// <c>ArtifactLink</c>.
+    /// </summary>
+    public string RelationType { get; init; } = string.Empty;
+
+    /// <summary>Absolute provider URL or artifact URI for the relation target.</summary>
+    public string Url { get; init; } = string.Empty;
+
+    /// <summary>Optional provider relation attributes.</summary>
+    public IReadOnlyDictionary<string, string>? Attributes { get; init; }
+}
+
+/// <summary>
+/// Result of creating a work item in an external source, including the candidate data
+/// that can be persisted locally without re-querying the provider.
+/// </summary>
+public sealed record CreatedWorkItemResult
+{
+    /// <summary>Provider-assigned work item identifier.</summary>
+    public string ExternalId { get; init; } = string.Empty;
+
+    /// <summary>Browser URL for the created work item.</summary>
+    public string Url { get; init; } = string.Empty;
+
+    /// <summary>Provider revision used for optimistic concurrency.</summary>
+    public string Revision { get; init; } = string.Empty;
+
+    /// <summary>Fully mapped local candidate data for the created item.</summary>
+    public WorkCandidate Candidate { get; init; } = new();
 }
 
 /// <summary>
