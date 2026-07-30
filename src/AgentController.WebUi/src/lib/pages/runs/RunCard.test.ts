@@ -1,5 +1,5 @@
 import { render, screen, within } from '@testing-library/svelte';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RunCardCategory, RunCardItem } from '../../api/types';
 import RunCard from './RunCard.svelte';
 
@@ -60,6 +60,8 @@ function assistanceCard(overrides: Partial<RunCardItem> = {}): RunCardItem {
 }
 
 describe('RunCard', () => {
+  afterEach(() => vi.useRealTimers());
+
   it.each<[
     RunCardCategory,
     string,
@@ -162,6 +164,76 @@ describe('RunCard', () => {
     expect(screen.getByText('3 feedback threads awaiting soak')).toBeVisible();
     expect(screen.getByText('Work item')).toBeVisible();
     expect(screen.queryByText('PR & story')).not.toBeInTheDocument();
+  });
+
+  it.each(['revival', 'assistance'] as const)(
+    'shows a live future eligibility time for watching %s feedback',
+    (requestMode) => {
+      vi.useFakeTimers();
+      vi.setSystemTime('2026-07-24T12:00:00.000Z');
+      const eligibleAt = '2026-07-24T12:01:01.000Z';
+      const timedCard = card({
+        kind: 'rework-soak',
+        status: 'Rework feedback soaking',
+        category: 'pending',
+        requestMode,
+        pullRequest: assistancePullRequest,
+        feedbackStatus: 'watching',
+        soakEligibleAt: eligibleAt,
+      });
+
+      const view = render(RunCard, {
+        card: requestMode === 'assistance' ? assistanceCard(timedCard) : timedCard,
+      });
+
+      expect(screen.getByText(/Eligible after/)).toHaveTextContent(
+        `Eligible after ${new Date(eligibleAt).toLocaleString()} · 1m 1s remaining`,
+      );
+      view.unmount();
+    },
+  );
+
+  it('changes to Eligible now when the deadline elapses and clears its timer', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime('2026-07-24T12:00:00.000Z');
+    const view = render(RunCard, {
+      card: assistanceCard({
+        kind: 'rework-soak',
+        status: 'Assistance feedback soaking',
+        category: 'pending',
+        soakEligibleAt: '2026-07-24T12:00:01.500Z',
+      }),
+    });
+
+    expect(screen.getByText(/Eligible after/)).toHaveTextContent('2s remaining');
+    expect(vi.getTimerCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(screen.getByText('Eligible now')).toBeVisible();
+    expect(screen.queryByText(/Eligible after/)).not.toBeInTheDocument();
+
+    view.unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([
+    { soakEligibleAt: null },
+    { soakEligibleAt: 'not-a-date' },
+    { kind: 'run' as const, soakEligibleAt: '2026-07-24T12:01:00Z' },
+    { feedbackStatus: 'soaked' as const, soakEligibleAt: '2026-07-24T12:01:00Z' },
+    { feedbackStatus: 'materialized' as const, soakEligibleAt: '2026-07-24T12:01:00Z' },
+    { feedbackStatus: 'superseded' as const, soakEligibleAt: '2026-07-24T12:01:00Z' },
+  ])('hides timing for excluded or unusable timing state %#', (overrides) => {
+    render(RunCard, {
+      card: assistanceCard({
+        kind: 'rework-soak',
+        status: 'Assistance feedback soaking',
+        category: 'pending',
+        ...overrides,
+      }),
+    });
+
+    expect(screen.queryByText(/Eligible/)).not.toBeInTheDocument();
   });
 
   it.each<[

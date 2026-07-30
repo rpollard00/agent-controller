@@ -37,6 +37,12 @@ const runStatusLabels: Readonly<Record<string, string>> = {
 const minuteInMilliseconds = 60_000;
 const hourInMilliseconds = 60 * minuteInMilliseconds;
 const dayInMilliseconds = 24 * hourInMilliseconds;
+const secondInMilliseconds = 1_000;
+
+export type SoakTimingCard = Pick<
+  RunCardItem,
+  'kind' | 'requestMode' | 'feedbackStatus' | 'soakEligibleAt'
+>;
 
 export function getRunCardStoplight(category: RunCardCategory): RunCardStoplight {
   return stoplights[category];
@@ -112,6 +118,48 @@ export function formatRelativeTime(
   if (elapsed < hourInMilliseconds) return `${Math.floor(elapsed / minuteInMilliseconds)}m ago`;
   if (elapsed < dayInMilliseconds) return `${Math.floor(elapsed / hourInMilliseconds)}h ago`;
   return `${Math.floor(elapsed / dayInMilliseconds)}d ago`;
+}
+
+export function getSoakEligibilityDeadline(card: SoakTimingCard): number | null {
+  if (
+    card.kind !== 'rework-soak' ||
+    (card.requestMode !== 'revival' && card.requestMode !== 'assistance') ||
+    card.feedbackStatus !== 'watching' ||
+    card.soakEligibleAt === null
+  ) {
+    return null;
+  }
+
+  const deadline = Date.parse(card.soakEligibleAt);
+  return Number.isFinite(deadline) ? deadline : null;
+}
+
+export function formatLocalDateTime(timestampInMilliseconds: number): string {
+  if (!Number.isFinite(timestampInMilliseconds)) return '';
+  return new Date(timestampInMilliseconds).toLocaleString();
+}
+
+export function formatSoakRemaining(
+  deadlineInMilliseconds: number,
+  nowInMilliseconds: number = Date.now(),
+): string {
+  if (!Number.isFinite(deadlineInMilliseconds) || !Number.isFinite(nowInMilliseconds)) return '';
+  if (deadlineInMilliseconds <= nowInMilliseconds) return 'Eligible now';
+
+  let seconds = Math.ceil((deadlineInMilliseconds - nowInMilliseconds) / secondInMilliseconds);
+  const days = Math.floor(seconds / (24 * 60 * 60));
+  seconds %= 24 * 60 * 60;
+  const hours = Math.floor(seconds / (60 * 60));
+  seconds %= 60 * 60;
+  const minutes = Math.floor(seconds / 60);
+  seconds %= 60;
+
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (seconds > 0) parts.push(`${seconds}s`);
+  return `${parts.join(' ')} remaining`;
 }
 
 export function isRunCardVisible(

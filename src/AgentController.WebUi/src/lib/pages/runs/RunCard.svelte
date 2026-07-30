@@ -1,10 +1,13 @@
 <script lang="ts">
   import type { RunCardItem } from '../../api/types';
   import {
+    formatLocalDateTime,
     formatRelativeTime,
+    formatSoakRemaining,
     getRunCardStateLabel,
     getRunCardStoplight,
     getRunStatusLabel,
+    getSoakEligibilityDeadline,
   } from './runCardModel';
 
   let { card }: { card: RunCardItem } = $props();
@@ -18,6 +21,25 @@
   const relativeEventTime = $derived(
     card.lastEventAt === null ? '' : formatRelativeTime(card.lastEventAt),
   );
+  let clock = $state(Date.now());
+  const soakDeadline = $derived(getSoakEligibilityDeadline(card));
+  const soakAbsoluteTime = $derived(
+    soakDeadline === null ? '' : formatLocalDateTime(soakDeadline),
+  );
+  const soakRemaining = $derived(
+    soakDeadline === null ? '' : formatSoakRemaining(soakDeadline, clock),
+  );
+
+  $effect(() => {
+    if (soakDeadline === null) return;
+
+    clock = Date.now();
+    const timer = setInterval(() => {
+      clock = Date.now();
+    }, 1_000);
+
+    return () => clearInterval(timer);
+  });
   const repositoryLabel = $derived(card.repoKey ?? 'Unknown repository');
   const workItemLabel = $derived(card.workItemTitle ?? 'Unknown work item');
   const runtimeLabel = $derived(card.runtimeType ?? 'Unknown runtime');
@@ -90,6 +112,16 @@
             </time>
           {/if}
         </div>
+        {#if soakDeadline !== null && soakRemaining}
+          <p class="mt-1 text-xs font-medium text-amber-200" aria-live="polite">
+            {#if soakRemaining === 'Eligible now'}
+              Eligible now
+            {:else}
+              Eligible after <time datetime={card.soakEligibleAt ?? undefined}>{soakAbsoluteTime}</time>
+              <span class="text-amber-300/80">· {soakRemaining}</span>
+            {/if}
+          </p>
+        {/if}
       </div>
 
       <div class="min-w-0">

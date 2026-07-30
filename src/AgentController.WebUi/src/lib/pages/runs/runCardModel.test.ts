@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { RunCardCategory } from '../../api/types';
+import type { RunCardCategory, RunCardItem } from '../../api/types';
 import {
+  formatLocalDateTime,
   formatRelativeTime,
+  formatSoakRemaining,
   getRunCardStoplight,
   getRunStatusLabel,
+  getSoakEligibilityDeadline,
   isRunCardVisible,
 } from './runCardModel';
 
@@ -75,6 +78,51 @@ describe('formatRelativeTime', () => {
 
   it('returns an empty label for an invalid timestamp', () => {
     expect(formatRelativeTime('not-a-timestamp', now)).toBe('');
+  });
+});
+
+describe('soak eligibility timing', () => {
+  const deadline = '2026-07-24T12:01:01.000Z';
+  const watchingCard = {
+    kind: 'rework-soak',
+    requestMode: 'revival',
+    feedbackStatus: 'watching',
+    soakEligibleAt: deadline,
+  } satisfies Pick<
+    RunCardItem,
+    'kind' | 'requestMode' | 'feedbackStatus' | 'soakEligibleAt'
+  >;
+
+  it('formats an absolute local time and deterministic live duration', () => {
+    const deadlineMilliseconds = Date.parse(deadline);
+
+    expect(formatLocalDateTime(deadlineMilliseconds)).toBe(
+      new Date(deadlineMilliseconds).toLocaleString(),
+    );
+    expect(
+      formatSoakRemaining(deadlineMilliseconds, Date.parse('2026-07-24T12:00:00.000Z')),
+    ).toBe('1m 1s remaining');
+    expect(formatSoakRemaining(deadlineMilliseconds, deadlineMilliseconds)).toBe(
+      'Eligible now',
+    );
+  });
+
+  it('rejects invalid formatter values', () => {
+    expect(formatLocalDateTime(Number.NaN)).toBe('');
+    expect(formatSoakRemaining(Number.NaN, 0)).toBe('');
+  });
+
+  it.each([
+    [{ ...watchingCard, requestMode: 'assistance' as const }, true],
+    [{ ...watchingCard, requestMode: null }, false],
+    [{ ...watchingCard, kind: 'run' as const }, false],
+    [{ ...watchingCard, feedbackStatus: 'soaked' as const }, false],
+    [{ ...watchingCard, feedbackStatus: 'materialized' as const }, false],
+    [{ ...watchingCard, feedbackStatus: 'superseded' as const }, false],
+    [{ ...watchingCard, soakEligibleAt: null }, false],
+    [{ ...watchingCard, soakEligibleAt: 'invalid' }, false],
+  ])('selects only valid watching rework soak cards %#', (candidate, expected) => {
+    expect(getSoakEligibilityDeadline(candidate) !== null).toBe(expected);
   });
 });
 
