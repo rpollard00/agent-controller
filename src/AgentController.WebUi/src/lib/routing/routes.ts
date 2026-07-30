@@ -1,6 +1,7 @@
 export type RouteId =
   | 'overview'
   | 'runs'
+  | 'debug'
   | 'repositories'
   | 'work-source-environments'
   | 'connections'
@@ -32,6 +33,14 @@ export const routes: readonly AppRoute[] = [
     shortLabel: 'Runs',
     title: 'Runs',
     description: 'Monitor executing, pending, and completed controller work.',
+  },
+  {
+    id: 'debug',
+    path: '/debug',
+    label: 'Debug',
+    shortLabel: 'Debug',
+    title: 'Debug',
+    description: 'Inspect work items and pull requests visible to the controller.',
   },
   {
     id: 'repositories',

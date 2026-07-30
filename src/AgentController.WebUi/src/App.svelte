@@ -3,6 +3,7 @@
   import { webUiApi, type WebUiApiClient } from './lib/api/client';
   import NotFoundPage from './lib/pages/NotFoundPage.svelte';
   import OverviewPage from './lib/pages/OverviewPage.svelte';
+  import DebugPage from './lib/pages/debug/DebugPage.svelte';
   import RunsPage from './lib/pages/runs/RunsPage.svelte';
   import WorkSourceEnvironmentPage from './lib/pages/azureDevOpsEnvironments/AzureDevOpsEnvironmentPage.svelte';
   import ConnectionsPage from './lib/pages/connections/ConnectionsPage.svelte';
@@ -174,6 +175,8 @@
       <OverviewPage />
     {:else if currentRoute.id === 'runs'}
       <RunsPage {client} />
+    {:else if currentRoute.id === 'debug'}
+      <DebugPage {client} />
     {:else if currentRoute.id === 'repositories'}
       <RepositoryPage
         {pathname}

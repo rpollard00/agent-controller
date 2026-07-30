@@ -74,7 +74,22 @@ function createClient(
     runtimeEnvironments: resourceClient<RuntimeEnvironmentProfile>(async () => []),
     runs: { list: async () => [] },
     secrets: secretsClient(),
-    debug: {} as WebUiApiClient['debug'],
+    debug: {
+      boardItems: {
+        list: async () => ({
+          sourceOptions: [], items: [], failures: [], page: 1, pageSize: 50, total: 0,
+          observedAt: '2026-07-30T03:40:43Z',
+        }),
+        get: async () => { throw new Error('Not implemented in this component test.'); },
+      },
+      pullRequests: {
+        list: async () => ({
+          sourceOptions: [], items: [], failures: [], page: 1, pageSize: 50, total: 0,
+          observedAt: '2026-07-30T03:40:43Z',
+        }),
+        get: async () => { throw new Error('Not implemented in this component test.'); },
+      },
+    },
   };
 }
 
@@ -145,6 +160,28 @@ describe('App shell', () => {
       'page',
     );
     expect(document.title).toBe('Runs · Agent Controller');
+  });
+
+  it('navigates to Debug from desktop and mobile navigation and updates the title', async () => {
+    render(App, { client: createClient() });
+
+    const primaryNavigation = screen.getByRole('navigation', { name: 'Primary navigation' });
+    await fireEvent.click(within(primaryNavigation).getByRole('link', { name: 'Debug' }));
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Debug' })).toBeVisible();
+    expect(window.location.pathname).toBe('/debug');
+    expect(document.title).toBe('Debug · Agent Controller');
+    expect(within(primaryNavigation).getByRole('link', { name: 'Debug' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+    const mobileNavigation = screen.getByRole('navigation', { name: 'Mobile navigation' });
+    expect(within(mobileNavigation).getByRole('link', { name: 'Debug' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
   });
 
   it('renders ProblemDetails and field validation messages from API failures', async () => {
