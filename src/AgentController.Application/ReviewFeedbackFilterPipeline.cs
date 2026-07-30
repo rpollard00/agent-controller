@@ -47,18 +47,42 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
     /// Returns signals with only surviving threads; signals with zero surviving
     /// threads are dropped from the result.
     /// </summary>
-    public Task<IReadOnlyList<ReworkSignal>> FilterAsync(
+    public async Task<IReadOnlyList<ReworkSignal>> FilterAsync(
         FeedbackQuery query,
         IReadOnlyList<ReworkSignal> rawSignals,
         CancellationToken cancellationToken)
     {
-        return FilterCoreAsync(
+        var evaluations = await EvaluateCoreAsync(
             query,
             rawSignals,
             applyMarkerGate: true,
             preserveEmptySignals: false,
             cancellationToken
         );
+
+        return evaluations
+            .Where(evaluation => evaluation.FilteredSignal is not null)
+            .Select(evaluation => evaluation.FilteredSignal!)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Produce body-free check traces using the exact Revival policy used by
+    /// <see cref="FilterAsync"/>.
+    /// </summary>
+    public async Task<IReadOnlyList<ReviewFeedbackCheckTrace>> TraceAsync(
+        FeedbackQuery query,
+        IReadOnlyList<ReworkSignal> rawSignals,
+        CancellationToken cancellationToken)
+    {
+        var evaluations = await EvaluateCoreAsync(
+            query,
+            rawSignals,
+            applyMarkerGate: true,
+            preserveEmptySignals: false,
+            cancellationToken
+        );
+        return evaluations.Select(evaluation => evaluation.Trace).ToList();
     }
 
     /// <summary>
@@ -68,21 +92,43 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
     /// when no thread qualifies. An empty reviewer allowlist therefore produces an empty
     /// bundle rather than suppressing the label-driven assistance request.
     /// </summary>
-    public Task<IReadOnlyList<ReworkSignal>> FilterAssistanceAsync(
+    public async Task<IReadOnlyList<ReworkSignal>> FilterAssistanceAsync(
         FeedbackQuery query,
         IReadOnlyList<ReworkSignal> rawSignals,
         CancellationToken cancellationToken)
     {
-        return FilterCoreAsync(
+        var evaluations = await EvaluateCoreAsync(
             query,
             rawSignals,
             applyMarkerGate: false,
             preserveEmptySignals: true,
             cancellationToken
         );
+
+        return evaluations.Select(evaluation => evaluation.FilteredSignal!).ToList();
     }
 
-    private async Task<IReadOnlyList<ReworkSignal>> FilterCoreAsync(
+    /// <summary>
+    /// Produce body-free check traces using the exact Assistance policy used by
+    /// <see cref="FilterAssistanceAsync"/>. The request marker is already validated by
+    /// managed pull-request discovery, and zero qualifying comments remain valid.
+    /// </summary>
+    public async Task<IReadOnlyList<ReviewFeedbackCheckTrace>> TraceAssistanceAsync(
+        FeedbackQuery query,
+        IReadOnlyList<ReworkSignal> rawSignals,
+        CancellationToken cancellationToken)
+    {
+        var evaluations = await EvaluateCoreAsync(
+            query,
+            rawSignals,
+            applyMarkerGate: false,
+            preserveEmptySignals: true,
+            cancellationToken
+        );
+        return evaluations.Select(evaluation => evaluation.Trace).ToList();
+    }
+
+    private async Task<IReadOnlyList<FeedbackEvaluation>> EvaluateCoreAsync(
         FeedbackQuery query,
         IReadOnlyList<ReworkSignal> rawSignals,
         bool applyMarkerGate,
@@ -100,11 +146,23 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
             await LogAllowlistEmptyWarningAsync();
             if (!preserveEmptySignals)
             {
-                return [];
+                return rawSignals.Select(signal => new FeedbackEvaluation(
+                    null,
+                    CreateTrace(
+                        signal,
+                        FeedbackMarkerCheckStatus.NotAttempted,
+                        hasAllowedReviewers,
+                        activeThreadCount: signal.Threads.Count(thread =>
+                            thread.Status == ReviewThreadStatus.Active),
+                        allowlistedReviewerThreadCount: 0,
+                        nonEmptyContentThreadCount: 0,
+                        qualifyingThreadCount: 0,
+                        isAccepted: false)))
+                    .ToList();
             }
         }
 
-        var filteredSignals = new List<ReworkSignal>();
+        var evaluations = new List<FeedbackEvaluation>();
 
         foreach (var signal in rawSignals)
         {
@@ -121,13 +179,26 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
                 {
                     // Signal without a matching PR — skip (shouldn't happen).
                     Log.SignalWithoutMatchingPr(_logger, signal.PullRequestId);
+                    evaluations.Add(new FeedbackEvaluation(
+                        null,
+                        CreateRejectedTrace(
+                            signal,
+                            FeedbackMarkerCheckStatus.PullRequestNotFound,
+                            query.AllowedReviewers)));
                     continue;
                 }
 
                 // ── (1) Marker gate ───────────────────────────────
-                if (!await PassMarkerGateAsync(pr, query, cancellationToken))
+                var markerStatus = await CheckMarkerGateAsync(pr, query, cancellationToken);
+                if (markerStatus != FeedbackMarkerCheckStatus.Present)
                 {
                     Log.PrFailedMarkerGate(_logger, signal.PullRequestId, pr.PullRequestUrl);
+                    evaluations.Add(new FeedbackEvaluation(
+                        null,
+                        CreateRejectedTrace(
+                            signal,
+                            markerStatus,
+                            query.AllowedReviewers)));
                     continue;
                 }
             }
@@ -196,6 +267,17 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
 
             if (contentFilteredThreads.Count == 0 && !preserveEmptySignals)
             {
+                evaluations.Add(new FeedbackEvaluation(
+                    null,
+                    CreateTrace(
+                        signal,
+                        FeedbackMarkerCheckStatus.Present,
+                        hasAllowedReviewers,
+                        activeThreads.Count,
+                        authorFilteredThreads.Count,
+                        contentFilteredThreads.Count,
+                        qualifyingThreadCount: 0,
+                        isAccepted: false)));
                 continue;
             }
 
@@ -212,12 +294,25 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
                 ? survivingComments.Max(c => c.CreatedAt)
                 : signal.LastQualifyingCommentAt;
 
-            filteredSignals.Add(signal with
+            var filteredSignal = signal with
             {
                 Threads = contentFilteredThreads,
                 FirstQualifyingCommentAt = firstQualifyingCommentAt,
                 LastQualifyingCommentAt = lastQualifyingCommentAt,
-            });
+            };
+            evaluations.Add(new FeedbackEvaluation(
+                filteredSignal,
+                CreateTrace(
+                    signal,
+                    applyMarkerGate
+                        ? FeedbackMarkerCheckStatus.Present
+                        : FeedbackMarkerCheckStatus.AlreadyValidated,
+                    hasAllowedReviewers,
+                    activeThreads.Count,
+                    authorFilteredThreads.Count,
+                    contentFilteredThreads.Count,
+                    contentFilteredThreads.Count,
+                    isAccepted: true)));
 
             if (contentFilteredThreads.Count > 0)
             {
@@ -229,14 +324,68 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
             }
         }
 
-        return filteredSignals;
+        return evaluations;
     }
+
+    private static ReviewFeedbackCheckTrace CreateRejectedTrace(
+        ReworkSignal signal,
+        FeedbackMarkerCheckStatus markerStatus,
+        IReadOnlySet<string> allowedReviewers)
+    {
+        var activeThreads = signal.Threads
+            .Where(thread => thread.Status == ReviewThreadStatus.Active)
+            .ToList();
+        var reviewerThreads = activeThreads
+            .Where(thread => HasCommentByAllowedReviewer(thread, allowedReviewers))
+            .ToList();
+        var contentThreads = reviewerThreads.Count == 0
+            ? []
+            : reviewerThreads.Where(HasNonEmptyComment).ToList();
+
+        return CreateTrace(
+            signal,
+            markerStatus,
+            allowedReviewers.Count > 0,
+            activeThreads.Count,
+            reviewerThreads.Count,
+            contentThreads.Count,
+            qualifyingThreadCount: 0,
+            isAccepted: false);
+    }
+
+    private static ReviewFeedbackCheckTrace CreateTrace(
+        ReworkSignal signal,
+        FeedbackMarkerCheckStatus markerStatus,
+        bool reviewerAllowlistConfigured,
+        int activeThreadCount,
+        int allowlistedReviewerThreadCount,
+        int nonEmptyContentThreadCount,
+        int qualifyingThreadCount,
+        bool isAccepted)
+    {
+        return new ReviewFeedbackCheckTrace
+        {
+            PullRequestId = signal.PullRequestId,
+            MarkerStatus = markerStatus,
+            ReviewerAllowlistConfigured = reviewerAllowlistConfigured,
+            TotalThreadCount = signal.Threads.Count,
+            ActiveThreadCount = activeThreadCount,
+            AllowlistedReviewerThreadCount = allowlistedReviewerThreadCount,
+            NonEmptyContentThreadCount = nonEmptyContentThreadCount,
+            QualifyingThreadCount = qualifyingThreadCount,
+            IsAccepted = isAccepted,
+        };
+    }
+
+    private sealed record FeedbackEvaluation(
+        ReworkSignal? FilteredSignal,
+        ReviewFeedbackCheckTrace Trace);
 
     /// <summary>
     /// Marker gate: fetch PR labels, require the rework marker label.
     /// Fail-closed per-PR.
     /// </summary>
-    private async Task<bool> PassMarkerGateAsync(
+    private async Task<FeedbackMarkerCheckStatus> CheckMarkerGateAsync(
         PrUnderTest pr,
         FeedbackQuery query,
         CancellationToken cancellationToken)
@@ -252,10 +401,10 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
             if (markerLabel is null)
             {
                 // No marker label — fail-closed.
-                return false;
+                return FeedbackMarkerCheckStatus.Missing;
             }
 
-            return true;
+            return FeedbackMarkerCheckStatus.Present;
         }
         catch (OperationCanceledException)
         {
@@ -265,7 +414,7 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
         {
             // Label fetch failure — fail-closed per-PR.
             Log.MarkerGateFetchFailed(_logger, pr.PullRequestId, ex);
-            return false;
+            return FeedbackMarkerCheckStatus.FetchFailed;
         }
     }
 

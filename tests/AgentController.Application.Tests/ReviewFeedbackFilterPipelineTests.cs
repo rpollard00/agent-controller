@@ -1296,6 +1296,176 @@ public class ReviewFeedbackFilterPipelineTests
         Assert.True(typeof(IDisposable).IsAssignableFrom(typeof(ReviewFeedbackFilterPipeline)));
     }
 
+    [Fact]
+    public async Task TraceAsync_UsesSameMarkerAndThreadPolicyAsFilterAsync()
+    {
+        var labels = new TestPrLabelSource(new Dictionary<string, List<PrLabel>>
+        {
+            ["1"] = [new PrLabel { Name = "agent-rework-requested" }],
+            ["2"] = [new PrLabel { Name = "Agent-Rework-Requested" }],
+        });
+        var pipeline = CreatePipeline(labels);
+        var query = new FeedbackQuery
+        {
+            OpenPrs =
+            [
+                new PrUnderTest { PullRequestId = "1" },
+                new PrUnderTest { PullRequestId = "2" },
+            ],
+            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
+            ReworkMarkerTag = "agent-rework-requested",
+        };
+        var mixedThreads = new List<ReviewThread>
+        {
+            new()
+            {
+                ThreadId = "reply-chain",
+                Status = ReviewThreadStatus.Active,
+                Comments =
+                [
+                    new ReviewThreadComment { Author = "author@example.com", Body = "question" },
+                    new ReviewThreadComment
+                    {
+                        Author = "reviewer@example.com",
+                        Body = "answer",
+                        IsReply = true,
+                    },
+                ],
+            },
+            new()
+            {
+                ThreadId = "resolved",
+                Status = ReviewThreadStatus.Resolved,
+                Comments = [new ReviewThreadComment { Author = "reviewer@example.com", Body = "done" }],
+            },
+            new()
+            {
+                ThreadId = "whitespace",
+                Status = ReviewThreadStatus.Active,
+                Comments = [new ReviewThreadComment { Author = "reviewer@example.com", Body = " \t" }],
+            },
+            new()
+            {
+                ThreadId = "other",
+                Status = ReviewThreadStatus.Active,
+                Comments = [new ReviewThreadComment { Author = "other@example.com", Body = "text" }],
+            },
+            new()
+            {
+                ThreadId = "reviewer-case-mismatch",
+                Status = ReviewThreadStatus.Active,
+                Comments = [new ReviewThreadComment { Author = "Reviewer@example.com", Body = "text" }],
+            },
+        };
+        var signals = new ReworkSignal[]
+        {
+            new() { PullRequestId = "1", Threads = mixedThreads },
+            new() { PullRequestId = "2", Threads = ActiveThread("case", "reviewer@example.com") },
+        };
+
+        var traces = await pipeline.TraceAsync(query, signals, CancellationToken.None);
+        var filtered = await pipeline.FilterAsync(query, signals, CancellationToken.None);
+
+        var accepted = Assert.Single(traces, trace => trace.PullRequestId == "1");
+        Assert.Equal(FeedbackMarkerCheckStatus.Present, accepted.MarkerStatus);
+        Assert.Equal(5, accepted.TotalThreadCount);
+        Assert.Equal(4, accepted.ActiveThreadCount);
+        Assert.Equal(2, accepted.AllowlistedReviewerThreadCount);
+        Assert.Equal(1, accepted.NonEmptyContentThreadCount);
+        Assert.Equal(1, accepted.QualifyingThreadCount);
+        Assert.True(accepted.IsAccepted);
+        Assert.Single(Assert.Single(filtered).Threads);
+
+        var rejected = Assert.Single(traces, trace => trace.PullRequestId == "2");
+        Assert.Equal(FeedbackMarkerCheckStatus.Missing, rejected.MarkerStatus);
+        Assert.False(rejected.IsAccepted);
+        Assert.Equal(1, rejected.ActiveThreadCount);
+        Assert.Equal(1, rejected.NonEmptyContentThreadCount);
+    }
+
+    [Fact]
+    public async Task TraceAsync_FetchFailureAndEmptyAllowlist_MatchFailClosedFiltering()
+    {
+        var signal = new ReworkSignal
+        {
+            PullRequestId = "1",
+            Threads = ActiveThread("thread", "reviewer@example.com"),
+        };
+        var pr = new PrUnderTest { PullRequestId = "1" };
+
+        var failingPipeline = CreatePipeline(new FailingPrLabelSource());
+        var configuredQuery = new FeedbackQuery
+        {
+            OpenPrs = [pr],
+            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
+        };
+        var failedTrace = Assert.Single(await failingPipeline.TraceAsync(
+            configuredQuery, [signal], CancellationToken.None));
+        Assert.Equal(FeedbackMarkerCheckStatus.FetchFailed, failedTrace.MarkerStatus);
+        Assert.False(failedTrace.IsAccepted);
+        Assert.Empty(await failingPipeline.FilterAsync(configuredQuery, [signal], CancellationToken.None));
+
+        var fetches = new List<string>();
+        var emptyPipeline = CreatePipeline(new TrackingPrLabelSource([], fetches));
+        var emptyQuery = configuredQuery with { AllowedReviewers = new HashSet<string>() };
+        var emptyTrace = Assert.Single(await emptyPipeline.TraceAsync(
+            emptyQuery, [signal], CancellationToken.None));
+        Assert.Equal(FeedbackMarkerCheckStatus.NotAttempted, emptyTrace.MarkerStatus);
+        Assert.False(emptyTrace.ReviewerAllowlistConfigured);
+        Assert.False(emptyTrace.IsAccepted);
+        Assert.Empty(fetches);
+        Assert.Empty(await emptyPipeline.FilterAsync(emptyQuery, [signal], CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task TraceAssistanceAsync_ZeroComments_RemainsAcceptedWithoutBodies()
+    {
+        var pipeline = CreatePipeline(new FailingPrLabelSource());
+        var query = new FeedbackQuery { AllowedReviewers = new HashSet<string>() };
+        var signal = new ReworkSignal
+        {
+            RequestMode = ReworkRequestMode.Assistance,
+            PullRequestId = "1",
+            Threads =
+            [
+                new ReviewThread
+                {
+                    Status = ReviewThreadStatus.Active,
+                    Comments = [new ReviewThreadComment { Author = "someone", Body = "secret body" }],
+                },
+            ],
+        };
+
+        var trace = Assert.Single(await pipeline.TraceAssistanceAsync(
+            query, [signal], CancellationToken.None));
+        var filtered = Assert.Single(await pipeline.FilterAssistanceAsync(
+            query, [signal], CancellationToken.None));
+
+        Assert.Equal(FeedbackMarkerCheckStatus.AlreadyValidated, trace.MarkerStatus);
+        Assert.True(trace.IsAccepted);
+        Assert.Equal(0, trace.QualifyingThreadCount);
+        Assert.Empty(filtered.Threads);
+        Assert.DoesNotContain("secret body", System.Text.Json.JsonSerializer.Serialize(trace));
+    }
+
+    [Fact]
+    public async Task TraceAsync_LabelFetchCancellation_IsPropagated()
+    {
+        var pipeline = CreatePipeline(new CancelingPrLabelSource());
+        var query = new FeedbackQuery
+        {
+            OpenPrs = [new PrUnderTest { PullRequestId = "1" }],
+            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
+        };
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pipeline.TraceAsync(
+            query,
+            [new ReworkSignal { PullRequestId = "1" }],
+            cts.Token));
+    }
+
     // ── Helpers ────────────────────────────────────────────────────
 
     private static List<ReviewThread> ActiveThread(string threadId, string author)
@@ -1357,6 +1527,16 @@ public class ReviewFeedbackFilterPipelineTests
             CancellationToken cancellationToken)
         {
             throw new InvalidOperationException("Simulated label fetch failure");
+        }
+    }
+
+    private sealed class CancelingPrLabelSource : IPrLabelSource
+    {
+        public Task<IReadOnlyList<PrLabel>> GetLabelsAsync(
+            PrUnderTest pr,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromCanceled<IReadOnlyList<PrLabel>>(cancellationToken);
         }
     }
 
