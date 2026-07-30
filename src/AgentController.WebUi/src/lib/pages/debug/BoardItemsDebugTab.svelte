@@ -1,9 +1,17 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { getErrorMessage, type WebUiApiClient } from '../../api/client';
-  import type { BoardItemsDebugPageResponse } from '../../api/types';
+  import type {
+    BoardItemDiagnosticDetail,
+    BoardItemDiagnosticSummary,
+    BoardItemMatchResult,
+    BoardItemsDebugPageResponse,
+  } from '../../api/types';
   import Alert from '../../components/ui/Alert.svelte';
   import Button from '../../components/ui/Button.svelte';
+  import DataTable from '../../components/ui/DataTable.svelte';
+  import Pagination from '../../components/ui/Pagination.svelte';
+  import BoardItemDiagnosticsDialog from './BoardItemDiagnosticsDialog.svelte';
 
   let { client, active = false }: { client: WebUiApiClient; active?: boolean } = $props();
 
@@ -14,12 +22,24 @@
   let status = $state<'idle' | 'loading' | 'ready' | 'error'>('idle');
   let requestError = $state<unknown>();
   let activated = $state(false);
-  let controller: AbortController | undefined;
+  let listController: AbortController | undefined;
+
+  let selectedItem = $state<BoardItemDiagnosticSummary>();
+  let detail = $state<BoardItemDiagnosticDetail>();
+  let detailStatus = $state<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  let detailError = $state<unknown>();
+  let detailController: AbortController | undefined;
+
+  const matchPresentation: Record<BoardItemMatchResult, { label: string; className: string }> = {
+    eligible: { label: 'Eligible', className: 'bg-emerald-950 text-emerald-300' },
+    missingTags: { label: 'Missing tags', className: 'bg-amber-950 text-amber-300' },
+    excluded: { label: 'Excluded', className: 'bg-slate-800 text-slate-300' },
+  };
 
   async function refresh(): Promise<void> {
-    controller?.abort();
+    listController?.abort();
     const requestController = new AbortController();
-    controller = requestController;
+    listController = requestController;
     status = 'loading';
     requestError = undefined;
 
@@ -44,9 +64,55 @@
     }
   }
 
+  function closeDetail(): void {
+    detailController?.abort();
+    detailController = undefined;
+    selectedItem = undefined;
+    detail = undefined;
+    detailError = undefined;
+    detailStatus = 'idle';
+  }
+
+  async function loadDetail(): Promise<void> {
+    if (!selectedItem) return;
+    detailController?.abort();
+    const requestController = new AbortController();
+    detailController = requestController;
+    detail = undefined;
+    detailError = undefined;
+    detailStatus = 'loading';
+
+    try {
+      const loaded = await client.debug.boardItems.get(
+        selectedItem.workSourceEnvironmentKey,
+        selectedItem.id,
+        requestController.signal,
+      );
+      if (requestController.signal.aborted) return;
+      detail = loaded;
+      detailStatus = 'ready';
+    } catch (error) {
+      if (requestController.signal.aborted) return;
+      detailError = error;
+      detailStatus = 'error';
+    }
+  }
+
+  function openDetail(item: BoardItemDiagnosticSummary): void {
+    selectedItem = item;
+    void loadDetail();
+  }
+
   function filtersChanged(): void {
     page = 1;
+    closeDetail();
     if (activated) void refresh();
+  }
+
+  function goToPage(nextPage: number): void {
+    page = nextPage;
+    closeDetail();
+    void refresh();
   }
 
   $effect(() => {
@@ -56,7 +122,10 @@
     }
   });
 
-  onDestroy(() => controller?.abort());
+  onDestroy(() => {
+    listController?.abort();
+    detailController?.abort();
+  });
 </script>
 
 <div class="space-y-5">
@@ -85,13 +154,13 @@
       Show terminal items
     </label>
 
-    <Button variant="secondary" onclick={() => void refresh()}>Refresh</Button>
+    <Button variant="secondary" disabled={status === 'loading'} onclick={() => void refresh()}>Refresh</Button>
     {#if result?.observedAt}
       <span class="pb-2 text-xs text-slate-400">Last refreshed {new Date(result.observedAt).toLocaleString()}</span>
     {/if}
   </div>
 
-  {#if status === 'loading'}
+  {#if status === 'loading' && !result}
     <div class="flex min-h-32 items-center justify-center gap-3 text-sm text-slate-300" role="status">
       <span class="size-4 animate-spin rounded-full border-2 border-slate-700 border-t-cyan-300" aria-hidden="true"></span>
       Loading board items…
@@ -101,7 +170,89 @@
       <Alert variant="error" title="Could not load board items" message={getErrorMessage(requestError)} />
       <Button variant="secondary" onclick={() => void refresh()}>Try again</Button>
     </div>
-  {:else if status === 'ready'}
-    <p class="text-sm text-slate-300">{result?.total ?? 0} board {(result?.total ?? 0) === 1 ? 'item' : 'items'} found.</p>
+  {:else if result}
+    {#if status === 'loading'}
+      <p class="text-xs text-slate-400" role="status">Refreshing board items…</p>
+    {/if}
+
+    <p class="text-sm text-slate-300">
+      {result.total} board {result.total === 1 ? 'item' : 'items'} found.
+    </p>
+
+    {#if result.failures.length > 0}
+      <div class="rounded-lg border border-amber-700/40 bg-amber-950/30 px-4 py-3 text-sm text-amber-100" role="alert">
+        <p class="font-semibold">Some work sources could not be inspected.</p>
+        <ul class="mt-1 space-y-1">
+          {#each result.failures as failure (`${failure.workSourceEnvironmentKey}:${failure.project}`)}
+            <li>
+              <span class="font-medium">{failure.workSourceEnvironmentKey} · {failure.project}:</span>
+              {failure.message}
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
+
+    {#if result.items.length === 0}
+      <p class="rounded-xl border border-slate-800 px-4 py-10 text-center text-sm text-slate-400">
+        No board items match the current filters.
+      </p>
+    {:else}
+      <DataTable caption="Board item pickup diagnostics">
+        <thead class="bg-slate-950/60 text-xs tracking-wide text-slate-400 uppercase">
+          <tr>
+            <th scope="col" class="px-4 py-3 font-semibold">Work item</th>
+            <th scope="col" class="px-4 py-3 font-semibold">Project</th>
+            <th scope="col" class="px-4 py-3 font-semibold">Repository</th>
+            <th scope="col" class="px-4 py-3 font-semibold">State</th>
+            <th scope="col" class="px-4 py-3 font-semibold">Match</th>
+            <th scope="col" class="px-4 py-3 text-right font-semibold">Diagnostics</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-800 bg-slate-900/30">
+          {#each result.items as item (`${item.workSourceEnvironmentKey}:${item.id}`)}
+            <tr class="align-top">
+              <td class="px-4 py-4">
+                <p class="max-w-md font-medium text-white">{item.title}</p>
+                <p class="mt-1 text-xs text-slate-400">Work item #{item.id}</p>
+              </td>
+              <td class="px-4 py-4 text-slate-300">{item.project}</td>
+              <td class="px-4 py-4 text-slate-300">{item.repositoryKey || 'None'}</td>
+              <td class="px-4 py-4 text-slate-300">{item.state || 'None'}</td>
+              <td class="px-4 py-4">
+                <span class={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${matchPresentation[item.match].className}`}>
+                  {matchPresentation[item.match].label}
+                </span>
+              </td>
+              <td class="px-4 py-4 text-right">
+                <Button
+                  variant="ghost"
+                  ariaLabel={`View diagnostics for work item #${item.id}`}
+                  onclick={() => openDetail(item)}
+                >View</Button>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </DataTable>
+    {/if}
+
+    <Pagination
+      page={result.page}
+      pageSize={result.pageSize}
+      total={result.total}
+      label="Board items pagination"
+      onprevious={() => goToPage(Math.max(1, page - 1))}
+      onnext={() => goToPage(page + 1)}
+    />
   {/if}
 </div>
+
+<BoardItemDiagnosticsDialog
+  item={selectedItem}
+  {detail}
+  loading={detailStatus === 'loading'}
+  error={detailStatus === 'error' ? getErrorMessage(detailError) : undefined}
+  onclose={closeDetail}
+  onretry={() => void loadDetail()}
+/>
