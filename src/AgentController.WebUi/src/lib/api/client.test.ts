@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ApiError, createWebUiApiClient, getFieldErrors } from './client';
 import type {
+  BoardItemsDebugPageResponse,
   ConnectionProfile,
   ConnectionProject,
+  PullRequestsDebugPageResponse,
   RepositoryProfile,
   RunCardItem,
 } from './types';
@@ -187,6 +189,122 @@ describe('Web UI API client', () => {
       '/api/webui/runs',
       expect.objectContaining({ signal: controller.signal }),
     );
+  });
+
+  it('uses endpoint defaults when debug list options are omitted', async () => {
+    const boardPage: BoardItemsDebugPageResponse = {
+      sourceOptions: [{ key: 'boards-main', displayName: 'Main boards' }],
+      items: [],
+      failures: [],
+      page: 1,
+      pageSize: 50,
+      total: 0,
+      observedAt: '2026-07-30T00:00:00Z',
+    };
+    const fetchMock = vi.fn(async () => Response.json(boardPage));
+    const client = createWebUiApiClient({ fetch: fetchMock });
+
+    const result: BoardItemsDebugPageResponse = await client.debug.boardItems.list();
+
+    expect(result).toEqual(boardPage);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/webui/debug/board-items',
+      expect.objectContaining({}),
+    );
+  });
+
+  it('encodes board debug filters independently and forwards abort signals', async () => {
+    const fetchMock = vi.fn(async () => Response.json({ items: [] }));
+    const client = createWebUiApiClient({ fetch: fetchMock });
+    const controller = new AbortController();
+
+    await client.debug.boardItems.list(
+      {
+        workSourceEnvironmentKey: 'boards/main & west',
+        includeTerminal: true,
+        page: 3,
+        pageSize: 25,
+      },
+      controller.signal,
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/webui/debug/board-items?workSourceEnvironmentKey=boards%2Fmain%20%26%20west&includeTerminal=true&page=3&pageSize=25',
+      expect.objectContaining({ signal: controller.signal }),
+    );
+  });
+
+  it('encodes pull request debug filters without adding unrelated parameters', async () => {
+    const pullRequestPage: PullRequestsDebugPageResponse = {
+      sourceOptions: [{ key: 'ado/main', name: 'Main Azure DevOps' }],
+      items: [],
+      failures: [],
+      page: 2,
+      pageSize: 10,
+      total: 12,
+      observedAt: '2026-07-30T00:00:00Z',
+    };
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json(pullRequestPage),
+    );
+    const client = createWebUiApiClient({ fetch: fetchMock });
+
+    const result: PullRequestsDebugPageResponse = await client.debug.pullRequests.list({
+      includeInactive: false,
+      page: 2,
+      pageSize: 10,
+    });
+
+    expect(result.total).toBe(12);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      '/api/webui/debug/pull-requests?includeInactive=false&page=2&pageSize=10',
+    );
+  });
+
+  it('escapes every segment of composite debug detail identities', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json({ eligible: false }),
+    );
+    const client = createWebUiApiClient({ fetch: fetchMock });
+
+    await client.debug.boardItems.get('boards/main', 'item #42');
+    await client.debug.pullRequests.get('ado/main', 'repo one/two', 'PR #7?');
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      '/api/webui/debug/board-items/boards%2Fmain/item%20%2342',
+    );
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      '/api/webui/debug/pull-requests/ado%2Fmain/repo%20one%2Ftwo/PR%20%237%3F',
+    );
+  });
+
+  it('does not convert aborted debug requests into API errors', async () => {
+    const abortError = new DOMException('The operation was aborted.', 'AbortError');
+    const fetchMock = vi.fn(async () => {
+      throw abortError;
+    });
+    const client = createWebUiApiClient({ fetch: fetchMock });
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      client.debug.boardItems.list({}, controller.signal),
+    ).rejects.toBe(abortError);
+  });
+
+  it('preserves problem details from debug requests', async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json(
+        { title: 'Pull request not found.', status: 404, detail: 'It is no longer visible.' },
+        { status: 404, headers: { 'Content-Type': 'application/problem+json' } },
+      ),
+    );
+    const client = createWebUiApiClient({ fetch: fetchMock });
+
+    await expect(client.debug.pullRequests.get('ado', 'repo', '99')).rejects.toMatchObject({
+      status: 404,
+      problem: { title: 'Pull request not found.', detail: 'It is no longer visible.' },
+    });
   });
 
   it('uses encoded secrets endpoints and preserves typed secret payloads', async () => {

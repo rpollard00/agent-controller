@@ -188,6 +188,7 @@ function createApi(
     runtimeEnvironments: staticResource(initialRuntimeEnvironments),
     runs: { list: vi.fn(async () => []) },
     secrets: secretsClient,
+    debug: {} as WebUiApiClient['debug'],
   };
 
   return { client, connections, secrets: secretsClient };

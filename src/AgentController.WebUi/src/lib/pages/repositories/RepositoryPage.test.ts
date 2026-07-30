@@ -196,6 +196,7 @@ function createApi(initialRepositories: RepositoryProfile[] = [repository]): Moc
         createVersion: vi.fn(async () => ({ name: 'test', version: 1 })),
         delete: vi.fn(async () => undefined),
       },
+      debug: {} as WebUiApiClient['debug'],
     },
     repositories,
   };

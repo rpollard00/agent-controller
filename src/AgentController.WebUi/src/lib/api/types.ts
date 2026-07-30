@@ -286,6 +286,151 @@ export interface ConnectionConnectivityResult {
   payload?: Record<string, unknown>;
 }
 
+/** A configured work source available to board-item diagnostics. */
+export interface BoardDebugSourceOption {
+  key: string;
+  displayName: string;
+}
+
+/** A configured source-control integration available to pull-request diagnostics. */
+export interface PullRequestDebugSourceOption {
+  key: string;
+  name: string;
+}
+
+/** An operator-safe discovery failure scoped to one work-source environment. */
+export interface BoardDebugSourceFailure {
+  workSourceEnvironmentKey: string;
+  project: string;
+  message: string;
+}
+
+/** An operator-safe discovery failure scoped to one managed repository. */
+export interface PullRequestDebugSourceFailure {
+  sourceControlEnvironmentKey: string;
+  repositoryKey: string;
+  message: string;
+}
+
+/** Concise board-item pickup result. */
+export type BoardItemMatchResult = 'eligible' | 'missingTags' | 'excluded';
+
+/** Concise request markers found on a pull request. */
+export type PullRequestRequestMatch = 'none' | 'revival' | 'assistance' | 'both';
+
+/** Final result of pull-request pickup diagnostics. */
+export type PullRequestDiagnosticOutcome =
+  | 'notEligible'
+  | 'eligible'
+  | 'assistanceTakesPrecedence';
+
+/** One pass/fail pickup-policy check. */
+export interface DiagnosticCheck {
+  code: string;
+  label: string;
+  passed: boolean;
+  reason: string;
+}
+
+export type BoardItemDiagnosticCheck = DiagnosticCheck;
+export type PullRequestDiagnosticCheck = DiagnosticCheck;
+
+export interface BoardItemDiagnosticSummary {
+  id: string;
+  title: string;
+  url: string | null;
+  project: string;
+  workSourceEnvironmentKey: string;
+  repositoryKey: string | null;
+  state: string | null;
+  match: BoardItemMatchResult;
+}
+
+export interface BoardItemDiagnosticDetail extends BoardItemDiagnosticSummary {
+  tags: string[];
+  eligible: boolean;
+  checks: BoardItemDiagnosticCheck[];
+  recognizedRepositoryTags: string[];
+  recognizedReadyTag: string;
+  recognizedReadyReworkTag: string;
+}
+
+export interface BoardItemsDebugPageResponse {
+  sourceOptions: BoardDebugSourceOption[];
+  items: BoardItemDiagnosticSummary[];
+  failures: BoardDebugSourceFailure[];
+  page: number;
+  pageSize: number;
+  total: number;
+  observedAt: string;
+}
+
+export interface PullRequestDiagnosticSummary {
+  pullRequestId: string;
+  title: string;
+  url: string | null;
+  sourceControlEnvironmentKey: string;
+  repositoryKey: string;
+  status: string;
+  request: PullRequestRequestMatch;
+}
+
+export interface PullRequestWorkItemReference {
+  workItemId: string;
+  workItemUrl: string;
+}
+
+export type FeedbackMarkerCheckStatus =
+  | 'alreadyValidated'
+  | 'present'
+  | 'missing'
+  | 'fetchFailed'
+  | 'pullRequestNotFound'
+  | 'notAttempted';
+
+/** Body-free feedback counts from the same policy used for production pickup. */
+export interface ReviewFeedbackCheckTrace {
+  pullRequestId: string;
+  markerStatus: FeedbackMarkerCheckStatus;
+  reviewerAllowlistConfigured: boolean;
+  totalThreadCount: number;
+  activeThreadCount: number;
+  allowlistedReviewerThreadCount: number;
+  nonEmptyContentThreadCount: number;
+  qualifyingThreadCount: number;
+  isAccepted: boolean;
+}
+
+export interface PullRequestTrackingState {
+  requestMode: ReworkRequestMode;
+  feedbackStatus: ReworkFeedbackStatus;
+  cycleStatus: ReworkCycleStatus | null;
+}
+
+export interface PullRequestDiagnosticDetail extends PullRequestDiagnosticSummary {
+  sourceBranch: string;
+  targetBranch: string;
+  labels: string[];
+  linkedWorkItems: PullRequestWorkItemReference[];
+  outcome: PullRequestDiagnosticOutcome;
+  eligible: boolean;
+  checks: PullRequestDiagnosticCheck[];
+  recognizedRevivalLabel: string;
+  recognizedAssistanceLabel: string;
+  feedbackTrace: ReviewFeedbackCheckTrace | null;
+  tracking: PullRequestTrackingState | null;
+}
+
+export interface PullRequestsDebugPageResponse {
+  sourceOptions: PullRequestDebugSourceOption[];
+  items: PullRequestDiagnosticSummary[];
+  failures: PullRequestDebugSourceFailure[];
+  page: number;
+  pageSize: number;
+  total: number;
+  observedAt: string;
+}
+
 /** RFC 9457 problem details, including ASP.NET validation extensions. */
 export interface ProblemDetails {
   type?: string;

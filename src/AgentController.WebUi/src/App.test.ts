@@ -74,6 +74,7 @@ function createClient(
     runtimeEnvironments: resourceClient<RuntimeEnvironmentProfile>(async () => []),
     runs: { list: async () => [] },
     secrets: secretsClient(),
+    debug: {} as WebUiApiClient['debug'],
   };
 }
 

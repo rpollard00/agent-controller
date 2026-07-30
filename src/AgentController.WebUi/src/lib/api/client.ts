@@ -1,4 +1,6 @@
 import type {
+  BoardItemDiagnosticDetail,
+  BoardItemsDebugPageResponse,
   ClonePreflightResult,
   ConnectionConnectivityResult,
   ConnectionProfile,
@@ -9,6 +11,8 @@ import type {
   CreateSecretVersionRequest,
   HostRepository,
   ProblemDetails,
+  PullRequestDiagnosticDetail,
+  PullRequestsDebugPageResponse,
   RepositoryCloneTransportResolution,
   RepositoryProfile,
   RunCardItem,
@@ -62,6 +66,50 @@ export interface RunsResourceClient {
   list(signal?: AbortSignal): Promise<RunCardItem[]>;
 }
 
+export interface BoardItemsDebugListOptions {
+  workSourceEnvironmentKey?: string;
+  includeTerminal?: boolean;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface PullRequestsDebugListOptions {
+  sourceControlEnvironmentKey?: string;
+  includeInactive?: boolean;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface BoardItemsDebugClient {
+  list(
+    options?: BoardItemsDebugListOptions,
+    signal?: AbortSignal,
+  ): Promise<BoardItemsDebugPageResponse>;
+  get(
+    workSourceEnvironmentKey: string,
+    itemId: string,
+    signal?: AbortSignal,
+  ): Promise<BoardItemDiagnosticDetail>;
+}
+
+export interface PullRequestsDebugClient {
+  list(
+    options?: PullRequestsDebugListOptions,
+    signal?: AbortSignal,
+  ): Promise<PullRequestsDebugPageResponse>;
+  get(
+    sourceControlEnvironmentKey: string,
+    repositoryKey: string,
+    pullRequestId: string,
+    signal?: AbortSignal,
+  ): Promise<PullRequestDiagnosticDetail>;
+}
+
+export interface DebugResourceClient {
+  boardItems: BoardItemsDebugClient;
+  pullRequests: PullRequestsDebugClient;
+}
+
 export interface SecretsResourceClient {
   list(signal?: AbortSignal): Promise<SecretInfo[]>;
   listVersions(name: string, signal?: AbortSignal): Promise<SecretVersionInfo[]>;
@@ -77,6 +125,7 @@ export interface WebUiApiClient {
   runtimeEnvironments: ResourceClient<RuntimeEnvironmentProfile>;
   runs: RunsResourceClient;
   secrets: SecretsResourceClient;
+  debug: DebugResourceClient;
 }
 
 export interface ApiClientOptions {
@@ -265,7 +314,62 @@ export function createWebUiApiClient(options: ApiClientOptions = {}): WebUiApiCl
       delete: (name, signal) =>
         request<void>(`/secrets/${encodeURIComponent(name)}`, { method: 'DELETE', signal }),
     },
+    debug: {
+      boardItems: {
+        list: (options = {}, signal) =>
+          request<BoardItemsDebugPageResponse>(
+            `/debug/board-items${debugQuery(options)}`,
+            { signal },
+          ),
+        get: (workSourceEnvironmentKey, itemId, signal) =>
+          request<BoardItemDiagnosticDetail>(
+            `/debug/board-items/${encodeURIComponent(workSourceEnvironmentKey)}/${encodeURIComponent(itemId)}`,
+            { signal },
+          ),
+      },
+      pullRequests: {
+        list: (options = {}, signal) =>
+          request<PullRequestsDebugPageResponse>(
+            `/debug/pull-requests${debugQuery(options)}`,
+            { signal },
+          ),
+        get: (sourceControlEnvironmentKey, repositoryKey, pullRequestId, signal) =>
+          request<PullRequestDiagnosticDetail>(
+            `/debug/pull-requests/${encodeURIComponent(sourceControlEnvironmentKey)}/${encodeURIComponent(repositoryKey)}/${encodeURIComponent(pullRequestId)}`,
+            { signal },
+          ),
+      },
+    },
   };
+}
+
+function debugQuery(
+  options: BoardItemsDebugListOptions | PullRequestsDebugListOptions,
+): string {
+  const parameters: Array<[string, string | number | boolean | undefined]> = [];
+
+  if ('workSourceEnvironmentKey' in options || 'includeTerminal' in options) {
+    const boardOptions = options as BoardItemsDebugListOptions;
+    parameters.push(
+      ['workSourceEnvironmentKey', boardOptions.workSourceEnvironmentKey],
+      ['includeTerminal', boardOptions.includeTerminal],
+    );
+  } else if ('sourceControlEnvironmentKey' in options || 'includeInactive' in options) {
+    parameters.push(
+      ['sourceControlEnvironmentKey', options.sourceControlEnvironmentKey],
+      ['includeInactive', options.includeInactive],
+    );
+  }
+
+  parameters.push(['page', options.page], ['pageSize', options.pageSize]);
+  const encoded = parameters
+    .filter((parameter): parameter is [string, string | number | boolean] =>
+      parameter[1] !== undefined,
+    )
+    .map(([key, value]) => `${key}=${encodeURIComponent(String(value))}`)
+    .join('&');
+
+  return encoded ? `?${encoded}` : '';
 }
 
 async function readResponseBody(response: Response): Promise<unknown> {

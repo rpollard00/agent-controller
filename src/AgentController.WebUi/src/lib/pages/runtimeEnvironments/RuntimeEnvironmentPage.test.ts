@@ -102,6 +102,7 @@ function createApi(initialEnvironments: RuntimeEnvironmentProfile[] = [environme
         throw new Error('Not implemented in this component test.');
       }),
     },
+    debug: {} as WebUiApiClient['debug'],
   };
 
   return { client, environments: runtimeEnvironments };
