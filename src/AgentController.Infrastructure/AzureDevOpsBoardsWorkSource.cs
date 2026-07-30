@@ -208,6 +208,55 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource, IManagedBoardIt
         };
     }
 
+    public async Task<ManagedBoardItemSnapshot?> GetAsync(
+        ManagedBoardItemDiscoveryItemQuery query,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        if (!int.TryParse(query.ItemId, out var itemId) || itemId <= 0)
+        {
+            return null;
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var resolver = scope.ServiceProvider.GetService<IManagedProfileResolver>();
+        var environment = resolver is null
+            ? null
+            : (await resolver.ListConfiguredWorkSourceEnvironmentsAsync(cancellationToken))
+                .FirstOrDefault(candidate => string.Equals(
+                    candidate.Profile.Key,
+                    query.WorkSourceEnvironmentKey,
+                    StringComparison.OrdinalIgnoreCase));
+        if (environment is null)
+        {
+            return null;
+        }
+
+        var factory = scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClientFactory>();
+        var client = await factory.CreateAsync(environment, cancellationToken);
+        using var disposableClient = client as IDisposable;
+        var items = await client.GetWorkItemsAsync(
+            environment.Profile.Project,
+            [itemId],
+            cancellationToken);
+        var item = items.Count == 0 ? null : items[0];
+
+        return item is null
+            ? null
+            : new ManagedBoardItemSnapshot
+            {
+                Item = item with
+                {
+                    SourceMetadata = AddEnvironmentKey(
+                        item.SourceMetadata,
+                        environment.Profile.Key),
+                },
+                WorkSourceEnvironmentKey = environment.Profile.Key,
+                Project = environment.Profile.Project,
+            };
+    }
+
     public async Task<ClaimResult> TryClaimAsync(
         WorkCandidate candidate,
         ClaimRequest claim,
@@ -505,20 +554,18 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource, IManagedBoardIt
                 ? null
                 :
                 [
-                    WorkSourceOptions.TagReady(tagPrefix),
-                    WorkSourceOptions.TagReadyRework(tagPrefix),
+                    BoardItemPickupPolicy.ReadyTag(tagPrefix),
+                    BoardItemPickupPolicy.ReadyReworkTag(tagPrefix),
                 ],
             ExcludedTags = query.ExcludedTags is { Count: > 0 }
                 ? query.ExcludedTags
-                : WorkSourceOptions.LifecycleTags(tagPrefix),
+                : BoardItemPickupPolicy.LifecycleTags(tagPrefix),
             MaxResults = query.MaxResults,
         };
     }
 
     private static string GetTagPrefix(WorkSourceEnvironmentProfile profile) =>
-        string.IsNullOrWhiteSpace(profile.TagPrefix)
-            ? WorkSourceOptions.DefaultTagPrefix
-            : profile.TagPrefix.Trim();
+        BoardItemPickupPolicy.NormalizeTagPrefix(profile.TagPrefix);
 
     private static async Task<ClientSelection?> ResolveClientAsync(
         IServiceProvider services,

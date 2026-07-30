@@ -1,3 +1,5 @@
+using AgentController.Application;
+
 namespace AgentController.Infrastructure;
 
 /// <summary>
@@ -16,6 +18,5 @@ public static class BoardTerminalStates
     /// <summary>
     /// The fixed set of terminal states: Closed, Removed, Resolved, Completed.
     /// </summary>
-    public static readonly IReadOnlyList<string> Values =
-        new[] { "Closed", "Removed", "Resolved", "Completed" };
+    public static IReadOnlyList<string> Values => BoardItemPickupPolicy.TerminalStates;
 }

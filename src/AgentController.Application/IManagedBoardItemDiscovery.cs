@@ -29,6 +29,13 @@ public sealed record ManagedBoardItemSnapshot
     public string Project { get; init; } = string.Empty;
 }
 
+/// <summary>Identity for lazy discovery of one board item.</summary>
+public sealed record ManagedBoardItemDiscoveryItemQuery
+{
+    public string WorkSourceEnvironmentKey { get; init; } = string.Empty;
+    public string ItemId { get; init; } = string.Empty;
+}
+
 /// <summary>Operator-safe failure for one managed work-source environment.</summary>
 public sealed record ManagedBoardItemDiscoveryFailure
 {
@@ -57,4 +64,37 @@ public interface IManagedBoardItemDiscovery
         ManagedBoardItemDiscoveryQuery query,
         CancellationToken cancellationToken
     );
+
+    /// <summary>
+    /// Lazily fetches one item, including terminal items, or returns null when it is not visible.
+    /// The default implementation preserves compatibility for provider-neutral test doubles;
+    /// providers should override it with a direct lookup.
+    /// </summary>
+    async Task<ManagedBoardItemSnapshot?> GetAsync(
+        ManagedBoardItemDiscoveryItemQuery query,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        const int pageSize = ManagedBoardItemDiscoveryQuery.MaximumPageSize;
+        for (var page = 1; ; page++)
+        {
+            var result = await ListAsync(
+                new ManagedBoardItemDiscoveryQuery
+                {
+                    WorkSourceEnvironmentKey = query.WorkSourceEnvironmentKey,
+                    IncludeTerminal = true,
+                    Page = page,
+                    PageSize = pageSize,
+                },
+                cancellationToken);
+            var match = result.Items.FirstOrDefault(item => string.Equals(
+                item.Item.ExternalId,
+                query.ItemId,
+                StringComparison.OrdinalIgnoreCase));
+            if (match is not null || (long)page * pageSize >= result.Total)
+            {
+                return match;
+            }
+        }
+    }
 }

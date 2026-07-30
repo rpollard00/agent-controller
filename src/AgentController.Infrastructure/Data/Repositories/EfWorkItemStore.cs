@@ -97,6 +97,19 @@ internal sealed class EfWorkItemStore : IWorkItemStore
         return entity is null ? null : MapToCandidate(entity);
     }
 
+    public async Task<WorkCandidate?> GetByExternalIdentityAsync(
+        string source,
+        string externalId,
+        CancellationToken cancellationToken)
+    {
+        var entity = await _db.WorkItems
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                item => item.Source == source && item.ExternalId == externalId,
+                cancellationToken);
+        return entity is null ? null : MapToCandidate(entity);
+    }
+
     public async Task<IReadOnlyList<WorkCandidate>> FindEligibleAsync(
         WorkQuery query,
         CancellationToken cancellationToken)

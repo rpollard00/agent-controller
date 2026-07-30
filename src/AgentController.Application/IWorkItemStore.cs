@@ -38,6 +38,30 @@ public interface IWorkItemStore
     );
 
     /// <summary>
+    /// Resolve a provider identity to its persisted controller work item.
+    /// </summary>
+    async Task<WorkCandidate?> GetByExternalIdentityAsync(
+        string source,
+        string externalId,
+        CancellationToken cancellationToken)
+    {
+        const int pageSize = 100;
+        for (var offset = 0; ; offset += pageSize)
+        {
+            var page = await ListAsync(
+                new ListWorkItemsQuery { Offset = offset, MaxResults = pageSize },
+                cancellationToken);
+            var match = page.FirstOrDefault(item =>
+                string.Equals(item.Source, source, StringComparison.Ordinal)
+                && string.Equals(item.ExternalId, externalId, StringComparison.Ordinal));
+            if (match is not null || page.Count < pageSize)
+            {
+                return match;
+            }
+        }
+    }
+
+    /// <summary>
     /// Find work items eligible for autonomous agent execution according to
     /// the provided query. This is the persistence-level query used by
     /// <see cref="IWorkSource"/> implementations to discover candidates

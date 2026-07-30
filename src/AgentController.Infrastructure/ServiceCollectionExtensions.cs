@@ -1,5 +1,6 @@
 using AgentController.Application;
 using AgentController.Application.Abstractions;
+using AgentController.Application.Queries;
 using AgentController.Application.Services;
 using AgentController.Domain;
 using AgentController.Domain.Secrets;
@@ -575,6 +576,12 @@ public static class AgentControllerServiceCollectionExtensions
             provider.GetRequiredService<AzureDevOpsBoardsWorkSource>());
         services.AddSingleton<IManagedBoardItemDiscovery>(provider =>
             provider.GetRequiredService<AzureDevOpsBoardsWorkSource>());
+        services.AddScoped<
+            IQueryHandler<ListBoardItemDiagnosticsQuery, BoardItemDiagnosticsPage>,
+            ListBoardItemDiagnosticsQueryHandler>();
+        services.AddScoped<
+            IQueryHandler<GetBoardItemDiagnosticsQuery, BoardItemDiagnosticDetail?>,
+            GetBoardItemDiagnosticsQueryHandler>();
 
         // Register startup validator for managed ADO work source environments.
         // Validates ActiveState and CompletedState against the actual valid
