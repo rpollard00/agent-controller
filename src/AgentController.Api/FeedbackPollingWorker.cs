@@ -235,7 +235,10 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             // Retain controller lineage when this happens to be a controller-produced
             // PR, but never require it for Assistance.
             var originatingRun = candidateRuns.FirstOrDefault(run =>
-                PullRequestsMatch(snapshot.PullRequest, run.PullRequestUrl)
+                Application.PullRequestIdentityMatcher.Matches(
+                    snapshot.PullRequest,
+                    run.PullRequestUrl
+                )
             );
 
             assistancePrs.Add(
@@ -256,7 +259,9 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
         var revivalPrs = new List<Application.PrUnderTest>();
         foreach (var run in eligibleRuns)
         {
-            var pullRequestId = ExtractPullRequestId(run.PullRequestUrl);
+            var pullRequestId = Application.PullRequestIdentityMatcher.ExtractPullRequestId(
+                run.PullRequestUrl
+            );
             if (pullRequestId is null)
             {
                 Log.SkippingRunBadPrUrl(_logger, run.RunId, run.PullRequestUrl ?? "(null)");
@@ -265,13 +270,19 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
 
             // Assistance wins when both request markers are present. Excluding the
             // run-backed copy also prevents duplicate thread fetches for the same PR.
-            if (assistancePrs.Any(pr => PullRequestsMatch(pr.PullRequest, run.PullRequestUrl)))
+            if (assistancePrs.Any(pr =>
+                Application.PullRequestIdentityMatcher.Matches(
+                    pr.PullRequest,
+                    run.PullRequestUrl
+                )))
             {
                 Log.RevivalSuppressedByAssistance(_logger, pullRequestId);
                 continue;
             }
 
-            var repoKey = ExtractRepoKey(run.PullRequestUrl) ?? string.Empty;
+            var repoKey = Application.PullRequestIdentityMatcher.ExtractRepositoryKey(
+                run.PullRequestUrl
+            ) ?? string.Empty;
 
             revivalPrs.Add(
                 new Application.PrUnderTest
@@ -542,7 +553,10 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
                         Application.IPullRequestCommentCreator>()
                 );
                 var pullRequestTitle = managedPullRequests.FirstOrDefault(snapshot =>
-                    PullRequestsMatch(snapshot.PullRequest, soaked.PullRequest)
+                    Application.PullRequestIdentityMatcher.Matches(
+                        snapshot.PullRequest,
+                        soaked.PullRequest
+                    )
                 )?.Title;
                 var materialized = await assistanceMaterializer.MaterializeAsync(
                     soaked,
@@ -785,7 +799,10 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
         DateTimeOffset observedAt)
     {
         var fetched = fetchedSignals.FirstOrDefault(signal =>
-            PullRequestsMatch(pr.PullRequest, signal.PullRequest)
+            Application.PullRequestIdentityMatcher.Matches(
+                pr.PullRequest,
+                signal.PullRequest
+            )
         );
 
         // Preserve compatibility with feedback fetchers that only populated the
@@ -887,7 +904,10 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
         PullRequestReference assistancePullRequest,
         ReworkFeedback revivalFeedback)
     {
-        if (PullRequestsMatch(assistancePullRequest, revivalFeedback.PullRequest))
+        if (Application.PullRequestIdentityMatcher.Matches(
+            assistancePullRequest,
+            revivalFeedback.PullRequest
+        ))
         {
             return true;
         }
@@ -899,141 +919,6 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             revivalFeedback.PullRequestId,
             StringComparison.OrdinalIgnoreCase
         );
-    }
-
-    private static bool PullRequestsMatch(
-        PullRequestReference pullRequest,
-        string? candidateUrl)
-    {
-        if (string.IsNullOrWhiteSpace(candidateUrl))
-        {
-            return false;
-        }
-
-        if (UrlsMatch(pullRequest.PullRequestUrl, candidateUrl))
-        {
-            return true;
-        }
-
-        var candidateId = ExtractPullRequestId(candidateUrl);
-        var candidateRepo = ExtractRepoKey(candidateUrl);
-        return candidateId is not null
-            && candidateRepo is not null
-            && candidateId.Equals(pullRequest.PullRequestId, StringComparison.OrdinalIgnoreCase)
-            && candidateRepo.Equals(
-                pullRequest.RepositoryKey,
-                StringComparison.OrdinalIgnoreCase
-            );
-    }
-
-    private static bool PullRequestsMatch(
-        PullRequestReference first,
-        PullRequestReference second)
-    {
-        if (first.HasCanonicalIdentity && second.HasCanonicalIdentity)
-        {
-            return first.CanonicalKey.Equals(
-                second.CanonicalKey,
-                StringComparison.OrdinalIgnoreCase
-            );
-        }
-
-        if (UrlsMatch(first.PullRequestUrl, second.PullRequestUrl))
-        {
-            return true;
-        }
-
-        return first.PullRequestId.Equals(
-                second.PullRequestId,
-                StringComparison.OrdinalIgnoreCase
-            )
-            && first.RepositoryKey.Equals(
-                second.RepositoryKey,
-                StringComparison.OrdinalIgnoreCase
-            );
-    }
-
-    private static bool UrlsMatch(string? first, string? second)
-    {
-        if (string.IsNullOrWhiteSpace(first) || string.IsNullOrWhiteSpace(second))
-        {
-            return false;
-        }
-
-        return first.TrimEnd('/').Equals(
-            second.TrimEnd('/'),
-            StringComparison.OrdinalIgnoreCase
-        );
-    }
-
-    /// <summary>
-    /// Extract the pull request integer ID from an Azure DevOps PR URL.
-    /// Supported formats:
-    ///   https://dev.azure.com/{org}/{project}/_git/{repo}/pullrequest/{id}
-    ///   https://{org}.visualstudio.com/{project}/_git/{repo}/pullrequest/{id}
-    /// Returns null if the URL cannot be parsed.
-    /// </summary>
-    private static string? ExtractPullRequestId(string? url)
-    {
-        if (string.IsNullOrWhiteSpace(url))
-            return null;
-
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-            return null;
-
-        var segments = uri.Segments;
-
-        // Find the "pullrequest/" segment; the next segment is the ID.
-        for (int i = 0; i < segments.Length; i++)
-        {
-            if (
-                segments[i].Equals("pullrequest/", StringComparison.Ordinal)
-                && i + 1 < segments.Length
-            )
-            {
-                return segments[i + 1].TrimEnd('/');
-            }
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// Extract a repo key ("{project}/{repository}") from an Azure DevOps PR URL.
-    /// Returns null if the URL cannot be parsed.
-    /// </summary>
-    private static string? ExtractRepoKey(string? url)
-    {
-        if (string.IsNullOrWhiteSpace(url))
-            return null;
-
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-            return null;
-
-        var segments = uri.Segments;
-
-        // Find the "_git/" segment; project is before it, repo is after it.
-        for (int i = 0; i < segments.Length; i++)
-        {
-            if (
-                segments[i].Equals("_git/", StringComparison.Ordinal)
-                && i > 0
-                && i + 1 < segments.Length
-            )
-            {
-                var project = segments[i - 1].TrimEnd('/');
-                var repository = segments[i + 1].TrimEnd('/');
-
-                if (!string.IsNullOrWhiteSpace(project) && !string.IsNullOrWhiteSpace(repository))
-                {
-                    return $"{project}/{repository}";
-                }
-
-                break;
-            }
-        }
-
-        return null;
     }
 
     /// <summary>

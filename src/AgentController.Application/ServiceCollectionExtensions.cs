@@ -4,6 +4,7 @@ using AgentController.Application.Queries;
 using AgentController.Application.Results;
 using AgentController.Domain;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace AgentController.Application;
 
@@ -19,6 +20,7 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddApplicationHandlers(this IServiceCollection services)
     {
         services.AddScoped<IManagedProfileResolver, ManagedProfileResolver>();
+        services.TryAddSingleton(new PullRequestDiagnosticOptions());
 
         // Command handlers
         services.AddScoped<
@@ -84,6 +86,14 @@ public static class ServiceCollectionExtensions
             GetWorkItemByIdQueryHandler
         >();
         services.AddScoped<IQueryHandler<ListRunsQuery, RunListResult>, ListRunsQueryHandler>();
+        services.AddScoped<
+            IQueryHandler<ListPullRequestDiagnosticsQuery, PullRequestDiagnosticsPage>,
+            ListPullRequestDiagnosticsQueryHandler
+        >();
+        services.AddScoped<
+            IQueryHandler<GetPullRequestDiagnosticsQuery, PullRequestDiagnosticDetail?>,
+            GetPullRequestDiagnosticsQueryHandler
+        >();
         services.AddScoped<
             IQueryHandler<ListRunCardsQuery, IReadOnlyList<RunCardItem>>,
             ListRunCardsQueryHandler

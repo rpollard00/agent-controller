@@ -784,6 +784,18 @@ public static class AgentControllerServiceCollectionExtensions
         var feedbackProvider =
             configuration.GetValue<string>($"{FeedbackOptions.SectionName}:provider") ?? "None";
 
+        // Project infrastructure configuration into the application diagnostic policy.
+        services.AddSingleton<PullRequestDiagnosticOptions>(serviceProvider =>
+        {
+            var feedback = serviceProvider.GetRequiredService<IOptions<FeedbackOptions>>().Value;
+            return new PullRequestDiagnosticOptions
+            {
+                RevivalLabel = feedback.ReworkMarkerTag,
+                AssistanceLabel = feedback.AssistanceMarkerTag,
+                AllowedReviewers = new HashSet<string>(feedback.AllowedReviewers),
+            };
+        });
+
         // ── Filter pipeline (always registered, must come first) ──
         // The filter pipeline registers a no-op IPrLabelSource as the default.
         // Provider-specific registrations below override it.
