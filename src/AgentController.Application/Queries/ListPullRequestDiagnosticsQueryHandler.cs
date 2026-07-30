@@ -1,12 +1,10 @@
 using AgentController.Application.Abstractions;
-using AgentController.Domain;
 
 namespace AgentController.Application.Queries;
 
 public sealed class ListPullRequestDiagnosticsQueryHandler(
     IManagedPullRequestDiagnosticDiscovery discovery,
-    IRepositoryStore repositoryStore,
-    IConnectionStore connectionStore,
+    PullRequestSourceOptionsProvider sourceOptionsProvider,
     PullRequestDiagnosticOptions options)
     : IQueryHandler<ListPullRequestDiagnosticsQuery, PullRequestDiagnosticsPage>
 {
@@ -25,7 +23,7 @@ public sealed class ListPullRequestDiagnosticsQueryHandler(
 
         return new PullRequestDiagnosticsPage
         {
-            Sources = await ListSourcesAsync(cancellationToken),
+            Sources = await sourceOptionsProvider.ListAsync(cancellationToken),
             Items = page.Items.Select(snapshot => new PullRequestDiagnosticSummary
             {
                 PullRequestId = snapshot.PullRequestId,
@@ -41,31 +39,6 @@ public sealed class ListPullRequestDiagnosticsQueryHandler(
             PageSize = page.PageSize,
             Total = page.Total,
         };
-    }
-
-    private async Task<IReadOnlyList<PullRequestSourceOption>> ListSourcesAsync(
-        CancellationToken cancellationToken)
-    {
-        var repositories = await repositoryStore.ListAsync(cancellationToken);
-        var owningKeys = repositories
-            .Select(repository => repository.RepositoryHostConnectionKey)
-            .Where(key => !string.IsNullOrWhiteSpace(key))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var connections = await connectionStore.ListAsync(cancellationToken);
-
-        return connections
-            .Where(connection => owningKeys.Contains(connection.Key)
-                && connection.Capabilities.Contains(ConnectionCapability.Repositories))
-            .OrderBy(connection => connection.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(connection => connection.Key, StringComparer.OrdinalIgnoreCase)
-            .Select(connection => new PullRequestSourceOption
-            {
-                Key = connection.Key,
-                Name = string.IsNullOrWhiteSpace(connection.DisplayName)
-                    ? connection.Key
-                    : connection.DisplayName,
-            })
-            .ToArray();
     }
 
     private static string? Clean(string value) =>

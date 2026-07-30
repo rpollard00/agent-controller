@@ -28,6 +28,7 @@ public static class WebUiControllers
         MapSecretsControllers(app.MapGroup(SecretsPath));
         MapRunsController(app.MapGroup(RunsPath));
         app.MapWebUiBoardDebugEndpoints();
+        app.MapWebUiPullRequestDebugEndpoints();
         return app;
     }
 

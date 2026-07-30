@@ -86,6 +86,7 @@ public static class ServiceCollectionExtensions
             GetWorkItemByIdQueryHandler
         >();
         services.AddScoped<IQueryHandler<ListRunsQuery, RunListResult>, ListRunsQueryHandler>();
+        services.AddScoped<PullRequestSourceOptionsProvider>();
         services.AddScoped<
             IQueryHandler<ListPullRequestDiagnosticsQuery, PullRequestDiagnosticsPage>,
             ListPullRequestDiagnosticsQueryHandler
