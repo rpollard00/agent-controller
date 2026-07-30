@@ -27,6 +27,7 @@ public static class WebUiControllers
         MapRuntimeEnvironmentControllers(app.MapGroup(RuntimeEnvironmentsPath));
         MapSecretsControllers(app.MapGroup(SecretsPath));
         MapRunsController(app.MapGroup(RunsPath));
+        app.MapWebUiBoardDebugEndpoints();
         return app;
     }
 

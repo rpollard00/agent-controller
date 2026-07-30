@@ -304,6 +304,13 @@ public static class AgentControllerServiceCollectionExtensions
     )
     {
         services.AddSingleton<IWorkSource, NoOpWorkSource>();
+        services.AddSingleton<IManagedBoardItemDiscovery, NoOpManagedBoardItemDiscovery>();
+        services.TryAddScoped<
+            IQueryHandler<ListBoardItemDiagnosticsQuery, BoardItemDiagnosticsPage>,
+            ListBoardItemDiagnosticsQueryHandler>();
+        services.TryAddScoped<
+            IQueryHandler<GetBoardItemDiagnosticsQuery, BoardItemDiagnosticDetail?>,
+            GetBoardItemDiagnosticsQueryHandler>();
         services.AddSingleton<ISourceControlProvider, NoOpSourceControlProvider>();
         services.AddAgentControllerNoOpPullRequestDiscovery();
 
@@ -576,10 +583,10 @@ public static class AgentControllerServiceCollectionExtensions
             provider.GetRequiredService<AzureDevOpsBoardsWorkSource>());
         services.AddSingleton<IManagedBoardItemDiscovery>(provider =>
             provider.GetRequiredService<AzureDevOpsBoardsWorkSource>());
-        services.AddScoped<
+        services.TryAddScoped<
             IQueryHandler<ListBoardItemDiagnosticsQuery, BoardItemDiagnosticsPage>,
             ListBoardItemDiagnosticsQueryHandler>();
-        services.AddScoped<
+        services.TryAddScoped<
             IQueryHandler<GetBoardItemDiagnosticsQuery, BoardItemDiagnosticDetail?>,
             GetBoardItemDiagnosticsQueryHandler>();
 
