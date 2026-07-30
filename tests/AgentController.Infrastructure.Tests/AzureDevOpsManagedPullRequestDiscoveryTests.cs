@@ -100,6 +100,38 @@ public sealed class AzureDevOpsManagedPullRequestDiscoveryTests
     }
 
     [Fact]
+    public async Task ActiveClient_RemainsFailSoftWhenRelationshipHydrationFails()
+    {
+        var handler = new DelegateHandler(request =>
+        {
+            var uri = request.RequestUri?.AbsoluteUri ?? string.Empty;
+            if (uri.Contains("/labels?", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.BadGateway);
+            }
+
+            if (uri.Contains("/workitems?", StringComparison.OrdinalIgnoreCase))
+            {
+                return JsonResponse("{\"value\":{}}");
+            }
+
+            return JsonResponse(PullRequestPage(PullRequest(
+                9,
+                "Needs hydration",
+                includeRelationships: false
+            )));
+        });
+        using var client = CreateClient(handler, pageSize: 10);
+
+        var snapshot = Assert.Single(
+            await client.ListActiveAsync(ManagedRepository(), CancellationToken.None)
+        );
+
+        Assert.Empty(snapshot.Labels);
+        Assert.Empty(snapshot.LinkedWorkItems);
+    }
+
+    [Fact]
     public async Task Client_LabelMutation_IsCaseInsensitiveAndIdempotent()
     {
         var labels = new List<(string Id, string Name)>
@@ -284,6 +316,222 @@ public sealed class AzureDevOpsManagedPullRequestDiscoveryTests
     }
 
     [Fact]
+    public async Task DiagnosticClient_IncludesInactiveStatusesAndRequestLabels()
+    {
+        var requestedUris = new List<string>();
+        var handler = new DelegateHandler(request =>
+        {
+            requestedUris.Add(request.RequestUri?.AbsoluteUri ?? string.Empty);
+            return JsonResponse(PullRequestPage(
+                PullRequest(1, "Active"),
+                PullRequest(2, "Completed").Replace(
+                    "\"status\":\"active\"",
+                    "\"status\":\"completed\"",
+                    StringComparison.Ordinal
+                ),
+                PullRequest(3, "Abandoned").Replace(
+                    "\"status\":\"active\"",
+                    "\"status\":\"abandoned\"",
+                    StringComparison.Ordinal
+                )
+            ));
+        });
+        using var client = CreateClient(handler, pageSize: 10);
+
+        var snapshots = await client.ListForDiagnosticsAsync(
+            ManagedRepository(),
+            includeInactive: true,
+            CancellationToken.None
+        );
+
+        Assert.Equal(["active", "completed", "abandoned"], snapshots.Select(item => item.Status));
+        Assert.All(snapshots, item => Assert.Equal(
+            "agent-assistance-requested",
+            Assert.Single(item.Labels)
+        ));
+        Assert.Contains(requestedUris, uri => uri.Contains(
+            "searchCriteria.status=all",
+            StringComparison.OrdinalIgnoreCase
+        ));
+    }
+
+    [Fact]
+    public async Task DiagnosticDiscovery_FiltersEnvironmentsAndReturnsDeterministicPages()
+    {
+        var repositories = new StubRepositoryStore(
+            Repository("zeta", "zeta-id", "Zeta"),
+            Repository("alpha", "alpha-id", "Alpha") with
+            {
+                RepositoryHostConnectionKey = "ado-secondary",
+            },
+            Repository("beta", "beta-id", "Beta") with
+            {
+                RepositoryHostConnectionKey = "ado-secondary",
+            }
+        );
+        var clientFactory = new RecordingClientFactory((request, _) =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            var id = path.Contains("alpha-id", StringComparison.OrdinalIgnoreCase) ? 1
+                : path.Contains("beta-id", StringComparison.OrdinalIgnoreCase) ? 2
+                : 3;
+            return Task.FromResult(JsonResponse(PullRequestPage(PullRequest(id, $"PR {id}"))));
+        });
+        var discovery = CreateDiscovery(
+            repositories,
+            clientFactory,
+            Connection("ado-production"),
+            Connection("ado-secondary")
+        );
+
+        var firstPage = await discovery.ListAsync(
+            new ManagedPullRequestDiscoveryQuery
+            {
+                SourceControlEnvironmentKey = "ADO-SECONDARY",
+                Page = 1,
+                PageSize = 1,
+            },
+            CancellationToken.None
+        );
+        var secondPage = await discovery.ListAsync(
+            new ManagedPullRequestDiscoveryQuery
+            {
+                SourceControlEnvironmentKey = "ado-secondary",
+                Page = 2,
+                PageSize = 1,
+            },
+            CancellationToken.None
+        );
+
+        Assert.Equal(2, firstPage.Total);
+        Assert.Equal("alpha", Assert.Single(firstPage.Items).RepositoryKey);
+        Assert.Equal("beta", Assert.Single(secondPage.Items).RepositoryKey);
+        Assert.All(firstPage.Items.Concat(secondPage.Items), item =>
+            Assert.Equal("ado-secondary", item.EnvironmentKey)
+        );
+        Assert.DoesNotContain(clientFactory.RequestedUris, uri => uri.Contains(
+            "zeta-id",
+            StringComparison.OrdinalIgnoreCase
+        ));
+    }
+
+    [Fact]
+    public async Task DiagnosticDiscovery_IsolatesRepositoryHttpFailures()
+    {
+        var repositories = new StubRepositoryStore(
+            Repository("alpha", "alpha-id", "Alpha"),
+            Repository("beta", "beta-id", "Beta")
+        );
+        var clientFactory = new RecordingClientFactory((request, _) =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            return Task.FromResult(path.Contains("alpha-id", StringComparison.OrdinalIgnoreCase)
+                ? new HttpResponseMessage(HttpStatusCode.Unauthorized)
+                : JsonResponse(PullRequestPage(PullRequest(2, "Available"))));
+        });
+        var discovery = CreateDiscovery(
+            repositories,
+            clientFactory,
+            Connection("ado-production")
+        );
+
+        var page = await discovery.ListAsync(
+            new ManagedPullRequestDiscoveryQuery(),
+            CancellationToken.None
+        );
+
+        Assert.Equal("beta", Assert.Single(page.Items).RepositoryKey);
+        var failure = Assert.Single(page.Failures);
+        Assert.Equal("ado-production", failure.SourceControlEnvironmentKey);
+        Assert.Equal("alpha", failure.RepositoryKey);
+        Assert.Equal("The managed repository could not be queried.", failure.Message);
+        Assert.DoesNotContain(TestPat, JsonSerializer.Serialize(page));
+    }
+
+    [Theory]
+    [InlineData("labels", false)]
+    [InlineData("workitems", true)]
+    public async Task DiagnosticDiscovery_IsolatesRelationshipHydrationFailures(
+        string failingRelationship,
+        bool malformedResponse
+    )
+    {
+        var repositories = new StubRepositoryStore(
+            Repository("alpha", "alpha-id", "Alpha"),
+            Repository("beta", "beta-id", "Beta")
+        );
+        var clientFactory = new RecordingClientFactory((request, _) =>
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            var isAlpha = path.Contains("alpha-id", StringComparison.OrdinalIgnoreCase);
+            if (!isAlpha)
+            {
+                return Task.FromResult(JsonResponse(PullRequestPage(
+                    PullRequest(2, "Available")
+                )));
+            }
+
+            if ((request.RequestUri?.Query ?? string.Empty).Contains(
+                "searchCriteria.status",
+                StringComparison.OrdinalIgnoreCase
+            ))
+            {
+                return Task.FromResult(JsonResponse(PullRequestPage(PullRequest(
+                    1,
+                    "Incomplete",
+                    includeRelationships: false
+                ))));
+            }
+
+            if (path.Contains($"/{failingRelationship}", StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult(malformedResponse
+                    ? JsonResponse("{\"value\":{}}")
+                    : new HttpResponseMessage(HttpStatusCode.BadGateway));
+            }
+
+            return Task.FromResult(JsonResponse("{\"value\":[]}"));
+        });
+        var discovery = CreateDiscovery(
+            repositories,
+            clientFactory,
+            Connection("ado-production")
+        );
+
+        var page = await discovery.ListAsync(
+            new ManagedPullRequestDiscoveryQuery(),
+            CancellationToken.None
+        );
+
+        Assert.Equal("beta", Assert.Single(page.Items).RepositoryKey);
+        var failure = Assert.Single(page.Failures);
+        Assert.Equal("ado-production", failure.SourceControlEnvironmentKey);
+        Assert.Equal("alpha", failure.RepositoryKey);
+        Assert.Equal("The managed repository could not be queried.", failure.Message);
+    }
+
+    [Fact]
+    public async Task DiagnosticDiscovery_PropagatesCancellation()
+    {
+        var clientFactory = new RecordingClientFactory(async (_, cancellationToken) =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return JsonResponse(PullRequestPage());
+        });
+        var discovery = CreateDiscovery(
+            new StubRepositoryStore(Repository("alpha", "alpha-id", "Alpha")),
+            clientFactory,
+            Connection("ado-production")
+        );
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(25));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => discovery.ListAsync(
+            new ManagedPullRequestDiscoveryQuery(),
+            cancellation.Token
+        ));
+    }
+
+    [Fact]
     public async Task LabelMutator_ResolvesManagedRepositoryAndConnectionCredential()
     {
         var repository = Repository("payments", "payments-id", "Payments");
@@ -351,6 +599,37 @@ public sealed class AzureDevOpsManagedPullRequestDiscoveryTests
             client.ListActiveAsync(ManagedRepository(), cancellation.Token)
         );
     }
+
+    private static AzureDevOpsManagedPullRequestDiscovery CreateDiscovery(
+        IRepositoryStore repositories,
+        AzureDevOpsReposPullRequestClientFactory clientFactory,
+        params ConnectionProfile[] connections
+    )
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(repositories);
+        services.AddSingleton<IConnectionStore>(new StubConnectionStore(connections));
+        services.AddScoped<AzureDevOpsPatResolver>(_ => new StubPatResolver(TestPat));
+        var provider = services.BuildServiceProvider();
+        return new AzureDevOpsManagedPullRequestDiscovery(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            clientFactory,
+            NullLogger<AzureDevOpsManagedPullRequestDiscovery>.Instance
+        );
+    }
+
+    private static ConnectionProfile Connection(string key) => new()
+    {
+        Key = key,
+        Provider = "AzureDevOps",
+        Enabled = true,
+        Capabilities = [ConnectionCapability.Repositories],
+        ProviderSettings = new AzureDevOpsConnectionSettings
+        {
+            OrganizationUrl = OrganizationUrl,
+            PersonalAccessTokenReference = SecretReference.ByName($"{key}-pat"),
+        },
+    };
 
     private static AzureDevOpsReposPullRequestClient CreateClient(
         HttpMessageHandler handler,

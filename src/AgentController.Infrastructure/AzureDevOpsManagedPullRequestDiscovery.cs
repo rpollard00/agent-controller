@@ -15,7 +15,7 @@ internal sealed partial class AzureDevOpsManagedPullRequestDiscovery(
     IServiceScopeFactory scopeFactory,
     AzureDevOpsReposPullRequestClientFactory clientFactory,
     ILogger<AzureDevOpsManagedPullRequestDiscovery> logger
-) : IManagedPullRequestDiscovery
+) : IManagedPullRequestDiscovery, IManagedPullRequestDiagnosticDiscovery
 {
     private const int MaximumConcurrentRepositories = 4;
 
@@ -79,8 +79,104 @@ internal sealed partial class AzureDevOpsManagedPullRequestDiscovery(
             .ToArray();
     }
 
-    private async Task<IReadOnlyList<DiscoveryTarget>> ResolveTargetsAsync(
+    public async Task<ManagedPullRequestDiscoveryPage> ListAsync(
+        ManagedPullRequestDiscoveryQuery query,
         CancellationToken cancellationToken
+    )
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        if (query.Page < 1)
+            throw new ArgumentOutOfRangeException(nameof(query), "Page must be at least one.");
+        if (query.PageSize < 1
+            || query.PageSize > ManagedPullRequestDiscoveryQuery.MaximumPageSize)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(query),
+                "Page size must be between 1 and 100."
+            );
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var failures = new ConcurrentBag<ManagedPullRequestDiscoveryFailure>();
+        var targets = await ResolveTargetsAsync(
+            cancellationToken,
+            failures,
+            query.SourceControlEnvironmentKey
+        );
+        var discovered = new ConcurrentBag<ManagedPullRequestSnapshot>();
+
+        await Parallel.ForEachAsync(
+            targets,
+            new ParallelOptions
+            {
+                CancellationToken = cancellationToken,
+                MaxDegreeOfParallelism = MaximumConcurrentRepositories,
+            },
+            async (target, token) =>
+            {
+                try
+                {
+                    using var client = clientFactory.Create(
+                        target.OrganizationUrl,
+                        target.PersonalAccessToken
+                    );
+                    var snapshots = await client.ListForDiagnosticsAsync(
+                        target.Repository,
+                        query.IncludeInactive,
+                        token
+                    );
+                    foreach (var snapshot in snapshots)
+                    {
+                        if (snapshot.PullRequest.HasCanonicalIdentity)
+                        {
+                            discovered.Add(snapshot);
+                        }
+                    }
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception)
+                {
+                    failures.Add(ToFailure(target.Repository));
+                    Log.RepositoryDiscoveryFailed(logger, target.Repository.RepositoryKey);
+                }
+            }
+        );
+
+        var ordered = discovered
+            .GroupBy(snapshot => snapshot.CanonicalKey, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .OrderBy(snapshot => snapshot.CanonicalKey, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var offset = ((long)query.Page - 1) * query.PageSize;
+        var items = offset >= ordered.LongLength
+            ? []
+            : ordered.Skip((int)offset).Take(query.PageSize).ToArray();
+
+        return new ManagedPullRequestDiscoveryPage
+        {
+            Items = items,
+            Failures = failures
+                .GroupBy(
+                    failure => $"{failure.SourceControlEnvironmentKey}|{failure.RepositoryKey}",
+                    StringComparer.OrdinalIgnoreCase
+                )
+                .Select(group => group.First())
+                .OrderBy(failure => failure.SourceControlEnvironmentKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(failure => failure.RepositoryKey, StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            Page = query.Page,
+            PageSize = query.PageSize,
+            Total = ordered.Length,
+        };
+    }
+
+    private async Task<IReadOnlyList<DiscoveryTarget>> ResolveTargetsAsync(
+        CancellationToken cancellationToken,
+        ConcurrentBag<ManagedPullRequestDiscoveryFailure>? failures = null,
+        string? sourceControlEnvironmentKey = null
     )
     {
         await using var scope = scopeFactory.CreateAsyncScope();
@@ -107,6 +203,15 @@ internal sealed partial class AzureDevOpsManagedPullRequestDiscovery(
             cancellationToken.ThrowIfCancellationRequested();
 
             var connectionKey = Clean(repository.RepositoryHostConnectionKey);
+            if (!string.IsNullOrWhiteSpace(sourceControlEnvironmentKey)
+                && !connectionKey.Equals(
+                    sourceControlEnvironmentKey.Trim(),
+                    StringComparison.OrdinalIgnoreCase
+                ))
+            {
+                continue;
+            }
+
             var project = Clean(repository.Project);
             var remoteIdentity = ResolveRemoteIdentity(repository);
             if (connectionKey.Length == 0
@@ -138,6 +243,12 @@ internal sealed partial class AzureDevOpsManagedPullRequestDiscovery(
 
             if (string.IsNullOrWhiteSpace(personalAccessToken))
             {
+                failures?.Add(new ManagedPullRequestDiscoveryFailure
+                {
+                    SourceControlEnvironmentKey = connection.Key.Trim(),
+                    RepositoryKey = Clean(repository.Key),
+                    Message = "The managed repository could not be queried.",
+                });
                 continue;
             }
 
@@ -257,6 +368,15 @@ internal sealed partial class AzureDevOpsManagedPullRequestDiscovery(
 
         return null;
     }
+
+    private static ManagedPullRequestDiscoveryFailure ToFailure(
+        AzureDevOpsManagedRepository repository
+    ) => new()
+    {
+        SourceControlEnvironmentKey = repository.EnvironmentKey,
+        RepositoryKey = repository.RepositoryKey,
+        Message = "The managed repository could not be queried.",
+    };
 
     private static string Clean(string? value) => value?.Trim() ?? string.Empty;
 

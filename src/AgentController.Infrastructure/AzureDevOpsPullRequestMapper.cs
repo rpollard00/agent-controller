@@ -38,11 +38,13 @@ internal static class AzureDevOpsPullRequestMapper
     public static AzureDevOpsPullRequestItem? MapPullRequest(
         JsonElement element,
         AzureDevOpsManagedRepository repository,
-        string organizationUrl
+        string organizationUrl,
+        bool includeInactive = false
     )
     {
         var status = ReadString(element, "status");
-        if (status.Length > 0
+        if (!includeInactive
+            && status.Length > 0
             && !status.Equals("active", StringComparison.OrdinalIgnoreCase))
         {
             return null;
@@ -85,6 +87,7 @@ internal static class AzureDevOpsPullRequestMapper
                     ),
                 },
                 Title = ReadString(element, "title"),
+                Status = status,
                 Labels = labels,
                 LinkedWorkItems = linkedWorkItems,
             },

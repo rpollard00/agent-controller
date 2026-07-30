@@ -77,8 +77,35 @@ internal sealed partial class AzureDevOpsReposPullRequestClient : IDisposable
         );
     }
 
-    public async Task<IReadOnlyList<ManagedPullRequestSnapshot>> ListActiveAsync(
+    public Task<IReadOnlyList<ManagedPullRequestSnapshot>> ListActiveAsync(
         AzureDevOpsManagedRepository repository,
+        CancellationToken cancellationToken
+    ) => ListAsync(
+        repository,
+        includeInactive: false,
+        failOnProviderError: false,
+        cancellationToken
+    );
+
+    /// <summary>
+    /// Lists pull requests for diagnostics. Unlike polling discovery, repository-level
+    /// list failures are surfaced so callers can report an isolated safe failure.
+    /// </summary>
+    public Task<IReadOnlyList<ManagedPullRequestSnapshot>> ListForDiagnosticsAsync(
+        AzureDevOpsManagedRepository repository,
+        bool includeInactive,
+        CancellationToken cancellationToken
+    ) => ListAsync(
+        repository,
+        includeInactive,
+        failOnProviderError: true,
+        cancellationToken
+    );
+
+    private async Task<IReadOnlyList<ManagedPullRequestSnapshot>> ListAsync(
+        AzureDevOpsManagedRepository repository,
+        bool includeInactive,
+        bool failOnProviderError,
         CancellationToken cancellationToken
     )
     {
@@ -93,7 +120,7 @@ internal sealed partial class AzureDevOpsReposPullRequestClient : IDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var endpoint = BuildListEndpoint(repository, skip);
+            var endpoint = BuildListEndpoint(repository, skip, includeInactive);
             using var response = await _http.GetAsync(endpoint, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
@@ -102,6 +129,13 @@ internal sealed partial class AzureDevOpsReposPullRequestClient : IDisposable
                     repository.RepositoryKey,
                     (int)response.StatusCode
                 );
+                if (failOnProviderError)
+                {
+                    throw new HttpRequestException(
+                        "The pull-request provider rejected the repository query."
+                    );
+                }
+
                 return snapshots;
             }
 
@@ -114,6 +148,11 @@ internal sealed partial class AzureDevOpsReposPullRequestClient : IDisposable
             if (!document.RootElement.TryGetProperty("value", out var values)
                 || values.ValueKind != JsonValueKind.Array)
             {
+                if (failOnProviderError)
+                {
+                    throw new JsonException("The pull-request provider returned an invalid list response.");
+                }
+
                 return snapshots;
             }
 
@@ -126,7 +165,8 @@ internal sealed partial class AzureDevOpsReposPullRequestClient : IDisposable
                 var item = AzureDevOpsPullRequestMapper.MapPullRequest(
                     value,
                     repository,
-                    _organizationUrl
+                    _organizationUrl,
+                    includeInactive
                 );
                 if (item is null
                     || !pullRequestIds.Add(item.Snapshot.PullRequestId))
@@ -137,6 +177,7 @@ internal sealed partial class AzureDevOpsReposPullRequestClient : IDisposable
                 snapshots.Add(await HydrateRelationshipsAsync(
                     repository,
                     item,
+                    failOnProviderError,
                     cancellationToken
                 ));
             }
@@ -155,6 +196,7 @@ internal sealed partial class AzureDevOpsReposPullRequestClient : IDisposable
     private async Task<ManagedPullRequestSnapshot> HydrateRelationshipsAsync(
         AzureDevOpsManagedRepository repository,
         AzureDevOpsPullRequestItem item,
+        bool failOnProviderError,
         CancellationToken cancellationToken
     )
     {
@@ -164,6 +206,7 @@ internal sealed partial class AzureDevOpsReposPullRequestClient : IDisposable
             labels = await FetchLabelsAsync(
                 repository,
                 item.Snapshot.PullRequestId,
+                failOnProviderError,
                 cancellationToken
             );
         }
@@ -174,6 +217,7 @@ internal sealed partial class AzureDevOpsReposPullRequestClient : IDisposable
             linkedWorkItems = await FetchWorkItemsAsync(
                 repository,
                 item.Snapshot.PullRequestId,
+                failOnProviderError,
                 cancellationToken
             );
         }
@@ -188,6 +232,7 @@ internal sealed partial class AzureDevOpsReposPullRequestClient : IDisposable
     private async Task<IReadOnlyList<string>> FetchLabelsAsync(
         AzureDevOpsManagedRepository repository,
         string pullRequestId,
+        bool failOnProviderError,
         CancellationToken cancellationToken
     )
     {
@@ -204,6 +249,13 @@ internal sealed partial class AzureDevOpsReposPullRequestClient : IDisposable
                     pullRequestId,
                     (int)response.StatusCode
                 );
+                if (failOnProviderError)
+                {
+                    throw new HttpRequestException(
+                        "The pull-request provider rejected relationship hydration."
+                    );
+                }
+
                 return [];
             }
 
@@ -212,6 +264,7 @@ internal sealed partial class AzureDevOpsReposPullRequestClient : IDisposable
                 stream,
                 cancellationToken: cancellationToken
             );
+            EnsureRelationshipResponse(document.RootElement, failOnProviderError);
             return AzureDevOpsPullRequestMapper.MapLabelsResponse(document.RootElement);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -226,6 +279,11 @@ internal sealed partial class AzureDevOpsReposPullRequestClient : IDisposable
                 repository.RepositoryKey,
                 pullRequestId
             );
+            if (failOnProviderError)
+            {
+                throw;
+            }
+
             return [];
         }
     }
@@ -233,6 +291,7 @@ internal sealed partial class AzureDevOpsReposPullRequestClient : IDisposable
     private async Task<IReadOnlyList<PullRequestWorkItemReference>> FetchWorkItemsAsync(
         AzureDevOpsManagedRepository repository,
         string pullRequestId,
+        bool failOnProviderError,
         CancellationToken cancellationToken
     )
     {
@@ -249,6 +308,13 @@ internal sealed partial class AzureDevOpsReposPullRequestClient : IDisposable
                     pullRequestId,
                     (int)response.StatusCode
                 );
+                if (failOnProviderError)
+                {
+                    throw new HttpRequestException(
+                        "The pull-request provider rejected relationship hydration."
+                    );
+                }
+
                 return [];
             }
 
@@ -257,6 +323,7 @@ internal sealed partial class AzureDevOpsReposPullRequestClient : IDisposable
                 stream,
                 cancellationToken: cancellationToken
             );
+            EnsureRelationshipResponse(document.RootElement, failOnProviderError);
             return AzureDevOpsPullRequestMapper.MapWorkItemsResponse(document.RootElement);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -271,17 +338,39 @@ internal sealed partial class AzureDevOpsReposPullRequestClient : IDisposable
                 repository.RepositoryKey,
                 pullRequestId
             );
+            if (failOnProviderError)
+            {
+                throw;
+            }
+
             return [];
+        }
+    }
+
+    private static void EnsureRelationshipResponse(
+        JsonElement root,
+        bool failOnProviderError
+    )
+    {
+        if (failOnProviderError
+            && (!root.TryGetProperty("value", out var value)
+                || value.ValueKind != JsonValueKind.Array))
+        {
+            throw new JsonException(
+                "The pull-request provider returned an invalid relationship response."
+            );
         }
     }
 
     private string BuildListEndpoint(
         AzureDevOpsManagedRepository repository,
-        int skip
+        int skip,
+        bool includeInactive
     )
     {
+        var status = includeInactive ? "all" : "active";
         return BuildRepositoryEndpoint(repository)
-            + "/pullrequests?searchCriteria.status=active"
+            + $"/pullrequests?searchCriteria.status={status}"
             + "&searchCriteria.includeLinks=true"
             + $"&$top={_pageSize}&$skip={skip}&api-version=7.1";
     }

@@ -15,7 +15,7 @@ public sealed record PullRequestWorkItemReference
 }
 
 /// <summary>
-/// Point-in-time view of an active pull request in a controller-managed repository.
+/// Point-in-time view of a pull request in a controller-managed repository.
 /// </summary>
 public sealed record ManagedPullRequestSnapshot
 {
@@ -24,6 +24,9 @@ public sealed record ManagedPullRequestSnapshot
 
     /// <summary>Pull-request title.</summary>
     public string Title { get; init; } = string.Empty;
+
+    /// <summary>Current provider status (for example, active, completed, or abandoned).</summary>
+    public string Status { get; init; } = string.Empty;
 
     /// <summary>Labels currently applied to the pull request.</summary>
     public IReadOnlyList<string> Labels { get; init; } = [];

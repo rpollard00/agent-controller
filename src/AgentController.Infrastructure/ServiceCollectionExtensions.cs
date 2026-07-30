@@ -342,6 +342,10 @@ public static class AgentControllerServiceCollectionExtensions
     )
     {
         services.AddSingleton<IManagedPullRequestDiscovery, NoOpPullRequestDiscovery>();
+        services.AddSingleton<
+            IManagedPullRequestDiagnosticDiscovery,
+            NoOpManagedPullRequestDiagnosticDiscovery
+        >();
         services.AddSingleton<IPullRequestLabelMutator, NoOpPullRequestLabelMutator>();
         services.AddSingleton<IPullRequestCommentCreator, NoOpPullRequestCommentCreator>();
         services.AddSingleton<
@@ -402,10 +406,13 @@ public static class AgentControllerServiceCollectionExtensions
             AzureDevOpsAssistanceStoryRelationshipClientFactory,
             DefaultAzureDevOpsAssistanceStoryRelationshipClientFactory
         >();
-        services.AddSingleton<
-            IManagedPullRequestDiscovery,
-            AzureDevOpsManagedPullRequestDiscovery
-        >();
+        services.AddSingleton<AzureDevOpsManagedPullRequestDiscovery>();
+        services.AddSingleton<IManagedPullRequestDiscovery>(serviceProvider =>
+            serviceProvider.GetRequiredService<AzureDevOpsManagedPullRequestDiscovery>()
+        );
+        services.AddSingleton<IManagedPullRequestDiagnosticDiscovery>(serviceProvider =>
+            serviceProvider.GetRequiredService<AzureDevOpsManagedPullRequestDiscovery>()
+        );
         services.AddSingleton<
             IPullRequestLabelMutator,
             AzureDevOpsPullRequestLabelMutator
