@@ -15,7 +15,7 @@ namespace AgentController.Infrastructure;
 /// Because the managed client factory is scoped, each method creates its own
 /// <see cref="IServiceScope"/> to resolve a fresh client instance per operation.
 /// </summary>
-internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
+internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource, IManagedBoardItemDiscovery
 {
     private const string ManagedEnvironmentResolutionFailure =
         "No enabled managed Azure DevOps work source environment could be resolved.";
@@ -78,6 +78,134 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
         }
 
         return candidates;
+    }
+
+    public async Task<ManagedBoardItemDiscoveryPage> ListAsync(
+        ManagedBoardItemDiscoveryQuery query,
+        CancellationToken cancellationToken
+    )
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        if (query.Page < 1)
+            throw new ArgumentOutOfRangeException(nameof(query), "Page must be at least one.");
+        if (query.PageSize < 1 || query.PageSize > ManagedBoardItemDiscoveryQuery.MaximumPageSize)
+            throw new ArgumentOutOfRangeException(nameof(query), "Page size must be between 1 and 100.");
+
+        cancellationToken.ThrowIfCancellationRequested();
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var resolver = scope.ServiceProvider.GetService<IManagedProfileResolver>();
+        var environments = resolver is null
+            ? []
+            : await resolver.ListConfiguredWorkSourceEnvironmentsAsync(cancellationToken);
+        var selectedEnvironments = environments
+            .Where(environment => string.IsNullOrWhiteSpace(query.WorkSourceEnvironmentKey)
+                || string.Equals(
+                    environment.Profile.Key,
+                    query.WorkSourceEnvironmentKey.Trim(),
+                    StringComparison.OrdinalIgnoreCase
+                ))
+            .OrderBy(environment => environment.Profile.Key, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var factory = scope.ServiceProvider.GetRequiredService<IAzureDevOpsBoardsClientFactory>();
+        var references = new List<DiagnosticReference>();
+        var failures = new List<ManagedBoardItemDiscoveryFailure>();
+        foreach (var environment in selectedEnvironments)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var client = await factory.CreateAsync(environment, cancellationToken);
+                using var disposableClient = client as IDisposable;
+                var discovered = await client.QueryWorkItemReferencesAsync(
+                    new BoardsQueryParameters
+                    {
+                        Project = environment.Profile.Project,
+                        ExcludedStates = query.IncludeTerminal ? null : BoardTerminalStates.Values,
+                        MaxResults = int.MaxValue,
+                    },
+                    cancellationToken
+                );
+                references.AddRange(discovered.Select(reference =>
+                    new DiagnosticReference(environment, reference.Id)));
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                failures.Add(ToFailure(environment));
+            }
+        }
+
+        var ordered = references
+            .OrderBy(reference => reference.Environment.Profile.Key, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(reference => reference.Id)
+            .ToArray();
+        var offset = ((long)query.Page - 1) * query.PageSize;
+        var pageReferences = offset >= ordered.LongLength
+            ? []
+            : ordered.Skip((int)offset).Take(query.PageSize).ToArray();
+        var snapshotsByKey = new Dictionary<string, ManagedBoardItemSnapshot>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var group in pageReferences.GroupBy(reference => reference.Environment.Profile.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            var environment = group.First().Environment;
+            try
+            {
+                var client = await factory.CreateAsync(environment, cancellationToken);
+                using var disposableClient = client as IDisposable;
+                var items = await client.GetWorkItemsAsync(
+                    environment.Profile.Project,
+                    group.Select(reference => reference.Id).ToArray(),
+                    cancellationToken
+                );
+                foreach (var item in items)
+                {
+                    snapshotsByKey[ReferenceKey(environment.Profile.Key, item.ExternalId)] =
+                        new ManagedBoardItemSnapshot
+                        {
+                            Item = item with
+                            {
+                                SourceMetadata = AddEnvironmentKey(item.SourceMetadata, environment.Profile.Key),
+                            },
+                            WorkSourceEnvironmentKey = environment.Profile.Key,
+                            Project = environment.Profile.Project,
+                        };
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                if (!failures.Any(failure => string.Equals(
+                    failure.WorkSourceEnvironmentKey,
+                    environment.Profile.Key,
+                    StringComparison.OrdinalIgnoreCase)))
+                {
+                    failures.Add(ToFailure(environment));
+                }
+            }
+        }
+
+        return new ManagedBoardItemDiscoveryPage
+        {
+            Items = pageReferences
+                .Select(reference => snapshotsByKey.GetValueOrDefault(
+                    ReferenceKey(reference.Environment.Profile.Key, reference.Id)))
+                .Where(snapshot => snapshot is not null)
+                .Cast<ManagedBoardItemSnapshot>()
+                .ToArray(),
+            Failures = failures
+                .OrderBy(failure => failure.WorkSourceEnvironmentKey, StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            Page = query.Page,
+            PageSize = query.PageSize,
+            Total = ordered.Length,
+        };
     }
 
     public async Task<ClaimResult> TryClaimAsync(
@@ -462,6 +590,26 @@ internal sealed class AzureDevOpsBoardsWorkSource : IWorkSource
             EnvironmentKey = environmentKey,
         };
     }
+
+    private static ManagedBoardItemDiscoveryFailure ToFailure(
+        ResolvedWorkSourceEnvironment environment
+    ) => new()
+    {
+        WorkSourceEnvironmentKey = environment.Profile.Key,
+        Project = environment.Profile.Project,
+        Message = "Board items could not be read from this work source environment.",
+    };
+
+    private static string ReferenceKey(string environmentKey, string itemId) =>
+        $"{environmentKey}\u001f{itemId}";
+
+    private static string ReferenceKey(string environmentKey, int itemId) =>
+        $"{environmentKey}\u001f{itemId.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+
+    private sealed record DiagnosticReference(
+        ResolvedWorkSourceEnvironment Environment,
+        int Id
+    );
 
     private sealed record ClientSelection(
         IAzureDevOpsBoardsClient Client,

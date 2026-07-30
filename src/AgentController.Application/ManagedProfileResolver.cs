@@ -137,16 +137,21 @@ internal sealed class ManagedProfileResolver : IManagedProfileResolver
         IReadOnlyList<ResolvedWorkSourceEnvironment>
     > ListWorkSourceEnvironmentsAsync(CancellationToken cancellationToken)
     {
-        var managedList = await _workSourceEnvironmentStore.ListAsync(cancellationToken);
-        var managed = managedList
-            .Where(profile => profile.Enabled)
-            .Select(async profile => new ResolvedWorkSourceEnvironment(
-                profile,
-                await ResolveWorkSourceConnectionAsync(profile, cancellationToken)
-            ))
-            .ToList();
+        var configured = await ListConfiguredWorkSourceEnvironmentsAsync(cancellationToken);
+        return configured.Where(environment => environment.Profile.Enabled).ToArray();
+    }
 
-        return await Task.WhenAll(managed);
+    public async Task<
+        IReadOnlyList<ResolvedWorkSourceEnvironment>
+    > ListConfiguredWorkSourceEnvironmentsAsync(CancellationToken cancellationToken)
+    {
+        var profiles = await _workSourceEnvironmentStore.ListAsync(cancellationToken);
+        var resolved = profiles.Select(async profile => new ResolvedWorkSourceEnvironment(
+            profile,
+            await ResolveWorkSourceConnectionAsync(profile, cancellationToken)
+        ));
+
+        return await Task.WhenAll(resolved);
     }
 
     private static string NormalizeKey(string? key) =>

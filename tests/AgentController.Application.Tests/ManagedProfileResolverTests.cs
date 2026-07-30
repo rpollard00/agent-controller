@@ -124,6 +124,28 @@ public sealed class ManagedProfileResolverTests
     }
 
     [Fact]
+    public async Task ListConfiguredWorkSourceEnvironmentsAsync_IncludesDisabledProfilesInStoreOrder()
+    {
+        var resolver = CreateResolver(
+            [],
+            [
+                AzureDevOps("alpha", enabled: true, "Alpha"),
+                AzureDevOps("disabled", enabled: false, "Disabled"),
+            ],
+            []
+        );
+
+        var environments = await resolver.ListConfiguredWorkSourceEnvironmentsAsync(
+            CancellationToken.None
+        );
+
+        Assert.Equal(
+            ["alpha", "disabled"],
+            environments.Select(environment => environment.Profile.Key)
+        );
+    }
+
+    [Fact]
     public async Task ListWorkSourceEnvironmentsAsync_NoEnabledManagedProfilesReturnsEmpty()
     {
         var resolver = CreateResolver(

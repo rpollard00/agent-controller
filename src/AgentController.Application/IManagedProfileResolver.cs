@@ -24,4 +24,12 @@ public interface IManagedProfileResolver
     Task<IReadOnlyList<ResolvedWorkSourceEnvironment>> ListWorkSourceEnvironmentsAsync(
         CancellationToken cancellationToken
     );
+
+    /// <summary>
+    /// Lists every configured managed work source environment for read-only diagnostics,
+    /// including environments disabled for polling.
+    /// </summary>
+    Task<IReadOnlyList<ResolvedWorkSourceEnvironment>> ListConfiguredWorkSourceEnvironmentsAsync(
+        CancellationToken cancellationToken
+    ) => ListWorkSourceEnvironmentsAsync(cancellationToken);
 }

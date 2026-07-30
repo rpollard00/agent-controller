@@ -23,6 +23,22 @@ public interface IAzureDevOpsBoardsClient
     );
 
     /// <summary>
+    /// Queries only work-item identities. Used by diagnostic discovery so paging can
+    /// be resolved before any item details are fetched.
+    /// </summary>
+    Task<IReadOnlyList<AzureDevOpsWorkItemReference>> QueryWorkItemReferencesAsync(
+        BoardsQueryParameters parameters,
+        CancellationToken cancellationToken
+    ) => throw new NotSupportedException();
+
+    /// <summary>Fetches details for the supplied identities, in request order.</summary>
+    Task<IReadOnlyList<WorkCandidate>> GetWorkItemsAsync(
+        string project,
+        IReadOnlyList<int> ids,
+        CancellationToken cancellationToken
+    ) => throw new NotSupportedException();
+
+    /// <summary>
     /// Create a work item using an Azure DevOps JSON Patch document and return the
     /// external identity plus a candidate suitable for local persistence.
     /// </summary>
@@ -143,6 +159,9 @@ public interface IAzureDevOpsBoardsClient
         CancellationToken cancellationToken
     );
 }
+
+/// <summary>Identity returned by an Azure DevOps WIQL query.</summary>
+public sealed record AzureDevOpsWorkItemReference(int Id);
 
 /// <summary>
 /// Metadata for a Git repository in an Azure DevOps project.

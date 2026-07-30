@@ -871,6 +871,227 @@ public class AzureDevOpsBoardsWorkSourceTests
         Assert.Contains("agent-ready", patchBody);
     }
 
+    [Fact]
+    public async Task DiagnosticDiscovery_MergesFiltersAndPagesWithoutFetchingUnselectedDetails()
+    {
+        var first = new MockAzureDevOpsBoardsClient
+        {
+            ReferenceResults = [new(3), new(1)],
+            DetailResults = [Candidate(1), Candidate(3)],
+        };
+        var second = new MockAzureDevOpsBoardsClient
+        {
+            ReferenceResults = [new(2)],
+            DetailResults = [Candidate(2)],
+        };
+        var source = CreateWorkSource(
+            new Dictionary<string, IAzureDevOpsBoardsClient>
+            {
+                ["z-source"] = second,
+                ["a-source"] = first,
+            },
+            [ManagedEnvironment("z-source", "Project Z"), ManagedEnvironment("a-source", "Project A")]
+        );
+
+        var result = await source.ListAsync(
+            new ManagedBoardItemDiscoveryQuery { Page = 2, PageSize = 2 },
+            CancellationToken.None
+        );
+
+        Assert.Equal(3, result.Total);
+        var item = Assert.Single(result.Items);
+        Assert.Equal("z-source", item.WorkSourceEnvironmentKey);
+        Assert.Equal("Project Z", item.Project);
+        Assert.Equal("2", item.Item.ExternalId);
+        Assert.Empty(first.DetailCalls);
+        Assert.Equal([2], Assert.Single(second.DetailCalls).Ids);
+        Assert.Equal(BoardTerminalStates.Values, Assert.Single(first.ReferenceCalls).ExcludedStates);
+    }
+
+    [Fact]
+    public async Task DiagnosticDiscovery_IncludeTerminalAndEnvironmentFilter_RemoveOnlyTerminalConstraint()
+    {
+        var selected = new MockAzureDevOpsBoardsClient { ReferenceResults = [new(7)], DetailResults = [Candidate(7)] };
+        var ignored = new MockAzureDevOpsBoardsClient { ReferenceResults = [new(8)] };
+        var source = CreateWorkSource(
+            new Dictionary<string, IAzureDevOpsBoardsClient> { ["selected"] = selected, ["ignored"] = ignored },
+            [ManagedEnvironment("ignored", "Other"), ManagedEnvironment("selected", "Selected")]
+        );
+
+        var result = await source.ListAsync(
+            new ManagedBoardItemDiscoveryQuery
+            {
+                WorkSourceEnvironmentKey = "SELECTED",
+                IncludeTerminal = true,
+            },
+            CancellationToken.None
+        );
+
+        Assert.Single(result.Items);
+        Assert.Null(Assert.Single(selected.ReferenceCalls).ExcludedStates);
+        Assert.Empty(ignored.ReferenceCalls);
+        Assert.Null(Assert.Single(selected.ReferenceCalls).Tags);
+        Assert.Null(Assert.Single(selected.ReferenceCalls).ExcludedTags);
+    }
+
+    [Fact]
+    public async Task DiagnosticDiscovery_IsolatesEnvironmentFailuresAndHonorsCancellation()
+    {
+        var successful = new MockAzureDevOpsBoardsClient { ReferenceResults = [new(1)], DetailResults = [Candidate(1)] };
+        var failed = new MockAzureDevOpsBoardsClient { DiscoveryException = new HttpRequestException("secret detail") };
+        var source = CreateWorkSource(
+            new Dictionary<string, IAzureDevOpsBoardsClient> { ["good"] = successful, ["bad"] = failed },
+            [ManagedEnvironment("good", "Good"), ManagedEnvironment("bad", "Bad")]
+        );
+
+        var result = await source.ListAsync(new(), CancellationToken.None);
+
+        Assert.Single(result.Items);
+        var failure = Assert.Single(result.Failures);
+        Assert.Equal("bad", failure.WorkSourceEnvironmentKey);
+        Assert.DoesNotContain("secret", failure.Message, StringComparison.OrdinalIgnoreCase);
+
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            source.ListAsync(new(), cancellation.Token));
+    }
+
+    [Fact]
+    public async Task DiagnosticDiscovery_IncludesConfiguredEnvironmentDisabledForPolling()
+    {
+        var client = new MockAzureDevOpsBoardsClient
+        {
+            ReferenceResults = [new(4)],
+            DetailResults = [Candidate(4)],
+        };
+        var disabled = ManagedEnvironment("disabled", "Disabled Project") with { Enabled = false };
+        var source = CreateWorkSource(
+            new Dictionary<string, IAzureDevOpsBoardsClient> { ["disabled"] = client },
+            [disabled]
+        );
+
+        var result = await source.ListAsync(new(), CancellationToken.None);
+
+        var item = Assert.Single(result.Items);
+        Assert.Equal("disabled", item.WorkSourceEnvironmentKey);
+        Assert.Equal("Disabled Project", item.Project);
+    }
+
+    [Theory]
+    [InlineData("{\"value\":[]}", 0)]
+    [InlineData("{\"workItems\":[{\"id\":1}]}", 1)]
+    public async Task DiagnosticDiscovery_IsolatesMalformedProviderResponses(
+        string wiqlResponse,
+        int expectedTotal
+    )
+    {
+        var handler = new CaptureHttpMessageHandler(req => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    req.RequestUri!.AbsolutePath.EndsWith("/wiql", StringComparison.OrdinalIgnoreCase)
+                        ? wiqlResponse
+                        : "{\"notValue\":[]}",
+                    Encoding.UTF8,
+                    "application/json"
+                ),
+            }
+        ));
+        var source = CreateWorkSource(CreateClientWithHandler(handler));
+
+        var result = await source.ListAsync(new(), CancellationToken.None);
+
+        Assert.Equal(expectedTotal, result.Total);
+        Assert.Empty(result.Items);
+        Assert.Single(result.Failures);
+    }
+
+    [Fact]
+    public async Task DiagnosticDiscovery_DetailFailureDoesNotBlankOtherEnvironments()
+    {
+        var failed = new MockAzureDevOpsBoardsClient
+        {
+            ReferenceResults = [new(1)],
+            DetailException = new HttpRequestException("sensitive detail"),
+        };
+        var successful = new MockAzureDevOpsBoardsClient
+        {
+            ReferenceResults = [new(2)],
+            DetailResults = [Candidate(2)],
+        };
+        var source = CreateWorkSource(
+            new Dictionary<string, IAzureDevOpsBoardsClient>
+            {
+                ["bad"] = failed,
+                ["good"] = successful,
+            },
+            [ManagedEnvironment("bad", "Bad"), ManagedEnvironment("good", "Good")]
+        );
+
+        var result = await source.ListAsync(new(), CancellationToken.None);
+
+        Assert.Equal(2, result.Total);
+        Assert.Equal("2", Assert.Single(result.Items).Item.ExternalId);
+        var failure = Assert.Single(result.Failures);
+        Assert.Equal("bad", failure.WorkSourceEnvironmentKey);
+        Assert.DoesNotContain("sensitive", failure.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DiagnosticDetailClient_ChunksRequestsAtAzureDevOpsBatchLimit()
+    {
+        var batchSizes = new List<int>();
+        var handler = new CaptureHttpMessageHandler(async req =>
+        {
+            using var body = JsonDocument.Parse(await req.Content!.ReadAsStringAsync());
+            var ids = body.RootElement.GetProperty("ids").EnumerateArray()
+                .Select(value => value.GetInt32())
+                .ToArray();
+            batchSizes.Add(ids.Length);
+            var values = ids.Select(id => JsonSerializer.Deserialize<object>(
+                WorkItemGetResponse(id, 1, "New", string.Empty))!);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    JsonSerializer.Serialize(new { value = values }),
+                    Encoding.UTF8,
+                    "application/json"
+                ),
+            };
+        });
+        var client = CreateClientWithHandler(handler);
+
+        var result = await client.GetWorkItemsAsync(
+            Project,
+            Enumerable.Range(1, 401).ToArray(),
+            CancellationToken.None
+        );
+
+        Assert.Equal(401, result.Count);
+        Assert.Equal([200, 200, 1], batchSizes);
+    }
+
+    [Theory]
+    [InlineData(0, 50)]
+    [InlineData(1, 0)]
+    [InlineData(1, 101)]
+    public async Task DiagnosticDiscovery_RejectsInvalidPagination(int page, int pageSize)
+    {
+        var source = CreateWorkSourceWithoutManagedEnvironments();
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => source.ListAsync(
+            new ManagedBoardItemDiscoveryQuery { Page = page, PageSize = pageSize },
+            CancellationToken.None));
+    }
+
+    private static WorkCandidate Candidate(int id) => new()
+    {
+        Id = $"wi_{id}",
+        ExternalId = id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        Title = $"Item {id}",
+        Source = "AzureDevOpsBoards",
+    };
+
     // ──────────────────────────────────────────────
     // Helpers
     // ──────────────────────────────────────────────
@@ -898,6 +1119,18 @@ public class AzureDevOpsBoardsWorkSourceTests
         );
         var provider = services.BuildServiceProvider();
 
+        return new AzureDevOpsBoardsWorkSource(new DelegatingScopeFactory(provider));
+    }
+
+    private static AzureDevOpsBoardsWorkSource CreateWorkSource(
+        IReadOnlyDictionary<string, IAzureDevOpsBoardsClient> clients,
+        IReadOnlyList<WorkSourceEnvironmentProfile> environments
+    )
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IManagedProfileResolver>(new StubManagedProfileResolver(environments));
+        services.AddSingleton<IAzureDevOpsBoardsClientFactory>(new StubClientFactory(clients));
+        var provider = services.BuildServiceProvider();
         return new AzureDevOpsBoardsWorkSource(new DelegatingScopeFactory(provider));
     }
 
@@ -1020,14 +1253,19 @@ public class AzureDevOpsBoardsWorkSourceTests
 
         public Task<IReadOnlyList<ResolvedWorkSourceEnvironment>> ListWorkSourceEnvironmentsAsync(
             CancellationToken cancellationToken
-        )
-        {
-            return Task.FromResult<IReadOnlyList<ResolvedWorkSourceEnvironment>>(
-                profiles
-                    .Select(profile => new ResolvedWorkSourceEnvironment(profile, Connection: null))
-                    .ToList()
-            );
-        }
+        ) => ResolveProfiles(profiles.Where(profile => profile.Enabled));
+
+        public Task<IReadOnlyList<ResolvedWorkSourceEnvironment>> ListConfiguredWorkSourceEnvironmentsAsync(
+            CancellationToken cancellationToken
+        ) => ResolveProfiles(profiles);
+
+        private static Task<IReadOnlyList<ResolvedWorkSourceEnvironment>> ResolveProfiles(
+            IEnumerable<WorkSourceEnvironmentProfile> selectedProfiles
+        ) => Task.FromResult<IReadOnlyList<ResolvedWorkSourceEnvironment>>(
+            selectedProfiles
+                .Select(profile => new ResolvedWorkSourceEnvironment(profile, Connection: null))
+                .ToList()
+        );
     }
 
     private sealed class StubClientFactory(
@@ -1051,7 +1289,13 @@ public class AzureDevOpsBoardsWorkSourceTests
         public ClaimResult ClaimResult { get; init; } = new() { Success = false };
         public CreatedWorkItemResult CreateResult { get; init; } = new();
         public IReadOnlyList<WorkCandidate> QueryResults { get; init; } = [];
+        public IReadOnlyList<AzureDevOpsWorkItemReference> ReferenceResults { get; init; } = [];
+        public IReadOnlyList<WorkCandidate> DetailResults { get; init; } = [];
+        public Exception? DiscoveryException { get; init; }
+        public Exception? DetailException { get; init; }
         public List<BoardsQueryParameters> QueryCalls { get; } = [];
+        public List<BoardsQueryParameters> ReferenceCalls { get; } = [];
+        public List<(string Project, IReadOnlyList<int> Ids)> DetailCalls { get; } = [];
         public List<BoardsCreateWorkItemParameters> CreateCalls { get; } = [];
         public List<ClaimRequest> ClaimCalls { get; } = [];
         public List<ReleaseClaimRequest> ReleaseClaimCalls { get; } = [];
@@ -1071,6 +1315,33 @@ public class AzureDevOpsBoardsWorkSourceTests
         {
             QueryCalls.Add(parameters);
             return Task.FromResult(QueryResults);
+        }
+
+        public Task<IReadOnlyList<AzureDevOpsWorkItemReference>> QueryWorkItemReferencesAsync(
+            BoardsQueryParameters parameters,
+            CancellationToken ct
+        )
+        {
+            ct.ThrowIfCancellationRequested();
+            if (DiscoveryException is not null) throw DiscoveryException;
+            ReferenceCalls.Add(parameters);
+            return Task.FromResult(ReferenceResults);
+        }
+
+        public Task<IReadOnlyList<WorkCandidate>> GetWorkItemsAsync(
+            string project,
+            IReadOnlyList<int> ids,
+            CancellationToken ct
+        )
+        {
+            ct.ThrowIfCancellationRequested();
+            if (DetailException is not null) throw DetailException;
+            if (DiscoveryException is not null) throw DiscoveryException;
+            DetailCalls.Add((project, ids));
+            var selected = DetailResults
+                .Where(item => ids.Contains(int.Parse(item.ExternalId, System.Globalization.CultureInfo.InvariantCulture)))
+                .ToArray();
+            return Task.FromResult<IReadOnlyList<WorkCandidate>>(selected);
         }
 
         public Task<CreatedWorkItemResult> CreateWorkItemAsync(

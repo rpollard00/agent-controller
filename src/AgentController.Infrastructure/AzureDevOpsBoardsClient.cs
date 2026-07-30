@@ -105,138 +105,127 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
         CancellationToken cancellationToken
     )
     {
-        var project = string.IsNullOrWhiteSpace(parameters.Project)
-            ? _options.Project
-            : parameters.Project;
+        var references = await QueryWorkItemReferencesAsync(parameters, cancellationToken);
+        var project = ResolveQueryProject(parameters.Project);
+        return await GetWorkItemsCoreAsync(
+            project,
+            references.Select(reference => reference.Id).ToArray(),
+            strict: false,
+            cancellationToken
+        );
+    }
 
-        if (string.IsNullOrWhiteSpace(project))
-        {
-            throw new InvalidOperationException(
-                "Azure DevOps project name is required for work item queries. "
-                    + "Configure 'workSource:project' or supply it in the query parameters."
-            );
-        }
-
-        // Build WIQL query
-        var wiql = BuildWiql(project, parameters);
-        var wiqlBody = JsonSerializer.Serialize(new { query = wiql }, JsonOptions);
-        var content = new StringContent(wiqlBody, Encoding.UTF8, "application/json");
-
-        // POST WIQL query
-        var wiqlResponse = await _http.PostAsync(
+    public async Task<IReadOnlyList<AzureDevOpsWorkItemReference>> QueryWorkItemReferencesAsync(
+        BoardsQueryParameters parameters,
+        CancellationToken cancellationToken
+    )
+    {
+        ArgumentNullException.ThrowIfNull(parameters);
+        var project = ResolveQueryProject(parameters.Project);
+        var wiqlBody = JsonSerializer.Serialize(
+            new { query = BuildWiql(project, parameters) },
+            JsonOptions
+        );
+        using var content = new StringContent(wiqlBody, Encoding.UTF8, "application/json");
+        using var response = await _http.PostAsync(
             $"{project}/_apis/wit/wiql?api-version=7.1",
             content,
             cancellationToken
         );
+        response.EnsureSuccessStatusCode();
 
-        wiqlResponse.EnsureSuccessStatusCode();
-
-        var wiqlJson = await wiqlResponse.Content.ReadAsStringAsync(cancellationToken);
-        using var wiqlDoc = JsonDocument.Parse(wiqlJson);
-        var workItemRefs = wiqlDoc.RootElement.GetProperty("workItems").EnumerateArray().ToList();
-
-        if (workItemRefs.Count == 0)
-            return [];
-
-        // Batch fetch work item details
-        var ids = workItemRefs.Select(r => r.GetProperty("id").GetInt32()).ToList();
-
-        var batchBody = JsonSerializer.Serialize(new { ids, fields = WorkItemFields }, JsonOptions);
-
-        var batchContent = new StringContent(batchBody, Encoding.UTF8, "application/json");
-        var batchResponse = await _http.PostAsync(
-            $"{project}/_apis/wit/workitemsbatch?api-version=7.1",
-            batchContent,
-            cancellationToken
-        );
-
-        batchResponse.EnsureSuccessStatusCode();
-
-        var batchJson = await batchResponse.Content.ReadAsStringAsync(cancellationToken);
-        using var batchDoc = JsonDocument.Parse(batchJson);
-        var workItems = batchDoc.RootElement.GetProperty("value").EnumerateArray();
-
-        var results = new List<WorkCandidate>();
-        foreach (var item in workItems)
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var document = JsonDocument.Parse(json);
+        if (!document.RootElement.TryGetProperty("workItems", out var values)
+            || values.ValueKind != JsonValueKind.Array)
         {
-            var itemId = item.GetProperty("id").GetInt32();
-
-            // Extract revision for optimistic concurrency on later updates
-            var revision =
-                item.TryGetProperty("rev", out var revEl)
-                && revEl.ValueKind == JsonValueKind.Number
-                && revEl.TryGetInt32(out var rev)
-                    ? rev.ToString(CultureInfo.InvariantCulture)
-                    : null;
-
-            // Require the fields object for mapping
-            if (
-                !item.TryGetProperty("fields", out var fields)
-                || fields.ValueKind != JsonValueKind.Object
-            )
-            {
-                // Malformed: work item returned without fields — skip with warning
-                continue;
-            }
-
-            // Parse tags
-            var tags =
-                fields.TryGetProperty("System.Tags", out var tagsElement)
-                && tagsElement.ValueKind == JsonValueKind.String
-                    ? tagsElement
-                        .GetString()
-                        ?.Split(
-                            ';',
-                            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries
-                        )
-                        ?? Array.Empty<string>()
-                    : Array.Empty<string>();
-
-            // Resolve RepoKey from tags
-            var repoKey = ResolveRepoKeyFromTags(tags);
-
-            // Build SourceMetadata for later updates
-            var metadata = new Dictionary<string, string>();
-            if (revision is not null)
-                metadata["revision"] = revision;
-
-            var areaPath = GetStringField(fields, "System.AreaPath");
-            if (areaPath is not null)
-                metadata["areaPath"] = areaPath;
-
-            var iterationPath = GetStringField(fields, "System.IterationPath");
-            if (iterationPath is not null)
-                metadata["iterationPath"] = iterationPath;
-
-            var workItemType = GetStringField(fields, "System.WorkItemType");
-            if (workItemType is not null)
-                metadata["workItemType"] = workItemType;
-
-            var candidate = new WorkCandidate
-            {
-                Id = $"wi_{itemId}",
-                ExternalId = itemId.ToString(CultureInfo.InvariantCulture),
-                ExternalUrl =
-                    $"{_options.BaseUrl?.TrimEnd('/')}/{project}/_workitems/edit/{itemId}",
-                RepoKey = repoKey,
-                Title = GetStringField(fields, "System.Title") ?? string.Empty,
-                Description = GetStringField(fields, "System.Description"),
-                AcceptanceCriteria = ParseAcceptanceCriteria(
-                    fields,
-                    GetStringField(fields, "System.Description")
-                ),
-                Priority = GetIntField(fields, "Microsoft.VSTS.Common.Priority"),
-                Status = GetStringField(fields, "System.State"),
-                Tags = tags,
-                AssignedTo = GetAssignedToDisplayName(fields),
-                Source = "AzureDevOpsBoards",
-                SourceMetadata = metadata.Count > 0 ? metadata : null,
-            };
-
-            results.Add(candidate);
+            throw new JsonException("The WIQL response did not contain a workItems array.");
         }
 
-        return results;
+        var maximum = Math.Max(0, parameters.MaxResults);
+        var references = new List<AzureDevOpsWorkItemReference>();
+        foreach (var value in values.EnumerateArray())
+        {
+            if (!value.TryGetProperty("id", out var idElement)
+                || !idElement.TryGetInt32(out var id))
+            {
+                throw new JsonException("The WIQL response contained an invalid work-item identity.");
+            }
+
+            if (references.Count < maximum)
+            {
+                references.Add(new AzureDevOpsWorkItemReference(id));
+            }
+        }
+
+        return references;
+    }
+
+    public Task<IReadOnlyList<WorkCandidate>> GetWorkItemsAsync(
+        string project,
+        IReadOnlyList<int> ids,
+        CancellationToken cancellationToken
+    ) => GetWorkItemsCoreAsync(project, ids, strict: true, cancellationToken);
+
+    private async Task<IReadOnlyList<WorkCandidate>> GetWorkItemsCoreAsync(
+        string project,
+        IReadOnlyList<int> ids,
+        bool strict,
+        CancellationToken cancellationToken
+    )
+    {
+        project = ResolveQueryProject(project);
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        var byId = new Dictionary<int, WorkCandidate>();
+        foreach (var batchIds in ids.Distinct().Chunk(200))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var body = JsonSerializer.Serialize(
+                new { ids = batchIds, fields = WorkItemFields },
+                JsonOptions
+            );
+            using var content = new StringContent(body, Encoding.UTF8, "application/json");
+            using var response = await _http.PostAsync(
+                $"{project}/_apis/wit/workitemsbatch?api-version=7.1",
+                content,
+                cancellationToken
+            );
+            response.EnsureSuccessStatusCode();
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            using var document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty("value", out var values)
+                || values.ValueKind != JsonValueKind.Array)
+            {
+                throw new JsonException("The work-item batch response did not contain a value array.");
+            }
+
+            foreach (var value in values.EnumerateArray())
+            {
+                var candidate = MapWorkItem(value, project, strict);
+                if (candidate is null)
+                {
+                    continue;
+                }
+                if (!int.TryParse(candidate.ExternalId, CultureInfo.InvariantCulture, out var id))
+                {
+                    throw new JsonException("The work-item batch response contained an invalid identity.");
+                }
+                byId[id] = candidate;
+            }
+        }
+
+        // A missing or malformed detail would make diagnostic page metadata misleading.
+        if (strict && ids.Any(id => !byId.ContainsKey(id)))
+        {
+            throw new JsonException("The work-item batch response omitted requested details.");
+        }
+
+        return ids.Where(byId.ContainsKey).Select(id => byId[id]).ToArray();
     }
 
     public async Task<CreatedWorkItemResult> CreateWorkItemAsync(
@@ -1324,6 +1313,73 @@ internal sealed partial class AzureDevOpsBoardsClient : IAzureDevOpsBoardsClient
     public void Dispose()
     {
         _http.Dispose();
+    }
+
+    private string ResolveQueryProject(string? project)
+    {
+        var resolved = string.IsNullOrWhiteSpace(project) ? _options.Project : project.Trim();
+        if (string.IsNullOrWhiteSpace(resolved))
+        {
+            throw new InvalidOperationException(
+                "Azure DevOps project name is required for work item queries. "
+                    + "Configure 'workSource:project' or supply it in the query parameters."
+            );
+        }
+        return resolved;
+    }
+
+    private WorkCandidate? MapWorkItem(JsonElement item, string project, bool strict)
+    {
+        if (!item.TryGetProperty("id", out var idElement) || !idElement.TryGetInt32(out var itemId))
+        {
+            if (strict) throw new JsonException("A work-item detail contained an invalid identity.");
+            return null;
+        }
+        if (!item.TryGetProperty("fields", out var fields) || fields.ValueKind != JsonValueKind.Object)
+        {
+            if (strict) throw new JsonException("A work-item detail did not contain a fields object.");
+            return null;
+        }
+
+        var revision = item.TryGetProperty("rev", out var revisionElement)
+            && revisionElement.TryGetInt32(out var revisionValue)
+                ? revisionValue.ToString(CultureInfo.InvariantCulture)
+                : null;
+        var tags = fields.TryGetProperty("System.Tags", out var tagsElement)
+            && tagsElement.ValueKind == JsonValueKind.String
+                ? tagsElement.GetString()?.Split(
+                    ';',
+                    StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries
+                ) ?? []
+                : [];
+        var metadata = new Dictionary<string, string>();
+        if (revision is not null) metadata["revision"] = revision;
+        AddMetadata("areaPath", GetStringField(fields, "System.AreaPath"));
+        AddMetadata("iterationPath", GetStringField(fields, "System.IterationPath"));
+        AddMetadata("workItemType", GetStringField(fields, "System.WorkItemType"));
+
+        var description = GetStringField(fields, "System.Description");
+        return new WorkCandidate
+        {
+            Id = $"wi_{itemId}",
+            ExternalId = itemId.ToString(CultureInfo.InvariantCulture),
+            ExternalUrl = $"{_options.BaseUrl?.TrimEnd('/')}/{project}/_workitems/edit/{itemId}",
+            RepoKey = ResolveRepoKeyFromTags(tags),
+            Title = GetStringField(fields, "System.Title") ?? string.Empty,
+            Description = description,
+            AcceptanceCriteria = ParseAcceptanceCriteria(fields, description),
+            Priority = GetIntField(fields, "Microsoft.VSTS.Common.Priority"),
+            Status = GetStringField(fields, "System.State"),
+            Tags = tags,
+            AssignedTo = GetAssignedToDisplayName(fields),
+            Source = "AzureDevOpsBoards",
+            SourceMetadata = metadata.Count == 0 ? null : metadata,
+        };
+
+        void AddMetadata(string key, string? value)
+        {
+            if (value is not null) metadata[key] = value;
+        }
     }
 
     // ─── WIQL builder ────────────────────────────────────

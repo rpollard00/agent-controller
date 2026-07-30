@@ -570,7 +570,11 @@ public static class AgentControllerServiceCollectionExtensions
         // Register the work source implementation as singleton.
         // It uses IServiceScopeFactory to resolve scoped profile/client services
         // per operation.
-        services.AddSingleton<IWorkSource, AzureDevOpsBoardsWorkSource>();
+        services.AddSingleton<AzureDevOpsBoardsWorkSource>();
+        services.AddSingleton<IWorkSource>(provider =>
+            provider.GetRequiredService<AzureDevOpsBoardsWorkSource>());
+        services.AddSingleton<IManagedBoardItemDiscovery>(provider =>
+            provider.GetRequiredService<AzureDevOpsBoardsWorkSource>());
 
         // Register startup validator for managed ADO work source environments.
         // Validates ActiveState and CompletedState against the actual valid
