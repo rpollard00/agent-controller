@@ -68,6 +68,7 @@ const runCard: RunCardItem = {
   lastEventType: 'runtime.progress',
   lastEventMessage: 'Implementing API client',
   lastEventAt: '2026-07-24T01:00:00Z',
+  soakEligibleAt: null,
   createdAt: '2026-07-24T00:00:00Z',
   updatedAt: '2026-07-24T01:00:00Z',
 };

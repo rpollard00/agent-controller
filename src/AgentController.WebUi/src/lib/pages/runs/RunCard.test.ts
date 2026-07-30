@@ -29,6 +29,7 @@ const baseCard: RunCardItem = {
   lastEventType: 'runtime.progress',
   lastEventMessage: 'Implementing the run card',
   lastEventAt: new Date().toISOString(),
+  soakEligibleAt: null,
   createdAt: '2026-07-24T00:00:00Z',
   updatedAt: '2026-07-24T01:00:00Z',
 };

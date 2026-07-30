@@ -88,7 +88,8 @@ internal static class RunCardFactory
         ReworkCycle? cycle,
         AgentRunHandle? associatedRun,
         WorkCandidate? workItem,
-        string? repositoryUrl
+        string? repositoryUrl,
+        TimeSpan feedbackSoakDuration
     )
     {
         var threadLabel = feedback.ThreadCount == 1 ? "thread" : "threads";
@@ -125,6 +126,9 @@ internal static class RunCardFactory
             LastEventAt = feedback.Status == ReworkFeedbackStatus.Watching
                 ? feedback.LastQualifyingCommentAt
                 : feedback.UpdatedAt,
+            SoakEligibleAt = feedback.Status == ReworkFeedbackStatus.Watching
+                ? feedback.LastQualifyingCommentAt.Add(feedbackSoakDuration).ToUniversalTime()
+                : null,
             CreatedAt = feedback.CreatedAt,
             UpdatedAt = feedback.UpdatedAt,
         };

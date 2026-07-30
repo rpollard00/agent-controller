@@ -31,6 +31,7 @@ const baseCard: RunCardItem = {
   lastEventType: 'runtime.progress',
   lastEventMessage: 'Building the dashboard',
   lastEventAt: '2026-07-24T01:00:00Z',
+  soakEligibleAt: null,
   createdAt: '2026-07-24T00:00:00Z',
   updatedAt: '2026-07-24T01:00:00Z',
 };

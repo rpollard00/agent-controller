@@ -1,6 +1,7 @@
 using AgentController.Application.Abstractions;
 using AgentController.Application.Results;
 using AgentController.Domain;
+using Microsoft.Extensions.Options;
 
 namespace AgentController.Application.Queries;
 
@@ -13,7 +14,8 @@ public sealed class ListRunCardsQueryHandler(
     ILifecycleEventStore lifecycleEventStore,
     IRepositoryStore repositoryStore,
     IReworkFeedbackStore reworkFeedbackStore,
-    IReworkCycleStore reworkCycleStore
+    IReworkCycleStore reworkCycleStore,
+    IOptions<FeedbackSoakOptionsView> feedbackSoakOptions
 ) : IQueryHandler<ListRunCardsQuery, IReadOnlyList<RunCardItem>>
 {
     private const int ResultLimit = 200;
@@ -24,6 +26,7 @@ public sealed class ListRunCardsQueryHandler(
     private readonly IRepositoryStore _repositoryStore = repositoryStore;
     private readonly IReworkFeedbackStore _reworkFeedbackStore = reworkFeedbackStore;
     private readonly IReworkCycleStore _reworkCycleStore = reworkCycleStore;
+    private readonly TimeSpan _feedbackSoakDuration = feedbackSoakOptions.Value.SoakDuration;
 
     public async Task<IReadOnlyList<RunCardItem>> ExecuteAsync(
         ListRunCardsQuery query,
@@ -123,7 +126,8 @@ public sealed class ListRunCardsQueryHandler(
                     cycle,
                     associatedRun,
                     enrichment.WorkItem,
-                    enrichment.RepositoryUrl
+                    enrichment.RepositoryUrl,
+                    _feedbackSoakDuration
                 )
             );
         }

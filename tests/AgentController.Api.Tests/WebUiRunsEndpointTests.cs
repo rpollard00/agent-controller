@@ -242,6 +242,14 @@ public sealed class WebUiRunsEndpointTests : IAsyncLifetime
             Baseline.AddMinutes(2),
             soakCard.GetProperty("lastEventAt").GetDateTimeOffset()
         );
+        var soakEligibleAt = soakCard.GetProperty("soakEligibleAt");
+        Assert.Equal(JsonValueKind.String, soakEligibleAt.ValueKind);
+        Assert.Equal(Baseline.AddMinutes(13), soakEligibleAt.GetDateTimeOffset());
+        Assert.EndsWith("+00:00", soakEligibleAt.GetString(), StringComparison.Ordinal);
+        Assert.Equal(
+            JsonValueKind.Null,
+            executingCard.GetProperty("soakEligibleAt").ValueKind
+        );
     }
 
     [Fact]
@@ -445,6 +453,7 @@ public sealed class WebUiRunsEndpointTests : IAsyncLifetime
             "lastEventType",
             "lastEventMessage",
             "lastEventAt",
+            "soakEligibleAt",
             "createdAt",
             "updatedAt",
         ];
@@ -483,6 +492,7 @@ public sealed class WebUiRunsEndpointTests : IAsyncLifetime
                             ["runtime:provider"] = "NoOp",
                             ["feedback:enabled"] = "false",
                             ["feedback:provider"] = "None",
+                            ["feedback:soakMinutes"] = "11",
                         }
                     )
             );

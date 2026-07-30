@@ -108,6 +108,15 @@ public static class AgentControllerServiceCollectionExtensions
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
+        // Project only the soak duration into Application; keep provider options private here.
+        services.Configure<FeedbackSoakOptionsView>(options =>
+        {
+            var feedback = configuration
+                .GetSection(FeedbackOptions.SectionName)
+                .Get<FeedbackOptions>();
+            options.SoakDuration = TimeSpan.FromMinutes(feedback?.SoakMinutes ?? 5);
+        });
+
         services
             .AddOptions<SecretProviderOptions>()
             .Bind(configuration.GetSection(SecretProviderOptions.SectionName))

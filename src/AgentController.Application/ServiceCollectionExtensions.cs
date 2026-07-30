@@ -20,6 +20,7 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddApplicationHandlers(this IServiceCollection services)
     {
         services.AddScoped<IManagedProfileResolver, ManagedProfileResolver>();
+        services.AddOptions<FeedbackSoakOptionsView>();
         services.TryAddSingleton(new PullRequestDiagnosticOptions());
 
         // Command handlers

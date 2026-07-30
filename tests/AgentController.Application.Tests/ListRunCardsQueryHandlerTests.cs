@@ -1,5 +1,7 @@
 using AgentController.Application.Queries;
+using AgentController.Application.Abstractions;
 using AgentController.Domain;
+using Microsoft.Extensions.Options;
 
 namespace AgentController.Application.Tests;
 
@@ -77,7 +79,13 @@ public sealed class ListRunCardsQueryHandlerTests
             CreatedAt = Baseline.AddMinutes(1),
             UpdatedAt = Baseline.AddMinutes(4),
         };
-        var handler = CreateHandler([run], [workItem], [repository], [feedback]);
+        var handler = CreateHandler(
+            [run],
+            [workItem],
+            [repository],
+            [feedback],
+            feedbackSoakDuration: TimeSpan.FromMinutes(17)
+        );
 
         var cards = await handler.ExecuteAsync(new ListRunCardsQuery(), CancellationToken.None);
 
@@ -101,6 +109,8 @@ public sealed class ListRunCardsQueryHandlerTests
         Assert.Equal("rework.feedback.soaking", card.LastEventType);
         Assert.Contains("3", card.LastEventMessage);
         Assert.Equal(feedback.LastQualifyingCommentAt, card.LastEventAt);
+        Assert.Equal(Baseline.AddMinutes(22), card.SoakEligibleAt);
+        Assert.Equal(TimeSpan.Zero, card.SoakEligibleAt?.Offset);
         Assert.Equal(feedback.CreatedAt, card.CreatedAt);
         Assert.Equal(feedback.UpdatedAt, card.UpdatedAt);
 
@@ -108,6 +118,84 @@ public sealed class ListRunCardsQueryHandlerTests
         Assert.Equal(run.RuntimeType, runCard.RuntimeType);
         Assert.Equal(run.RuntimeProfileName, runCard.RuntimeProfileName);
         Assert.Equal(run.EnvironmentProviderType, runCard.EnvironmentProviderType);
+        Assert.Null(runCard.SoakEligibleAt);
+    }
+
+    [Theory]
+    [InlineData(ReworkRequestMode.Revival)]
+    [InlineData(ReworkRequestMode.Assistance)]
+    public async Task ExecuteAsync_ProjectsDeadlineForBothWatchingRequestModes(
+        ReworkRequestMode requestMode
+    )
+    {
+        var feedback = new ReworkFeedback
+        {
+            Id = $"watching-{requestMode}",
+            RequestMode = requestMode,
+            Status = ReworkFeedbackStatus.Watching,
+            LastQualifyingCommentAt = Baseline.ToOffset(TimeSpan.FromHours(-4)),
+            CreatedAt = Baseline,
+            UpdatedAt = Baseline,
+        };
+        var handler = CreateHandler(
+            feedback: [feedback],
+            feedbackSoakDuration: TimeSpan.FromMinutes(23)
+        );
+
+        var card = Assert.Single(
+            await handler.ExecuteAsync(new ListRunCardsQuery(), CancellationToken.None)
+        );
+
+        Assert.Equal(Baseline.AddMinutes(23), card.SoakEligibleAt);
+        Assert.Equal(TimeSpan.Zero, card.SoakEligibleAt?.Offset);
+    }
+
+    [Theory]
+    [InlineData(ReworkFeedbackStatus.Soaked)]
+    [InlineData(ReworkFeedbackStatus.Materialized)]
+    public async Task ExecuteAsync_OmitsDeadlineForLaterFeedbackStates(
+        ReworkFeedbackStatus status
+    )
+    {
+        var feedback = new ReworkFeedback
+        {
+            Id = $"feedback-{status}",
+            Status = status,
+            LastQualifyingCommentAt = Baseline,
+            CreatedAt = Baseline,
+            UpdatedAt = Baseline,
+        };
+        var handler = CreateHandler(feedback: [feedback]);
+
+        var card = Assert.Single(
+            await handler.ExecuteAsync(new ListRunCardsQuery(), CancellationToken.None)
+        );
+
+        Assert.Null(card.SoakEligibleAt);
+    }
+
+    [Fact]
+    public void CreateTrackingCard_OmitsDeadlineForSupersededFeedback()
+    {
+        var feedback = new ReworkFeedback
+        {
+            Id = "feedback-superseded",
+            Status = ReworkFeedbackStatus.Superseded,
+            LastQualifyingCommentAt = Baseline,
+            CreatedAt = Baseline,
+            UpdatedAt = Baseline,
+        };
+
+        var card = RunCardFactory.CreateTrackingCard(
+            feedback,
+            cycle: null,
+            associatedRun: null,
+            workItem: null,
+            repositoryUrl: null,
+            feedbackSoakDuration: TimeSpan.FromMinutes(5)
+        );
+
+        Assert.Null(card.SoakEligibleAt);
     }
 
     [Fact]
@@ -451,7 +539,8 @@ public sealed class ListRunCardsQueryHandlerTests
         IEnumerable<RepositoryProfile>? repositories = null,
         IEnumerable<ReworkFeedback>? feedback = null,
         IEnumerable<LifecycleEvent>? events = null,
-        IEnumerable<ReworkCycle>? cycles = null
+        IEnumerable<ReworkCycle>? cycles = null,
+        TimeSpan? feedbackSoakDuration = null
     ) =>
         new(
             new StubAgentRunStore(runs ?? []),
@@ -459,7 +548,13 @@ public sealed class ListRunCardsQueryHandlerTests
             new StubLifecycleEventStore(events ?? []),
             new StubRepositoryStore(repositories ?? []),
             new StubReworkFeedbackStore(feedback ?? []),
-            new StubReworkCycleStore(cycles ?? [])
+            new StubReworkCycleStore(cycles ?? []),
+            Options.Create(
+                new FeedbackSoakOptionsView
+                {
+                    SoakDuration = feedbackSoakDuration ?? TimeSpan.FromMinutes(5),
+                }
+            )
         );
 
     private sealed class StubAgentRunStore(IEnumerable<AgentRunHandle> runs) : IAgentRunStore

@@ -194,6 +194,7 @@ export interface RunCardItem {
   lastEventType: string | null;
   lastEventMessage: string | null;
   lastEventAt: string | null;
+  soakEligibleAt: string | null;
   createdAt: string;
   updatedAt: string;
 }

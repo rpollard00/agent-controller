@@ -82,6 +82,11 @@ public sealed record RunCardItem
     /// <summary>Occurrence time of the latest lifecycle event or qualifying comment.</summary>
     public DateTimeOffset? LastEventAt { get; init; }
 
+    /// <summary>
+    /// UTC instant when watched feedback completes its soak period, when applicable.
+    /// </summary>
+    public DateTimeOffset? SoakEligibleAt { get; init; }
+
     /// <summary>When the underlying run or soak row was created.</summary>
     public DateTimeOffset CreatedAt { get; init; }
 
