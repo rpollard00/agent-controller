@@ -1,6 +1,9 @@
+using System.Reflection;
 using System.Net;
 using System.Text;
 using AgentController.Application;
+using AgentController.Application.Abstractions;
+using AgentController.Application.Queries;
 using AgentController.Domain;
 using AgentController.Domain.Secrets;
 using AgentController.Infrastructure;
@@ -25,6 +28,29 @@ public sealed class AzureDevOpsReposPrLabelSourceTests
         Assert.IsType<AzureDevOpsReposPrLabelSource>(
             provider.GetRequiredService<IPrLabelSource>()
         );
+    }
+
+    [Fact]
+    public void Registration_ResolvesFeedbackPipelineAndScopedDiagnosticsHandler()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddApplicationHandlers();
+        services.AddAgentControllerFeedbackFilterPipeline();
+        services.AddAgentControllerAzureDevOpsReposFeedbackSource();
+        AddScopedStoreProxies(services);
+
+        using var provider = services.BuildServiceProvider(validateScopes: true);
+
+        var pipeline = provider.GetRequiredService<ReviewFeedbackFilterPipeline>();
+        Assert.Same(pipeline, provider.GetRequiredService<ReviewFeedbackFilterPipeline>());
+
+        using var scope = provider.CreateScope();
+        var handler = scope.ServiceProvider.GetRequiredService<
+            IQueryHandler<GetPullRequestDiagnosticsQuery, PullRequestDiagnosticDetail?>
+        >();
+
+        Assert.IsType<GetPullRequestDiagnosticsQueryHandler>(handler);
     }
 
     [Fact]
@@ -174,6 +200,19 @@ public sealed class AzureDevOpsReposPrLabelSourceTests
         NullLogger<AzureDevOpsReposPrLabelSource>.Instance
     );
 
+    private static void AddScopedStoreProxies(ServiceCollection services)
+    {
+        services.AddScoped<IRepositoryStore>(_ => NoOpProxy<IRepositoryStore>());
+        services.AddScoped<IAgentRunStore>(_ => NoOpProxy<IAgentRunStore>());
+        services.AddScoped<IReworkCycleStore>(_ => NoOpProxy<IReworkCycleStore>());
+        services.AddScoped<IReworkFeedbackStore>(_ => NoOpProxy<IReworkFeedbackStore>());
+        services.AddScoped<IConnectionStore>(_ => NoOpProxy<IConnectionStore>());
+        services.AddScoped<ISecretStore>(_ => NoOpProxy<ISecretStore>());
+    }
+
+    private static T NoOpProxy<T>() where T : class =>
+        DispatchProxy.Create<T, NoOpDispatchProxy<T>>();
+
     private static ServiceProvider CreateProvider(
         RepositoryProfile? repository,
         ConnectionProfile connection,
@@ -223,6 +262,16 @@ public sealed class AzureDevOpsReposPrLabelSourceTests
     {
         Content = new StringContent(json, Encoding.UTF8, "application/json"),
     };
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Performance",
+        "CA1852:Seal internal types",
+        Justification = "DispatchProxy subclasses this type at runtime."
+    )]
+    private class NoOpDispatchProxy<T> : DispatchProxy where T : class
+    {
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args) => null;
+    }
 
     private sealed class RecordingLabelClientFactory(
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> responseFactory
