@@ -181,6 +181,11 @@ function createApi(initialRepositories: RepositoryProfile[] = [repository]): Moc
           authMechanism: 'PersonalAccessToken',
           errors: [],
         }),
+        getReviewerIdentityPolicy: async () => ({
+          provider: 'AzureDevOps',
+          isSupported: true,
+          supportedIdentityKinds: [],
+        }),
         listProjects: async () => projects,
         listRepositories: async () => [],
         listBranches: async () => [],

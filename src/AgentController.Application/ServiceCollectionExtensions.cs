@@ -195,6 +195,13 @@ public static class ServiceCollectionExtensions
             >,
             ListHostRepositoryBranchesQueryHandler
         >();
+        services.AddScoped<
+            IQueryHandler<
+                GetReviewerIdentityPolicyQuery,
+                ReviewerIdentityPolicyQueryResult
+            >,
+            GetReviewerIdentityPolicyQueryHandler
+        >();
 
         // Secrets management command handlers
         services.AddScoped<

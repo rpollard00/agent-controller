@@ -272,6 +272,24 @@ export interface ConnectionProfile {
   updatedAt: string;
 }
 
+/** Metadata for one provider-specific reviewer identity kind. */
+export type ReviewerIdentityValidationCategory = 'email' | 'guid' | 'opaque';
+
+export interface ReviewerIdentityKindMetadata {
+  kind: string;
+  label: string;
+  hint: string | null;
+  placeholder: string | null;
+  validationCategory: ReviewerIdentityValidationCategory;
+}
+
+/** Credential-free reviewer identity policy metadata for a managed connection. */
+export interface ReviewerIdentityPolicyMetadata {
+  provider: string;
+  isSupported: boolean;
+  supportedIdentityKinds: ReviewerIdentityKindMetadata[];
+}
+
 /** Minimal project descriptor from a connection provider. */
 export interface ConnectionProject {
   id: string;

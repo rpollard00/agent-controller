@@ -15,6 +15,7 @@ import type {
   PullRequestsDebugPageResponse,
   RepositoryCloneTransportResolution,
   RepositoryProfile,
+  ReviewerIdentityPolicyMetadata,
   RunCardItem,
   RuntimeEnvironmentProfile,
   SecretInfo,
@@ -49,6 +50,10 @@ export interface WorkSourceEnvironmentResourceClient
 export interface ConnectionResourceClient
   extends ResourceClient<ConnectionProfile> {
   verifyConnection(key: string, signal?: AbortSignal): Promise<ConnectionConnectivityResult>;
+  getReviewerIdentityPolicy(
+    key: string,
+    signal?: AbortSignal,
+  ): Promise<ReviewerIdentityPolicyMetadata>;
   listProjects(key: string, signal?: AbortSignal): Promise<ConnectionProject[]>;
   listRepositories(key: string, project: string, signal?: AbortSignal): Promise<HostRepository[]>;
   listBranches(key: string, project: string, repositoryId: string, signal?: AbortSignal): Promise<string[]>;
@@ -251,6 +256,11 @@ export function createWebUiApiClient(options: ApiClientOptions = {}): WebUiApiCl
         request<ConnectionConnectivityResult>(
           `/connections/${encodeURIComponent(key)}/verify`,
           { method: 'POST', signal },
+        ),
+      getReviewerIdentityPolicy: (key, signal) =>
+        request<ReviewerIdentityPolicyMetadata>(
+          `/connections/${encodeURIComponent(key)}/reviewer-identity-policy`,
+          { signal },
         ),
       listProjects: (key, signal) =>
         request<ConnectionProject[]>(

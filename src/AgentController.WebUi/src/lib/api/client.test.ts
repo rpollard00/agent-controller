@@ -6,6 +6,7 @@ import type {
   ConnectionProject,
   PullRequestsDebugPageResponse,
   RepositoryProfile,
+  ReviewerIdentityPolicyMetadata,
   RunCardItem,
 } from './types';
 
@@ -119,6 +120,33 @@ describe('Web UI API client', () => {
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/webui/repositories/repo%20key%2Fone/clone-transport',
       expect.objectContaining({}),
+    );
+  });
+
+  it('gets credential-free reviewer policy metadata for an encoded connection key', async () => {
+    const metadata: ReviewerIdentityPolicyMetadata = {
+      provider: 'AzureDevOps',
+      isSupported: true,
+      supportedIdentityKinds: [
+        {
+          kind: 'email',
+          label: 'Email / uniqueName',
+          hint: 'The Azure DevOps uniqueName, usually an email address.',
+          placeholder: 'reviewer@example.com',
+          validationCategory: 'email',
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async () => Response.json(metadata));
+    const client = createWebUiApiClient({ fetch: fetchMock });
+    const controller = new AbortController();
+
+    await expect(
+      client.connections.getReviewerIdentityPolicy('connection key/one', controller.signal),
+    ).resolves.toEqual(metadata);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/webui/connections/connection%20key%2Fone/reviewer-identity-policy',
+      expect.objectContaining({ signal: controller.signal }),
     );
   });
 

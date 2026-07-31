@@ -17,6 +17,7 @@ namespace AgentController.Api.Endpoints;
 /// PUT /connections/{key} — update a connection.
 /// DELETE /connections/{key} — delete a connection.
 /// POST /connections/{key}/verify — verify connectivity for a connection.
+/// GET /connections/{key}/reviewer-identity-policy — get safe reviewer identity metadata.
 /// GET /connections/{key}/projects — list projects for a connection.
 /// GET /connections/{key}/repositories?project= — list repositories within a project.
 /// POST /connections/{key}/repositories/onboard — onboard a repository from the connection.
@@ -220,6 +221,26 @@ public static class ConnectionEndpoints
             }
         );
 
+        // GET /api/webui/connections/{key}/reviewer-identity-policy
+        group.MapGet(
+            "/{key}/reviewer-identity-policy",
+            async (
+                string key,
+                IQueryHandler<
+                    GetReviewerIdentityPolicyQuery,
+                    ReviewerIdentityPolicyQueryResult
+                > handler,
+                CancellationToken cancellationToken
+            ) =>
+            {
+                var result = await handler.ExecuteAsync(
+                    new GetReviewerIdentityPolicyQuery(key),
+                    cancellationToken
+                );
+                return MapReviewerIdentityPolicyResult(result);
+            }
+        );
+
         // GET /api/webui/connections/{key}/projects
         group.MapGet(
             "/{key}/projects",
@@ -330,6 +351,21 @@ public static class ConnectionEndpoints
             ConnectionOperationStatus.Conflict => ConflictProblem(result.Detail),
             _ => throw new InvalidOperationException(
                 $"Unsupported connection operation status '{result.Status}'."
+            ),
+        };
+
+    private static IResult MapReviewerIdentityPolicyResult(
+        ReviewerIdentityPolicyQueryResult result
+    ) =>
+        result.Status switch
+        {
+            ReviewerIdentityPolicyQueryStatus.Succeeded => Results.Ok(result.Metadata),
+            ReviewerIdentityPolicyQueryStatus.ValidationFailed => ValidationProblem(
+                result.ValidationErrors
+            ),
+            ReviewerIdentityPolicyQueryStatus.NotFound => NotFoundProblem(result.Detail),
+            _ => throw new InvalidOperationException(
+                $"Unsupported reviewer identity policy query status '{result.Status}'."
             ),
         };
 

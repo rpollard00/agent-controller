@@ -357,6 +357,80 @@ public sealed class ConnectionEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ConnectionEndpoints_ReviewerIdentityPolicy_ResolvesCurrentProviderMetadata()
+    {
+        var profile = new
+        {
+            key = "ado.policy",
+            displayName = "Reviewer policy",
+            provider = "AzureDevOps",
+            capabilities = new[] { "Repositories" },
+            providerSettings = new
+            {
+                provider = "AzureDevOps",
+                organizationUrl = "https://dev.azure.com/testorg",
+                personalAccessTokenReference = new { name = "secret-pat" },
+            },
+        };
+
+        using (var createResponse = await _client.PostAsJsonAsync("/api/webui/connections", profile))
+        {
+            Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+        }
+
+        using (var supportedResponse = await _client.GetAsync(
+            "/api/webui/connections/ado.policy/reviewer-identity-policy"
+        ))
+        {
+            Assert.Equal(HttpStatusCode.OK, supportedResponse.StatusCode);
+            var metadata = await ReadJsonAsync(supportedResponse);
+            Assert.Equal("AzureDevOps", metadata.GetProperty("provider").GetString());
+            Assert.True(metadata.GetProperty("isSupported").GetBoolean());
+            var kinds = metadata.GetProperty("supportedIdentityKinds");
+            Assert.Equal(3, kinds.GetArrayLength());
+            Assert.Equal("email", kinds[0].GetProperty("kind").GetString());
+            Assert.Equal("Email / uniqueName", kinds[0].GetProperty("label").GetString());
+            Assert.Equal("email", kinds[0].GetProperty("validationCategory").GetString());
+            Assert.Equal("00000000-0000-0000-0000-000000000000", kinds[1].GetProperty("placeholder").GetString());
+            Assert.Equal("opaque", kinds[2].GetProperty("validationCategory").GetString());
+            Assert.DoesNotContain("secret-pat", metadata.ToString(), StringComparison.Ordinal);
+        }
+
+        var changedProfile = new
+        {
+            key = profile.key,
+            displayName = profile.displayName,
+            enabled = true,
+            provider = "GitHub",
+            capabilities = profile.capabilities,
+            providerSettings = (object?)null,
+        };
+        using (var updateResponse = await _client.PutAsJsonAsync(
+            "/api/webui/connections/ado.policy",
+            changedProfile
+        ))
+        {
+            Assert.Equal(HttpStatusCode.OK, updateResponse.StatusCode);
+        }
+
+        using (var unsupportedResponse = await _client.GetAsync(
+            "/api/webui/connections/ado.policy/reviewer-identity-policy"
+        ))
+        {
+            Assert.Equal(HttpStatusCode.OK, unsupportedResponse.StatusCode);
+            var metadata = await ReadJsonAsync(unsupportedResponse);
+            Assert.Equal("GitHub", metadata.GetProperty("provider").GetString());
+            Assert.False(metadata.GetProperty("isSupported").GetBoolean());
+            Assert.Empty(metadata.GetProperty("supportedIdentityKinds").EnumerateArray());
+        }
+
+        using var missingResponse = await _client.GetAsync(
+            "/api/webui/connections/missing/reviewer-identity-policy"
+        );
+        await AssertProblemAsync(missingResponse, HttpStatusCode.NotFound, "Resource not found.");
+    }
+
+    [Fact]
     public async Task ConnectionEndpoints_POST_MissingProviderDiscriminator_Returns400()
     {
         // providerSettings present but no 'provider' discriminator — mirrors the bug report payload

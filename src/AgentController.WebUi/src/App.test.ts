@@ -66,6 +66,11 @@ function createClient(
         authMechanism: 'PersonalAccessToken',
         errors: [],
       }),
+      getReviewerIdentityPolicy: async () => ({
+        provider: 'AzureDevOps',
+        isSupported: true,
+        supportedIdentityKinds: [],
+      }),
       listProjects: async () => [],
       listRepositories: async () => [],
       listBranches: async () => [],

@@ -82,6 +82,11 @@ function createApi(initialEnvironments: RuntimeEnvironmentProfile[] = [environme
         authMechanism: 'PersonalAccessToken',
         errors: [],
       }),
+      getReviewerIdentityPolicy: async () => ({
+        provider: 'AzureDevOps',
+        isSupported: true,
+        supportedIdentityKinds: [],
+      }),
       listProjects: async () => [],
       listRepositories: async () => [],
       listBranches: async () => [],

@@ -113,6 +113,11 @@ function createApi(
     verifyConnection: vi.fn(
       async (): Promise<ConnectionConnectivityResult> => verifyResult ?? defaultVerifyResult,
     ),
+    getReviewerIdentityPolicy: vi.fn(async () => ({
+      provider: 'AzureDevOps',
+      isSupported: true,
+      supportedIdentityKinds: [],
+    })),
     listProjects: vi.fn(async (): Promise<ConnectionProject[]> => initialProjects),
     listRepositories: vi.fn(async (): Promise<HostRepository[]> => initialRepos),
     listBranches: vi.fn(async (): Promise<string[]> => []),
