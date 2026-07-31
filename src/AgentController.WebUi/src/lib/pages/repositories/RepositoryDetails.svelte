@@ -39,6 +39,15 @@
     const version = reference.version === null ? 'latest version' : `version ${reference.version}`;
     return `${type} · ${reference.name} · ${version}`;
   }
+
+  function reviewerIdentityLabel(kind: string): string {
+    const labels: Record<string, string> = {
+      email: 'Email / uniqueName',
+      identityId: 'Identity ID',
+      descriptor: 'Graph descriptor',
+    };
+    return labels[kind] ?? kind;
+  }
 </script>
 
 <Card title="Repository details" description="Managed onboarding configuration.">
@@ -83,6 +92,30 @@
       <dd class="mt-1 text-slate-100">{repository.runtimeEnvironmentKey ?? 'None'}</dd>
     </div>
   </dl>
+
+  <section class="mt-7 space-y-4 border-t border-slate-800 pt-5" aria-labelledby="reviewer-identities-heading">
+    <div>
+      <h3 id="reviewer-identities-heading" class="text-base font-semibold text-white">Reviewer identities</h3>
+      <p class="mt-1 text-sm leading-6 text-slate-400">
+        Identities allowed to qualify feedback for this repository.
+      </p>
+    </div>
+    {#if !repository.reviewerIdentities?.length}
+      <p class="text-sm text-slate-400">No reviewer identities configured.</p>
+    {:else}
+      <ul class="grid gap-3 sm:grid-cols-2" aria-label="Configured reviewer identities">
+        {#each repository.reviewerIdentities as identity (`${identity.kind}-${identity.value}`)}
+          <li class="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+            <p class="text-xs font-semibold tracking-wide text-slate-500 uppercase">
+              {reviewerIdentityLabel(identity.kind)}
+              <span class="font-normal normal-case">({identity.kind})</span>
+            </p>
+            <p class="mt-1 break-all font-mono text-sm text-slate-100">{identity.value}</p>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </section>
 
   <section class="mt-7 space-y-4 border-t border-slate-800 pt-5" aria-labelledby="clone-preflight-heading">
     <div>

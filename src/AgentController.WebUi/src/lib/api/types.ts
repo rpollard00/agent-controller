@@ -6,6 +6,12 @@ export interface SecretReference {
   version: number | null;
 }
 
+/** Provider-neutral reviewer identity configured for a managed repository. */
+export interface ReviewerIdentity {
+  kind: string;
+  value: string;
+}
+
 export interface RepositoryProfile {
   key: string;
   cloneUrl: string;
@@ -17,6 +23,7 @@ export interface RepositoryProfile {
   repositoryHostConnectionKey: string | null;
   remoteIdentity: string | null;
   runtimeEnvironmentKey: string | null;
+  reviewerIdentities: ReviewerIdentity[];
   sshKeyReference: SecretReference | null;
   sshKeyInheritEnvironment: boolean;
   project: string | null;

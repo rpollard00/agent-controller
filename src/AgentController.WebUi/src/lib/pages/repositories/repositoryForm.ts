@@ -1,4 +1,11 @@
-import type { CloneTransport, RepositoryProfile, SecretReference } from '../../api/types';
+import type {
+  CloneTransport,
+  RepositoryProfile,
+  ReviewerIdentity,
+  ReviewerIdentityKindMetadata,
+  ReviewerIdentityPolicyMetadata,
+  SecretReference,
+} from '../../api/types';
 
 export interface RepositoryFormValues {
   key: string;
@@ -12,6 +19,7 @@ export interface RepositoryFormValues {
   sshKeyName: string;
   sshKeyVersion: number | null;
   sshKeyInheritEnvironment: boolean;
+  reviewerIdentities: ReviewerIdentity[];
 }
 
 export type RepositoryFormErrors = Record<string, string[]>;
@@ -29,6 +37,7 @@ export function createRepositoryFormValues(profile?: RepositoryProfile): Reposit
     sshKeyName: profile?.sshKeyReference?.name ?? '',
     sshKeyVersion: profile?.sshKeyReference?.version ?? null,
     sshKeyInheritEnvironment: profile?.sshKeyInheritEnvironment ?? false,
+    reviewerIdentities: profile?.reviewerIdentities?.map(cloneReviewerIdentity) ?? [],
   };
 }
 
@@ -112,11 +121,106 @@ export function toRepositoryProfile(
     project: nullableKey(values.project),
     remoteIdentity: original?.remoteIdentity ?? null,
     runtimeEnvironmentKey: values.runtimeEnvironmentKey.trim(),
+    reviewerIdentities: values.reviewerIdentities.map(cloneReviewerIdentity),
     sshKeyReference: toSecretReference(values.sshKeyName, values.sshKeyVersion),
     sshKeyInheritEnvironment: values.sshKeyInheritEnvironment,
     environmentProfile: original?.environmentProfile ?? '',
     runtimeProfile: original?.runtimeProfile ?? '',
   };
+}
+
+export interface ReviewerIdentityValidationResult {
+  normalizedIdentity?: ReviewerIdentity;
+  error?: string;
+}
+
+/**
+ * Apply the credential-free policy metadata locally so the editor behaves like
+ * the selected provider before a repository is submitted.
+ */
+export function validateAndNormalizeReviewerIdentity(
+  identity: ReviewerIdentity,
+  policy: ReviewerIdentityPolicyMetadata | undefined,
+): ReviewerIdentityValidationResult {
+  if (!policy || !policy.isSupported) {
+    return { error: 'Reviewer identities are not supported by the selected repository host.' };
+  }
+
+  const kind = findIdentityKind(policy.supportedIdentityKinds, identity.kind);
+  if (!kind) {
+    return { error: 'Select a supported reviewer identity kind.' };
+  }
+
+  const value = identity.value.trim();
+  if (!value) return { error: 'An identity value is required.' };
+  if ([...value].some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127;
+  })) {
+    return { error: 'The identity value cannot contain control characters.' };
+  }
+  if (value.length > 1024) {
+    return { error: 'The identity value must be 1024 characters or fewer.' };
+  }
+
+  let normalizedValue = value;
+  switch (kind.validationCategory) {
+    case 'email':
+      if (!isEmailLike(value)) {
+        return { error: 'Enter a valid email / uniqueName value.' };
+      }
+      normalizedValue = value.toLowerCase();
+      break;
+    case 'guid': {
+      const normalizedGuid = normalizeGuid(value);
+      if (!normalizedGuid) return { error: 'Enter a valid identity GUID.' };
+      normalizedValue = normalizedGuid;
+      break;
+    }
+    case 'opaque':
+      if (/\s/u.test(value)) {
+        return { error: 'The graph descriptor cannot contain whitespace.' };
+      }
+      break;
+  }
+
+  return {
+    normalizedIdentity: { kind: kind.kind, value: normalizedValue },
+  };
+}
+
+export function reviewerIdentityKey(identity: ReviewerIdentity): string {
+  return JSON.stringify([identity.kind, identity.value]);
+}
+
+export function reviewerIdentityKind(
+  policy: ReviewerIdentityPolicyMetadata | undefined,
+  kind: string,
+): ReviewerIdentityKindMetadata | undefined {
+  return policy ? findIdentityKind(policy.supportedIdentityKinds, kind) : undefined;
+}
+
+function findIdentityKind(
+  kinds: ReviewerIdentityKindMetadata[],
+  value: string,
+): ReviewerIdentityKindMetadata | undefined {
+  const normalized = value.trim();
+  return kinds.find((kind) => kind.kind === normalized)
+    ?? kinds.find((kind) => kind.kind.toLowerCase() === normalized.toLowerCase());
+}
+
+function isEmailLike(value: string): boolean {
+  return /^[^\s@,]+@[^\s@,]+$/u.test(value);
+}
+
+function normalizeGuid(value: string): string | undefined {
+  const compact = value.replace(/[{}()-]/gu, '');
+  if (!/^[0-9a-f]{32}$/iu.test(compact)) return undefined;
+  return `${compact.slice(0, 8)}-${compact.slice(8, 12)}-${compact.slice(12, 16)}-${compact.slice(16, 20)}-${compact.slice(20)}`.toLowerCase();
+}
+
+function cloneReviewerIdentity(identity: ReviewerIdentity): ReviewerIdentity {
+  return { kind: identity.kind, value: identity.value };
 }
 
 function addRequiredError(

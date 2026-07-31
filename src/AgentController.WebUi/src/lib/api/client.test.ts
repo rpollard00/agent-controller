@@ -21,6 +21,7 @@ const repository: RepositoryProfile = {
   repositoryHostConnectionKey: null,
   remoteIdentity: null,
   runtimeEnvironmentKey: 'runtime-main',
+  reviewerIdentities: [],
   sshKeyReference: null,
   sshKeyInheritEnvironment: false,
   project: null,

@@ -8,6 +8,7 @@ import type {
   ConnectionProject,
   HostRepository,
   RepositoryProfile,
+  ReviewerIdentityPolicyMetadata,
   RuntimeEnvironmentProfile,
   SecretInfo,
   SecretVersionInfo,
@@ -25,6 +26,7 @@ const repository: RepositoryProfile = {
   repositoryHostConnectionKey: null,
   remoteIdentity: null,
   runtimeEnvironmentKey: 'runtime-main',
+  reviewerIdentities: [],
   sshKeyReference: null,
   sshKeyInheritEnvironment: false,
   project: null,
@@ -48,6 +50,34 @@ const connection: ConnectionProfile = {
 const projects: ConnectionProject[] = [
   { id: 'proj-1', name: 'Agent Controller' },
 ];
+
+const reviewerIdentityPolicy: ReviewerIdentityPolicyMetadata = {
+  provider: 'AzureDevOps',
+  isSupported: true,
+  supportedIdentityKinds: [
+    {
+      kind: 'email',
+      label: 'Email / uniqueName',
+      hint: 'The Azure DevOps uniqueName, usually an email address.',
+      placeholder: 'reviewer@example.com',
+      validationCategory: 'email',
+    },
+    {
+      kind: 'identityId',
+      label: 'Identity ID',
+      hint: 'The Azure DevOps identity GUID.',
+      placeholder: '00000000-0000-0000-0000-000000000000',
+      validationCategory: 'guid',
+    },
+    {
+      kind: 'descriptor',
+      label: 'Graph descriptor',
+      hint: 'The opaque Azure DevOps graph descriptor.',
+      placeholder: 'aad.YWJj',
+      validationCategory: 'opaque',
+    },
+  ],
+};
 
 const secrets: SecretInfo[] = [
   {
@@ -279,6 +309,87 @@ describe('repository onboarding screens', () => {
     );
     expect(await screen.findByText('Repository “new.repo” was onboarded.')).toBeVisible();
     expect(window.location.pathname).toBe('/repositories/new.repo');
+  });
+
+  it('adds normalized, typed reviewer identities one at a time', async () => {
+    window.history.replaceState({}, '', '/repositories/new');
+    const api = createApi([]);
+    api.client.connections.getReviewerIdentityPolicy = vi.fn(async () => reviewerIdentityPolicy);
+    render(App, { client: api.client });
+
+    await completeRequiredCreateFields();
+    await fireEvent.change(screen.getByLabelText('Repository Host'), {
+      target: { value: 'ado-main' },
+    });
+    await waitFor(() => expect(api.client.connections.getReviewerIdentityPolicy).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByLabelText(/Reviewer identity kind/)).toBeVisible());
+
+    const valueInput = screen.getByLabelText(/Reviewer identity value/);
+    await fireEvent.input(valueInput, { target: { value: 'Reviewer@Example.COM' } });
+    expect(screen.getByRole('button', { name: 'Add' })).not.toBeDisabled();
+    await fireEvent.keyDown(valueInput, { key: 'Enter' });
+
+    expect(screen.getByText('reviewer@example.com')).toBeVisible();
+    expect(screen.getAllByText('Email / uniqueName').length).toBeGreaterThan(0);
+
+    await fireEvent.input(valueInput, { target: { value: 'REVIEWER@example.com' } });
+    expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled();
+    expect(screen.getByText('This reviewer identity is already configured.')).toBeVisible();
+
+    await fireEvent.change(screen.getByLabelText(/Reviewer identity kind/), {
+      target: { value: 'identityId' },
+    });
+    await fireEvent.input(valueInput, {
+      target: { value: '8B5E0B7E-7D74-4F22-8BE8-5B0B7E8B5E0B' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(screen.getByText('8b5e0b7e-7d74-4f22-8be8-5b0b7e8b5e0b')).toBeVisible();
+    await fireEvent.click(screen.getByRole('button', { name: /Remove reviewer@example.com/ }));
+    expect(screen.queryByText('reviewer@example.com')).not.toBeInTheDocument();
+  });
+
+  it('revalidates configured identities and disables unsupported providers', async () => {
+    window.history.replaceState({}, '', '/repositories/existing.repo/edit');
+    const configuredRepository: RepositoryProfile = {
+      ...repository,
+      key: 'existing.repo',
+      reviewerIdentities: [{ kind: 'email', value: 'reviewer@example.com' }],
+      repositoryHostConnectionKey: 'ado-main',
+      project: 'Agent Controller',
+    };
+    const api = createApi([configuredRepository]);
+    api.client.connections.getReviewerIdentityPolicy = vi.fn(async () => ({
+      provider: 'OtherProvider',
+      isSupported: false,
+      supportedIdentityKinds: [],
+    }));
+    render(App, { client: api.client });
+
+    expect(await screen.findByText(/Reviewer identities are not supported by this repository host/)).toBeVisible();
+    expect(screen.getByText('reviewer@example.com')).toBeVisible();
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(await screen.findAllByText(/Reviewer identities are not supported/)).not.toHaveLength(0);
+    expect(api.repositories.update).not.toHaveBeenCalled();
+  });
+
+  it('shows configured reviewer identities on repository details', async () => {
+    const configuredRepository: RepositoryProfile = {
+      ...repository,
+      reviewerIdentities: [
+        { kind: 'email', value: 'reviewer@example.com' },
+        { kind: 'descriptor', value: 'aad.YWJj' },
+      ],
+    };
+    window.history.replaceState({}, '', '/repositories/web.repo');
+    const api = createApi([configuredRepository]);
+    render(App, { client: api.client });
+
+    expect(await screen.findByRole('heading', { name: 'Reviewer identities' })).toBeVisible();
+    expect(screen.getByText('reviewer@example.com')).toBeVisible();
+    expect(screen.getByText('aad.YWJj')).toBeVisible();
+    expect(screen.getByText('Email / uniqueName')).toBeVisible();
+    expect(screen.getByText('Graph descriptor')).toBeVisible();
   });
 
   it('validates required fields before submitting', async () => {
@@ -773,6 +884,7 @@ describe('repository onboarding screens', () => {
       repositoryHostConnectionKey: 'ado-main',
       remoteIdentity: 'repo-guid',
       runtimeEnvironmentKey: 'runtime-main',
+      reviewerIdentities: [],
       sshKeyReference: null,
       sshKeyInheritEnvironment: false,
       project: 'Agent Controller',

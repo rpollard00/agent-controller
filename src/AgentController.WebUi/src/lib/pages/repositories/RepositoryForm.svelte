@@ -5,6 +5,8 @@
     ConnectionProject,
     HostRepository,
     RepositoryProfile,
+    ReviewerIdentity,
+    ReviewerIdentityPolicyMetadata,
     RuntimeEnvironmentProfile,
   } from '../../api/types';
   import { type WebUiApiClient } from '../../api/client';
@@ -18,7 +20,10 @@
     isHostDriven,
     requiresSshKey,
     resolveRepositoryFormTransport,
+    reviewerIdentityKey,
+    reviewerIdentityKind,
     toRepositoryProfile,
+    validateAndNormalizeReviewerIdentity,
     validateRepositoryForm,
     type RepositoryFormErrors,
   } from './repositoryForm';
@@ -56,6 +61,12 @@
   let branches = $state<string[]>([]);
   let branchesLoading = $state(false);
   let branchesLoadError = $state<string>();
+  let reviewerPolicy = $state<ReviewerIdentityPolicyMetadata>();
+  let reviewerPolicyLoading = $state(false);
+  let reviewerPolicyError = $state<string>();
+  let reviewerKind = $state('');
+  let reviewerValue = $state('');
+  let reviewerEntryTouched = $state(false);
 
   // Tracks the last host key used for loading projects. When the user switches hosts,
   // project/repository selections are reset. On initial mount in edit mode the existing
@@ -70,6 +81,7 @@
   // cloneUrl/defaultBranch. Subsequent runs (manual repo pick, transport
   // change) overwrite as normal.
   let initialEditReposLoad = mode === 'edit';
+  let reviewerPolicyController: AbortController | undefined;
 
   const hostDriven = $derived(isHostDriven(values));
   const inferredTransport = $derived(inferCloneTransport(values.cloneUrl));
@@ -77,6 +89,32 @@
   const sshKeyRequired = $derived(requiresSshKey(values));
   const showSshKeyPicker = $derived(sshKeyRequired || Boolean(values.sshKeyName));
   const hasEnumerationError = $derived(Boolean(projectsLoadError || repositoriesLoadError || branchesLoadError));
+  const configuredReviewerErrors = $derived(
+    values.reviewerIdentities.map((identity, index) => reviewerEntryError(identity, index)),
+  );
+  const reviewerCandidateValidation = $derived(
+    validateAndNormalizeReviewerIdentity(
+      { kind: reviewerKind, value: reviewerValue },
+      reviewerPolicy,
+    ),
+  );
+  const reviewerCandidateError = $derived(
+    reviewerEntryTouched
+      ? reviewerCandidateValidation.error ?? reviewerDuplicateError(reviewerCandidateValidation.normalizedIdentity)
+      : undefined,
+  );
+  const selectedReviewerKind = $derived(reviewerIdentityKind(reviewerPolicy, reviewerKind));
+  const reviewerListError = $derived(reviewerIdentitiesError());
+  const canAddReviewer = $derived(
+    Boolean(
+      reviewerPolicy?.isSupported
+      && reviewerPolicy.supportedIdentityKinds.length > 0
+      && reviewerKind
+      && reviewerValue.trim()
+      && !reviewerCandidateValidation.error
+      && !reviewerDuplicateError(reviewerCandidateValidation.normalizedIdentity),
+    ),
+  );
   const enumerationErrorTitle = $derived(
     branchesLoadError
       ? 'Could not load branches'
@@ -104,9 +142,76 @@
     return ids.length > 0 ? ids.join(' ') : undefined;
   }
 
+  function reviewerEntryError(identity: ReviewerIdentity, index: number): string | undefined {
+    const validation = validateAndNormalizeReviewerIdentity(identity, reviewerPolicy);
+    if (validation.error) return validation.error;
+    const normalized = validation.normalizedIdentity;
+    if (!normalized) return undefined;
+
+    const duplicateIndex = values.reviewerIdentities.findIndex((candidate, candidateIndex) => {
+      if (candidateIndex === index) return false;
+      const candidateValidation = validateAndNormalizeReviewerIdentity(candidate, reviewerPolicy);
+      return candidateValidation.normalizedIdentity
+        && reviewerIdentityKey(candidateValidation.normalizedIdentity) === reviewerIdentityKey(normalized);
+    });
+    return duplicateIndex >= 0 ? 'This reviewer identity is duplicated.' : undefined;
+  }
+
+  function reviewerDuplicateError(identity: ReviewerIdentity | undefined): string | undefined {
+    if (!identity) return undefined;
+    return values.reviewerIdentities.some(
+      (candidate) => reviewerIdentityKey(candidate) === reviewerIdentityKey(identity),
+    )
+      ? 'This reviewer identity is already configured.'
+      : undefined;
+  }
+
+  function reviewerIdentitiesError(): string | undefined {
+    const serverError = serverErrors.reviewerIdentities?.[0];
+    if (serverError) return serverError;
+    if (values.reviewerIdentities.length === 0) return undefined;
+    if (!values.repositoryHostConnectionKey) {
+      return 'Select a Repository Host before configuring reviewer identities.';
+    }
+    if (reviewerPolicyLoading) return 'Reviewer identity options are still loading.';
+    if (reviewerPolicyError) return reviewerPolicyError;
+    if (!reviewerPolicy) return 'Reviewer identity options are unavailable. Try again.';
+    if (!reviewerPolicy.isSupported) {
+      return 'Reviewer identities are not supported by the selected repository host.';
+    }
+
+    const invalidIndex = configuredReviewerErrors.findIndex(Boolean);
+    return invalidIndex >= 0
+      ? `Reviewer identity ${invalidIndex + 1}: ${configuredReviewerErrors[invalidIndex]}`
+      : undefined;
+  }
+
+  function reviewerKindLabel(kind: string): string {
+    return reviewerIdentityKind(reviewerPolicy, kind)?.label ?? kind;
+  }
+
+  function addReviewerIdentity(): void {
+    reviewerEntryTouched = true;
+    const normalized = reviewerCandidateValidation.normalizedIdentity;
+    if (reviewerCandidateValidation.error || !normalized || reviewerDuplicateError(normalized)) return;
+
+    values.reviewerIdentities = [...values.reviewerIdentities, normalized];
+    reviewerValue = '';
+    reviewerEntryTouched = false;
+    clearClientError('reviewerIdentities');
+  }
+
+  function removeReviewerIdentity(index: number): void {
+    values.reviewerIdentities = values.reviewerIdentities.filter((_, candidateIndex) => candidateIndex !== index);
+    clearClientError('reviewerIdentities');
+  }
+
   function handleSubmit(event: SubmitEvent): void {
     event.preventDefault();
-    clientErrors = validateRepositoryForm(values);
+    const errors = validateRepositoryForm(values);
+    const reviewerError = reviewerIdentitiesError();
+    if (reviewerError) errors.reviewerIdentities = [reviewerError];
+    clientErrors = errors;
     if (Object.keys(clientErrors).length > 0) return;
 
     onsave(toRepositoryProfile(values, profile));
@@ -117,6 +222,33 @@
     const nextErrors = { ...clientErrors };
     delete nextErrors[field];
     clientErrors = nextErrors;
+  }
+
+  async function loadReviewerPolicy(connectionKey: string, signal: AbortSignal): Promise<void> {
+    reviewerPolicyLoading = true;
+    reviewerPolicyError = undefined;
+    try {
+      const policy = await client.connections.getReviewerIdentityPolicy(connectionKey, signal);
+      if (signal.aborted) return;
+      reviewerPolicy = policy;
+      if (!policy.isSupported || policy.supportedIdentityKinds.length === 0) {
+        reviewerKind = '';
+      } else if (!policy.supportedIdentityKinds.some((kind) => kind.kind === reviewerKind)) {
+        reviewerKind = policy.supportedIdentityKinds[0].kind;
+      }
+    } catch (error) {
+      if (signal.aborted || isAbortError(error)) return;
+      reviewerPolicy = undefined;
+      reviewerPolicyError = 'Could not load reviewer identity options. Try again.';
+    } finally {
+      if (!signal.aborted) {
+        reviewerPolicyLoading = false;
+      }
+    }
+  }
+
+  function isAbortError(error: unknown): boolean {
+    return error instanceof DOMException && error.name === 'AbortError';
   }
 
   async function loadProjects(connectionKey: string): Promise<void> {
@@ -264,6 +396,26 @@
     values.sshKeyVersion = null;
     clearClientError('sshKeyReference');
   }
+
+  // Load reviewer identity metadata whenever the repository host changes.
+  $effect(() => {
+    const connectionKey = values.repositoryHostConnectionKey;
+    reviewerPolicyController?.abort();
+    reviewerPolicyController = undefined;
+
+    if (!connectionKey) {
+      reviewerPolicy = undefined;
+      reviewerPolicyLoading = false;
+      reviewerPolicyError = undefined;
+      reviewerKind = '';
+      return;
+    }
+
+    const controller = new AbortController();
+    reviewerPolicyController = controller;
+    void loadReviewerPolicy(connectionKey, controller.signal);
+    return () => controller.abort();
+  });
 
   // Load projects when the host connection changes
   $effect(() => {
@@ -661,6 +813,136 @@
       {/if}
     </div>
   {/if}
+
+  <section class="space-y-5 rounded-xl border border-slate-800 p-4 sm:p-5" aria-labelledby="repository-reviewer-identities-heading">
+    <div>
+      <h2 id="repository-reviewer-identities-heading" class="text-sm font-semibold text-white">Reviewer identities</h2>
+      <p class="mt-1 text-sm text-slate-400">
+        Allow feedback from specific identities when Revival checks this repository. Add one typed identity at a time.
+      </p>
+    </div>
+
+    {#if !hostDriven}
+      <p class="rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-sm text-slate-400">
+        Select a Repository Host to configure provider-specific reviewer identities.
+      </p>
+    {:else if reviewerPolicyLoading}
+      <p class="text-sm text-slate-400" role="status">Loading reviewer identity options…</p>
+    {:else if reviewerPolicyError}
+      <Alert
+        variant="warning"
+        title="Reviewer identity options unavailable"
+        message={reviewerPolicyError}
+      />
+    {:else if reviewerPolicy && !reviewerPolicy.isSupported}
+      <p class="rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-sm text-slate-400">
+        Reviewer identities are not supported by this repository host. The editor is disabled.
+      </p>
+    {:else if reviewerPolicy && reviewerPolicy.supportedIdentityKinds.length > 0}
+      <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto] lg:items-end">
+        <Field
+          id="repository-reviewerIdentityKind"
+          label="Reviewer identity kind"
+          hint="Choose the provider identity represented by the value."
+          required
+        >
+          <select
+            id="repository-reviewerIdentityKind"
+            name="reviewerIdentityKind"
+            class={inputClasses}
+            bind:value={reviewerKind}
+            disabled={submitting}
+            required
+          >
+            {#each reviewerPolicy.supportedIdentityKinds as kind (kind.kind)}
+              <option value={kind.kind}>{kind.label}</option>
+            {/each}
+          </select>
+        </Field>
+
+        <Field
+          id="repository-reviewerIdentityValue"
+          label="Reviewer identity value"
+          hint={selectedReviewerKind?.hint ?? 'Enter the provider identity value.'}
+          error={reviewerCandidateError}
+          required
+        >
+          <input
+            id="repository-reviewerIdentityValue"
+            name="reviewerIdentityValue"
+            type="text"
+            class={inputClasses}
+            bind:value={reviewerValue}
+            disabled={submitting}
+            required
+            maxlength="1024"
+            spellcheck="false"
+            autocomplete="off"
+            placeholder={selectedReviewerKind?.placeholder ?? undefined}
+            aria-invalid={reviewerCandidateError ? 'true' : undefined}
+            aria-describedby={`repository-reviewerIdentityValue-hint${reviewerCandidateError ? ' repository-reviewerIdentityValue-error' : ''}`}
+            oninput={() => { reviewerEntryTouched = true; clearClientError('reviewerIdentities'); }}
+            onkeydown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                addReviewerIdentity();
+              }
+            }}
+          />
+        </Field>
+
+        <Button
+          variant="secondary"
+          onclick={addReviewerIdentity}
+          disabled={submitting || !canAddReviewer}
+        >
+          Add
+        </Button>
+      </div>
+    {:else if reviewerPolicy}
+      <p class="rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-sm text-slate-400">
+        This provider does not expose reviewer identity kinds.
+      </p>
+    {/if}
+
+    {#if reviewerListError}
+      <p id="repository-reviewerIdentities-error" class="text-sm font-medium text-rose-300" role="alert">
+        {reviewerListError}
+      </p>
+    {/if}
+
+    <div class="space-y-3" aria-live="polite">
+      <h3 class="text-sm font-semibold text-slate-200">Configured reviewer identities</h3>
+      {#if values.reviewerIdentities.length === 0}
+        <p class="text-sm text-slate-500">No reviewer identities configured.</p>
+      {:else}
+        <ul class="space-y-2" aria-label="Configured reviewer identities">
+          {#each values.reviewerIdentities as identity, index (`${identity.kind}-${identity.value}-${index}`)}
+            <li class="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+              <div class="min-w-0">
+                <p class="text-sm font-medium text-slate-200">
+                  {reviewerKindLabel(identity.kind)}
+                  <span class="text-slate-500">({identity.kind})</span>
+                </p>
+                <p class="mt-1 break-all font-mono text-sm text-slate-100">{identity.value}</p>
+                {#if configuredReviewerErrors[index]}
+                  <p class="mt-1 text-sm font-medium text-rose-300">{configuredReviewerErrors[index]}</p>
+                {/if}
+              </div>
+              <Button
+                variant="ghost"
+                ariaLabel={`Remove ${identity.value}`}
+                onclick={() => removeReviewerIdentity(index)}
+                disabled={submitting}
+              >
+                Remove
+              </Button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
+  </section>
 
   <fieldset class="space-y-5 rounded-xl border border-slate-800 p-4 sm:p-5">
     <legend class="px-2 text-sm font-semibold text-white">Managed environment associations</legend>
