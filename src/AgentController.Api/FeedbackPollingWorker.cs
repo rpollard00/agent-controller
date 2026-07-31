@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AgentController.Application;
+using AgentController.Application.Abstractions;
 using AgentController.Domain;
 using AgentController.Infrastructure.Options;
 using Microsoft.Extensions.DependencyInjection;
@@ -124,6 +126,13 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             scope.ServiceProvider.GetRequiredService<Application.IReworkCycleStore>();
         var reworkFeedbackStore =
             scope.ServiceProvider.GetRequiredService<Application.IReworkFeedbackStore>();
+        var repositoryStore =
+            scope.ServiceProvider.GetRequiredService<Application.IRepositoryStore>();
+        var connectionStore =
+            scope.ServiceProvider.GetService<Application.IConnectionStore>();
+        var reviewerIdentityPolicyResolver =
+            scope.ServiceProvider.GetService<IReviewerIdentityPolicyResolver>()
+            ?? new ReviewerIdentityPolicyResolver([new AzureDevOpsReviewerIdentityPolicy()]);
         var feedbackSource =
             scope.ServiceProvider.GetRequiredService<Application.IFeedbackSource>();
         var filterPipeline =
@@ -148,6 +157,12 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
         var assistanceSnapshots = managedPullRequests
             .Where(snapshot => HasLabel(snapshot.Labels, options.AssistanceMarkerTag))
             .ToList();
+        var repositoryReviewerPolicies = await LoadRepositoryReviewerPoliciesAsync(
+            repositoryStore,
+            connectionStore,
+            reviewerIdentityPolicyResolver,
+            ct
+        );
 
         if (candidateRuns.Count == 0)
         {
@@ -241,6 +256,12 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
                 )
             );
 
+            var assistanceReviewerPolicy = repositoryReviewerPolicies.TryGetValue(
+                snapshot.RepositoryKey,
+                out var configuredAssistanceReviewers)
+                ? configuredAssistanceReviewers
+                : RepositoryReviewerPolicy.Empty;
+
             assistancePrs.Add(
                 new Application.PrUnderTest
                 {
@@ -252,6 +273,8 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
                     PullRequestUrl = snapshot.PullRequestUrl,
                     PullRequestId = snapshot.PullRequestId,
                     BranchName = snapshot.SourceBranch,
+                    ReviewerIdentityProvider = assistanceReviewerPolicy.Provider,
+                    ReviewerIdentities = assistanceReviewerPolicy.Identities,
                 }
             );
         }
@@ -280,28 +303,43 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
                 continue;
             }
 
-            var repoKey = Application.PullRequestIdentityMatcher.ExtractRepositoryKey(
-                run.PullRequestUrl
-            ) ?? string.Empty;
+            var managedSnapshot = managedPullRequests.FirstOrDefault(snapshot =>
+                Application.PullRequestIdentityMatcher.Matches(
+                    snapshot.PullRequest,
+                    run.PullRequestUrl
+                ));
+            var repoKey = managedSnapshot?.RepositoryKey
+                ?? Application.PullRequestIdentityMatcher.ExtractRepositoryKey(
+                    run.PullRequestUrl
+                )
+                ?? string.Empty;
+            var pullRequest = managedSnapshot?.PullRequest ?? new PullRequestReference
+            {
+                RepositoryKey = repoKey,
+                PullRequestId = pullRequestId,
+                PullRequestUrl = run.PullRequestUrl ?? string.Empty,
+                SourceBranch = run.BranchName ?? string.Empty,
+                SourceCommitSha = run.CommitSha ?? string.Empty,
+            };
+            var revivalReviewerPolicy = repositoryReviewerPolicies.TryGetValue(
+                repoKey,
+                out var configuredRevivalReviewers)
+                ? configuredRevivalReviewers
+                : RepositoryReviewerPolicy.Empty;
 
             revivalPrs.Add(
                 new Application.PrUnderTest
                 {
                     RequestMode = ReworkRequestMode.Revival,
-                    PullRequest = new PullRequestReference
-                    {
-                        RepositoryKey = repoKey,
-                        PullRequestId = pullRequestId,
-                        PullRequestUrl = run.PullRequestUrl ?? string.Empty,
-                        SourceBranch = run.BranchName ?? string.Empty,
-                        SourceCommitSha = run.CommitSha ?? string.Empty,
-                    },
+                    PullRequest = pullRequest,
                     OriginatingRunId = run.RunId,
                     WorkItemId = run.WorkItemId,
                     RepoKey = repoKey,
-                    PullRequestUrl = run.PullRequestUrl ?? string.Empty,
+                    PullRequestUrl = pullRequest.PullRequestUrl,
                     PullRequestId = pullRequestId,
                     BranchName = run.BranchName ?? string.Empty,
+                    ReviewerIdentityProvider = revivalReviewerPolicy.Provider,
+                    ReviewerIdentities = revivalReviewerPolicy.Identities,
                 }
             );
         }
@@ -320,7 +358,6 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
         Log.PrUnderTestBuilt(_logger, revivalPrs.Count + assistancePrs.Count);
 
         // ── Steps 5-6: Poll and filter each request mode ──────────
-        var allowedReviewers = new HashSet<string>(options.AllowedReviewers);
         var filteredSignals = new List<Application.ReworkSignal>();
         var rawSignalCount = 0;
 
@@ -329,7 +366,6 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             var revivalQuery = new Application.FeedbackQuery
             {
                 OpenPrs = revivalPrs,
-                AllowedReviewers = allowedReviewers,
                 ReworkMarkerTag = options.ReworkMarkerTag,
             };
             var revivalSignals = await feedbackSource.PollAsync(revivalQuery, ct);
@@ -344,7 +380,6 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             var assistanceQuery = new Application.FeedbackQuery
             {
                 OpenPrs = assistancePrs,
-                AllowedReviewers = allowedReviewers,
                 ReworkMarkerTag = options.AssistanceMarkerTag,
             };
             var fetchedAssistanceSignals = await feedbackSource.PollAsync(assistanceQuery, ct);
@@ -768,6 +803,80 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
         }
 
         Log.PollCycleCompleted(_logger);
+    }
+
+    private static async Task<IReadOnlyDictionary<string, RepositoryReviewerPolicy>>
+        LoadRepositoryReviewerPoliciesAsync(
+            Application.IRepositoryStore repositoryStore,
+            Application.IConnectionStore? connectionStore,
+            IReviewerIdentityPolicyResolver policyResolver,
+            CancellationToken cancellationToken)
+    {
+        var repositories = await repositoryStore.ListAsync(cancellationToken);
+        var connections = connectionStore is null
+            ? []
+            : await connectionStore.ListAsync(cancellationToken);
+        var connectionsByKey = connections.ToDictionary(
+            connection => connection.Key,
+            StringComparer.OrdinalIgnoreCase);
+        var policies = new Dictionary<string, RepositoryReviewerPolicy>(
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var repository in repositories)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var connection = !string.IsNullOrWhiteSpace(repository.RepositoryHostConnectionKey)
+                && connectionsByKey.TryGetValue(
+                    repository.RepositoryHostConnectionKey,
+                    out var resolvedConnection)
+                ? resolvedConnection
+                : null;
+            var policy = connection is null
+                ? null
+                : policyResolver.Resolve(connection.Provider);
+            var identities = policy is null
+                && (!string.IsNullOrWhiteSpace(repository.RepositoryHostConnectionKey)
+                    || connection is not null)
+                ? []
+                : NormalizeReviewerIdentities(repository.ReviewerIdentities, policy);
+
+            policies[repository.Key] = new RepositoryReviewerPolicy(
+                connection?.Provider,
+                identities);
+        }
+
+        return policies;
+    }
+
+    private static List<ReviewerIdentity> NormalizeReviewerIdentities(
+        IReadOnlyList<ReviewerIdentity> identities,
+        IReviewerIdentityPolicy? policy)
+    {
+        var normalized = new List<ReviewerIdentity>(identities.Count);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var identity in identities)
+        {
+            var candidate = policy?.Normalize(identity) ?? identity;
+            if (candidate is null)
+            {
+                continue;
+            }
+
+            var key = $"{candidate.Kind}\0{candidate.Value}";
+            if (seen.Add(key))
+            {
+                normalized.Add(candidate);
+            }
+        }
+
+        return normalized;
+    }
+
+    private sealed record RepositoryReviewerPolicy(
+        string? Provider,
+        IReadOnlyList<ReviewerIdentity> Identities)
+    {
+        public static RepositoryReviewerPolicy Empty { get; } = new(null, []);
     }
 
     private async Task<IReadOnlyList<Application.ManagedPullRequestSnapshot>>

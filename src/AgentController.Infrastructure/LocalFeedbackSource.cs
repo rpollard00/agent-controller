@@ -140,6 +140,7 @@ internal sealed partial class LocalFeedbackSource : IFeedbackSource, IDisposable
                         comments.Add(new ReviewThreadComment
                         {
                             Author = commentDef.Author,
+                            AuthorIdentities = commentDef.AuthorIdentities,
                             Body = commentDef.Body,
                             CreatedAt = ParseCreatedAt(commentDef.CreatedAt),
                             IsReply = commentDef.IsReply,

@@ -1,3 +1,4 @@
+using AgentController.Application.Abstractions;
 using AgentController.Domain;
 using Microsoft.Extensions.Logging;
 
@@ -9,9 +10,9 @@ namespace AgentController.Application;
 ///   <item><term>Marker gate</term>
 ///   <description>Fetch PR labels, require <c>agent-rework-requested</c> label.
 ///   Fail-closed per-PR.</description></item>
-///   <item><term>Allowlist fail-closed</term>
-///   <description>If AllowedReviewers is empty, log warning once at startup and
-///   return nothing.</description></item>
+///   <item><term>Repository reviewer allowlist</term>
+///   <description>If a pull request's repository identities are empty, log warning
+///   once and fail closed for Revival.</description></item>
 ///   <item><term>Thread-status filter</term>
 ///   <description>Keep only Active status threads.</description></item>
 ///   <item><term>Thread-author filter</term>
@@ -21,11 +22,13 @@ namespace AgentController.Application;
 ///   <description>Drop threads whose entire reply chain is empty/whitespace.</description></item>
 /// </list>
 ///
-/// AllowedReviewers is resolved once per poll; canonical key is uniqueName (email).
+/// Reviewer identities are resolved from the matching <see cref="PrUnderTest"/>
+/// so one poll can safely process repositories with different allowlists.
 /// </summary>
 public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
 {
     private readonly IPrLabelSource _labelSource;
+    private readonly IReviewerIdentityPolicyResolver? _reviewerIdentityPolicyResolver;
     private readonly ILogger<ReviewFeedbackFilterPipeline> _logger;
     private readonly SemaphoreSlim _allowlistWarningLock = new(1, 1);
     private bool _allowlistWarningLogged;
@@ -36,10 +39,12 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
     /// </summary>
     public ReviewFeedbackFilterPipeline(
         IPrLabelSource labelSource,
-        ILogger<ReviewFeedbackFilterPipeline> logger)
+        ILogger<ReviewFeedbackFilterPipeline> logger,
+        IReviewerIdentityPolicyResolver? reviewerIdentityPolicyResolver = null)
     {
         _labelSource = labelSource;
         _logger = logger;
+        _reviewerIdentityPolicyResolver = reviewerIdentityPolicyResolver;
     }
 
     /// <summary>
@@ -140,41 +145,39 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
             return [];
         }
 
-        var hasAllowedReviewers = query.AllowedReviewers.Count > 0;
-        if (!hasAllowedReviewers)
-        {
-            await LogAllowlistEmptyWarningAsync();
-            if (!preserveEmptySignals)
-            {
-                return rawSignals.Select(signal => new FeedbackEvaluation(
-                    null,
-                    CreateTrace(
-                        signal,
-                        FeedbackMarkerCheckStatus.NotAttempted,
-                        hasAllowedReviewers,
-                        activeThreadCount: signal.Threads.Count(thread =>
-                            thread.Status == ReviewThreadStatus.Active),
-                        allowlistedReviewerThreadCount: 0,
-                        nonEmptyContentThreadCount: 0,
-                        qualifyingThreadCount: 0,
-                        isAccepted: false)))
-                    .ToList();
-            }
-        }
-
         var evaluations = new List<FeedbackEvaluation>();
 
         foreach (var signal in rawSignals)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            var pr = FindMatchingPr(query.OpenPrs, signal);
+            var reviewerIdentities = pr?.ReviewerIdentities ?? [];
+            var hasAllowedReviewers = reviewerIdentities.Count > 0;
+
+            if (!hasAllowedReviewers)
+            {
+                await LogAllowlistEmptyWarningAsync();
+                if (!preserveEmptySignals)
+                {
+                    evaluations.Add(new FeedbackEvaluation(
+                        null,
+                        CreateTrace(
+                            signal,
+                            FeedbackMarkerCheckStatus.NotAttempted,
+                            reviewerAllowlistConfigured: false,
+                            activeThreadCount: signal.Threads.Count(thread =>
+                                thread.Status == ReviewThreadStatus.Active),
+                            allowlistedReviewerThreadCount: 0,
+                            nonEmptyContentThreadCount: 0,
+                            qualifyingThreadCount: 0,
+                            isAccepted: false)));
+                    continue;
+                }
+            }
+
             if (applyMarkerGate)
             {
-                // Find the matching PrUnderTest for this signal (needed for label fetch).
-                var pr = query.OpenPrs.FirstOrDefault(candidate =>
-                    candidate.PullRequestId == signal.PullRequestId
-                );
-
                 if (pr is null)
                 {
                     // Signal without a matching PR — skip (shouldn't happen).
@@ -184,7 +187,8 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
                         CreateRejectedTrace(
                             signal,
                             FeedbackMarkerCheckStatus.PullRequestNotFound,
-                            query.AllowedReviewers)));
+                            reviewerIdentities,
+                            pr?.ReviewerIdentityProvider)));
                     continue;
                 }
 
@@ -198,7 +202,8 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
                         CreateRejectedTrace(
                             signal,
                             markerStatus,
-                            query.AllowedReviewers)));
+                            reviewerIdentities,
+                            pr.ReviewerIdentityProvider)));
                     continue;
                 }
             }
@@ -226,7 +231,10 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
             // ── (4) Thread-author filter ──────────────────────────
             var authorFilteredThreads = hasAllowedReviewers
                 ? activeThreads
-                    .Where(t => HasCommentByAllowedReviewer(t, query.AllowedReviewers))
+                    .Where(t => HasCommentByAllowedReviewer(
+                        t,
+                        reviewerIdentities,
+                        pr?.ReviewerIdentityProvider))
                     .ToList()
                 : [];
 
@@ -327,16 +335,20 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
         return evaluations;
     }
 
-    private static ReviewFeedbackCheckTrace CreateRejectedTrace(
+    private ReviewFeedbackCheckTrace CreateRejectedTrace(
         ReworkSignal signal,
         FeedbackMarkerCheckStatus markerStatus,
-        IReadOnlySet<string> allowedReviewers)
+        IReadOnlyList<ReviewerIdentity> reviewerIdentities,
+        string? provider = null)
     {
         var activeThreads = signal.Threads
             .Where(thread => thread.Status == ReviewThreadStatus.Active)
             .ToList();
         var reviewerThreads = activeThreads
-            .Where(thread => HasCommentByAllowedReviewer(thread, allowedReviewers))
+            .Where(thread => HasCommentByAllowedReviewer(
+                thread,
+                reviewerIdentities,
+                provider))
             .ToList();
         var contentThreads = reviewerThreads.Count == 0
             ? []
@@ -345,7 +357,7 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
         return CreateTrace(
             signal,
             markerStatus,
-            allowedReviewers.Count > 0,
+            reviewerIdentities.Count > 0,
             activeThreads.Count,
             reviewerThreads.Count,
             contentThreads.Count,
@@ -419,21 +431,69 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
     }
 
     /// <summary>
-    /// Check whether at least one comment in the thread's reply chain is by an allowed reviewer.
+    /// Check whether at least one comment in the thread's reply chain carries an
+    /// alias that matches a configured identity of the same kind.
     /// </summary>
-    private static bool HasCommentByAllowedReviewer(
+    private bool HasCommentByAllowedReviewer(
         ReviewThread thread,
-        IReadOnlySet<string> allowedReviewers)
+        IReadOnlyList<ReviewerIdentity> reviewerIdentities,
+        string? provider)
     {
         foreach (var comment in thread.Comments)
         {
-            if (allowedReviewers.Contains(comment.Author))
+            foreach (var authorIdentity in comment.AuthorIdentities)
             {
-                return true;
+                if (reviewerIdentities.Any(configured =>
+                    MatchesReviewerIdentity(provider, configured, authorIdentity)))
+                {
+                    return true;
+                }
             }
         }
 
         return false;
+    }
+
+    private bool MatchesReviewerIdentity(
+        string? provider,
+        ReviewerIdentity configured,
+        ReviewerIdentity author)
+    {
+        var policy = _reviewerIdentityPolicyResolver?.Resolve(provider);
+        if (policy is not null)
+        {
+            return policy.Matches(configured, author);
+        }
+
+        var kind = configured.Kind?.Trim();
+        var valueComparison = kind is "email" or "identityId" or "identity-id"
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        return string.Equals(kind, author.Kind?.Trim(), StringComparison.OrdinalIgnoreCase)
+            && string.Equals(configured.Value?.Trim(), author.Value?.Trim(), valueComparison);
+    }
+
+    private static PrUnderTest? FindMatchingPr(
+        IReadOnlyList<PrUnderTest> openPrs,
+        ReworkSignal signal)
+    {
+        if (signal.PullRequest.HasCanonicalIdentity)
+        {
+            var canonical = signal.PullRequest.CanonicalKey;
+            return openPrs.FirstOrDefault(candidate =>
+                candidate.PullRequest.HasCanonicalIdentity
+                && candidate.PullRequest.CanonicalKey.Equals(
+                    canonical,
+                    StringComparison.OrdinalIgnoreCase));
+        }
+
+        var matches = openPrs
+            .Where(candidate => candidate.PullRequestId.Equals(
+                signal.PullRequestId,
+                StringComparison.OrdinalIgnoreCase))
+            .Take(2)
+            .ToList();
+        return matches.Count == 1 ? matches[0] : null;
     }
 
     /// <summary>
@@ -487,8 +547,8 @@ public sealed partial class ReviewFeedbackFilterPipeline : IDisposable
     {
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "Feedback allowedReviewers is empty. All feedback will be rejected " +
-                      "(fail-closed). Configure 'feedback:allowedReviewers' with reviewer emails.")]
+            Message = "A managed repository reviewer allowlist is empty. Revival feedback will " +
+                      "be rejected (fail-closed); Assistance may retain its marker-only request.")]
         public static partial void AllowlistEmpty(ILogger logger);
 
         [LoggerMessage(

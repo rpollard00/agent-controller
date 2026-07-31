@@ -55,8 +55,11 @@ public sealed class LocalFeedbackThreadDefinition
     /// <summary>Stable thread identifier. Required.</summary>
     public string ThreadId { get; init; } = string.Empty;
 
-    /// <summary>Canonical author identifier (uniqueName / email).</summary>
+    /// <summary>Displayable author value.</summary>
     public string Author { get; init; } = string.Empty;
+
+    /// <summary>Typed aliases identifying the thread author.</summary>
+    public IReadOnlyList<AgentController.Domain.ReviewerIdentity> AuthorIdentities { get; init; } = [];
 
     /// <summary>ISO 8601 date-time string for thread creation.</summary>
     public string? CreatedAt { get; init; }
@@ -85,8 +88,11 @@ public sealed class LocalFeedbackThreadDefinition
 /// </summary>
 public sealed class LocalFeedbackCommentDefinition
 {
-    /// <summary>Canonical author identifier (uniqueName / email).</summary>
+    /// <summary>Displayable author value.</summary>
     public string Author { get; init; } = string.Empty;
+
+    /// <summary>Typed aliases identifying the comment author.</summary>
+    public IReadOnlyList<AgentController.Domain.ReviewerIdentity> AuthorIdentities { get; init; } = [];
 
     /// <summary>Comment body text.</summary>
     public string Body { get; init; } = string.Empty;

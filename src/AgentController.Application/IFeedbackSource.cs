@@ -38,26 +38,30 @@ public sealed record PrUnderTest
 
     /// <summary>Branch name the prior run pushed to.</summary>
     public string BranchName { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Provider discriminator for the managed repository's reviewer identity policy.
+    /// </summary>
+    public string? ReviewerIdentityProvider { get; init; }
+
+    /// <summary>
+    /// Normalized, typed reviewer identities configured on the managed repository.
+    /// An empty list is fail-closed for Revival and produces marker-only Assistance.
+    /// </summary>
+    public IReadOnlyList<ReviewerIdentity> ReviewerIdentities { get; init; } = [];
 }
 
 /// <summary>
 /// Query parameters passed by the feedback worker to a feedback source.
 /// The source uses <see cref="OpenPrs"/> to know which PRs to fetch threads for.
-/// <see cref="AllowedReviewers"/> and <see cref="ReworkMarkerTag"/> are carried
-/// for potential use by the source (e.g. marker label checks) but all filtering
-/// is the responsibility of the upstream worker pipeline, not the source.
+/// <see cref="ReworkMarkerTag"/> is carried for potential use by the source (e.g.
+/// marker label checks), but all reviewer, status, and content filtering is the
+/// responsibility of the upstream worker pipeline, not the source.
 /// </summary>
 public sealed record FeedbackQuery
 {
     /// <summary>List of open PRs to poll for review threads.</summary>
     public IReadOnlyList<PrUnderTest> OpenPrs { get; init; } = [];
-
-    /// <summary>
-    /// Set of canonical reviewer identifiers (uniqueName / email).
-    /// Used by the filter pipeline; the source may surface them for
-    /// marker-gate checks but does not filter on them.
-    /// </summary>
-    public IReadOnlySet<string> AllowedReviewers { get; init; } = new HashSet<string>();
 
     /// <summary>
     /// Tag/label name that marks a PR as requesting rework

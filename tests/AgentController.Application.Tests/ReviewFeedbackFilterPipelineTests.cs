@@ -23,7 +23,6 @@ public class ReviewFeedbackFilterPipelineTests
         var query = new FeedbackQuery
         {
             OpenPrs = [],
-            AllowedReviewers = new HashSet<string>(), // Empty — fail-closed
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -67,7 +66,6 @@ public class ReviewFeedbackFilterPipelineTests
                     PullRequestId = "1",
                 },
             ],
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
             ReworkMarkerTag = "agent-assistance-requested",
         };
         var signals = new ReworkSignal[]
@@ -87,6 +85,7 @@ public class ReviewFeedbackFilterPipelineTests
                             new ReviewThreadComment
                             {
                                 Author = "reviewer@example.com",
+                                AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }],
                                 Body = "already handled",
                                 CreatedAt = observedAt,
                             },
@@ -129,7 +128,6 @@ public class ReviewFeedbackFilterPipelineTests
         var pipeline = CreatePipeline(new FailingPrLabelSource());
         var query = new FeedbackQuery
         {
-            AllowedReviewers = new HashSet<string>(),
             ReworkMarkerTag = "agent-assistance-requested",
         };
         var signals = new ReworkSignal[]
@@ -166,9 +164,8 @@ public class ReviewFeedbackFilterPipelineTests
         {
             OpenPrs = new List<PrUnderTest>
             {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+                ConfiguredPr("1", "https://example.com/pr/1"),
             },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -202,9 +199,8 @@ public class ReviewFeedbackFilterPipelineTests
         {
             OpenPrs = new List<PrUnderTest>
             {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+                ConfiguredPr("1", "https://example.com/pr/1"),
             },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -232,9 +228,8 @@ public class ReviewFeedbackFilterPipelineTests
         {
             OpenPrs = new List<PrUnderTest>
             {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+                ConfiguredPr("1", "https://example.com/pr/1"),
             },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -270,9 +265,8 @@ public class ReviewFeedbackFilterPipelineTests
         {
             OpenPrs = new List<PrUnderTest>
             {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+                ConfiguredPr("1", "https://example.com/pr/1"),
             },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -289,7 +283,7 @@ public class ReviewFeedbackFilterPipelineTests
                         Status = ReviewThreadStatus.Active,
                         Comments = new List<ReviewThreadComment>
                         {
-                            new() { Author = "reviewer@example.com", Body = "fix" },
+                            new() { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = "fix" },
                         },
                     },
                     new()
@@ -298,7 +292,7 @@ public class ReviewFeedbackFilterPipelineTests
                         Status = ReviewThreadStatus.Resolved,
                         Comments = new List<ReviewThreadComment>
                         {
-                            new() { Author = "reviewer@example.com", Body = "fix" },
+                            new() { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = "fix" },
                         },
                     },
                     new()
@@ -307,7 +301,7 @@ public class ReviewFeedbackFilterPipelineTests
                         Status = ReviewThreadStatus.Fixed,
                         Comments = new List<ReviewThreadComment>
                         {
-                            new() { Author = "reviewer@example.com", Body = "fix" },
+                            new() { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = "fix" },
                         },
                     },
                 },
@@ -337,9 +331,8 @@ public class ReviewFeedbackFilterPipelineTests
         {
             OpenPrs = new List<PrUnderTest>
             {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+                ConfiguredPr("1", "https://example.com/pr/1"),
             },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -356,7 +349,7 @@ public class ReviewFeedbackFilterPipelineTests
                         Status = ReviewThreadStatus.Resolved,
                         Comments = new List<ReviewThreadComment>
                         {
-                            new() { Author = "reviewer@example.com", Body = "fix" },
+                            new() { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = "fix" },
                         },
                     },
                 },
@@ -386,9 +379,8 @@ public class ReviewFeedbackFilterPipelineTests
         {
             OpenPrs = new List<PrUnderTest>
             {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+                ConfiguredPr("1", "https://example.com/pr/1"),
             },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -406,7 +398,7 @@ public class ReviewFeedbackFilterPipelineTests
                         Status = ReviewThreadStatus.Active,
                         Comments = new List<ReviewThreadComment>
                         {
-                            new() { Author = "reviewer@example.com", Body = "fix this" },
+                            new() { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = "fix this" },
                         },
                     },
                     // Thread by non-allowed reviewer — dropped
@@ -427,7 +419,7 @@ public class ReviewFeedbackFilterPipelineTests
                         Comments = new List<ReviewThreadComment>
                         {
                             new() { Author = "other@example.com", Body = "initial" },
-                            new() { Author = "reviewer@example.com", Body = "yes fix", IsReply = true },
+                            new() { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = "yes fix", IsReply = true },
                         },
                     },
                 },
@@ -458,9 +450,8 @@ public class ReviewFeedbackFilterPipelineTests
         {
             OpenPrs = new List<PrUnderTest>
             {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+                ConfiguredPr("1", "https://example.com/pr/1"),
             },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -507,9 +498,8 @@ public class ReviewFeedbackFilterPipelineTests
         {
             OpenPrs = new List<PrUnderTest>
             {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+                ConfiguredPr("1", "https://example.com/pr/1"),
             },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -527,7 +517,7 @@ public class ReviewFeedbackFilterPipelineTests
                         Status = ReviewThreadStatus.Active,
                         Comments = new List<ReviewThreadComment>
                         {
-                            new() { Author = "reviewer@example.com", Body = "fix this" },
+                            new() { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = "fix this" },
                         },
                     },
                     // Empty body — dropped
@@ -537,7 +527,7 @@ public class ReviewFeedbackFilterPipelineTests
                         Status = ReviewThreadStatus.Active,
                         Comments = new List<ReviewThreadComment>
                         {
-                            new() { Author = "reviewer@example.com", Body = string.Empty },
+                            new() { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = string.Empty },
                         },
                     },
                     // Whitespace only — dropped
@@ -547,7 +537,7 @@ public class ReviewFeedbackFilterPipelineTests
                         Status = ReviewThreadStatus.Active,
                         Comments = new List<ReviewThreadComment>
                         {
-                            new() { Author = "reviewer@example.com", Body = "   \n\t  " },
+                            new() { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = "   \n\t  " },
                         },
                     },
                 },
@@ -577,9 +567,8 @@ public class ReviewFeedbackFilterPipelineTests
         {
             OpenPrs = new List<PrUnderTest>
             {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+                ConfiguredPr("1", "https://example.com/pr/1"),
             },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -596,7 +585,7 @@ public class ReviewFeedbackFilterPipelineTests
                         Status = ReviewThreadStatus.Active,
                         Comments = new List<ReviewThreadComment>
                         {
-                            new() { Author = "reviewer@example.com", Body = string.Empty },
+                            new() { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = string.Empty },
                         },
                     },
                 },
@@ -626,9 +615,8 @@ public class ReviewFeedbackFilterPipelineTests
         {
             OpenPrs = new List<PrUnderTest>
             {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+                ConfiguredPr("1", "https://example.com/pr/1"),
             },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -646,7 +634,7 @@ public class ReviewFeedbackFilterPipelineTests
                         Status = ReviewThreadStatus.Active,
                         Comments = new List<ReviewThreadComment>
                         {
-                            new() { Author = "reviewer@example.com", Body = "fix this" },
+                            new() { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = "fix this" },
                         },
                     },
                     // Resolved — dropped by status filter
@@ -656,7 +644,7 @@ public class ReviewFeedbackFilterPipelineTests
                         Status = ReviewThreadStatus.Resolved,
                         Comments = new List<ReviewThreadComment>
                         {
-                            new() { Author = "reviewer@example.com", Body = "fix" },
+                            new() { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = "fix" },
                         },
                     },
                     // Active but by non-reviewer — dropped by author filter
@@ -676,7 +664,7 @@ public class ReviewFeedbackFilterPipelineTests
                         Status = ReviewThreadStatus.Active,
                         Comments = new List<ReviewThreadComment>
                         {
-                            new() { Author = "reviewer@example.com", Body = string.Empty },
+                            new() { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = string.Empty },
                         },
                     },
                 },
@@ -709,10 +697,9 @@ public class ReviewFeedbackFilterPipelineTests
         {
             OpenPrs = new List<PrUnderTest>
             {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
-                new() { PullRequestId = "2", PullRequestUrl = "https://example.com/pr/2" },
+                ConfiguredPr("1", "https://example.com/pr/1"),
+                ConfiguredPr("2", "https://example.com/pr/2"),
             },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -757,9 +744,8 @@ public class ReviewFeedbackFilterPipelineTests
         {
             OpenPrs = new List<PrUnderTest>
             {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+                ConfiguredPr("1", "https://example.com/pr/1"),
             },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -777,7 +763,7 @@ public class ReviewFeedbackFilterPipelineTests
                         Status = ReviewThreadStatus.Active,
                         Comments = new List<ReviewThreadComment>
                         {
-                            new() { Author = "reviewer@example.com", Body = "fix", CreatedAt = t2 },
+                            new() { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = "fix", CreatedAt = t2 },
                         },
                     },
                     // Dropped by status — had earlier comment at t1
@@ -787,7 +773,7 @@ public class ReviewFeedbackFilterPipelineTests
                         Status = ReviewThreadStatus.Resolved,
                         Comments = new List<ReviewThreadComment>
                         {
-                            new() { Author = "reviewer@example.com", Body = "fix", CreatedAt = t1 },
+                            new() { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = "fix", CreatedAt = t1 },
                         },
                     },
                 },
@@ -823,9 +809,8 @@ public class ReviewFeedbackFilterPipelineTests
         {
             OpenPrs = new List<PrUnderTest>
             {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+                ConfiguredPr("1", "https://example.com/pr/1"),
             },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -861,9 +846,8 @@ public class ReviewFeedbackFilterPipelineTests
         {
             OpenPrs = new List<PrUnderTest>
             {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+                ConfiguredPr("1", "https://example.com/pr/1"),
             },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -907,10 +891,9 @@ public class ReviewFeedbackFilterPipelineTests
         {
             OpenPrs = new List<PrUnderTest>
             {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
-                new() { PullRequestId = "2", PullRequestUrl = "https://example.com/pr/2" },
+                ConfiguredPr("1", "https://example.com/pr/1"),
+                ConfiguredPr("2", "https://example.com/pr/2"),
             },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -959,9 +942,8 @@ public class ReviewFeedbackFilterPipelineTests
         {
             OpenPrs = new List<PrUnderTest>
             {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+                new() { PullRequestId = "1" },
             },
-            AllowedReviewers = new HashSet<string>(), // Empty — fail-closed before marker gate
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -998,11 +980,10 @@ public class ReviewFeedbackFilterPipelineTests
         {
             OpenPrs = new List<PrUnderTest>
             {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
-                new() { PullRequestId = "2", PullRequestUrl = "https://example.com/pr/2" },
-                new() { PullRequestId = "3", PullRequestUrl = "https://example.com/pr/3" },
+                ConfiguredPr("1", "https://example.com/pr/1"),
+                ConfiguredPr("2", "https://example.com/pr/2"),
+                ConfiguredPr("3", "https://example.com/pr/3"),
             },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -1036,10 +1017,9 @@ public class ReviewFeedbackFilterPipelineTests
         {
             OpenPrs = new List<PrUnderTest>
             {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+                ConfiguredPr("1", "https://example.com/pr/1"),
                 // PR "99" has no entry in OpenPrs
             },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -1073,7 +1053,6 @@ public class ReviewFeedbackFilterPipelineTests
         var query = new FeedbackQuery
         {
             OpenPrs = [],
-            AllowedReviewers = new HashSet<string>(), // Empty
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -1114,9 +1093,8 @@ public class ReviewFeedbackFilterPipelineTests
         {
             OpenPrs = new List<PrUnderTest>
             {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+                ConfiguredPr("1", "https://example.com/pr/1"),
             },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -1134,9 +1112,9 @@ public class ReviewFeedbackFilterPipelineTests
                         Status = ReviewThreadStatus.Active,
                         Comments = new List<ReviewThreadComment>
                         {
-                            new() { Author = "reviewer@example.com", Body = string.Empty },
+                            new() { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = string.Empty },
                             new() { Author = "other@example.com", Body = "   " },
-                            new() { Author = "reviewer@example.com", Body = "please fix", IsReply = true },
+                            new() { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = "please fix", IsReply = true },
                         },
                     },
                     // Thread where all comments are empty
@@ -1146,8 +1124,8 @@ public class ReviewFeedbackFilterPipelineTests
                         Status = ReviewThreadStatus.Active,
                         Comments = new List<ReviewThreadComment>
                         {
-                            new() { Author = "reviewer@example.com", Body = string.Empty },
-                            new() { Author = "reviewer@example.com", Body = "\t\n" },
+                            new() { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = string.Empty },
+                            new() { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = "\t\n" },
                         },
                     },
                 },
@@ -1179,9 +1157,8 @@ public class ReviewFeedbackFilterPipelineTests
         {
             OpenPrs = new List<PrUnderTest>
             {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+                ConfiguredPr("1", "https://example.com/pr/1"),
             },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -1211,7 +1188,7 @@ public class ReviewFeedbackFilterPipelineTests
                         Comments = new List<ReviewThreadComment>
                         {
                             new() { Author = "author@example.com", Body = "initial comment" },
-                            new() { Author = "reviewer@example.com", Body = "yes fix this", IsReply = true },
+                            new() { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = "yes fix this", IsReply = true },
                         },
                     },
                 },
@@ -1243,9 +1220,8 @@ public class ReviewFeedbackFilterPipelineTests
         {
             OpenPrs = new List<PrUnderTest>
             {
-                new() { PullRequestId = "1", PullRequestUrl = "https://example.com/pr/1" },
+                ConfiguredPr("1", "https://example.com/pr/1"),
             },
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
             ReworkMarkerTag = "agent-rework-requested",
         };
 
@@ -1282,7 +1258,6 @@ public class ReviewFeedbackFilterPipelineTests
         var query = new FeedbackQuery
         {
             OpenPrs = [],
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
         };
 
         var result = await pipeline.FilterAsync(query, Array.Empty<ReworkSignal>(), CancellationToken.None);
@@ -1309,10 +1284,9 @@ public class ReviewFeedbackFilterPipelineTests
         {
             OpenPrs =
             [
-                new PrUnderTest { PullRequestId = "1" },
-                new PrUnderTest { PullRequestId = "2" },
+                ConfiguredPr("1"),
+                ConfiguredPr("2"),
             ],
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
             ReworkMarkerTag = "agent-rework-requested",
         };
         var mixedThreads = new List<ReviewThread>
@@ -1327,6 +1301,7 @@ public class ReviewFeedbackFilterPipelineTests
                     new ReviewThreadComment
                     {
                         Author = "reviewer@example.com",
+                        AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }],
                         Body = "answer",
                         IsReply = true,
                     },
@@ -1336,13 +1311,13 @@ public class ReviewFeedbackFilterPipelineTests
             {
                 ThreadId = "resolved",
                 Status = ReviewThreadStatus.Resolved,
-                Comments = [new ReviewThreadComment { Author = "reviewer@example.com", Body = "done" }],
+                Comments = [new ReviewThreadComment { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = "done" }],
             },
             new()
             {
                 ThreadId = "whitespace",
                 Status = ReviewThreadStatus.Active,
-                Comments = [new ReviewThreadComment { Author = "reviewer@example.com", Body = " \t" }],
+                Comments = [new ReviewThreadComment { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = " \t" }],
             },
             new()
             {
@@ -1391,13 +1366,13 @@ public class ReviewFeedbackFilterPipelineTests
             PullRequestId = "1",
             Threads = ActiveThread("thread", "reviewer@example.com"),
         };
-        var pr = new PrUnderTest { PullRequestId = "1" };
+        var configuredPr = ConfiguredPr("1");
+        var emptyPr = new PrUnderTest { PullRequestId = "1" };
 
         var failingPipeline = CreatePipeline(new FailingPrLabelSource());
         var configuredQuery = new FeedbackQuery
         {
-            OpenPrs = [pr],
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
+            OpenPrs = [configuredPr],
         };
         var failedTrace = Assert.Single(await failingPipeline.TraceAsync(
             configuredQuery, [signal], CancellationToken.None));
@@ -1407,7 +1382,7 @@ public class ReviewFeedbackFilterPipelineTests
 
         var fetches = new List<string>();
         var emptyPipeline = CreatePipeline(new TrackingPrLabelSource([], fetches));
-        var emptyQuery = configuredQuery with { AllowedReviewers = new HashSet<string>() };
+        var emptyQuery = new FeedbackQuery { OpenPrs = [emptyPr] };
         var emptyTrace = Assert.Single(await emptyPipeline.TraceAsync(
             emptyQuery, [signal], CancellationToken.None));
         Assert.Equal(FeedbackMarkerCheckStatus.NotAttempted, emptyTrace.MarkerStatus);
@@ -1421,7 +1396,7 @@ public class ReviewFeedbackFilterPipelineTests
     public async Task TraceAssistanceAsync_ZeroComments_RemainsAcceptedWithoutBodies()
     {
         var pipeline = CreatePipeline(new FailingPrLabelSource());
-        var query = new FeedbackQuery { AllowedReviewers = new HashSet<string>() };
+        var query = new FeedbackQuery();
         var signal = new ReworkSignal
         {
             RequestMode = ReworkRequestMode.Assistance,
@@ -1454,8 +1429,7 @@ public class ReviewFeedbackFilterPipelineTests
         var pipeline = CreatePipeline(new CancelingPrLabelSource());
         var query = new FeedbackQuery
         {
-            OpenPrs = [new PrUnderTest { PullRequestId = "1" }],
-            AllowedReviewers = new HashSet<string> { "reviewer@example.com" },
+            OpenPrs = [ConfiguredPr("1")],
         };
         using var cts = new CancellationTokenSource();
         cts.Cancel();
@@ -1466,7 +1440,204 @@ public class ReviewFeedbackFilterPipelineTests
             cts.Token));
     }
 
+    [Fact]
+    public async Task FilterAsync_UsesEachPullRequestsRepositoryReviewerIdentities()
+    {
+        var pipeline = CreatePipeline(new TestPrLabelSource(
+            new Dictionary<string, List<PrLabel>>
+            {
+                ["1"] = [new PrLabel { Name = "agent-rework-requested" }],
+                ["2"] = [new PrLabel { Name = "agent-rework-requested" }],
+            }));
+        var query = new FeedbackQuery
+        {
+            OpenPrs =
+            [
+                new PrUnderTest
+                {
+                    PullRequest = new PullRequestReference
+                    {
+                        EnvironmentKey = "ado",
+                        RepositoryKey = "orders",
+                        PullRequestId = "1",
+                    },
+                    PullRequestId = "1",
+                    ReviewerIdentityProvider = "AzureDevOps",
+                    ReviewerIdentities =
+                    [new ReviewerIdentity { Kind = "email", Value = "orders@example.com" }],
+                },
+                new PrUnderTest
+                {
+                    PullRequest = new PullRequestReference
+                    {
+                        EnvironmentKey = "ado",
+                        RepositoryKey = "payments",
+                        PullRequestId = "2",
+                    },
+                    PullRequestId = "2",
+                    ReviewerIdentityProvider = "AzureDevOps",
+                    ReviewerIdentities =
+                    [new ReviewerIdentity { Kind = "email", Value = "payments@example.com" }],
+                },
+            ],
+            // Each pull request carries its own repository reviewer policy.
+        };
+        var signals = new ReworkSignal[]
+        {
+            new()
+            {
+                PullRequest = query.OpenPrs[0].PullRequest,
+                PullRequestId = "1",
+                Threads =
+                [new ReviewThread
+                {
+                    ThreadId = "orders-thread",
+                    Status = ReviewThreadStatus.Active,
+                    Comments =
+                    [new ReviewThreadComment
+                    {
+                        Author = "Orders Reviewer",
+                        AuthorIdentities =
+                        [new ReviewerIdentity { Kind = "email", Value = "ORDERS@EXAMPLE.COM" }],
+                        Body = "Fix orders.",
+                    }],
+                }],
+            },
+            new()
+            {
+                PullRequest = query.OpenPrs[1].PullRequest,
+                PullRequestId = "2",
+                Threads =
+                [new ReviewThread
+                {
+                    ThreadId = "payments-thread",
+                    Status = ReviewThreadStatus.Active,
+                    Comments =
+                    [new ReviewThreadComment
+                    {
+                        Author = "Payments Reviewer",
+                        AuthorIdentities =
+                        [new ReviewerIdentity { Kind = "email", Value = "PAYMENTS@EXAMPLE.COM" }],
+                        Body = "Fix payments.",
+                    }],
+                }],
+            },
+        };
+
+        var result = await pipeline.FilterAsync(query, signals, CancellationToken.None);
+
+        Assert.Equal(2, result.Count);
+        Assert.Contains(result, signal => signal.PullRequestId == "1");
+        Assert.Contains(result, signal => signal.PullRequestId == "2");
+    }
+
+    [Fact]
+    public async Task FilterAsync_RequiresSameTypedIdentityKindAndAnyAuthorAlias()
+    {
+        var pipeline = CreatePipeline(new TestPrLabelSource(
+            new Dictionary<string, List<PrLabel>>
+            {
+                ["1"] = [new PrLabel { Name = "agent-rework-requested" }],
+            }));
+        var configured = new PrUnderTest
+        {
+            PullRequestId = "1",
+            ReviewerIdentities =
+            [new ReviewerIdentity { Kind = "descriptor", Value = "aad.123" }],
+        };
+        var query = new FeedbackQuery { OpenPrs = [configured] };
+        var signal = new ReworkSignal
+        {
+            PullRequestId = "1",
+            Threads =
+            [new ReviewThread
+            {
+                ThreadId = "aliases",
+                Status = ReviewThreadStatus.Active,
+                Comments =
+                [new ReviewThreadComment
+                {
+                    Author = "Reviewer",
+                    AuthorIdentities =
+                    [
+                        new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" },
+                        new ReviewerIdentity { Kind = "descriptor", Value = "aad.123" },
+                    ],
+                    Body = "Please update this.",
+                }],
+            }],
+        };
+
+        var result = await pipeline.FilterAsync(query, [signal], CancellationToken.None);
+
+        Assert.Single(result);
+        Assert.Single(result[0].Threads);
+    }
+
+    [Fact]
+    public async Task FilterAsync_EmptyRepositoryAllowlistFailsClosedPerRevivalPr()
+    {
+        var pipeline = CreatePipeline(new TestPrLabelSource(
+            new Dictionary<string, List<PrLabel>>
+            {
+                ["empty"] = [new PrLabel { Name = "agent-rework-requested" }],
+                ["configured"] = [new PrLabel { Name = "agent-rework-requested" }],
+            }));
+        var query = new FeedbackQuery
+        {
+            OpenPrs =
+            [
+                new PrUnderTest { PullRequestId = "empty" },
+                new PrUnderTest
+                {
+                    PullRequestId = "configured",
+                    ReviewerIdentities =
+                    [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }],
+                },
+            ],
+        };
+        var signals = new ReworkSignal[]
+        {
+            new() { PullRequestId = "empty", Threads = ActiveThread("empty-thread", "reviewer@example.com") },
+            new()
+            {
+                PullRequestId = "configured",
+                Threads =
+                [new ReviewThread
+                {
+                    ThreadId = "configured-thread",
+                    Status = ReviewThreadStatus.Active,
+                    Comments =
+                    [new ReviewThreadComment
+                    {
+                        Author = "reviewer@example.com",
+                        AuthorIdentities =
+                        [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }],
+                        Body = "fix this",
+                    }],
+                }],
+            },
+        };
+
+        var result = await pipeline.FilterAsync(query, signals, CancellationToken.None);
+
+        var accepted = Assert.Single(result);
+        Assert.Equal("configured", accepted.PullRequestId);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────
+
+    private static PrUnderTest ConfiguredPr(string pullRequestId, string? pullRequestUrl = null)
+    {
+        return new PrUnderTest
+        {
+            PullRequestId = pullRequestId,
+            PullRequestUrl = pullRequestUrl ?? $"https://example.com/pr/{pullRequestId}",
+            ReviewerIdentityProvider = "AzureDevOps",
+            ReviewerIdentities =
+            [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }],
+        };
+    }
 
     private static List<ReviewThread> ActiveThread(string threadId, string author)
     {
@@ -1478,7 +1649,13 @@ public class ReviewFeedbackFilterPipelineTests
                 Status = ReviewThreadStatus.Active,
                 Comments = new List<ReviewThreadComment>
                 {
-                    new() { Author = author, Body = "fix this" },
+                    new()
+                    {
+                        Author = author,
+                        AuthorIdentities =
+                        [new ReviewerIdentity { Kind = "email", Value = author }],
+                        Body = "fix this",
+                    },
                 },
             },
         };
@@ -1492,7 +1669,7 @@ public class ReviewFeedbackFilterPipelineTests
             Status = status,
             Comments = new List<ReviewThreadComment>
             {
-                new() { Author = "reviewer@example.com", Body = "fix" },
+                new() { Author = "reviewer@example.com", AuthorIdentities = [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }], Body = "fix" },
             },
         };
     }

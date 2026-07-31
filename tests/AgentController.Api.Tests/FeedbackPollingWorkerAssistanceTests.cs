@@ -260,6 +260,8 @@ public sealed class FeedbackPollingWorkerAssistanceTests
                     new ReviewThreadComment
                     {
                         Author = "reviewer@example.com",
+                        AuthorIdentities =
+                        [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }],
                         Body = "Please cover the null branch.",
                         CreatedAt = commentAt,
                     },
@@ -346,7 +348,6 @@ public sealed class FeedbackPollingWorkerAssistanceTests
                     ["feedback:enabled"] = "true",
                     ["feedback:provider"] = "None",
                     ["feedback:soakMinutes"] = "5",
-                    ["feedback:allowedReviewers:0"] = "reviewer@example.com",
                 }
             )
             .Build();
@@ -382,6 +383,16 @@ public sealed class FeedbackPollingWorkerAssistanceTests
         {
             var db = scope.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
             await db.Database.EnsureCreatedAsync();
+            await scope.ServiceProvider
+                .GetRequiredService<IRepositoryStore>()
+                .UpsertAsync(
+                    new RepositoryProfile
+                    {
+                        Key = PullRequest.RepositoryKey,
+                        ReviewerIdentities =
+                        [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.com" }],
+                    },
+                    CancellationToken.None);
         }
 
         var worker = new FeedbackPollingWorker(

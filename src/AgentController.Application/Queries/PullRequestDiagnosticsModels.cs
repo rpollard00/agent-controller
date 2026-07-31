@@ -21,7 +21,6 @@ public sealed record PullRequestDiagnosticOptions
 {
     public string RevivalLabel { get; init; } = "agent-rework-requested";
     public string AssistanceLabel { get; init; } = "agent-assistance-requested";
-    public IReadOnlySet<string> AllowedReviewers { get; init; } = new HashSet<string>();
 }
 
 public sealed record PullRequestSourceOption

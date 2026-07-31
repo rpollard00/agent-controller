@@ -63,11 +63,11 @@ internal sealed class PullRequestPickupEvaluator(
             PullRequestUrl = snapshot.PullRequestUrl,
             PullRequestId = snapshot.PullRequestId,
             BranchName = snapshot.SourceBranch,
+            ReviewerIdentities = repository?.ReviewerIdentities ?? [],
         };
         var feedbackQuery = new FeedbackQuery
         {
             OpenPrs = [pr],
-            AllowedReviewers = options.AllowedReviewers,
             ReworkMarkerTag = assistance ? options.AssistanceLabel : options.RevivalLabel,
         };
         var fetched = await feedbackSource.PollAsync(feedbackQuery, cancellationToken);
@@ -89,7 +89,7 @@ internal sealed class PullRequestPickupEvaluator(
             ? requested
             : request == PullRequestRequestMatch.Revival
                 && trace.MarkerStatus == FeedbackMarkerCheckStatus.Present;
-        var reviewerConfigured = options.AllowedReviewers.Count > 0;
+        var reviewerConfigured = pr.ReviewerIdentities.Count > 0;
         var feedbackQualifies = assistance || trace.QualifyingThreadCount > 0;
         var checks = new[]
         {

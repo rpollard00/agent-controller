@@ -20,8 +20,9 @@ namespace AgentController.Infrastructure;
 /// from the connection's named secret reference through <see cref="ISecretStore"/>.
 ///
 /// This source is a pure fetcher — it returns raw threads without any filtering.
-/// All filtering (marker gate, allowlist, status, author, content) is the
-/// responsibility of the upstream worker filter pipeline.
+/// It preserves the displayable author and all provider identity aliases; marker,
+/// reviewer, status, and content filtering remains the responsibility of the
+/// upstream worker filter pipeline.
 /// </summary>
 internal sealed class AzureDevOpsReposFeedbackSource : IFeedbackSource
 {
@@ -248,14 +249,31 @@ internal sealed class AzureDevOpsReposFeedbackSource : IFeedbackSource
                 {
                     foreach (var comment in commentsArray.EnumerateArray())
                     {
-                        // Author: use uniqueName (email) as canonical identifier.
+                        // Preserve a displayable author while carrying every typed
+                        // Azure DevOps identity alias emitted by the provider.
                         var author = string.Empty;
+                        var authorIdentities = new List<ReviewerIdentity>();
                         if (comment.TryGetProperty("author", out var authorEl)
-                            && authorEl.ValueKind == JsonValueKind.Object
-                            && authorEl.TryGetProperty("uniqueName", out var uniqueNameEl)
-                            && uniqueNameEl.ValueKind == JsonValueKind.String)
+                            && authorEl.ValueKind == JsonValueKind.Object)
                         {
-                            author = uniqueNameEl.GetString() ?? string.Empty;
+                            var displayName = ReadAuthorValue(authorEl, "displayName");
+                            var uniqueName = ReadAuthorValue(authorEl, "uniqueName");
+                            var identityId = ReadAuthorValue(authorEl, "id");
+                            var descriptor = ReadAuthorValue(authorEl, "descriptor");
+
+                            author = displayName ?? uniqueName ?? identityId ?? descriptor ?? string.Empty;
+                            AddAuthorIdentity(
+                                authorIdentities,
+                                AzureDevOpsReviewerIdentityKinds.Email,
+                                uniqueName);
+                            AddAuthorIdentity(
+                                authorIdentities,
+                                AzureDevOpsReviewerIdentityKinds.IdentityId,
+                                identityId);
+                            AddAuthorIdentity(
+                                authorIdentities,
+                                AzureDevOpsReviewerIdentityKinds.Descriptor,
+                                descriptor);
                         }
 
                         // Comment body.
@@ -275,6 +293,7 @@ internal sealed class AzureDevOpsReposFeedbackSource : IFeedbackSource
                         comments.Add(new ReviewThreadComment
                         {
                             Author = author,
+                            AuthorIdentities = authorIdentities,
                             Body = body,
                             CreatedAt = commentCreatedAt,
                             IsReply = isReply,
@@ -311,6 +330,25 @@ internal sealed class AzureDevOpsReposFeedbackSource : IFeedbackSource
             // Any other error (network, JSON parsing) — return empty list.
             // The caller skips PRs with no threads; this is a pure fetcher.
             return [];
+        }
+    }
+
+    private static string? ReadAuthorValue(JsonElement author, string propertyName)
+    {
+        return author.TryGetProperty(propertyName, out var value)
+            && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+    }
+
+    private static void AddAuthorIdentity(
+        List<ReviewerIdentity> identities,
+        string kind,
+        string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            identities.Add(new ReviewerIdentity { Kind = kind, Value = value });
         }
     }
 

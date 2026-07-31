@@ -58,9 +58,11 @@ public sealed class ReworkRequestContractTests
                     RequestMode = ReworkRequestMode.Assistance,
                     PullRequest = pullRequest,
                     PullRequestId = "42",
+                    ReviewerIdentityProvider = "AzureDevOps",
+                    ReviewerIdentities =
+                    [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.test" }],
                 },
             ],
-            AllowedReviewers = new HashSet<string> { "reviewer@example.test" },
         };
         var signals = new ReworkSignal[]
         {
@@ -80,6 +82,8 @@ public sealed class ReworkRequestContractTests
                             new ReviewThreadComment
                             {
                                 Author = "reviewer@example.test",
+                                AuthorIdentities =
+                                [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.test" }],
                                 Body = "Please clean this up.",
                                 CreatedAt = DateTimeOffset.UtcNow,
                             },

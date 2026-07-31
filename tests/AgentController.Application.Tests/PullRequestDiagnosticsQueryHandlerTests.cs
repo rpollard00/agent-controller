@@ -44,7 +44,16 @@ public sealed class PullRequestDiagnosticsQueryHandlerTests
         {
             ThreadId = "thread-1",
             Status = ReviewThreadStatus.Active,
-            Comments = [new ReviewThreadComment { Author = "reviewer@example.test", Body = "Please fix this." }],
+            Comments =
+            [
+                new ReviewThreadComment
+                {
+                    Author = "reviewer@example.test",
+                    AuthorIdentities =
+                    [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.test" }],
+                    Body = "Please fix this.",
+                },
+            ],
         };
         var fixture = Fixture.Create(["agent-rework-requested"], [run], [qualifyingThread]);
 
@@ -163,7 +172,16 @@ public sealed class PullRequestDiagnosticsQueryHandlerTests
     {
         ThreadId = "thread-1",
         Status = ReviewThreadStatus.Active,
-        Comments = [new ReviewThreadComment { Author = "reviewer@example.test", Body = "Change requested" }],
+        Comments =
+        [
+            new ReviewThreadComment
+            {
+                Author = "reviewer@example.test",
+                AuthorIdentities =
+                [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.test" }],
+                Body = "Change requested",
+            },
+        ],
     };
 
     private sealed class Fixture
@@ -222,6 +240,8 @@ public sealed class PullRequestDiagnosticsQueryHandlerTests
                 {
                     Key = repositoryKey,
                     RepositoryHostConnectionKey = "ado",
+                    ReviewerIdentities =
+                    [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.test" }],
                 }),
                 _ => throw new NotSupportedException(method.Name),
             });
@@ -262,10 +282,7 @@ public sealed class PullRequestDiagnosticsQueryHandlerTests
                 method.Name == nameof(IPrLabelSource.GetLabelsAsync)
                     ? Task.FromResult<IReadOnlyList<PrLabel>>(labels.Select(label => new PrLabel { Name = label }).ToArray())
                     : throw new NotSupportedException());
-            var options = new PullRequestDiagnosticOptions
-            {
-                AllowedReviewers = new HashSet<string> { "reviewer@example.test" },
-            };
+            var options = new PullRequestDiagnosticOptions();
             var pipeline = new ReviewFeedbackFilterPipeline(
                 labelSource, NullLogger<ReviewFeedbackFilterPipeline>.Instance);
             return new Fixture(new GetPullRequestDiagnosticsQueryHandler(

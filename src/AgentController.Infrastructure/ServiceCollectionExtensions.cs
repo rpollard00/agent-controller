@@ -768,7 +768,6 @@ public static class AgentControllerServiceCollectionExtensions
             {
                 RevivalLabel = feedback.ReworkMarkerTag,
                 AssistanceLabel = feedback.AssistanceMarkerTag,
-                AllowedReviewers = new HashSet<string>(feedback.AllowedReviewers),
             };
         });
 
