@@ -9,13 +9,16 @@ public sealed class CreateRepositoryCommandHandler(
     IRepositoryStore repositoryStore,
     IRuntimeEnvironmentStore runtimeEnvironmentStore,
     IConnectionStore? connectionStore,
-    ISecretManager secretManager
+    ISecretManager secretManager,
+    IReviewerIdentityPolicyResolver? reviewerIdentityPolicyResolver = null
 ) : ICommandHandler<CreateRepositoryCommand, RepositoryOperationResult>
 {
     private readonly IRepositoryStore _repositoryStore = repositoryStore;
     private readonly IRuntimeEnvironmentStore _runtimeEnvironmentStore = runtimeEnvironmentStore;
     private readonly IConnectionStore? _connectionStore = connectionStore;
     private readonly ISecretManager _secretManager = secretManager;
+    private readonly IReviewerIdentityPolicyResolver? _reviewerIdentityPolicyResolver =
+        reviewerIdentityPolicyResolver;
 
     public async Task<RepositoryOperationResult> HandleAsync(
         CreateRepositoryCommand command,
@@ -37,7 +40,8 @@ public sealed class CreateRepositoryCommandHandler(
             _runtimeEnvironmentStore,
             _connectionStore,
             _secretManager,
-            cancellationToken
+            cancellationToken,
+            _reviewerIdentityPolicyResolver
         );
 
         if (!validation.IsValid)

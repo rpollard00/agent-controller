@@ -1,3 +1,4 @@
+using AgentController.Application.Abstractions;
 using AgentController.Domain;
 using AgentController.Domain.Secrets;
 
@@ -11,13 +12,16 @@ internal static class RepositoryProfileValidation
     private const int MaximumCloneUrlLength = 2048;
     private const int MaximumBranchLength = 256;
     private const int MaximumProjectLength = 256;
+    private static readonly IReviewerIdentityPolicyResolver DefaultReviewerIdentityPolicies =
+        new ReviewerIdentityPolicyResolver([new AzureDevOpsReviewerIdentityPolicy()]);
 
     public static async Task<RepositoryProfileValidationResult> ValidateAndNormalizeAsync(
         RepositoryProfile profile,
         IRuntimeEnvironmentStore runtimeEnvironmentStore,
         IConnectionStore? connectionStore,
         ISecretManager secretManager,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        IReviewerIdentityPolicyResolver? reviewerIdentityPolicyResolver = null
     )
     {
         var errors = new ValidationErrors();
@@ -68,22 +72,26 @@ internal static class RepositoryProfileValidation
             cancellationToken
         );
 
-        // Validate that the unified connection exists when specified.
+        // Validate that the unified connection exists when specified and retain the
+        // selected provider for reviewer identity policy validation below.
+        ConnectionProfile? repositoryConnection = null;
         if (
             repositoryHostConnectionKey is not null
             && !errors.Contains("repositoryHostConnectionKey")
             && connectionStore is not null
-            && await connectionStore.GetByKeyAsync(
-                repositoryHostConnectionKey,
-                cancellationToken
-            )
-                is null
         )
         {
-            errors.Add(
-                "repositoryHostConnectionKey",
-                $"Connection '{repositoryHostConnectionKey}' does not exist."
+            repositoryConnection = await connectionStore.GetByKeyAsync(
+                repositoryHostConnectionKey,
+                cancellationToken
             );
+            if (repositoryConnection is null)
+            {
+                errors.Add(
+                    "repositoryHostConnectionKey",
+                    $"Connection '{repositoryHostConnectionKey}' does not exist."
+                );
+            }
         }
 
         if (
@@ -99,6 +107,14 @@ internal static class RepositoryProfileValidation
             );
         }
 
+        var reviewerIdentities = NormalizeReviewerIdentities(
+            profile.ReviewerIdentities,
+            repositoryHostConnectionKey,
+            repositoryConnection,
+            reviewerIdentityPolicyResolver,
+            errors
+        );
+
         var normalized = profile with
         {
             Key = key,
@@ -110,11 +126,84 @@ internal static class RepositoryProfileValidation
             Project = project,
             RemoteIdentity = remoteIdentity,
             RuntimeEnvironmentKey = runtimeEnvironmentKey,
+            ReviewerIdentities = reviewerIdentities,
             SshKeyReference = sshKeyReference,
         };
 
         return new RepositoryProfileValidationResult(normalized, errors.ToDictionary());
     }
+
+    private static List<ReviewerIdentity> NormalizeReviewerIdentities(
+        IReadOnlyList<ReviewerIdentity>? identities,
+        string? repositoryHostConnectionKey,
+        ConnectionProfile? repositoryConnection,
+        IReviewerIdentityPolicyResolver? policyResolver,
+        ValidationErrors errors
+    )
+    {
+        if (identities is null || identities.Count == 0)
+        {
+            return [];
+        }
+
+        if (repositoryConnection is null)
+        {
+            if (repositoryHostConnectionKey is null)
+            {
+                errors.Add(
+                    "repositoryHostConnectionKey",
+                    "A repository host connection is required when reviewer identities are configured."
+                );
+            }
+            else if (!errors.Contains("repositoryHostConnectionKey"))
+            {
+                errors.Add(
+                    "reviewerIdentities",
+                    "The selected repository host connection could not be resolved for reviewer identity validation."
+                );
+            }
+
+            return [];
+        }
+
+        var policy = (policyResolver ?? DefaultReviewerIdentityPolicies).Resolve(
+            repositoryConnection.Provider
+        );
+        if (policy is null)
+        {
+            errors.Add(
+                "reviewerIdentities",
+                $"Reviewer identities are not supported for provider '{repositoryConnection.Provider}'."
+            );
+            return [];
+        }
+
+        var normalized = new List<ReviewerIdentity>(identities.Count);
+        var seen = new HashSet<ReviewerIdentityKey>();
+        for (var index = 0; index < identities.Count; index++)
+        {
+            var result = policy.ValidateAndNormalize(identities[index]);
+            if (!result.IsValid || result.NormalizedIdentity is null)
+            {
+                foreach (var error in result.Errors.DefaultIfEmpty("The reviewer identity is invalid."))
+                {
+                    errors.Add("reviewerIdentities", $"Entry {index + 1}: {error}");
+                }
+                continue;
+            }
+
+            var identity = result.NormalizedIdentity;
+            var identityKey = new ReviewerIdentityKey(identity.Kind, identity.Value);
+            if (seen.Add(identityKey))
+            {
+                normalized.Add(identity);
+            }
+        }
+
+        return normalized;
+    }
+
+    private readonly record struct ReviewerIdentityKey(string Kind, string Value);
 
     public static KeyValidationResult ValidateAndNormalizeKey(string? value)
     {

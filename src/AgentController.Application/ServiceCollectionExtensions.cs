@@ -20,6 +20,8 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddApplicationHandlers(this IServiceCollection services)
     {
         services.AddScoped<IManagedProfileResolver, ManagedProfileResolver>();
+        services.TryAddSingleton<IReviewerIdentityPolicy, AzureDevOpsReviewerIdentityPolicy>();
+        services.TryAddSingleton<IReviewerIdentityPolicyResolver, ReviewerIdentityPolicyResolver>();
         services.AddOptions<FeedbackSoakOptionsView>();
         services.TryAddSingleton(new PullRequestDiagnosticOptions());
 

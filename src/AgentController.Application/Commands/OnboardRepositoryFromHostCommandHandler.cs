@@ -15,7 +15,8 @@ public sealed class OnboardRepositoryFromHostCommandHandler(
     IConnectionResolver connectionResolver,
     IRepositoryStore repositoryStore,
     IRuntimeEnvironmentStore runtimeEnvironmentStore,
-    ISecretManager secretManager
+    ISecretManager secretManager,
+    IReviewerIdentityPolicyResolver? reviewerIdentityPolicyResolver = null
 ) : ICommandHandler<OnboardRepositoryFromHostCommand, RepositoryOperationResult>
 {
     private readonly IConnectionStore _connectionStore = connectionStore;
@@ -23,6 +24,8 @@ public sealed class OnboardRepositoryFromHostCommandHandler(
     private readonly IRepositoryStore _repositoryStore = repositoryStore;
     private readonly IRuntimeEnvironmentStore _runtimeEnvironmentStore = runtimeEnvironmentStore;
     private readonly ISecretManager _secretManager = secretManager;
+    private readonly IReviewerIdentityPolicyResolver? _reviewerIdentityPolicyResolver =
+        reviewerIdentityPolicyResolver;
 
     public async Task<RepositoryOperationResult> HandleAsync(
         OnboardRepositoryFromHostCommand command,
@@ -87,7 +90,8 @@ public sealed class OnboardRepositoryFromHostCommandHandler(
             _runtimeEnvironmentStore,
             _connectionStore,
             _secretManager,
-            cancellationToken
+            cancellationToken,
+            _reviewerIdentityPolicyResolver
         );
 
         if (!validation.IsValid)
