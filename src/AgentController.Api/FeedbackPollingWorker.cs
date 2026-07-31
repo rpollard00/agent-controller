@@ -157,8 +157,9 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
         var assistanceSnapshots = managedPullRequests
             .Where(snapshot => HasLabel(snapshot.Labels, options.AssistanceMarkerTag))
             .ToList();
+        var managedRepositoryProfiles = await repositoryStore.ListAsync(ct);
         var repositoryReviewerPolicies = await LoadRepositoryReviewerPoliciesAsync(
-            repositoryStore,
+            managedRepositoryProfiles,
             connectionStore,
             reviewerIdentityPolicyResolver,
             ct
@@ -282,45 +283,70 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
         var revivalPrs = new List<Application.PrUnderTest>();
         foreach (var run in eligibleRuns)
         {
-            var pullRequestId = Application.PullRequestIdentityMatcher.ExtractPullRequestId(
-                run.PullRequestUrl
-            );
-            if (pullRequestId is null)
-            {
-                Log.SkippingRunBadPrUrl(_logger, run.RunId, run.PullRequestUrl ?? "(null)");
-                continue;
-            }
-
-            // Assistance wins when both request markers are present. Excluding the
-            // run-backed copy also prevents duplicate thread fetches for the same PR.
-            if (assistancePrs.Any(pr =>
+            // Assistance wins before Revival repository resolution. This preserves
+            // marker precedence even when a Revival-only repository lookup is missing
+            // or ambiguous.
+            var assistanceMatch = assistancePrs.FirstOrDefault(pr =>
                 Application.PullRequestIdentityMatcher.Matches(
                     pr.PullRequest,
                     run.PullRequestUrl
-                )))
+                ));
+            if (assistanceMatch is not null)
             {
-                Log.RevivalSuppressedByAssistance(_logger, pullRequestId);
+                Log.RevivalSuppressedByAssistance(
+                    _logger,
+                    assistanceMatch.PullRequestId
+                );
                 continue;
             }
 
-            var managedSnapshot = managedPullRequests.FirstOrDefault(snapshot =>
-                Application.PullRequestIdentityMatcher.Matches(
-                    snapshot.PullRequest,
-                    run.PullRequestUrl
-                ));
-            var repoKey = managedSnapshot?.RepositoryKey
-                ?? Application.PullRequestIdentityMatcher.ExtractRepositoryKey(
-                    run.PullRequestUrl
-                )
-                ?? string.Empty;
-            var pullRequest = managedSnapshot?.PullRequest ?? new PullRequestReference
+            var resolution = Application.ManagedPullRequestResolver.Resolve(
+                run.PullRequestUrl,
+                managedPullRequests,
+                managedRepositoryProfiles
+            );
+            if (!resolution.IsResolved || resolution.Snapshot is null)
             {
-                RepositoryKey = repoKey,
-                PullRequestId = pullRequestId,
-                PullRequestUrl = run.PullRequestUrl ?? string.Empty,
-                SourceBranch = run.BranchName ?? string.Empty,
-                SourceCommitSha = run.CommitSha ?? string.Empty,
+                var unresolvedPullRequestId =
+                    Application.PullRequestIdentityMatcher.ExtractPullRequestId(
+                        run.PullRequestUrl
+                    ) ?? "(unknown)";
+                if (resolution.Status
+                    == Application.ManagedPullRequestResolutionStatus.Ambiguous)
+                {
+                    Log.RevivalPullRequestResolutionAmbiguous(
+                        _logger,
+                        run.RunId,
+                        unresolvedPullRequestId,
+                        resolution.CandidateCount
+                    );
+                }
+                else
+                {
+                    Log.RevivalPullRequestResolutionMissing(
+                        _logger,
+                        run.RunId,
+                        unresolvedPullRequestId
+                    );
+                }
+
+                continue;
+            }
+
+            var managedSnapshot = resolution.Snapshot;
+            var pullRequestId = managedSnapshot.PullRequestId;
+            var pullRequest = managedSnapshot.PullRequest with
+            {
+                SourceBranch = FirstNonEmpty(
+                    managedSnapshot.SourceBranch,
+                    run.BranchName
+                ),
+                SourceCommitSha = FirstNonEmpty(
+                    managedSnapshot.SourceCommitSha,
+                    run.CommitSha
+                ),
             };
+            var repoKey = managedSnapshot.RepositoryKey;
             var revivalReviewerPolicy = repositoryReviewerPolicies.TryGetValue(
                 repoKey,
                 out var configuredRevivalReviewers)
@@ -337,7 +363,10 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
                     RepoKey = repoKey,
                     PullRequestUrl = pullRequest.PullRequestUrl,
                     PullRequestId = pullRequestId,
-                    BranchName = run.BranchName ?? string.Empty,
+                    BranchName = FirstNonEmpty(
+                        managedSnapshot.SourceBranch,
+                        run.BranchName
+                    ),
                     ReviewerIdentityProvider = revivalReviewerPolicy.Provider,
                     ReviewerIdentities = revivalReviewerPolicy.Identities,
                 }
@@ -807,12 +836,11 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
 
     private static async Task<IReadOnlyDictionary<string, RepositoryReviewerPolicy>>
         LoadRepositoryReviewerPoliciesAsync(
-            Application.IRepositoryStore repositoryStore,
+            IReadOnlyList<RepositoryProfile> repositories,
             Application.IConnectionStore? connectionStore,
             IReviewerIdentityPolicyResolver policyResolver,
             CancellationToken cancellationToken)
     {
-        var repositories = await repositoryStore.ListAsync(cancellationToken);
         var connections = connectionStore is null
             ? []
             : await connectionStore.ListAsync(cancellationToken);
@@ -1008,6 +1036,9 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
 
     private static bool HasLabel(IEnumerable<string> labels, string marker) =>
         labels.Any(label => label.Equals(marker, StringComparison.OrdinalIgnoreCase));
+
+    private static string FirstNonEmpty(string? preferred, string? fallback) =>
+        string.IsNullOrWhiteSpace(preferred) ? fallback ?? string.Empty : preferred;
 
     private static bool AssistanceMatchesRevivalFeedback(
         PullRequestReference assistancePullRequest,
@@ -1218,12 +1249,23 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
 
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "Skipping run {RunId}: could not extract PR ID from URL '{PullRequestUrl}'."
+            Message = "Skipping Revival run {RunId} for pull request {PullRequestId}: it did not resolve to exactly one managed repository profile."
         )]
-        public static partial void SkippingRunBadPrUrl(
+        public static partial void RevivalPullRequestResolutionMissing(
             ILogger logger,
             string runId,
-            string pullRequestUrl
+            string pullRequestId
+        );
+
+        [LoggerMessage(
+            Level = LogLevel.Warning,
+            Message = "Skipping Revival run {RunId} for pull request {PullRequestId}: it matched {CandidateCount} managed repository profiles and is ambiguous."
+        )]
+        public static partial void RevivalPullRequestResolutionAmbiguous(
+            ILogger logger,
+            string runId,
+            string pullRequestId,
+            int candidateCount
         );
 
         [LoggerMessage(
