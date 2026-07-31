@@ -19,7 +19,7 @@ If a PR has both request labels, **Assistance takes precedence**. The controller
 
 ### Revival discovery
 
-Revival is run-backed. The controller examines PRs reported by eligible prior controller runs and requires the configured revival marker. The request must have at least one qualifying review thread; an empty `feedback.allowedReviewers` list therefore fails closed for Revival.
+Revival is run-backed. The controller examines PRs reported by eligible prior controller runs and requires the configured revival marker. The request must have at least one qualifying review thread. Reviewer identities come only from the matched managed repository profile; an empty profile therefore fails closed for Revival.
 
 ### Assistance discovery
 
@@ -32,10 +32,10 @@ This allows a human-submitted PR to request autonomous cleanup. The PR does not 
 For either mode, included review threads must:
 
 1. still have `Active` status;
-2. contain at least one comment from an identity in `feedback.allowedReviewers`; and
+2. contain at least one comment whose typed author identity matches an identity configured on the PR's managed repository profile; and
 3. contain non-whitespace comment content.
 
-Full reply chains for surviving threads are retained. Assistance differs in one important way: the marker itself is a valid request. If there are no comments, no unresolved threads, no allowlisted reviewer comments, or all comments are filtered out, Assistance still creates an empty feedback bundle. The resulting story directs the agent to inspect and clean up the existing PR.
+Matching is provider-specific and considers all aliases returned for the comment author. Full reply chains for surviving threads are retained. Assistance differs in one important way: the marker itself is a valid request. If there are no comments, no unresolved threads, no matching reviewer comments, or all comments are filtered out, Assistance still creates an empty feedback bundle. The resulting story directs the agent to inspect and clean up the existing PR.
 
 The first Assistance observation starts the soak timer. A changed thread bundle supersedes the prior observation, and a genuinely newer qualifying comment advances the last-feedback timestamp and resets the quiet period. Materialization begins only after `feedback.soakMinutes` has elapsed without newer qualifying feedback. Soak and correlation state are persisted across restarts.
 
@@ -123,7 +123,6 @@ External projection failures are recorded as warnings and are safe to retry. Man
     "reworkMarkerTag": "agent-rework-requested",
     "assistanceMarkerTag": "agent-assistance-requested",
     "assistanceInProgressTag": "agent-assistance-in-progress",
-    "allowedReviewers": ["reviewer@example.com"],
     "maxReviewThreadsPerBundle": 50
   },
   "runtime": {
@@ -135,7 +134,9 @@ External projection failures are recorded as warnings and are safe to retry. Man
 }
 ```
 
-`allowedReviewers` controls which comments are copied into context. An empty list blocks Revival feedback, but does not block a label-driven zero-comment Assistance request.
+Reviewer identities are configured on each managed repository profile, not under process-level `feedback` settings. The Repositories editor loads the selected provider's supported identity kinds and accepts one normalized identity at a time; use **Add** (or Enter) for each entry and **Remove** to delete one. Upgraded profiles start with an empty reviewer identity list and have no global fallback, so configure the profile before expecting Revival feedback to qualify.
+
+For Azure DevOps, configure any of the provider's supported identity forms: email / `uniqueName`, identity ID (GUID), or graph descriptor. The feedback source maps all three aliases from each comment author, and matching is performed only between entries of the same kind. Email and identity ID values are normalized case-insensitively; graph descriptors are matched exactly.
 
 ## 8. Azure DevOps Permissions
 

@@ -18,6 +18,12 @@ public class FeedbackOptionsTests
     }
 
     [Fact]
+    public void GlobalReviewerAllowlist_IsNotPartOfFeedbackOptions()
+    {
+        Assert.Null(typeof(FeedbackOptions).GetProperty("AllowedReviewers"));
+    }
+
+    [Fact]
     public void Labels_BindFromConfiguration()
     {
         var options = BindAndValidate(

@@ -65,12 +65,6 @@ public sealed class FeedbackOptions : IValidatableObject
     public string AssistanceInProgressTag { get; init; } = "agent-assistance-in-progress";
 
     /// <summary>
-    /// Canonical reviewer identifiers (uniqueName / email) whose comments qualify
-    /// as rework feedback. Empty set means no feedback is accepted (fail-closed).
-    /// </summary>
-    public IReadOnlyList<string> AllowedReviewers { get; init; } = [];
-
-    /// <summary>
     /// Maximum number of review threads to bundle per rework cycle.
     /// Must be positive. Default: 50.
     /// </summary>

@@ -86,6 +86,22 @@ Repository profiles are stored in the controller database and managed from the *
 
 For example, create a profile with key `example-service`, clone URL `https://dev.azure.com/org/project/_git/example-service`, default branch `main`, and a `runtimeEnvironmentKey` selected from the managed runtime environments. The `repo:example-service` tag then resolves to that persisted profile.
 
+### 3.3 Repository Reviewer Identities
+
+Reviewer identities are authoritative data on the managed repository profile. They are not read from process-level `feedback` configuration and there is no global fallback. Database upgrades initialize existing profiles with an empty list, so Revival fails closed until each profile's identities are configured.
+
+The Repositories create/edit form is provider-tailored. After selecting the repository-host connection, choose one supported identity kind, enter one value, and select **Add** (or press Enter). Entries are shown individually with **Remove** controls; comma-separated or multiline input is not supported. Changing the provider revalidates the configured entries, and unsupported providers cannot use reviewer identities.
+
+Azure DevOps supports these identity kinds:
+
+| Kind | Value and matching |
+|------|-------------------|
+| Email / `uniqueName` | Email-like Azure DevOps `uniqueName`; normalized and matched case-insensitively. |
+| Identity ID | Azure DevOps identity GUID; normalized and matched case-insensitively. |
+| Graph descriptor | Opaque Azure DevOps graph descriptor; matched exactly. |
+
+Feedback author aliases are mapped from all available Azure DevOps `uniqueName`, `id`, and `descriptor` fields. A thread qualifies when any comment alias matches a configured profile identity of the same kind.
+
 ---
 
 ## 4. Lifecycle State Projection (`activeState` / `completedState`)
@@ -368,7 +384,6 @@ The process-level feedback and loadout settings are:
     "reworkMarkerTag": "agent-rework-requested",
     "assistanceMarkerTag": "agent-assistance-requested",
     "assistanceInProgressTag": "agent-assistance-in-progress",
-    "allowedReviewers": ["reviewer@example.com"],
     "maxReviewThreadsPerBundle": 50
   },
   "runtime": {
@@ -380,7 +395,7 @@ The process-level feedback and loadout settings are:
 }
 ```
 
-PR labels are independent of `tagPrefix`. Assistance label names are required and all three request/progress names must be distinct case-insensitively. See [Pull Request Revival and Assistance Workflows §7](./pull-request-feedback-workflows.md#7-configuration).
+PR labels are independent of `tagPrefix`. Assistance label names are required and all three request/progress names must be distinct case-insensitively. Reviewer identities are configured per managed repository profile as described in §3.3; the process-level `feedback` section has no reviewer allowlist. See [Pull Request Revival and Assistance Workflows §7](./pull-request-feedback-workflows.md#7-configuration).
 
 ### 10.1 Switching Between Mock and Live Providers
 

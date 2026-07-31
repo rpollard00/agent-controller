@@ -205,6 +205,8 @@ Docker is the likely MVP environment provider before considering devcontainers, 
 
 Repository profiles are managed records stored in SQLite. Operators create them through the Web UI or `/api/webui/repositories`; each repository references an enabled managed runtime environment. Static appsettings repository profiles are not supported.
 
+A repository profile is also the authoritative scope for typed reviewer identities used by pull-request feedback. Existing profiles upgraded by the reviewer-identity migration begin with an empty list and do not inherit a process-level fallback. The provider-tailored repository editor accepts one identity at a time and supports Azure DevOps email / `uniqueName`, identity ID (GUID), and graph descriptor matching. See [Board Provisioning §3.3](./board-provisioning.md#33-repository-reviewer-identities).
+
 ## 3.6 Work Item Eligibility
 
 Agent eligibility is configuration-driven using Azure DevOps Boards tags.
@@ -1338,7 +1340,6 @@ Repository, runtime-environment, work-source environment, connection, and secret
     "reworkMarkerTag": "agent-rework-requested",
     "assistanceMarkerTag": "agent-assistance-requested",
     "assistanceInProgressTag": "agent-assistance-in-progress",
-    "allowedReviewers": ["reviewer@example.com"],
     "maxReviewThreadsPerBundle": 50
   },
   "runtime": {
@@ -1350,7 +1351,7 @@ Repository, runtime-environment, work-source environment, connection, and secret
 }
 ```
 
-The three PR labels are independent of the managed board tag prefix. Assistance label names must be nonempty, and all three names must be distinct case-insensitively. Managed work-source environments use `tagPrefix` (default `agent`) to derive board tags such as `<prefix>-ready`, `<prefix>-ready-rework`, and `<prefix>-active`.
+The three PR labels are independent of the managed board tag prefix. Assistance label names must be nonempty, and all three names must be distinct case-insensitively. Reviewer identities are configured on managed repository profiles; the process-level `feedback` section has no reviewer allowlist. Managed work-source environments use `tagPrefix` (default `agent`) to derive board tags such as `<prefix>-ready`, `<prefix>-ready-rework`, and `<prefix>-active`.
 
 `NewWork` is for an ordinary ready story and may create a new branch/PR. Both Revival and Assistance carry persisted rework context and select `Rework`, which must update the existing PR source branch rather than create another PR. See [Pull Request Revival and Assistance Workflows](./pull-request-feedback-workflows.md).
 
