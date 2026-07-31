@@ -412,6 +412,10 @@ public static class AgentControllerServiceCollectionExtensions
             DefaultAzureDevOpsPullRequestCommentClientFactory
         >();
         services.TryAddSingleton<
+            AzureDevOpsPullRequestFeedbackClientFactory,
+            DefaultAzureDevOpsPullRequestFeedbackClientFactory
+        >();
+        services.TryAddSingleton<
             AzureDevOpsAssistanceStoryRelationshipClientFactory,
             DefaultAzureDevOpsAssistanceStoryRelationshipClientFactory
         >();
@@ -666,13 +670,12 @@ public static class AgentControllerServiceCollectionExtensions
     /// <see cref="AzureDevOpsReposPrLabelSource"/> as <see cref="IPrLabelSource"/>, and
     /// managed repository-wide pull-request discovery.
     ///
-    /// The feedback source resolves its PAT per-PR from the unified connection
-    /// profile that owns the PR's repository (via IRepositoryStore →
-    /// IConnectionStore → ISecretStore).
+    /// The feedback source resolves a canonical managed target per PR from the
+    /// repository and owning unified connection profiles, including its PAT.
     ///
     /// Requires <see cref="AddAgentControllerRepositories"/> to be called first
-    /// (for <see cref="IRepositoryStore"/> and <see cref="IConnectionStore"/>).
-    /// Requires secrets infrastructure (for <see cref="ISecretStore"/>).
+    /// (for managed repository and connection resolution).
+    /// Requires secrets infrastructure for Azure DevOps PAT resolution.
     /// </summary>
     public static IServiceCollection AddAgentControllerAzureDevOpsReposFeedbackSource(
         this IServiceCollection services
@@ -680,16 +683,14 @@ public static class AgentControllerServiceCollectionExtensions
     {
         services.AddAgentControllerAzureDevOpsPullRequestDiscovery();
 
-        // Register the feedback source (thread fetcher) as scoped.
-        // PAT is resolved per-PR from the owning unified connection profile.
+        // Register the feedback source (thread fetcher) as scoped. It resolves a fresh
+        // managed target for each PR, including its owning connection and PAT.
         services.AddScoped<IFeedbackSource>(sp =>
-        {
-            var repositoryStore = sp.GetRequiredService<IRepositoryStore>();
-            var connectionStore = sp.GetRequiredService<IConnectionStore>();
-            var secretStore = sp.GetRequiredService<ISecretStore>();
-
-            return new AzureDevOpsReposFeedbackSource(repositoryStore, connectionStore, secretStore);
-        });
+            new AzureDevOpsReposFeedbackSource(
+                sp.GetRequiredService<IServiceScopeFactory>(),
+                sp.GetRequiredService<AzureDevOpsPullRequestFeedbackClientFactory>()
+            )
+        );
 
         // Register the PR label source (marker gate) as singleton.
         // The source only captures singleton-safe factories and a scope factory;
