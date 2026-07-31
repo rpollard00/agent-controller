@@ -26,7 +26,9 @@ internal sealed class DefaultAzureDevOpsPullRequestLabelClientFactory
     ) => new(new HttpClient(), organizationUrl, personalAccessToken);
 }
 
-/// <summary>Narrow Azure DevOps Repos REST client for pull-request label mutation.</summary>
+/// <summary>
+/// Narrow Azure DevOps Repos REST client for pull-request label reads and mutations.
+/// </summary>
 internal sealed class AzureDevOpsPullRequestLabelClient : IDisposable
 {
     private readonly HttpClient _http;
@@ -52,6 +54,23 @@ internal sealed class AzureDevOpsPullRequestLabelClient : IDisposable
         _http.DefaultRequestHeaders.Accept.Add(
             new MediaTypeWithQualityHeaderValue("application/json")
         );
+    }
+
+    /// <summary>Reads the labels currently applied to one pull request.</summary>
+    public async Task<IReadOnlyList<PrLabel>> GetLabelsAsync(
+        AzureDevOpsManagedRepository repository,
+        string pullRequestId,
+        CancellationToken cancellationToken
+    )
+    {
+        ArgumentNullException.ThrowIfNull(repository);
+        ArgumentException.ThrowIfNullOrWhiteSpace(pullRequestId);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var labels = await FetchAsync(repository, pullRequestId, cancellationToken);
+        return labels
+            .Select(label => new PrLabel { Name = label.Name })
+            .ToArray();
     }
 
     /// <summary>
@@ -159,6 +178,8 @@ internal sealed class AzureDevOpsPullRequestLabelClient : IDisposable
         var labels = new List<AzureDevOpsPullRequestLabel>();
         foreach (var value in values.EnumerateArray())
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             var name = ReadJsonString(value, "name");
             if (name.Length == 0)
             {

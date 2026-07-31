@@ -132,6 +132,85 @@ public sealed class AzureDevOpsManagedPullRequestDiscoveryTests
     }
 
     [Fact]
+    public async Task Client_ReadsPullRequestLabels()
+    {
+        var requestedUris = new List<string>();
+        var handler = new DelegateHandler(request =>
+        {
+            requestedUris.Add(request.RequestUri?.AbsoluteUri ?? string.Empty);
+            Assert.Equal("Basic", request.Headers.Authorization?.Scheme);
+            Assert.DoesNotContain(TestPat, request.Headers.Authorization?.Parameter ?? string.Empty);
+            return JsonResponse("""
+                {"value":[
+                  {"id":"requested-id","name":" agent-assistance-requested "},
+                  {"id":42,"name":"keep"},
+                  {"name":""}
+                ]}
+                """);
+        });
+        using var client = CreateLabelClient(handler);
+
+        var labels = await client.GetLabelsAsync(
+            ManagedRepository(),
+            "42",
+            CancellationToken.None
+        );
+
+        Assert.Equal(["agent-assistance-requested", "keep"], labels.Select(label => label.Name));
+        Assert.Contains(requestedUris, uri => uri.Contains(
+            "Payments%20Project/_apis/git/repositories/payments-id/pullRequests/42/labels?",
+            StringComparison.OrdinalIgnoreCase
+        ));
+    }
+
+    [Fact]
+    public async Task Client_LabelRead_SurfacesProviderFailureWithoutCredentials()
+    {
+        var handler = new DelegateHandler(_ => new HttpResponseMessage(HttpStatusCode.Forbidden));
+        using var client = CreateLabelClient(handler);
+
+        var exception = await Assert.ThrowsAsync<HttpRequestException>(() => client.GetLabelsAsync(
+            ManagedRepository(),
+            "42",
+            CancellationToken.None
+        ));
+
+        Assert.Equal(HttpStatusCode.Forbidden, exception.StatusCode);
+        Assert.DoesNotContain(TestPat, exception.Message);
+    }
+
+    [Fact]
+    public async Task Client_LabelRead_SurfacesMalformedResponse()
+    {
+        var handler = new DelegateHandler(_ => JsonResponse("{\"value\":{}}"));
+        using var client = CreateLabelClient(handler);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => client.GetLabelsAsync(
+            ManagedRepository(),
+            "42",
+            CancellationToken.None
+        ));
+    }
+
+    [Fact]
+    public async Task Client_LabelRead_PropagatesCancellation()
+    {
+        var handler = new DelegateHandler(async (_, cancellationToken) =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return JsonResponse("{\"value\":[]}");
+        });
+        using var client = CreateLabelClient(handler);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(25));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.GetLabelsAsync(
+            ManagedRepository(),
+            "42",
+            cancellation.Token
+        ));
+    }
+
+    [Fact]
     public async Task Client_LabelMutation_IsCaseInsensitiveAndIdempotent()
     {
         var labels = new List<(string Id, string Name)>
