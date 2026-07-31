@@ -1,3 +1,4 @@
+using AgentController.Application.Abstractions;
 using AgentController.Domain;
 
 namespace AgentController.Application.Queries;
@@ -9,7 +10,9 @@ internal sealed class PullRequestPickupEvaluator(
     IReworkFeedbackStore feedbackStore,
     IFeedbackSource feedbackSource,
     ReviewFeedbackFilterPipeline feedbackPipeline,
-    PullRequestDiagnosticOptions options)
+    PullRequestDiagnosticOptions options,
+    IConnectionStore? connectionStore = null,
+    IReviewerIdentityPolicyResolver? reviewerIdentityPolicyResolver = null)
 {
     public static PullRequestRequestMatch ClassifyRequest(
         IEnumerable<string> labels,
@@ -40,6 +43,7 @@ internal sealed class PullRequestPickupEvaluator(
         var active = snapshot.Status.Equals("active", StringComparison.OrdinalIgnoreCase);
 
         var repository = await repositoryStore.GetByKeyAsync(snapshot.RepositoryKey, cancellationToken);
+        var reviewerPolicy = await ResolveReviewerPolicyAsync(repository, cancellationToken);
         var managedRepository = repository is not null
             && repository.RepositoryHostConnectionKey?.Equals(
                 snapshot.EnvironmentKey, StringComparison.OrdinalIgnoreCase) == true;
@@ -63,7 +67,8 @@ internal sealed class PullRequestPickupEvaluator(
             PullRequestUrl = snapshot.PullRequestUrl,
             PullRequestId = snapshot.PullRequestId,
             BranchName = snapshot.SourceBranch,
-            ReviewerIdentities = repository?.ReviewerIdentities ?? [],
+            ReviewerIdentityProvider = reviewerPolicy.Provider,
+            ReviewerIdentities = reviewerPolicy.Identities,
         };
         var feedbackQuery = new FeedbackQuery
         {
@@ -140,6 +145,95 @@ internal sealed class PullRequestPickupEvaluator(
             FeedbackTrace = trace,
             Tracking = tracking,
         };
+    }
+
+    private async Task<RepositoryReviewerPolicy> ResolveReviewerPolicyAsync(
+        RepositoryProfile? repository,
+        CancellationToken cancellationToken)
+    {
+        if (repository is null)
+        {
+            return RepositoryReviewerPolicy.Empty;
+        }
+
+        var connectionKey = repository.RepositoryHostConnectionKey?.Trim();
+        ConnectionProfile? connection = null;
+        if (connectionStore is not null && !string.IsNullOrWhiteSpace(connectionKey))
+        {
+            connection = await connectionStore.GetByKeyAsync(connectionKey, cancellationToken);
+        }
+
+        var provider = connection?.Provider?.Trim();
+        var hasConnectionStore = connectionStore is not null;
+
+        // A diagnostic query normally has a connection store available. If a caller
+        // supplies only the application-layer collaborators (for example, a focused
+        // unit test), retain the profile identities rather than guessing that a
+        // connection key is a provider name. A supplied policy can still identify an
+        // unambiguous provider key.
+        if (!hasConnectionStore
+            && reviewerIdentityPolicyResolver is not null
+            && provider is null
+            && !string.IsNullOrWhiteSpace(connectionKey)
+            && reviewerIdentityPolicyResolver.Resolve(connectionKey) is not null)
+        {
+            provider = connectionKey;
+        }
+
+        if (hasConnectionStore && connection is null)
+        {
+            return new RepositoryReviewerPolicy(provider, []);
+        }
+
+        var policy = provider is null || reviewerIdentityPolicyResolver is null
+            ? null
+            : reviewerIdentityPolicyResolver.Resolve(provider);
+        if (hasConnectionStore && policy is null)
+        {
+            // Repository CRUD rejects reviewer identities for unsupported providers.
+            // Treat any stale or externally-created data the same way here: fail closed.
+            return new RepositoryReviewerPolicy(provider, []);
+        }
+
+        return new RepositoryReviewerPolicy(
+            provider,
+            NormalizeReviewerIdentities(repository.ReviewerIdentities, policy));
+    }
+
+    private static IReadOnlyList<ReviewerIdentity> NormalizeReviewerIdentities(
+        IReadOnlyList<ReviewerIdentity> identities,
+        IReviewerIdentityPolicy? policy)
+    {
+        if (policy is null)
+        {
+            return identities.ToArray();
+        }
+
+        var normalized = new List<ReviewerIdentity>(identities.Count);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var identity in identities)
+        {
+            var result = policy.ValidateAndNormalize(identity);
+            if (!result.IsValid || result.NormalizedIdentity is null)
+            {
+                continue;
+            }
+
+            var candidate = result.NormalizedIdentity;
+            if (seen.Add($"{candidate.Kind}\0{candidate.Value}"))
+            {
+                normalized.Add(candidate);
+            }
+        }
+
+        return normalized;
+    }
+
+    private sealed record RepositoryReviewerPolicy(
+        string? Provider,
+        IReadOnlyList<ReviewerIdentity> Identities)
+    {
+        public static RepositoryReviewerPolicy Empty { get; } = new(null, []);
     }
 
     private async Task<bool> HasActiveReworkAsync(string? workItemId, CancellationToken cancellationToken)

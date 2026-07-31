@@ -10,7 +10,9 @@ public sealed class GetPullRequestDiagnosticsQueryHandler(
     IReworkFeedbackStore feedbackStore,
     IFeedbackSource feedbackSource,
     ReviewFeedbackFilterPipeline feedbackPipeline,
-    PullRequestDiagnosticOptions options)
+    PullRequestDiagnosticOptions options,
+    IConnectionStore? connectionStore = null,
+    IReviewerIdentityPolicyResolver? reviewerIdentityPolicyResolver = null)
     : IQueryHandler<GetPullRequestDiagnosticsQuery, PullRequestDiagnosticDetail?>
 {
     public async Task<PullRequestDiagnosticDetail?> ExecuteAsync(
@@ -47,7 +49,9 @@ public sealed class GetPullRequestDiagnosticsQueryHandler(
             feedbackStore,
             feedbackSource,
             feedbackPipeline,
-            options);
+            options,
+            connectionStore,
+            reviewerIdentityPolicyResolver);
         return await evaluator.EvaluateAsync(snapshot, cancellationToken);
     }
 }

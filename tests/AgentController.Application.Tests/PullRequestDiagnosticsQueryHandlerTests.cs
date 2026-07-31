@@ -98,6 +98,140 @@ public sealed class PullRequestDiagnosticsQueryHandlerTests
         Assert.True(Assert.Single(detail.Checks, check => check.Code == "originating-lineage").Passed);
     }
 
+    [Theory]
+    [InlineData("email", "reviewer@example.test", "email", "REVIEWER@EXAMPLE.TEST")]
+    [InlineData("identityId", "D2719B5C-3F2B-4E8E-9A4F-4E2D1F3A1B90", "identityId", "d2719b5c-3f2b-4e8e-9a4f-4e2d1f3a1b90")]
+    [InlineData("descriptor", "aad.reviewer", "descriptor", "aad.reviewer")]
+    public async Task Revival_UsesAzureDevOpsReviewerPolicyForEachIdentityKind(
+        string configuredKind,
+        string configuredValue,
+        string authorKind,
+        string authorValue)
+    {
+        var thread = new ReviewThread
+        {
+            ThreadId = "thread-1",
+            Status = ReviewThreadStatus.Active,
+            Comments =
+            [
+                new ReviewThreadComment
+                {
+                    Author = "reviewer",
+                    AuthorIdentities = [new ReviewerIdentity { Kind = authorKind, Value = authorValue }],
+                    Body = "Please fix this.",
+                },
+            ],
+        };
+        var fixture = Fixture.Create(
+            ["agent-rework-requested"],
+            [EligibleRun()],
+            [thread],
+            reviewerIdentities: [new ReviewerIdentity { Kind = configuredKind, Value = configuredValue }]);
+
+        var detail = await fixture.ExecuteAsync();
+
+        Assert.NotNull(detail);
+        Assert.True(detail.Eligible);
+        Assert.True(Assert.Single(detail.Checks, check => check.Code == "reviewer-configuration").Passed);
+        Assert.Equal(1, detail.FeedbackTrace!.ActiveThreadCount);
+        Assert.Equal(1, detail.FeedbackTrace.AllowlistedReviewerThreadCount);
+        Assert.Equal(1, detail.FeedbackTrace.NonEmptyContentThreadCount);
+        Assert.Equal(1, detail.FeedbackTrace.QualifyingThreadCount);
+    }
+
+    [Fact]
+    public async Task Revival_WithNonmatchingReviewerAuthor_ReportsFilteredStages()
+    {
+        var thread = new ReviewThread
+        {
+            ThreadId = "thread-1",
+            Status = ReviewThreadStatus.Active,
+            Comments =
+            [
+                new ReviewThreadComment
+                {
+                    Author = "other",
+                    AuthorIdentities = [new ReviewerIdentity { Kind = "descriptor", Value = "aad.other" }],
+                    Body = "Change requested",
+                },
+            ],
+        };
+        var fixture = Fixture.Create(
+            ["agent-rework-requested"],
+            [EligibleRun()],
+            [thread],
+            reviewerIdentities: [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.test" }]);
+
+        var detail = await fixture.ExecuteAsync();
+
+        Assert.NotNull(detail);
+        Assert.False(detail.Eligible);
+        Assert.False(Assert.Single(detail.Checks, check => check.Code == "qualifying-feedback").Passed);
+        Assert.True(Assert.Single(detail.Checks, check => check.Code == "reviewer-configuration").Passed);
+        Assert.Equal(1, detail.FeedbackTrace!.ActiveThreadCount);
+        Assert.Equal(0, detail.FeedbackTrace.AllowlistedReviewerThreadCount);
+        Assert.Equal(0, detail.FeedbackTrace.NonEmptyContentThreadCount);
+        Assert.Equal(0, detail.FeedbackTrace.QualifyingThreadCount);
+    }
+
+    [Fact]
+    public async Task Revival_WithEmptyRepositoryReviewers_FailsClosedAndReportsUnconfigured()
+    {
+        var fixture = Fixture.Create(
+            ["agent-rework-requested"],
+            [EligibleRun()],
+            [QualifyingThread()],
+            reviewerIdentities: []);
+
+        var detail = await fixture.ExecuteAsync();
+
+        Assert.NotNull(detail);
+        Assert.False(detail.Eligible);
+        Assert.False(Assert.Single(detail.Checks, check => check.Code == "reviewer-configuration").Passed);
+        Assert.Equal("Revival fails closed because no reviewer is configured.",
+            Assert.Single(detail.Checks, check => check.Code == "reviewer-configuration").Reason);
+        Assert.Equal(FeedbackMarkerCheckStatus.NotAttempted, detail.FeedbackTrace!.MarkerStatus);
+        Assert.False(detail.FeedbackTrace.ReviewerAllowlistConfigured);
+        Assert.Equal(1, detail.FeedbackTrace.ActiveThreadCount);
+        Assert.Equal(0, detail.FeedbackTrace.AllowlistedReviewerThreadCount);
+        Assert.Equal(0, detail.FeedbackTrace.QualifyingThreadCount);
+    }
+
+    [Fact]
+    public async Task Revival_WithInvalidAzureDevOpsReviewerIdentity_FailsClosed()
+    {
+        var fixture = Fixture.Create(
+            ["agent-rework-requested"],
+            [EligibleRun()],
+            [QualifyingThread()],
+            reviewerIdentities: [new ReviewerIdentity { Kind = "identityId", Value = "not-a-guid" }]);
+
+        var detail = await fixture.ExecuteAsync();
+
+        Assert.NotNull(detail);
+        Assert.False(detail.Eligible);
+        Assert.False(detail.FeedbackTrace!.ReviewerAllowlistConfigured);
+        Assert.Equal(0, detail.FeedbackTrace.AllowlistedReviewerThreadCount);
+        Assert.Equal(0, detail.FeedbackTrace.QualifyingThreadCount);
+    }
+
+    [Fact]
+    public async Task Revival_WithUnsupportedRepositoryProvider_FailsClosed()
+    {
+        var fixture = Fixture.Create(
+            ["agent-rework-requested"],
+            [EligibleRun()],
+            [QualifyingThread()],
+            reviewerProvider: "GitHub");
+
+        var detail = await fixture.ExecuteAsync();
+
+        Assert.NotNull(detail);
+        Assert.False(detail.Eligible);
+        Assert.False(detail.FeedbackTrace!.ReviewerAllowlistConfigured);
+        Assert.Equal(0, detail.FeedbackTrace.QualifyingThreadCount);
+    }
+
     [Fact]
     public async Task Revival_WithoutOriginatingRun_ExplainsMissingLineage()
     {
@@ -203,7 +337,9 @@ public sealed class PullRequestDiagnosticsQueryHandlerTests
             bool includeUrl = true,
             bool blocked = false,
             string? snapshotUrl = null,
-            string repositoryKey = "orders")
+            string repositoryKey = "orders",
+            IReadOnlyList<ReviewerIdentity>? reviewerIdentities = null,
+            string reviewerProvider = "AzureDevOps")
         {
             var pullRequest = new PullRequestReference
             {
@@ -240,7 +376,7 @@ public sealed class PullRequestDiagnosticsQueryHandlerTests
                 {
                     Key = repositoryKey,
                     RepositoryHostConnectionKey = "ado",
-                    ReviewerIdentities =
+                    ReviewerIdentities = reviewerIdentities ??
                     [new ReviewerIdentity { Kind = "email", Value = "reviewer@example.test" }],
                 }),
                 _ => throw new NotSupportedException(method.Name),
@@ -282,12 +418,25 @@ public sealed class PullRequestDiagnosticsQueryHandlerTests
                 method.Name == nameof(IPrLabelSource.GetLabelsAsync)
                     ? Task.FromResult<IReadOnlyList<PrLabel>>(labels.Select(label => new PrLabel { Name = label }).ToArray())
                     : throw new NotSupportedException());
+            var connectionStore = Stub<IConnectionStore>.Create((method, _) => method.Name switch
+            {
+                nameof(IConnectionStore.GetByKeyAsync) => Task.FromResult<ConnectionProfile?>(new ConnectionProfile
+                {
+                    Key = "ado",
+                    Provider = reviewerProvider,
+                }),
+                _ => throw new NotSupportedException(method.Name),
+            });
             var options = new PullRequestDiagnosticOptions();
+            var policyResolver = new ReviewerIdentityPolicyResolver(
+                [new AzureDevOpsReviewerIdentityPolicy()]);
             var pipeline = new ReviewFeedbackFilterPipeline(
-                labelSource, NullLogger<ReviewFeedbackFilterPipeline>.Instance);
+                labelSource,
+                NullLogger<ReviewFeedbackFilterPipeline>.Instance,
+                policyResolver);
             return new Fixture(new GetPullRequestDiagnosticsQueryHandler(
                 discovery, repositoryStore, runStore, cycleStore, feedbackStore,
-                feedbackSource, pipeline, options), repositoryKey);
+                feedbackSource, pipeline, options, connectionStore, policyResolver), repositoryKey);
         }
 
         public Task<PullRequestDiagnosticDetail?> ExecuteAsync() => _handler.ExecuteAsync(
