@@ -22,6 +22,10 @@ public sealed class RepositoryStoreTests
 
         Assert.True(created);
         AssertProfile(profile, Assert.IsType<RepositoryProfile>(persisted));
+        Assert.Equal(
+            "[{\"kind\":\"email\",\"value\":\"reviewer@example.test\"},{\"kind\":\"identity-id\",\"value\":\"8b5e0b7e\"}]",
+            await ReadColumnAsync(fixture.Connection, profile.Key, "ReviewerIdentitiesJson")
+        );
     }
 
     [Fact]
@@ -72,6 +76,8 @@ public sealed class RepositoryStoreTests
             RepositoryHostConnectionKey = "ado-staging",
             RuntimeEnvironmentKey = null,
             SshKeyReference = SecretReference.ByName("staging-deploy-key"),
+            ReviewerIdentities =
+            [new ReviewerIdentity { Kind = "descriptor", Value = "aadgp.Uy0x" }],
         };
 
         Assert.True(await fixture.Store.CreateAsync(original, CancellationToken.None));
@@ -123,6 +129,8 @@ public sealed class RepositoryStoreTests
             WebUrl = null,
             RepositoryHostConnectionKey = null,
             RuntimeEnvironmentKey = "runtime-production",
+            ReviewerIdentities =
+            [new ReviewerIdentity { Kind = "graph-descriptor", Value = "aadgp.Uy0y" }],
         };
 
         await fixture.Store.UpsertAsync(original, CancellationToken.None);
@@ -173,6 +181,8 @@ public sealed class RepositoryStoreTests
         Assert.Null(profile.RepositoryHostConnectionKey);
         Assert.Null(profile.RuntimeEnvironmentKey);
         Assert.Null(profile.SshKeyReference);
+        Assert.Empty(profile.ReviewerIdentities);
+        Assert.Equal("[]", await ReadColumnAsync(connection, "legacy", "ReviewerIdentitiesJson"));
         Assert.Equal(CloneTransport.Ssh, profile.Transport);
         Assert.Contains(
             await dbContext.Database.GetAppliedMigrationsAsync(),
@@ -199,6 +209,11 @@ public sealed class RepositoryStoreTests
             RepositoryHostConnectionKey = "ado-production",
             RuntimeEnvironmentKey = "runtime-local",
             SshKeyReference = SecretReference.ByNameAndVersion("production-deploy-key", 2),
+            ReviewerIdentities =
+            [
+                new ReviewerIdentity { Kind = "email", Value = "reviewer@example.test" },
+                new ReviewerIdentity { Kind = "identity-id", Value = "8b5e0b7e" },
+            ],
         };
     }
 
@@ -213,6 +228,7 @@ public sealed class RepositoryStoreTests
         Assert.Equal(expected.RuntimeProfile, actual.RuntimeProfile);
         Assert.Equal(expected.RepositoryHostConnectionKey, actual.RepositoryHostConnectionKey);
         Assert.Equal(expected.RuntimeEnvironmentKey, actual.RuntimeEnvironmentKey);
+        Assert.Equal(expected.ReviewerIdentities, actual.ReviewerIdentities);
         Assert.Equal(expected.SshKeyReference, actual.SshKeyReference);
     }
 

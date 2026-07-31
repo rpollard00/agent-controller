@@ -47,6 +47,9 @@ internal sealed class RepositoryEntity
     /// <summary>Optional pinned version of the SSH-key secret.</summary>
     public int? SshKeySecretVersion { get; set; }
 
+    /// <summary>JSON-serialized typed reviewer identities allowed for feedback.</summary>
+    public string ReviewerIdentitiesJson { get; set; } = "[]";
+
     /// <summary>
     /// When <c>true</c>, the SSH key is provided by the runner environment
     /// rather than by a managed secret reference.

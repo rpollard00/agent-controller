@@ -17,6 +17,7 @@ internal sealed class EfRepositoryStore : IRepositoryStore
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
+        PropertyNameCaseInsensitive = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
 
@@ -156,6 +157,10 @@ internal sealed class EfRepositoryStore : IRepositoryStore
         entity.SshKeySecretVersion = profile.SshKeyReference is { IsSpecified: true }
             ? profile.SshKeyReference.Version
             : null;
+        entity.ReviewerIdentitiesJson = JsonSerializer.Serialize(
+            profile.ReviewerIdentities,
+            JsonOptions
+        );
         entity.SshKeyInheritEnvironment = profile.SshKeyInheritEnvironment;
     }
 
@@ -180,8 +185,26 @@ internal sealed class EfRepositoryStore : IRepositoryStore
                 {
                     Version = entity.SshKeySecretVersion,
                 },
+            ReviewerIdentities = DeserializeReviewerIdentities(entity.ReviewerIdentitiesJson),
             SshKeyInheritEnvironment = entity.SshKeyInheritEnvironment,
         };
+    }
+
+    private static List<ReviewerIdentity> DeserializeReviewerIdentities(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return [];
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<ReviewerIdentity>>(json, JsonOptions) ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
     }
 
     private static bool IsUniqueConstraintViolation(DbUpdateException exception)
