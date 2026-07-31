@@ -692,42 +692,9 @@ public static class AgentControllerServiceCollectionExtensions
         });
 
         // Register the PR label source (marker gate) as singleton.
-        // The filter pipeline is a singleton and depends on IPrLabelSource,
-        // so the label source must not be scoped.
-        services.AddSingleton<IPrLabelSource>(sp =>
-        {
-            var workSourceOptions = sp.GetRequiredService<IOptions<WorkSourceOptions>>().Value;
-            var connectionStore = sp.GetRequiredService<IConnectionStore>();
-            var secretStore = sp.GetRequiredService<ISecretStore>();
-            var logger = sp.GetRequiredService<ILogger<AzureDevOpsReposPrLabelSource>>();
-
-            // Resolve the connection to derive BaseUrl and PAT.
-            var connection = connectionStore
-                .GetByKeyAsync(workSourceOptions.ConnectionKey ?? string.Empty, CancellationToken.None)
-                .GetAwaiter()
-                .GetResult();
-
-            if (connection is null || connection.ProviderSettings is not AzureDevOpsConnectionSettings adoSettings)
-            {
-                throw new InvalidOperationException(
-                    $"Cannot create PR label source: connection '{workSourceOptions.ConnectionKey}' " +
-                    "not found or does not have AzureDevOps settings.");
-            }
-
-            // Resolve PAT from the connection's secret reference.
-            var patPayload = secretStore
-                .ResolveAsync(adoSettings.PersonalAccessTokenReference.Name, cancellationToken: CancellationToken.None)
-                .GetAwaiter()
-                .GetResult();
-            var resolvedPat = patPayload is PersonalAccessTokenPayload pat ? pat.Value : null;
-
-            var http = new HttpClient();
-            return new AzureDevOpsReposPrLabelSource(
-                http,
-                adoSettings.OrganizationUrl,
-                resolvedPat,
-                logger);
-        });
+        // The source only captures singleton-safe factories and a scope factory;
+        // repository profiles and credentials are resolved per lookup.
+        services.AddSingleton<IPrLabelSource, AzureDevOpsReposPrLabelSource>();
 
         return services;
     }

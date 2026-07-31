@@ -1,8 +1,6 @@
-using System.Net.Http.Headers;
-using System.Text;
-using System.Text.Json;
 using AgentController.Application;
-using AgentController.Infrastructure.Options;
+using AgentController.Domain;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace AgentController.Infrastructure;
@@ -10,169 +8,98 @@ namespace AgentController.Infrastructure;
 /// <summary>
 /// <see cref="IPrLabelSource"/> implementation against the Azure DevOps Git REST API.
 ///
-/// Calls <c>GET {project}/_apis/git/repositories/{repository}/pullRequests/{pullRequestId}/labels?api-version=7.1</c>
-/// to fetch labels for a pull request.
+/// Repository profiles and credentials are resolved inside a short-lived scope for
+/// every lookup. No connection or credential state is retained by this singleton.
 /// </summary>
-internal sealed partial class AzureDevOpsReposPrLabelSource : IPrLabelSource
+internal sealed partial class AzureDevOpsReposPrLabelSource(
+    IServiceScopeFactory scopeFactory,
+    AzureDevOpsPullRequestLabelClientFactory clientFactory,
+    ILogger<AzureDevOpsReposPrLabelSource> logger
+) : IPrLabelSource
 {
-    private readonly HttpClient _http;
-    private readonly ILogger<AzureDevOpsReposPrLabelSource> _logger;
-
-    public AzureDevOpsReposPrLabelSource(
-        HttpClient http,
-        string baseUrl,
-        string? personalAccessToken,
-        ILogger<AzureDevOpsReposPrLabelSource> logger)
-    {
-        _http = http;
-        _logger = logger;
-
-        // Configure base address.
-        if (!string.IsNullOrWhiteSpace(baseUrl))
-        {
-            _http.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
-        }
-
-        // Set Basic auth header with PAT.
-        if (!string.IsNullOrWhiteSpace(personalAccessToken))
-        {
-            var authBytes = Encoding.ASCII.GetBytes($":{personalAccessToken}");
-            _http.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
-        }
-    }
-
     public async Task<IReadOnlyList<PrLabel>> GetLabelsAsync(
         PrUnderTest pr,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
-        // Parse project and repository from the ADO PR URL (same logic as AzureDevOpsReposFeedbackSource).
-        var urlParts = ParsePullRequestUrl(pr.PullRequestUrl);
-        if (urlParts is null)
+        ArgumentNullException.ThrowIfNull(pr);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var pullRequest = ToPullRequestReference(pr);
+        if (string.IsNullOrWhiteSpace(pullRequest.RepositoryKey)
+            || string.IsNullOrWhiteSpace(pullRequest.PullRequestId))
         {
             return [];
         }
 
-        var (project, repository) = urlParts.Value;
-
-        var endpoint = $"{project}/_apis/git/repositories/{Uri.EscapeDataString(repository)}/pullRequests/{Uri.EscapeDataString(pr.PullRequestId)}/labels?api-version=7.1";
-
-        return await FetchLabelsAsync(endpoint, cancellationToken);
-    }
-
-    private async Task<IReadOnlyList<PrLabel>> FetchLabelsAsync(
-        string endpoint,
-        CancellationToken cancellationToken)
-    {
         try
         {
-            var response = await _http.GetAsync(endpoint, cancellationToken);
+            var target = await AzureDevOpsPullRequestTargetResolver.ResolveAsync(
+                scopeFactory,
+                pullRequest,
+                cancellationToken
+            );
+            using var client = clientFactory.Create(
+                target.OrganizationUrl,
+                target.PersonalAccessToken
+            );
 
-            if (!response.IsSuccessStatusCode)
-            {
-                Log.LabelFetchFailed(_logger, endpoint, (int)response.StatusCode, response.StatusCode.ToString());
-                return [];
-            }
-
-            var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            Log.LabelFetchResponse(_logger, endpoint, json);
-            using var doc = JsonDocument.Parse(json);
-
-            var labels = new List<PrLabel>();
-
-            if (!doc.RootElement.TryGetProperty("value", out var valueArray)
-                || valueArray.ValueKind != JsonValueKind.Array)
-            {
-                Log.LabelFetchNoValue(_logger, endpoint);
-                return [];
-            }
-
-            foreach (var label in valueArray.EnumerateArray())
-            {
-                var name = label.TryGetProperty("name", out var nameEl)
-                           && nameEl.ValueKind == JsonValueKind.String
-                    ? nameEl.GetString() ?? string.Empty
-                    : string.Empty;
-
-                labels.Add(new PrLabel
-                {
-                    Name = name,
-                });
-            }
-
-            return labels;
+            return await client.GetLabelsAsync(
+                target.Repository,
+                pullRequest.PullRequestId.Trim(),
+                cancellationToken
+            );
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            // Any error — return empty list (marker gate fails-closed).
-            Log.LabelFetchException(_logger, endpoint, ex);
+            // Label reads are a marker-gate input and must fail closed. Do not log the
+            // exception because provider and credential implementations may include
+            // sensitive request or secret details in their messages.
+            Log.LabelFetchFailed(
+                logger,
+                pullRequest.RepositoryKey.Trim(),
+                pullRequest.PullRequestId.Trim()
+            );
             return [];
         }
     }
 
-    /// <summary>
-    /// Parse an Azure DevOps pull request URL to extract project and repository name.
-    /// Mirrors the logic in AzureDevOpsReposFeedbackSource.
-    /// </summary>
-    private static (string Project, string Repository)? ParsePullRequestUrl(string url)
+    private static PullRequestReference ToPullRequestReference(PrUnderTest pr)
     {
-        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        var reference = pr.PullRequest;
+        if (reference.HasCanonicalIdentity)
         {
-            var segments = uri.Segments;
-
-            for (int i = 0; i < segments.Length; i++)
-            {
-                if (segments[i].Equals("_git/", StringComparison.Ordinal))
-                {
-                    if (i > 0 && i + 1 < segments.Length)
-                    {
-                        var project = segments[i - 1].TrimEnd('/');
-                        var repository = segments[i + 1].TrimEnd('/');
-
-                        if (!string.IsNullOrWhiteSpace(project) && !string.IsNullOrWhiteSpace(repository))
-                        {
-                            return (project, repository);
-                        }
-                    }
-
-                    break;
-                }
-            }
+            return reference;
         }
 
-        return null;
+        // PrUnderTest retains flattened fields for older callers. They still identify
+        // the managed repository and pull request; all provider coordinates and the
+        // credential come from the repository/connection profiles below.
+        return reference with
+        {
+            RepositoryKey = FirstNonEmpty(reference.RepositoryKey, pr.RepoKey),
+            PullRequestId = FirstNonEmpty(reference.PullRequestId, pr.PullRequestId),
+            PullRequestUrl = FirstNonEmpty(reference.PullRequestUrl, pr.PullRequestUrl),
+        };
     }
 
-    /// <summary>
-    /// Source-generated high-performance logger methods.
-    /// </summary>
+    private static string FirstNonEmpty(string first, string second) =>
+        string.IsNullOrWhiteSpace(first) ? second : first;
+
     private static partial class Log
     {
         [LoggerMessage(
             Level = LogLevel.Warning,
-            Message = "Failed to fetch PR labels from {Endpoint}: {StatusCode} ({StatusText}).")]
+            Message = "Could not fetch Azure DevOps PR labels for managed repository '{RepositoryKey}' and pull request '{PullRequestId}'."
+        )]
         public static partial void LabelFetchFailed(
-            ILogger logger, string endpoint, int statusCode, string statusText);
-
-        [LoggerMessage(
-            Level = LogLevel.Debug,
-            Message = "PR label fetch response from {Endpoint}: {Response}")]
-        public static partial void LabelFetchResponse(
-            ILogger logger, string endpoint, string response);
-
-        [LoggerMessage(
-            Level = LogLevel.Warning,
-            Message = "PR label fetch from {Endpoint}: no 'value' array in response.")]
-        public static partial void LabelFetchNoValue(ILogger logger, string endpoint);
-
-        [LoggerMessage(
-            Level = LogLevel.Warning,
-            Message = "PR label fetch from {Endpoint} threw exception.")]
-        public static partial void LabelFetchException(
-            ILogger logger, string endpoint, Exception ex);
+            ILogger logger,
+            string repositoryKey,
+            string pullRequestId
+        );
     }
 }

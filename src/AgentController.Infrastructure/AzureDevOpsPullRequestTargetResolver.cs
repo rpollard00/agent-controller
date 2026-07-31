@@ -33,15 +33,17 @@ internal static class AzureDevOpsPullRequestTargetResolver
         );
 
         var connectionKey = Clean(repository.RepositoryHostConnectionKey);
+        var environmentKey = Clean(pullRequest.EnvironmentKey);
         if (connectionKey.Length == 0
-            || !connectionKey.Equals(
-                pullRequest.EnvironmentKey.Trim(),
-                StringComparison.OrdinalIgnoreCase
-            ))
+            || (environmentKey.Length > 0
+                && !connectionKey.Equals(
+                    environmentKey,
+                    StringComparison.OrdinalIgnoreCase
+                )))
         {
             throw new InvalidOperationException(
                 $"Managed repository '{repository.Key}' is not owned by connection "
-                    + $"'{pullRequest.EnvironmentKey.Trim()}'."
+                    + $"'{environmentKey}'."
             );
         }
 
