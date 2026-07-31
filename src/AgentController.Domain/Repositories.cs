@@ -118,6 +118,12 @@ public sealed record RepositoryProfile
     public string? PersonalAccessTokenSecretName { get; init; }
 
     /// <summary>
+    /// Reviewer identities allowed to qualify feedback for this repository.
+    /// Identity kinds and values are interpreted by the selected repository-host provider.
+    /// </summary>
+    public IReadOnlyList<ReviewerIdentity> ReviewerIdentities { get; init; } = [];
+
+    /// <summary>
     /// Optional reference to the SSH-key secret used by this repository.
     /// A version may be pinned; when omitted, consumers resolve the latest version.
     /// </summary>

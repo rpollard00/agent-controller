@@ -28,12 +28,16 @@ public enum ReviewThreadStatus
 
 /// <summary>
 /// A single comment within a review thread.
-/// Carries author, body, timestamp, and whether it is a reply to another comment.
+/// Carries a displayable author value, typed identity aliases, body, timestamp,
+/// and whether it is a reply to another comment.
 /// </summary>
 public sealed record ReviewThreadComment
 {
-    /// <summary>Canonical author identifier (uniqueName / email).</summary>
+    /// <summary>Displayable author value supplied by the source provider.</summary>
     public string Author { get; init; } = string.Empty;
+
+    /// <summary>Typed aliases that identify the comment author.</summary>
+    public IReadOnlyList<ReviewerIdentity> AuthorIdentities { get; init; } = [];
 
     /// <summary>Comment body text.</summary>
     public string Body { get; init; } = string.Empty;
@@ -55,7 +59,7 @@ public sealed record ReviewThread
     /// <summary>Stable thread identifier from the source system.</summary>
     public string ThreadId { get; init; } = string.Empty;
 
-    /// <summary>Canonical author of the thread (uniqueName / email).</summary>
+    /// <summary>Displayable author value of the thread.</summary>
     public string Author { get; init; } = string.Empty;
 
     /// <summary>When the thread was created.</summary>
