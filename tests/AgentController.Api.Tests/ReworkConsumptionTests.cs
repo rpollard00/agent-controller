@@ -103,6 +103,105 @@ public class ReworkConsumptionTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// A missing rework branch is rejected by the credentialed provider preflight,
+    /// before clone can fall back to the default branch.
+    /// </summary>
+    [Fact]
+    public async Task MissingReworkBranch_UsesCredentialedPreflightAndCleansUpWithoutFallback()
+    {
+        var dbPath = Path.Combine(_tempRoot, $"test-missing-rework-{Guid.NewGuid():N}.db");
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["agentController:workerId"] = "test-missing-rework-worker",
+                    ["agentController:pollIntervalSeconds"] = "10",
+                    ["agentController:maxConcurrentRuns"] = "1",
+                    ["agentController:maxRunAttempts"] = "1",
+                    ["agentController:staleTimeoutSeconds"] = "300",
+                    ["agentController:runRoot"] = _tempRunRoot,
+                    ["agentController:retainSuccessfulRuns"] = "true",
+                    ["agentController:retainFailedRuns"] = "true",
+                    ["agentController:workerEnabled"] = "true",
+                    ["persistence:provider"] = "Sqlite",
+                    ["persistence:connectionString"] = $"Data Source={dbPath}",
+                    ["workSource:provider"] = "LocalFile",
+                    ["sourceControl:provider"] = "LocalGit",
+                    ["environmentProvider:provider"] = "LocalWorkspace",
+                    ["runtime:provider"] = "MockPiMateria",
+                    ["runtime:defaultMateriaLoadout"] = "success-pr",
+                    ["localWork:definitions:0:repoKey"] = "test-repo",
+                    ["localWork:definitions:0:title"] = "Missing rework branch",
+                    ["localWork:definitions:0:body"] = "The prior branch is gone.",
+                    ["localWork:definitions:0:tags:0"] = "agent-ready",
+                    ["localWork:definitions:0:priority"] = "1",
+                    ["localWork:definitions:0:status"] = "New",
+                }
+            )
+            .Build();
+        var sourceControl = new RecordingSourceControlProvider(
+            ClonePreflightFailureCode.BranchNotFound
+        );
+        using var provider = BuildServiceProvider(config, sourceControl);
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+
+        await using (var scope = scopeFactory.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
+            await db.Database.EnsureCreatedAsync();
+            await SeedManagedProfilesAsync(scope.ServiceProvider);
+        }
+
+        string workItemId;
+        await using (var seedScope = scopeFactory.CreateAsyncScope())
+        {
+            var workSource = seedScope.ServiceProvider.GetRequiredService<IWorkSource>();
+            var cycleStore = seedScope.ServiceProvider.GetRequiredService<IReworkCycleStore>();
+            var candidate = Assert.Single(
+                await workSource.FindEligibleAsync(
+                    new WorkQuery { MaxResults = 10 },
+                    CancellationToken.None
+                )
+            );
+            workItemId = candidate.Id;
+            await cycleStore.CreateAsync(
+                workItemId,
+                1,
+                "run-prior-missing",
+                "feature/missing-rework-branch",
+                "https://example.com/pr/404",
+                "missing-sha",
+                "[]",
+                $"missing-branch-{Guid.NewGuid():N}",
+                CancellationToken.None
+            );
+        }
+
+        var worker = CreateWorker(provider, scopeFactory);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await worker.RunPollCycleForTestingAsync(cts.Token);
+
+        await using var verifyScope = scopeFactory.CreateAsyncScope();
+        var runStore = verifyScope.ServiceProvider.GetRequiredService<IAgentRunStore>();
+        var run = Assert.Single(
+            await runStore.ListAsync(new ListRunsQuery { MaxResults = 10 }, CancellationToken.None)
+        );
+        Assert.Equal(workItemId, run.WorkItemId);
+        Assert.Equal(RunLifecycleState.Failed, run.Status);
+        Assert.Contains("[rework_branch_missing]", run.Error, StringComparison.Ordinal);
+        Assert.Equal(0, sourceControl.CloneCalls);
+        Assert.Collection(
+            sourceControl.PreflightSpecs,
+            general => Assert.Equal("main", general.DefaultBranch),
+            rework => Assert.Equal("feature/missing-rework-branch", rework.DefaultBranch)
+        );
+
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<AgentControllerDbContext>();
+        var environment = await verifyDb.Environments.SingleAsync(entity => entity.RunId == run.RunId);
+        Assert.False(Directory.Exists(environment.RootPath));
+    }
+
+    /// <summary>
     /// A Pending ReworkCycle drives the full happy path:
     /// 1. Clone targets the prior PR branch (not main)
     /// 2. rework-context.md is written with the correct schema
@@ -1119,7 +1218,10 @@ public class ReworkConsumptionTests : IAsyncLifetime
             )
             .Build();
 
-    private static ServiceProvider BuildServiceProvider(IConfiguration configuration)
+    private static ServiceProvider BuildServiceProvider(
+        IConfiguration configuration,
+        ISourceControlProvider? sourceControlProvider = null
+    )
     {
         var services = new ServiceCollection();
         services.AddSilentLogging();
@@ -1131,6 +1233,10 @@ public class ReworkConsumptionTests : IAsyncLifetime
         services.AddAgentControllerNoOpProviders();
         services.AddAgentControllerLocalFileWorkSource();
         services.AddAgentControllerLocalGitSourceControl();
+        if (sourceControlProvider is not null)
+        {
+            services.AddSingleton<ISourceControlProvider>(sourceControlProvider);
+        }
         services.AddAgentControllerLocalWorkspaceEnvironment();
         services.AddAgentControllerMockPiMateriaRuntime();
         services.AddSingleton<IServiceScopeFactory, SimpleScopeFactory>();
@@ -1255,6 +1361,67 @@ public class ReworkConsumptionTests : IAsyncLifetime
         }
 
         return await stdOutTask;
+    }
+
+    private sealed class RecordingSourceControlProvider(
+        ClonePreflightFailureCode reworkFailureCode
+    ) : ISourceControlProvider
+    {
+        public List<RepositorySpec> PreflightSpecs { get; } = [];
+        public int CloneCalls { get; private set; }
+
+        public Task<ClonePreflightResult> CheckClonePreflightAsync(
+            RepositorySpec spec,
+            CancellationToken cancellationToken
+        )
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            PreflightSpecs.Add(spec);
+            if (PreflightSpecs.Count == 1)
+            {
+                return Task.FromResult(ClonePreflightResult.Ok(spec.Transport, spec.CloneUrl));
+            }
+
+            return Task.FromResult(
+                ClonePreflightResult.Failed(
+                    spec.Transport,
+                    spec.CloneUrl,
+                    "The requested rework branch was not found.",
+                    reworkFailureCode
+                )
+            );
+        }
+
+        public Task<RepositoryCheckout> CloneAsync(
+            RepositorySpec spec,
+            EnvironmentHandle environment,
+            CancellationToken cancellationToken
+        )
+        {
+            CloneCalls++;
+            return Task.FromResult(
+                new RepositoryCheckout
+                {
+                    RepoKey = spec.RepoKey,
+                    LocalPath = Path.Combine(environment.RootPath, "repo"),
+                    Branch = spec.DefaultBranch,
+                    Transport = spec.Transport,
+                }
+            );
+        }
+
+        public Task<SourceControlStatus> GetStatusAsync(
+            SourceControlRef sourceControlRef,
+            CancellationToken cancellationToken
+        ) =>
+            Task.FromResult(
+                new SourceControlStatus
+                {
+                    Exists = false,
+                    Branch = sourceControlRef.Branch,
+                    CommitSha = sourceControlRef.CommitSha,
+                }
+            );
     }
 
     /// <summary>

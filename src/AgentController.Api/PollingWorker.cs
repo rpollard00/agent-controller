@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
 using AgentController.Application;
@@ -929,40 +928,39 @@ public sealed partial class PollingWorker : BackgroundService
             };
 
             // Newly discovered work is preflighted before its claim. Retry runs enter this
-            // method already claimed, so run the same guard here before their clone.
-            var preflight =
-                validatedPreflight
-                ?? await sourceControlProvider.CheckClonePreflightAsync(spec, ct);
+            // method already claimed, so run the same guard here before their clone. Rework
+            // runs must always re-probe the effective branch after the claim through the
+            // credentialed source-control provider; the pre-claim default-branch result must
+            // never be reused for a branch override.
+            var isReworkBranch =
+                reworkContext is not null && !string.IsNullOrWhiteSpace(reworkContext.BranchName);
+            var preflight = isReworkBranch
+                ? await sourceControlProvider.CheckClonePreflightAsync(spec, ct)
+                : validatedPreflight
+                    ?? await sourceControlProvider.CheckClonePreflightAsync(spec, ct);
             if (!preflight.Success)
             {
+                if (
+                    isReworkBranch
+                    && preflight.FailureCode == ClonePreflightFailureCode.BranchNotFound
+                )
+                {
+                    throw new InvalidOperationException(
+                        $"[rework_branch_missing] Branch '{effectiveBranch}' does not exist on remote "
+                            + $"for repository '{repoKey}'. Cannot proceed with rework clone. "
+                            + preflight.Reason
+                    );
+                }
+
                 throw new InvalidOperationException(
                     $"[clone_preflight_failed] Clone preflight failed "
                         + $"({preflight.FailureCode}): {preflight.Reason}"
                 );
             }
 
-            // Guard: if we are overriding the branch for rework, verify it exists on origin.
-            // Fail loud with [rework_branch_missing] — no silent fallback to main.
-            if (
-                !string.IsNullOrWhiteSpace(reworkContext?.BranchName)
-                && !reworkContext.BranchName.Equals(defaultBranch, StringComparison.Ordinal)
-            )
+            if (isReworkBranch)
             {
-                var (exitCode, stdErr) = await CheckBranchExistsOnRemoteAsync(
-                    cloneUrl,
-                    reworkContext.BranchName,
-                    ct
-                );
-                if (exitCode != 0)
-                {
-                    var errorDetail = stdErr.Length > 0 ? $"\n{stdErr.Trim()}" : string.Empty;
-                    throw new InvalidOperationException(
-                        $"[rework_branch_missing] Branch '{reworkContext.BranchName}' does not exist on remote "
-                            + $"for repository '{repoKey}'. Cannot proceed with rework clone.{errorDetail}"
-                    );
-                }
-
-                Log.ReworkBranchVerified(_logger, run.RunId, reworkContext.BranchName);
+                Log.ReworkBranchVerified(_logger, run.RunId, effectiveBranch);
             }
 
             var checkout = await sourceControlProvider.CloneAsync(spec, envHandle, ct);
@@ -983,77 +981,6 @@ public sealed partial class PollingWorker : BackgroundService
                 ct
             );
             return null;
-        }
-    }
-
-    /// <summary>
-    /// Probe the remote repository with <c>git ls-remote</c> to verify a branch exists.
-    /// Used as a preflight guard before cloning onto a rework branch override.
-    /// Returns (exitCode, stderr) — exitCode 0 means the branch was found.
-    /// </summary>
-    private static async Task<(int ExitCode, string StdErr)> CheckBranchExistsOnRemoteAsync(
-        string cloneUrl,
-        string branchName,
-        CancellationToken cancellationToken
-    )
-    {
-        // Expand ~ for local paths (git ls-remote won't expand shell globs).
-        if (cloneUrl.StartsWith("~/", StringComparison.Ordinal))
-        {
-            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            cloneUrl = Path.Combine(home, cloneUrl[2..]);
-        }
-
-        using var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = "git",
-                WorkingDirectory = Path.GetTempPath(),
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            },
-        };
-
-        process.StartInfo.ArgumentList.Add("ls-remote");
-        process.StartInfo.ArgumentList.Add("--exit-code");
-        process.StartInfo.ArgumentList.Add("--heads");
-        process.StartInfo.ArgumentList.Add(cloneUrl);
-        process.StartInfo.ArgumentList.Add($"refs/heads/{branchName}");
-
-        // Harden against interactive prompts (mirrors LocalGitSourceControlProvider).
-        process.StartInfo.EnvironmentVariables["GIT_TERMINAL_PROMPT"] = "0";
-        process.StartInfo.EnvironmentVariables["GIT_SSH_COMMAND"] =
-            "ssh -o BatchMode=yes -o StrictHostKeyChecking=no";
-
-        process.Start();
-
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        cts.CancelAfter(TimeSpan.FromSeconds(30));
-
-        try
-        {
-            await process.WaitForExitAsync(cts.Token);
-            var stdErr = await process.StandardError.ReadToEndAsync(CancellationToken.None);
-            return (process.ExitCode, stdErr ?? string.Empty);
-        }
-        catch (OperationCanceledException)
-            when (cts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
-        {
-            try
-            {
-                process.Kill(entireProcessTree: true);
-            }
-            catch
-            { /* best effort */
-            }
-            return (-1, $"git ls-remote timed out after 30s.");
-        }
-        catch (Exception ex)
-        {
-            return (-1, ex.Message);
         }
     }
 
