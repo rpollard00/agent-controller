@@ -56,7 +56,7 @@ internal sealed class EfReworkFeedbackStore : IReworkFeedbackStore
         var existing = await FindExistingAsync(request, canonicalKey, cancellationToken);
         if (existing is not null)
         {
-            ApplyObservation(existing, request, canonicalKey, DateTimeOffset.UtcNow);
+            ApplyReplay(existing, request, canonicalKey);
             await _db.SaveChangesAsync(cancellationToken);
             return MapToDomain(existing);
         }
@@ -67,7 +67,7 @@ internal sealed class EfReworkFeedbackStore : IReworkFeedbackStore
             Id = GenerateId("rfeedback"),
             CreatedAt = now,
         };
-        ApplyObservation(entity, request, canonicalKey, now);
+        SeedInsert(entity, request, canonicalKey, now);
         _db.ReworkFeedback.Add(entity);
 
         try
@@ -85,7 +85,7 @@ internal sealed class EfReworkFeedbackStore : IReworkFeedbackStore
             if (concurrent is null)
                 throw;
 
-            ApplyObservation(concurrent, request, canonicalKey, DateTimeOffset.UtcNow);
+            ApplyReplay(concurrent, request, canonicalKey);
             await _db.SaveChangesAsync(cancellationToken);
             return MapToDomain(concurrent);
         }
@@ -253,11 +253,110 @@ internal sealed class EfReworkFeedbackStore : IReworkFeedbackStore
             cancellationToken);
     }
 
-    private static void ApplyObservation(
+    /// <summary>
+    /// Seed a brand-new row from an observation. All fields are taken directly
+    /// from the request because there is no prior state to reconcile against.
+    /// </summary>
+    private static void SeedInsert(
         ReworkFeedbackEntity entity,
         ReworkFeedbackUpsertRequest request,
         string? canonicalKey,
-        DateTimeOffset updatedAt)
+        DateTimeOffset now)
+    {
+        ApplySnapshot(entity, request, canonicalKey);
+        entity.CorrelationId = NullIfEmpty(request.CorrelationId);
+        entity.FeedbackBundleJson = request.FeedbackBundleJson;
+        entity.ThreadCount = request.ThreadCount;
+        entity.FirstQualifyingCommentAt = request.FirstQualifyingCommentAt;
+        entity.LastQualifyingCommentAt = request.LastQualifyingCommentAt;
+        entity.Status = (int)request.Status;
+        entity.UpdatedAt = now;
+    }
+
+    /// <summary>
+    /// Replay an observation against an existing row monotonically. Replaying an
+    /// unchanged Watching observation is idempotent: row identity, lifecycle
+    /// status, soak baseline timestamps, and UpdatedAt are preserved rather than
+    /// treating every upsert as new activity.
+    /// </summary>
+    /// <remarks>
+    /// A Watching observation must not regress Soaked, Materialized, or
+    /// Superseded rows — those transitions are explicit (<see cref="MarkSoakedAsync"/>,
+    /// <see cref="MarkSupersededAsync"/>, <see cref="MarkMaterializedAsync"/>).
+    /// Soak baseline timestamps only advance: <see cref="ReworkFeedbackEntity.FirstQualifyingCommentAt"/>
+    /// moves earlier only when a late-surfaced older comment appears, and
+    /// <see cref="ReworkFeedbackEntity.LastQualifyingCommentAt"/> advances only on a
+    /// genuinely newer qualifying comment (which also refreshes the bundle payload).
+    /// </remarks>
+    private static void ApplyReplay(
+        ReworkFeedbackEntity entity,
+        ReworkFeedbackUpsertRequest request,
+        string? canonicalKey)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var persistedStatus = (ReworkFeedbackStatus)entity.Status;
+
+        // Reconcile the materialization correlation idempotently regardless of
+        // lifecycle so assistance retries stay safe.
+        entity.CorrelationId = MergeReceiptValue(
+            entity.CorrelationId,
+            request.CorrelationId,
+            nameof(request.CorrelationId));
+
+        // A Watching observation must never regress an already-advanced row.
+        // Preserve the advanced lifecycle, the recorded soak baseline, and the
+        // last update time — this replay carries no new lifecycle signal.
+        if (request.Status == ReworkFeedbackStatus.Watching
+            && persistedStatus != ReworkFeedbackStatus.Watching)
+        {
+            return;
+        }
+
+        // Refresh the observational snapshot (request mode, PR identity/lineage,
+        // and bundle id) from the latest observation.
+        ApplySnapshot(entity, request, canonicalKey);
+
+        var priorLastComment = entity.LastQualifyingCommentAt;
+        var hasNewerComment = request.LastQualifyingCommentAt > priorLastComment;
+
+        // Soak baseline timestamps are monotonic and never regress: the earliest
+        // anchor only moves earlier, and the quiet-period anchor only advances on
+        // a genuinely newer qualifying comment.
+        if (request.FirstQualifyingCommentAt < entity.FirstQualifyingCommentAt)
+            entity.FirstQualifyingCommentAt = request.FirstQualifyingCommentAt;
+
+        if (hasNewerComment)
+        {
+            entity.LastQualifyingCommentAt = request.LastQualifyingCommentAt;
+
+            // A genuinely newer comment refreshes the bundle payload so later
+            // materialization captures the latest threads.
+            entity.FeedbackBundleJson = request.FeedbackBundleJson;
+            entity.ThreadCount = request.ThreadCount;
+        }
+
+        // Honor explicit non-regressing lifecycle requests. A Watching replay
+        // against a Watching row keeps it Watching; a non-Watching request (for
+        // example an explicit Superseded upsert) is adopted as-is.
+        if (request.Status != ReworkFeedbackStatus.Watching)
+            entity.Status = (int)request.Status;
+
+        // UpdatedAt advances only when the observation materially moved the soak
+        // or lifecycle, so unchanged replays remain fully idempotent.
+        if (hasNewerComment || entity.Status != (int)persistedStatus)
+            entity.UpdatedAt = now;
+    }
+
+    /// <summary>
+    /// Copy the observational snapshot fields (request mode, canonical/PR
+    /// identity, lineage, and bundle id) from the request onto the entity.
+    /// Lifecycle, soak baseline, payload, and timestamp fields are owned by the
+    /// caller (<see cref="SeedInsert"/> / <see cref="ApplyReplay"/>).
+    /// </summary>
+    private static void ApplySnapshot(
+        ReworkFeedbackEntity entity,
+        ReworkFeedbackUpsertRequest request,
+        string? canonicalKey)
     {
         entity.RequestMode = (int)request.RequestMode;
         entity.CanonicalPullRequestKey = canonicalKey;
@@ -270,16 +369,6 @@ internal sealed class EfReworkFeedbackStore : IReworkFeedbackStore
         entity.PullRequestSourceCommitSha = NullIfEmpty(request.PullRequest.SourceCommitSha);
         entity.OriginatingRunId = NullIfEmpty(request.OriginatingRunId);
         entity.FeedbackBundleId = request.FeedbackBundleId;
-        entity.FeedbackBundleJson = request.FeedbackBundleJson;
-        entity.ThreadCount = request.ThreadCount;
-        entity.FirstQualifyingCommentAt = request.FirstQualifyingCommentAt;
-        entity.LastQualifyingCommentAt = request.LastQualifyingCommentAt;
-        entity.Status = (int)request.Status;
-        entity.CorrelationId = MergeReceiptValue(
-            entity.CorrelationId,
-            request.CorrelationId,
-            nameof(request.CorrelationId));
-        entity.UpdatedAt = updatedAt;
     }
 
     private static void Validate(ReworkFeedbackUpsertRequest request)

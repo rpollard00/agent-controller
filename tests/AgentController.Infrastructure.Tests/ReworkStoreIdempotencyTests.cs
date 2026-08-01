@@ -247,25 +247,29 @@ public class ReworkStoreIdempotencyTests : IAsyncLifetime, IDisposable
     {
         // Arrange: upsert a new row.
         var now = DateTimeOffset.UtcNow;
+        var firstComment = now.AddMinutes(-10);
         var first = await _feedbackStore!.UpsertAsync(
             "run-1", "pr-100", "bundle-002", "[]", 1,
-            now, now, ReworkFeedbackStatus.Watching, CancellationToken.None);
+            firstComment, firstComment, ReworkFeedbackStatus.Watching, CancellationToken.None);
 
         var originalId = first.Id;
 
         // Act: upsert again with the same (PullRequestId, FeedbackBundleId)
-        // but different data.
+        // carrying a genuinely newer qualifying comment (and a late-surfaced
+        // earlier first comment).
+        var newerComment = now.AddMinutes(-3);
+        var olderFirst = now.AddMinutes(-15);
         var updated = await _feedbackStore.UpsertAsync(
             "run-2", "pr-100", "bundle-002", "[]", 3,
-            now.AddMinutes(-5), now.AddMinutes(-1),
-            ReworkFeedbackStatus.Watching, CancellationToken.None);
+            olderFirst, newerComment, ReworkFeedbackStatus.Watching, CancellationToken.None);
 
-        // Assert: same row ID (update, not insert), data is updated.
+        // Assert: same row ID (update, not insert). The snapshot/payload update,
+        // the quiet-period anchor advances, and the earliest anchor moves earlier.
         Assert.Equal(originalId, updated.Id);
         Assert.Equal("run-2", updated.OriginatingRunId);
         Assert.Equal(3, updated.ThreadCount);
-        Assert.Equal(now.AddMinutes(-5), updated.FirstQualifyingCommentAt);
-        Assert.Equal(now.AddMinutes(-1), updated.LastQualifyingCommentAt);
+        Assert.Equal(olderFirst, updated.FirstQualifyingCommentAt);
+        Assert.Equal(newerComment, updated.LastQualifyingCommentAt);
 
         // Only one row in the database.
         var allRows = await _db!.ReworkFeedback
@@ -277,14 +281,16 @@ public class ReworkStoreIdempotencyTests : IAsyncLifetime, IDisposable
     [Fact]
     public async Task ReworkFeedbackStore_UpsertAsync_DoesNotCreateDuplicates()
     {
-        // Arrange + Act: upsert the same key multiple times.
+        // Arrange + Act: upsert the same key multiple times. Each replay carries
+        // a genuinely newer qualifying comment so the payload advances.
         var now = DateTimeOffset.UtcNow;
 
         for (int i = 0; i < 5; i++)
         {
+            var t = now.AddMinutes(i);
             await _feedbackStore!.UpsertAsync(
                 "run-1", "pr-101", "bundle-dedup", "[]", i + 1,
-                now, now, ReworkFeedbackStatus.Watching, CancellationToken.None);
+                t, t, ReworkFeedbackStatus.Watching, CancellationToken.None);
         }
 
         // Assert: only one row exists.
@@ -293,7 +299,7 @@ public class ReworkStoreIdempotencyTests : IAsyncLifetime, IDisposable
             .ToListAsync();
         Assert.Single(allRows);
 
-        // Last ThreadCount should be 5 (from the last upsert).
+        // Last ThreadCount should be 5 (from the most recent newer comment).
         Assert.Equal(5, allRows[0].ThreadCount);
     }
 
