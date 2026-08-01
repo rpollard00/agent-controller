@@ -32,6 +32,8 @@ public sealed class WebUiPullRequestDebugEndpointTests : IDisposable
         Assert.Equal(JsonValueKind.String, payload.GetProperty("observedAt").ValueKind);
         Assert.Equal("Azure Repos", payload.GetProperty("sourceOptions")[0].GetProperty("name").GetString());
         Assert.Equal("both", payload.GetProperty("items")[0].GetProperty("request").GetString());
+        Assert.True(payload.GetProperty("items")[0].GetProperty("eligible").GetBoolean());
+        Assert.False(payload.GetProperty("items")[1].GetProperty("eligible").GetBoolean());
         Assert.Equal("Unavailable", payload.GetProperty("failures")[0].GetProperty("message").GetString());
         var query = Assert.Single(_factory.ListHandler.Queries);
         Assert.Null(query.SourceControlEnvironmentKey);
@@ -165,12 +167,21 @@ public sealed class WebUiPullRequestDebugEndpointTests : IDisposable
                 Page = query.Page,
                 PageSize = query.PageSize,
                 Total = 61,
-                Items = [new PullRequestDiagnosticSummary
-                {
-                    PullRequestId = "42", Title = "Fix pickup", Url = "https://example.test/pr/42",
-                    SourceControlEnvironmentKey = "ado primary", RepositoryKey = "team/orders",
-                    Status = "active", Request = PullRequestRequestMatch.Both,
-                }],
+                Items =
+                [
+                    new PullRequestDiagnosticSummary
+                    {
+                        PullRequestId = "42", Title = "Fix pickup", Url = "https://example.test/pr/42",
+                        SourceControlEnvironmentKey = "ado primary", RepositoryKey = "team/orders",
+                        Status = "active", Request = PullRequestRequestMatch.Both, Eligible = true,
+                    },
+                    new PullRequestDiagnosticSummary
+                    {
+                        PullRequestId = "43", Title = "Needs review", Url = "https://example.test/pr/43",
+                        SourceControlEnvironmentKey = "ado primary", RepositoryKey = "team/orders",
+                        Status = "active", Request = PullRequestRequestMatch.None, Eligible = false,
+                    },
+                ],
                 Failures = [new ManagedPullRequestDiscoveryFailure
                 {
                     SourceControlEnvironmentKey = "ado primary", RepositoryKey = "other", Message = "Unavailable",

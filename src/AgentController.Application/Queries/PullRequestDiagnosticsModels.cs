@@ -46,6 +46,7 @@ public sealed record PullRequestDiagnosticSummary
     public string RepositoryKey { get; init; } = string.Empty;
     public string Status { get; init; } = string.Empty;
     public PullRequestRequestMatch Request { get; init; }
+    public bool Eligible { get; init; }
 }
 
 public sealed record PullRequestDiagnosticsPage
