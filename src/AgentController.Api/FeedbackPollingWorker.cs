@@ -477,7 +477,12 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             Log.RevivalWatchingSuppressedByAssistance(_logger, row.PullRequestId);
         }
 
-        var watchingByPr = watchingRows
+        // The persisted observation is the source of truth for soak state across
+        // polling windows. Watching-only lookups would miss rows that already soaked
+        // or materialized and restart the soak every poll, or re-materialize a
+        // finished bundle. Tracked rows cover Watching, Soaked, and Materialized.
+        var trackedRows = (await reworkFeedbackStore.GetTrackedAsync(ct)).ToList();
+        var trackedByPr = trackedRows
             .GroupBy(GetObservationKey, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(
                 group => group.Key,
@@ -494,10 +499,17 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
 
             var pullRequestId = unadjustedSignal.PullRequestId;
             var bundleId = ComputeFeedbackBundleId(unadjustedSignal.Threads);
-            var existingRows = watchingByPr.TryGetValue(observationKey, out var rows)
-                ? rows
+
+            // Prefer the persisted row matching this bundle; otherwise fall back to
+            // the most recently updated active row (the bundle-changed case) so a
+            // new bundle replaces the prior observation rather than starting a
+            // duplicate soak alongside it.
+            var persistedForPr = trackedByPr.TryGetValue(observationKey, out var persistedRows)
+                ? persistedRows
                 : null;
-            var currentRow = existingRows?.FirstOrDefault();
+            var currentRow = persistedForPr?.FirstOrDefault(row =>
+                    row.FeedbackBundleId == bundleId)
+                ?? persistedForPr?.OrderByDescending(row => row.UpdatedAt).FirstOrDefault();
 
             if (unadjustedSignal.RequestMode == ReworkRequestMode.Assistance)
             {
@@ -529,6 +541,23 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
 
             var signal = NormalizeObservationTimestamp(unadjustedSignal, currentRow, now);
 
+            // The same bundle already soaked or materialized on a prior poll.
+            // Preserve the advanced lifecycle: do not restart the soak and do not
+            // re-materialize. (Assistance is handled above by correlation; this is
+            // the revival guarantee that repeated polls keep the existing soak.)
+            if (currentRow is not null
+                && currentRow.FeedbackBundleId == bundleId
+                && currentRow.Status is ReworkFeedbackStatus.Soaked
+                    or ReworkFeedbackStatus.Materialized)
+            {
+                Log.RevivalObservationAlreadyAdvanced(
+                    _logger,
+                    pullRequestId,
+                    currentRow.Status
+                );
+                continue;
+            }
+
             if (currentRow is not null && currentRow.FeedbackBundleId == bundleId)
             {
                 // Same qualifying threads: only a genuinely newer qualifying comment
@@ -543,8 +572,14 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             }
             else if (currentRow is not null)
             {
-                // Bundle changed — supersede prior, start fresh Watching.
-                await reworkFeedbackStore.MarkSupersededAsync(currentRow.Id, ct);
+                // Bundle changed — retire the prior Watching observation and start a
+                // fresh soak. Soaked/Materialized rows are terminal materialization
+                // records and must not be regressed; the new bundle simply starts
+                // alongside the completed one.
+                if (currentRow.Status == ReworkFeedbackStatus.Watching)
+                {
+                    await reworkFeedbackStore.MarkSupersededAsync(currentRow.Id, ct);
+                }
 
                 var bundleJsonChanged = JsonSerializer.Serialize(signal.Threads);
                 await reworkFeedbackStore.UpsertAsync(
@@ -1230,6 +1265,16 @@ public sealed partial class FeedbackPollingWorker : BackgroundService
             Message = "PR {PullRequestId}: Assistance observation already advanced to {Status}; soak was not restarted."
         )]
         public static partial void AssistanceObservationAlreadyAdvanced(
+            ILogger logger,
+            string pullRequestId,
+            ReworkFeedbackStatus status
+        );
+
+        [LoggerMessage(
+            Level = LogLevel.Debug,
+            Message = "PR {PullRequestId}: Revival observation already advanced to {Status}; the existing soak is preserved and the bundle will not be re-materialized."
+        )]
+        public static partial void RevivalObservationAlreadyAdvanced(
             ILogger logger,
             string pullRequestId,
             ReworkFeedbackStatus status
