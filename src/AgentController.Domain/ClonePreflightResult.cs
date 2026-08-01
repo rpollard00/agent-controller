@@ -34,6 +34,9 @@ public enum ClonePreflightFailureCode
 
     /// <summary>The remote probe failed for a reason not known to be connectivity or authentication.</summary>
     RemoteRejected = 10,
+
+    /// <summary>The requested branch was not found on the remote repository.</summary>
+    BranchNotFound = 11,
 }
 
 /// <summary>

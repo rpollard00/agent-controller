@@ -30,6 +30,35 @@ public sealed class GitClonePreflightProbeTests
     }
 
     [Fact]
+    public void ClassifyFailure_ReportsMissingBranchForExitCodeTwo()
+    {
+        var (code, reason) = GitClonePreflightProbe.ClassifyFailure(
+            standardError: string.Empty,
+            transport: CloneTransport.HttpsPat,
+            resolution: null,
+            exitCode: 2,
+            defaultBranch: "feature/missing"
+        );
+
+        Assert.Equal(ClonePreflightFailureCode.BranchNotFound, code);
+        Assert.Contains("feature/missing", reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ClassifyFailure_PreservesAuthenticationFailureForExitCodeTwo()
+    {
+        var (code, _) = GitClonePreflightProbe.ClassifyFailure(
+            standardError: "fatal: Authentication failed",
+            transport: CloneTransport.HttpsPat,
+            resolution: null,
+            exitCode: 2,
+            defaultBranch: "feature/missing"
+        );
+
+        Assert.Equal(ClonePreflightFailureCode.AuthenticationFailed, code);
+    }
+
+    [Fact]
     public void ClassifyFailure_ReportsInvalidReferencedSshKey()
     {
         var resolution = new RepositoryCloneTransportResolution

@@ -434,11 +434,8 @@ public class SourceControlNonInteractiveTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Preflight_WithNonExistentBranch_Passes()
+    public async Task Preflight_WithNonExistentBranch_ReturnsBranchNotFound()
     {
-        // git ls-remote with a specific ref that doesn't exist still returns exit code 0
-        // (just no output). The preflight validates URL reachability, not branch existence.
-        // Branch existence is validated at clone time.
         var provider = CreateProvider();
         var spec = new RepositorySpec
         {
@@ -449,8 +446,9 @@ public class SourceControlNonInteractiveTests : IAsyncLifetime
 
         var result = await provider.CheckClonePreflightAsync(spec, CancellationToken.None);
 
-        Assert.True(result.Success);
-        Assert.Empty(result.Reason);
+        Assert.False(result.Success);
+        Assert.Equal(ClonePreflightFailureCode.BranchNotFound, result.FailureCode);
+        Assert.Contains(spec.DefaultBranch, result.Reason, StringComparison.Ordinal);
     }
 
     [Fact]

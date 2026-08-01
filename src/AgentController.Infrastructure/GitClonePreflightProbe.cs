@@ -54,7 +54,13 @@ internal static class GitClonePreflightProbe
             return GitClonePreflightProbeResult.Passed();
         }
 
-        var (code, reason) = ClassifyFailure(standardError, transport, resolution);
+        var (code, reason) = ClassifyFailure(
+            standardError,
+            transport,
+            resolution,
+            exitCode,
+            defaultBranch
+        );
         return GitClonePreflightProbeResult.Failed(code, reason);
     }
 
@@ -78,7 +84,9 @@ internal static class GitClonePreflightProbe
     internal static (ClonePreflightFailureCode Code, string Reason) ClassifyFailure(
         string standardError,
         CloneTransport transport,
-        RepositoryCloneTransportResolution? resolution
+        RepositoryCloneTransportResolution? resolution,
+        int exitCode = 0,
+        string? defaultBranch = null
     )
     {
         var error = standardError.ToLowerInvariant();
@@ -109,6 +117,11 @@ internal static class GitClonePreflightProbe
 
         if (transport == CloneTransport.Local)
         {
+            if (IsBranchNotFound(exitCode, defaultBranch, standardError))
+            {
+                return BranchNotFound(defaultBranch!);
+            }
+
             return (
                 ClonePreflightFailureCode.RemoteRejected,
                 "The local path exists but is not a readable Git repository. Verify the path and repository contents."
@@ -152,11 +165,33 @@ internal static class GitClonePreflightProbe
             );
         }
 
+        if (IsBranchNotFound(exitCode, defaultBranch, standardError))
+        {
+            return BranchNotFound(defaultBranch!);
+        }
+
         return (
             ClonePreflightFailureCode.RemoteRejected,
             $"The repository probe was rejected while using {credential}. Verify the clone URL and repository read permission."
         );
     }
+
+    private static bool IsBranchNotFound(
+        int exitCode,
+        string? defaultBranch,
+        string standardError
+    ) =>
+        exitCode == 2
+        && !string.IsNullOrWhiteSpace(defaultBranch)
+        && string.IsNullOrWhiteSpace(standardError);
+
+    private static (ClonePreflightFailureCode Code, string Reason) BranchNotFound(
+        string branch
+    ) =>
+        (
+            ClonePreflightFailureCode.BranchNotFound,
+            $"Branch '{branch}' was not found on the remote repository. Verify the branch name."
+        );
 
     private static async Task<(int ExitCode, string StandardError)> RunGitLsRemoteAsync(
         string cloneUrl,
@@ -176,6 +211,12 @@ internal static class GitClonePreflightProbe
         }
 
         arguments.Add("ls-remote");
+        if (!string.IsNullOrWhiteSpace(defaultBranch))
+        {
+            arguments.Add("--exit-code");
+            arguments.Add("--heads");
+        }
+
         arguments.Add(cloneUrl);
         if (!string.IsNullOrWhiteSpace(defaultBranch))
         {
