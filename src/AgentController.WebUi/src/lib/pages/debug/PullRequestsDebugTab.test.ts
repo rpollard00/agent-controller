@@ -7,7 +7,7 @@ import PullRequestsDebugTab from './PullRequestsDebugTab.svelte';
 const observedAt = '2026-07-30T03:40:43Z';
 const pullRequest: PullRequestDiagnosticSummary = {
   pullRequestId: '73', title: 'Repair feedback pickup', url: 'https://repos.test/pullrequest/73',
-  sourceControlEnvironmentKey: 'ado-east', repositoryKey: 'agent-controller', status: 'active', request: 'both',
+  sourceControlEnvironmentKey: 'ado-east', repositoryKey: 'agent-controller', status: 'active', request: 'both', eligible: true,
 };
 const detail: PullRequestDiagnosticDetail = {
   ...pullRequest,
@@ -55,6 +55,8 @@ describe('PullRequestsDebugTab', () => {
     expect(await screen.findByRole('option', { name: 'Azure East (ado-east)' })).toBeVisible();
     expect(screen.getByLabelText('Show inactive PRs')).not.toBeChecked();
     expect(screen.getByRole('columnheader', { name: 'Pull request' })).toBeVisible();
+    expect(screen.getByRole('columnheader', { name: 'Request' })).toBeVisible();
+    expect(screen.getByRole('columnheader', { name: 'Eligibility' })).toBeVisible();
     expect(screen.getByText('Repair feedback pickup')).toBeVisible();
     expect(screen.getByText('PR #73')).toBeVisible();
     expect(screen.getByText('Both')).toBeVisible();
@@ -63,6 +65,19 @@ describe('PullRequestsDebugTab', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     expect(await screen.findByText('No pull requests match the current filters.')).toBeVisible();
+  });
+
+  it('renders eligibility badges from list summaries without loading detail diagnostics', async () => {
+    const get = vi.fn(async () => detail);
+    const list = vi.fn(async () => response({
+      items: [pullRequest, { ...pullRequest, pullRequestId: '74', title: 'Missing feedback', eligible: false }],
+      total: 2,
+    }));
+    render(PullRequestsDebugTab, { client: apiClient(list, get), active: true });
+
+    expect(await screen.findByText('Eligible')).toBeVisible();
+    expect(screen.getByText('Ineligible')).toBeVisible();
+    expect(get).not.toHaveBeenCalled();
   });
 
   it('filters inactive pull requests, resets and pages independently', async () => {

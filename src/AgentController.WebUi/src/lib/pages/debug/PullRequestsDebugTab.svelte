@@ -180,6 +180,7 @@
           <th scope="col" class="px-4 py-3 font-semibold">Repository</th>
           <th scope="col" class="px-4 py-3 font-semibold">Status</th>
           <th scope="col" class="px-4 py-3 font-semibold">Request</th>
+          <th scope="col" class="px-4 py-3 font-semibold">Eligibility</th>
           <th scope="col" class="px-4 py-3 text-right font-semibold">Diagnostics</th>
         </tr></thead>
         <tbody class="divide-y divide-slate-800 bg-slate-900/30">
@@ -189,6 +190,7 @@
               <td class="px-4 py-4 text-slate-300">{pullRequest.repositoryKey}</td>
               <td class="px-4 py-4 text-slate-300">{pullRequest.status || 'None'}</td>
               <td class="px-4 py-4"><span class={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${requestPresentation[pullRequest.request].className}`}>{requestPresentation[pullRequest.request].label}</span></td>
+              <td class="px-4 py-4"><span class={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${pullRequest.eligible ? 'bg-emerald-950 text-emerald-300' : 'bg-rose-950 text-rose-300'}`}>{pullRequest.eligible ? 'Eligible' : 'Ineligible'}</span></td>
               <td class="px-4 py-4 text-right"><Button variant="ghost" ariaLabel={`View diagnostics for PR #${pullRequest.pullRequestId}`} onclick={() => openDetail(pullRequest)}>View</Button></td>
             </tr>
           {/each}

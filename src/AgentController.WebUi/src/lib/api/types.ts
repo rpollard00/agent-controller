@@ -399,6 +399,7 @@ export interface PullRequestDiagnosticSummary {
   repositoryKey: string;
   status: string;
   request: PullRequestRequestMatch;
+  eligible: boolean;
 }
 
 export interface PullRequestWorkItemReference {
