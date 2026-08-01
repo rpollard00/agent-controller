@@ -3,7 +3,7 @@ using AgentController.Domain;
 
 namespace AgentController.Application.Queries;
 
-internal sealed class PullRequestPickupEvaluator(
+public sealed class PullRequestPickupEvaluator(
     IRepositoryStore repositoryStore,
     IAgentRunStore runStore,
     IReworkCycleStore cycleStore,
@@ -35,67 +35,190 @@ internal sealed class PullRequestPickupEvaluator(
         ManagedPullRequestSnapshot snapshot,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        var evaluated = await EvaluatePageAsync([snapshot], cancellationToken);
+        return evaluated.Count == 1
+            ? evaluated[0]
+            : throw new InvalidOperationException("Pull-request diagnostics did not evaluate the requested snapshot.");
+    }
+
+    /// <summary>
+    /// Evaluates a discovered page using one shared set of store lookups and one
+    /// feedback-provider poll per request mode. The snapshots are already supplied
+    /// by diagnostic discovery; this method never performs discovery for individual
+    /// rows.
+    /// </summary>
+    public Task<IReadOnlyList<PullRequestDiagnosticDetail>> EvaluateAsync(
+        IReadOnlyList<ManagedPullRequestSnapshot> snapshots,
+        CancellationToken cancellationToken) =>
+        EvaluatePageAsync(snapshots, cancellationToken);
+
+    public async Task<IReadOnlyList<PullRequestDiagnosticDetail>> EvaluatePageAsync(
+        IReadOnlyList<ManagedPullRequestSnapshot> snapshots,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(snapshots);
+        if (snapshots.Count == 0)
+        {
+            return [];
+        }
+
         cancellationToken.ThrowIfCancellationRequested();
-        var request = ClassifyRequest(snapshot.Labels, options);
-        var assistance = request is PullRequestRequestMatch.Assistance or PullRequestRequestMatch.Both;
-        var requested = request != PullRequestRequestMatch.None;
-        var mode = assistance ? ReworkRequestMode.Assistance : ReworkRequestMode.Revival;
-        var active = snapshot.Status.Equals("active", StringComparison.OrdinalIgnoreCase);
 
-        var repository = await repositoryStore.GetByKeyAsync(snapshot.RepositoryKey, cancellationToken);
-        var reviewerPolicy = await ResolveReviewerPolicyAsync(repository, cancellationToken);
-        var managedRepository = repository is not null
-            && repository.RepositoryHostConnectionKey?.Equals(
-                snapshot.EnvironmentKey, StringComparison.OrdinalIgnoreCase) == true;
-        var metadataPresent = snapshot.PullRequest.HasCanonicalIdentity
-            && !string.IsNullOrWhiteSpace(snapshot.PullRequestUrl);
+        var repositories = await LoadRepositoriesAsync(snapshots, cancellationToken);
+        var reviewerPolicies = new Dictionary<string, RepositoryReviewerPolicy>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in repositories)
+        {
+            reviewerPolicies[pair.Key] = await ResolveReviewerPolicyAsync(
+                pair.Value,
+                cancellationToken);
+        }
 
+        // These collections are common to every row in the discovered page.
         var runs = await runStore.FindRunsForFeedbackAsync(cancellationToken);
-        var originatingRun = runs.FirstOrDefault(run =>
-            PullRequestIdentityMatcher.Matches(snapshot.PullRequest, run.PullRequestUrl));
-        var hasEligibleLineage = assistance || originatingRun is not null;
-        var blocked = originatingRun is not null
-            && await HasActiveReworkAsync(originatingRun.WorkItemId, cancellationToken);
+        var trackedFeedback = await feedbackStore.GetTrackedAsync(cancellationToken);
+        var pendingCycles = await cycleStore.ListPendingAsync(cancellationToken);
+        var consumedCycles = await cycleStore.ListConsumedAsync(cancellationToken);
+        var activeReworkRuns = new Dictionary<string, AgentRunHandle?>(StringComparer.Ordinal);
+        var contexts = new List<EvaluationContext>(snapshots.Count);
 
-        var pr = new PrUnderTest
+        foreach (var snapshot in snapshots)
         {
-            RequestMode = mode,
-            PullRequest = snapshot.PullRequest,
-            OriginatingRunId = originatingRun?.RunId,
-            WorkItemId = originatingRun?.WorkItemId,
-            RepoKey = snapshot.RepositoryKey,
-            PullRequestUrl = snapshot.PullRequestUrl,
-            PullRequestId = snapshot.PullRequestId,
-            BranchName = snapshot.SourceBranch,
-            ReviewerIdentityProvider = reviewerPolicy.Provider,
-            ReviewerIdentities = reviewerPolicy.Identities,
-        };
-        var feedbackQuery = new FeedbackQuery
-        {
-            OpenPrs = [pr],
-            ReworkMarkerTag = assistance ? options.AssistanceLabel : options.RevivalLabel,
-        };
-        var fetched = await feedbackSource.PollAsync(feedbackQuery, cancellationToken);
-        var signal = fetched.FirstOrDefault(candidate =>
-                candidate.PullRequestId.Equals(snapshot.PullRequestId, StringComparison.OrdinalIgnoreCase))
-            ?? new ReworkSignal
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var request = ClassifyRequest(snapshot.Labels, options);
+            var assistance = request is PullRequestRequestMatch.Assistance
+                or PullRequestRequestMatch.Both;
+            var mode = assistance ? ReworkRequestMode.Assistance : ReworkRequestMode.Revival;
+            var repository = repositories[snapshot.RepositoryKey];
+            var reviewerPolicy = reviewerPolicies[snapshot.RepositoryKey];
+            var originatingRun = runs.FirstOrDefault(run =>
+                PullRequestIdentityMatcher.Matches(snapshot.PullRequest, run.PullRequestUrl));
+            var blocked = originatingRun is not null
+                && await HasActiveReworkAsync(
+                    originatingRun.WorkItemId,
+                    consumedCycles,
+                    activeReworkRuns,
+                    cancellationToken);
+
+            var pr = new PrUnderTest
             {
                 RequestMode = mode,
                 PullRequest = snapshot.PullRequest,
-                PullRequestId = snapshot.PullRequestId,
                 OriginatingRunId = originatingRun?.RunId,
-                Threads = [],
+                WorkItemId = originatingRun?.WorkItemId,
+                RepoKey = snapshot.RepositoryKey,
+                PullRequestUrl = snapshot.PullRequestUrl,
+                PullRequestId = snapshot.PullRequestId,
+                BranchName = snapshot.SourceBranch,
+                ReviewerIdentityProvider = reviewerPolicy.Provider,
+                ReviewerIdentities = reviewerPolicy.Identities,
             };
-        var trace = AssertSingleTrace(assistance
-            ? await feedbackPipeline.TraceAssistanceAsync(feedbackQuery, [signal], cancellationToken)
-            : await feedbackPipeline.TraceAsync(feedbackQuery, [signal], cancellationToken));
 
-        var markerPresent = assistance
-            ? requested
-            : request == PullRequestRequestMatch.Revival
-                && trace.MarkerStatus == FeedbackMarkerCheckStatus.Present;
-        var reviewerConfigured = pr.ReviewerIdentities.Count > 0;
+            contexts.Add(new EvaluationContext
+            {
+                Snapshot = snapshot,
+                Request = request,
+                Assistance = assistance,
+                Mode = mode,
+                Repository = repository,
+                OriginatingRun = originatingRun,
+                Blocked = blocked,
+                PullRequest = pr,
+            });
+        }
+
+        var traces = new Dictionary<EvaluationContext, ReviewFeedbackCheckTrace>();
+        foreach (var group in contexts.GroupBy(context => context.Assistance))
+        {
+            var grouped = group.ToArray();
+            var feedbackQuery = new FeedbackQuery
+            {
+                OpenPrs = grouped.Select(context => context.PullRequest).ToArray(),
+                ReworkMarkerTag = grouped[0].Assistance
+                    ? options.AssistanceLabel
+                    : options.RevivalLabel,
+            };
+            var fetched = await feedbackSource.PollAsync(feedbackQuery, cancellationToken);
+            var signals = grouped
+                .Select(context => FindSignal(context.Snapshot, fetched) ?? new ReworkSignal
+                {
+                    RequestMode = context.Mode,
+                    PullRequest = context.Snapshot.PullRequest,
+                    PullRequestId = context.Snapshot.PullRequestId,
+                    OriginatingRunId = context.OriginatingRun?.RunId,
+                    Threads = [],
+                })
+                .ToArray();
+            var groupTraces = grouped[0].Assistance
+                ? await feedbackPipeline.TraceAssistanceAsync(
+                    feedbackQuery,
+                    signals,
+                    cancellationToken)
+                : await feedbackPipeline.TraceAsync(
+                    feedbackQuery,
+                    signals,
+                    cancellationToken);
+
+            if (groupTraces.Count != grouped.Length)
+            {
+                throw new InvalidOperationException(
+                    "Feedback diagnostics did not return exactly one trace per pull request.");
+            }
+
+            for (var index = 0; index < grouped.Length; index++)
+            {
+                traces[grouped[index]] = groupTraces[index];
+            }
+        }
+
+        return contexts
+            .Select(context => CreateDetail(
+                context,
+                traces[context],
+                trackedFeedback,
+                pendingCycles,
+                consumedCycles))
+            .ToArray();
+    }
+
+    private async Task<IReadOnlyDictionary<string, RepositoryProfile?>> LoadRepositoriesAsync(
+        IReadOnlyList<ManagedPullRequestSnapshot> snapshots,
+        CancellationToken cancellationToken)
+    {
+        var repositories = new Dictionary<string, RepositoryProfile?>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var key in snapshots.Select(snapshot => snapshot.RepositoryKey).Distinct(
+                     StringComparer.OrdinalIgnoreCase))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            repositories[key] = await repositoryStore.GetByKeyAsync(key, cancellationToken);
+        }
+
+        return repositories;
+    }
+
+    private PullRequestDiagnosticDetail CreateDetail(
+        EvaluationContext context,
+        ReviewFeedbackCheckTrace trace,
+        IReadOnlyList<ReworkFeedback> trackedFeedback,
+        IReadOnlyList<ReworkCycle> pendingCycles,
+        IReadOnlyList<ReworkCycle> consumedCycles)
+    {
+        var snapshot = context.Snapshot;
+        var request = context.Request;
+        var assistance = context.Assistance;
+        var requested = request != PullRequestRequestMatch.None;
+        var active = snapshot.Status.Equals("active", StringComparison.OrdinalIgnoreCase);
+        var managedRepository = context.Repository is not null
+            && context.Repository.RepositoryHostConnectionKey?.Equals(
+                snapshot.EnvironmentKey, StringComparison.OrdinalIgnoreCase) == true;
+        var metadataPresent = snapshot.PullRequest.HasCanonicalIdentity
+            && !string.IsNullOrWhiteSpace(snapshot.PullRequestUrl);
+        var hasEligibleLineage = assistance || context.OriginatingRun is not null;
         var feedbackQualifies = assistance || trace.QualifyingThreadCount > 0;
+        var reviewerConfigured = context.PullRequest.ReviewerIdentities.Count > 0;
         var checks = new[]
         {
             Check("active-status", "Active pull request", active,
@@ -104,21 +227,26 @@ internal sealed class PullRequestPickupEvaluator(
                 managedRepository ? $"Repository '{snapshot.RepositoryKey}' is managed by this environment." : "The repository is not managed by this source-control environment."),
             Check("required-metadata", "Required pull request metadata", metadataPresent,
                 metadataPresent ? "Canonical identity and URL are available." : "Canonical identity or URL is missing."),
-            Check("request-marker", "Configured request label", markerPresent,
-                markerPresent ? $"Found '{(assistance ? options.AssistanceLabel : options.RevivalLabel)}'." : "The configured request label was not found with production matching semantics."),
+            Check("request-marker", "Configured request label", assistance
+                ? requested
+                : request == PullRequestRequestMatch.Revival
+                    && trace.MarkerStatus == FeedbackMarkerCheckStatus.Present,
+                assistance || request == PullRequestRequestMatch.Revival
+                    && trace.MarkerStatus == FeedbackMarkerCheckStatus.Present
+                    ? $"Found '{(assistance ? options.AssistanceLabel : options.RevivalLabel)}'."
+                    : "The configured request label was not found with production matching semantics."),
             Check("assistance-precedence", "Assistance precedence", true,
                 request == PullRequestRequestMatch.Both ? "Both labels are present; Assistance takes precedence." : assistance ? "Assistance is the selected request mode." : "Assistance does not override Revival."),
             Check("originating-lineage", "Eligible originating run", hasEligibleLineage,
-                assistance ? "Assistance does not require a controller-authored pull request." : hasEligibleLineage ? $"Matched eligible run '{originatingRun!.RunId}'." : "Revival requires an eligible controller run that produced this pull request."),
-            Check("active-rework", "No active rework", assistance || !blocked,
-                assistance ? "Assistance pickup is independent of Revival run blocking." : blocked ? "The originating work item already has active rework." : "No active rework blocks the originating work item."),
+                assistance ? "Assistance does not require a controller-authored pull request." : hasEligibleLineage ? $"Matched eligible run '{context.OriginatingRun!.RunId}'." : "Revival requires an eligible controller run that produced this pull request."),
+            Check("active-rework", "No active rework", assistance || !context.Blocked,
+                assistance ? "Assistance pickup is independent of Revival run blocking." : context.Blocked ? "The originating work item already has active rework." : "No active rework blocks the originating work item."),
             Check("reviewer-configuration", "Reviewer configuration", assistance || reviewerConfigured,
                 reviewerConfigured ? "At least one reviewer is configured." : assistance ? "No reviewer is configured; zero-comment Assistance remains valid." : "Revival fails closed because no reviewer is configured."),
             Check("qualifying-feedback", "Qualifying feedback", feedbackQualifies,
                 assistance ? $"Assistance remains eligible with {trace.QualifyingThreadCount} qualifying feedback thread(s)." : feedbackQualifies ? $"Found {trace.QualifyingThreadCount} qualifying feedback thread(s)." : "Revival requires at least one qualifying feedback thread."),
         };
         var eligible = requested && checks.All(check => check.Passed);
-        var tracking = await FindTrackingAsync(snapshot.PullRequest, mode, cancellationToken);
 
         return new PullRequestDiagnosticDetail
         {
@@ -143,7 +271,12 @@ internal sealed class PullRequestPickupEvaluator(
             RecognizedRevivalLabel = options.RevivalLabel,
             RecognizedAssistanceLabel = options.AssistanceLabel,
             FeedbackTrace = trace,
-            Tracking = tracking,
+            Tracking = FindTracking(
+                snapshot.PullRequest,
+                context.Mode,
+                trackedFeedback,
+                pendingCycles,
+                consumedCycles),
         };
     }
 
@@ -236,35 +369,65 @@ internal sealed class PullRequestPickupEvaluator(
         public static RepositoryReviewerPolicy Empty { get; } = new(null, []);
     }
 
-    private async Task<bool> HasActiveReworkAsync(string? workItemId, CancellationToken cancellationToken)
+    private async Task<bool> HasActiveReworkAsync(
+        string? workItemId,
+        IReadOnlyList<ReworkCycle> consumedCycles,
+        Dictionary<string, AgentRunHandle?> activeReworkRuns,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(workItemId)) return false;
-        foreach (var cycle in await cycleStore.ListConsumedAsync(cancellationToken))
+        foreach (var cycle in consumedCycles)
         {
             if (!cycle.WorkItemId.Equals(workItemId, StringComparison.Ordinal)
                 || string.IsNullOrWhiteSpace(cycle.NewRunId)) continue;
-            var run = await runStore.GetByIdAsync(cycle.NewRunId, cancellationToken);
+
+            if (!activeReworkRuns.TryGetValue(cycle.NewRunId, out var run))
+            {
+                run = await runStore.GetByIdAsync(cycle.NewRunId, cancellationToken);
+                activeReworkRuns[cycle.NewRunId] = run;
+            }
+
             if (run is not null && !run.Status.IsTerminal()) return true;
         }
         return false;
     }
 
-    private async Task<PullRequestTrackingState?> FindTrackingAsync(
+    private static PullRequestDiagnosticCheck Check(string code, string label, bool passed, string reason) =>
+        new() { Code = code, Label = label, Passed = passed, Reason = reason };
+
+    private static ReworkSignal? FindSignal(
+        ManagedPullRequestSnapshot snapshot,
+        IReadOnlyList<ReworkSignal> fetched)
+    {
+        return fetched.FirstOrDefault(candidate =>
+                   PullRequestIdentityMatcher.Matches(
+                       snapshot.PullRequest,
+                       candidate.PullRequest))
+            ?? fetched.FirstOrDefault(candidate =>
+                candidate.PullRequestId.Equals(
+                    snapshot.PullRequestId,
+                    StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static PullRequestTrackingState? FindTracking(
         PullRequestReference pullRequest,
         ReworkRequestMode mode,
-        CancellationToken cancellationToken)
+        IReadOnlyList<ReworkFeedback> trackedFeedback,
+        IReadOnlyList<ReworkCycle> pendingCycles,
+        IReadOnlyList<ReworkCycle> consumedCycles)
     {
-        var feedback = (await feedbackStore.GetTrackedAsync(cancellationToken))
+        var feedback = trackedFeedback
             .Where(item => item.RequestMode == mode
                 && PullRequestIdentityMatcher.Matches(item.PullRequest, pullRequest))
             .OrderByDescending(item => item.UpdatedAt)
             .FirstOrDefault();
         if (feedback is null) return null;
-        var cycles = (await cycleStore.ListPendingAsync(cancellationToken))
-            .Concat(await cycleStore.ListConsumedAsync(cancellationToken));
-        var cycle = cycles.FirstOrDefault(item =>
-            item.RequestMode == mode
-            && PullRequestIdentityMatcher.Matches(item.PullRequest, pullRequest));
+
+        var cycle = pendingCycles
+            .Concat(consumedCycles)
+            .FirstOrDefault(item =>
+                item.RequestMode == mode
+                && PullRequestIdentityMatcher.Matches(item.PullRequest, pullRequest));
         return new PullRequestTrackingState
         {
             RequestMode = mode,
@@ -273,9 +436,15 @@ internal sealed class PullRequestPickupEvaluator(
         };
     }
 
-    private static ReviewFeedbackCheckTrace AssertSingleTrace(IReadOnlyList<ReviewFeedbackCheckTrace> traces) =>
-        traces.Count == 1 ? traces[0] : throw new InvalidOperationException("Feedback diagnostics did not return exactly one trace.");
-
-    private static PullRequestDiagnosticCheck Check(string code, string label, bool passed, string reason) =>
-        new() { Code = code, Label = label, Passed = passed, Reason = reason };
+    private sealed class EvaluationContext
+    {
+        public ManagedPullRequestSnapshot Snapshot { get; init; } = new();
+        public PullRequestRequestMatch Request { get; init; }
+        public bool Assistance { get; init; }
+        public ReworkRequestMode Mode { get; init; }
+        public RepositoryProfile? Repository { get; init; }
+        public AgentRunHandle? OriginatingRun { get; init; }
+        public bool Blocked { get; init; }
+        public PrUnderTest PullRequest { get; init; } = new();
+    }
 }

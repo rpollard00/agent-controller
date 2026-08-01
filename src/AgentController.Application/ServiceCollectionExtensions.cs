@@ -90,6 +90,7 @@ public static class ServiceCollectionExtensions
         >();
         services.AddScoped<IQueryHandler<ListRunsQuery, RunListResult>, ListRunsQueryHandler>();
         services.AddScoped<PullRequestSourceOptionsProvider>();
+        services.AddScoped<PullRequestPickupEvaluator>();
         services.AddScoped<
             IQueryHandler<ListPullRequestDiagnosticsQuery, PullRequestDiagnosticsPage>,
             ListPullRequestDiagnosticsQueryHandler

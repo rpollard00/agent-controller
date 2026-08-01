@@ -12,9 +12,21 @@ public sealed class GetPullRequestDiagnosticsQueryHandler(
     ReviewFeedbackFilterPipeline feedbackPipeline,
     PullRequestDiagnosticOptions options,
     IConnectionStore? connectionStore = null,
-    IReviewerIdentityPolicyResolver? reviewerIdentityPolicyResolver = null)
+    IReviewerIdentityPolicyResolver? reviewerIdentityPolicyResolver = null,
+    PullRequestPickupEvaluator? evaluator = null)
     : IQueryHandler<GetPullRequestDiagnosticsQuery, PullRequestDiagnosticDetail?>
 {
+    private readonly PullRequestPickupEvaluator _evaluator = evaluator ?? new PullRequestPickupEvaluator(
+        repositoryStore,
+        runStore,
+        cycleStore,
+        feedbackStore,
+        feedbackSource,
+        feedbackPipeline,
+        options,
+        connectionStore,
+        reviewerIdentityPolicyResolver);
+
     public async Task<PullRequestDiagnosticDetail?> ExecuteAsync(
         GetPullRequestDiagnosticsQuery query,
         CancellationToken cancellationToken)
@@ -42,16 +54,6 @@ public sealed class GetPullRequestDiagnosticsQueryHandler(
 
         if (snapshot is null) return null;
 
-        var evaluator = new PullRequestPickupEvaluator(
-            repositoryStore,
-            runStore,
-            cycleStore,
-            feedbackStore,
-            feedbackSource,
-            feedbackPipeline,
-            options,
-            connectionStore,
-            reviewerIdentityPolicyResolver);
-        return await evaluator.EvaluateAsync(snapshot, cancellationToken);
+        return await _evaluator.EvaluateAsync(snapshot, cancellationToken);
     }
 }

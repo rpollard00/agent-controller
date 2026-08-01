@@ -5,7 +5,8 @@ namespace AgentController.Application.Queries;
 public sealed class ListPullRequestDiagnosticsQueryHandler(
     IManagedPullRequestDiagnosticDiscovery discovery,
     PullRequestSourceOptionsProvider sourceOptionsProvider,
-    PullRequestDiagnosticOptions options)
+    PullRequestDiagnosticOptions options,
+    PullRequestPickupEvaluator? evaluator = null)
     : IQueryHandler<ListPullRequestDiagnosticsQuery, PullRequestDiagnosticsPage>
 {
     public async Task<PullRequestDiagnosticsPage> ExecuteAsync(
@@ -21,19 +22,16 @@ public sealed class ListPullRequestDiagnosticsQueryHandler(
             PageSize = query.PageSize,
         }, cancellationToken);
 
+        var items = evaluator is null
+            ? page.Items.Select(snapshot => ToSummary(snapshot, options)).ToArray()
+            : (await evaluator.EvaluatePageAsync(page.Items, cancellationToken))
+                .Select(ToSummary)
+                .ToArray();
+
         return new PullRequestDiagnosticsPage
         {
             Sources = await sourceOptionsProvider.ListAsync(cancellationToken),
-            Items = page.Items.Select(snapshot => new PullRequestDiagnosticSummary
-            {
-                PullRequestId = snapshot.PullRequestId,
-                Title = snapshot.Title,
-                Url = Clean(snapshot.PullRequestUrl),
-                SourceControlEnvironmentKey = snapshot.EnvironmentKey,
-                RepositoryKey = snapshot.RepositoryKey,
-                Status = snapshot.Status,
-                Request = PullRequestPickupEvaluator.ClassifyRequest(snapshot.Labels, options),
-            }).ToArray(),
+            Items = items,
             Failures = page.Failures,
             Page = page.Page,
             PageSize = page.PageSize,
@@ -41,6 +39,31 @@ public sealed class ListPullRequestDiagnosticsQueryHandler(
         };
     }
 
-    private static string? Clean(string value) =>
+    private static PullRequestDiagnosticSummary ToSummary(
+        PullRequestDiagnosticDetail detail) => new()
+        {
+            PullRequestId = detail.PullRequestId,
+            Title = detail.Title,
+            Url = Clean(detail.Url),
+            SourceControlEnvironmentKey = detail.SourceControlEnvironmentKey,
+            RepositoryKey = detail.RepositoryKey,
+            Status = detail.Status,
+            Request = detail.Request,
+        };
+
+    private static PullRequestDiagnosticSummary ToSummary(
+        ManagedPullRequestSnapshot snapshot,
+        PullRequestDiagnosticOptions options) => new()
+        {
+            PullRequestId = snapshot.PullRequestId,
+            Title = snapshot.Title,
+            Url = Clean(snapshot.PullRequestUrl),
+            SourceControlEnvironmentKey = snapshot.EnvironmentKey,
+            RepositoryKey = snapshot.RepositoryKey,
+            Status = snapshot.Status,
+            Request = PullRequestPickupEvaluator.ClassifyRequest(snapshot.Labels, options),
+        };
+
+    private static string? Clean(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }
